@@ -2,12 +2,9 @@
 __pycache__/
 *.pyc
 
-# venv
+# IDE / env
 .venv/
-
-# PyCharm
 .idea/
 
-# Windows
+# OS
 Thumbs.db
-desktop.ini
