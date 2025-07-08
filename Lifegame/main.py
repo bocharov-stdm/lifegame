@@ -49,23 +49,24 @@ def main():
 
         # --- рендер ---
         screen.fill((30, 30, 30))
-
-        for p in plants:
-            p.draw(screen, scale_x, scale_y)
-        for pr in predators:
-            pr.draw(screen, scale_x, scale_y)
-        for c in creatures:
-            c.draw(screen, scale_x, scale_y)
+        for p in plants:     p.draw(screen, scale_x, scale_y)
+        for pr in predators: pr.draw(screen, scale_x, scale_y)
+        for c in creatures:  c.draw(screen, scale_x, scale_y)
 
         # статистика
-        count = len(creatures)
-        avg_speed = sum(c.speed for c in creatures) / count if count else 0
-        avg_smell = sum(c.smell_radius for c in creatures) / count if count else 0
-        text = (f"Creatures: {len(creatures)}  "
-                f"Predators: {len(predators)}  "
-                f"Avg speed: {avg_speed:.2f}  "
-                f"Avg smell: {avg_smell:.1f}")
-        screen.blit(font.render(text, True, (255, 255, 255)), (10, 10))
+        count_c  = len(creatures)
+        count_pr = len(predators)
+
+        avg_speed_c  = sum(c.speed for c in creatures)     / count_c  if count_c  else 0
+        avg_smell_c  = sum(c.smell_radius for c in creatures) / count_c  if count_c  else 0
+        avg_speed_pr = sum(p.speed for p in predators)     / count_pr if count_pr else 0
+        avg_smell_pr = sum(p.smell_radius for p in predators) / count_pr if count_pr else 0
+
+        text1 = f"Creatures: {count_c}  Avg speed: {avg_speed_c:.2f}  Avg smell: {avg_smell_c:.1f}"
+        text2 = f"Predators: {count_pr}  Avg speed: {avg_speed_pr:.2f}  Avg smell: {avg_smell_pr:.1f}"
+
+        screen.blit(font.render(text1, True, (255, 255, 255)), (10, 10))
+        screen.blit(font.render(text2, True, (120, 200, 255)), (10, 35))
 
         pygame.display.flip()
         clock.tick(FPS)
