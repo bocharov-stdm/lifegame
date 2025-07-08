@@ -16,7 +16,7 @@ def main():
     scale_x = WIDTH / WORLD_WIDTH
     scale_y = HEIGHT / WORLD_HEIGHT
 
-    creatures = [Creature() for _ in range(10)]
+    creatures = [Creature() for _ in range(50)]
     plants = [Plant() for _ in range(PLANTS_AT_START)]
 
     while True:
@@ -25,15 +25,16 @@ def main():
                 pygame.quit()
                 sys.exit()
 
-        if random.random() < PLANT_SPAWN_CHANCE:
-            plants.append(Plant())
+        for _ in range(TICKS_PER_FRAME):
+            if random.random() < PLANT_SPAWN_CHANCE:
+                plants.append(Plant())
 
-        for c in list(creatures):
-            c.move(plants)
-            c.try_eat(plants)
-            c.maybe_divide(creatures)
-            if c.energy <= 0:
-                creatures.remove(c)
+            for c in list(creatures):
+                c.move(plants)
+                c.try_eat(plants)
+                c.maybe_divide(creatures)
+                if c.energy <= 0:
+                    creatures.remove(c)
 
         screen.fill((30, 30, 30))
         for p in plants:

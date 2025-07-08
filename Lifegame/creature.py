@@ -6,7 +6,7 @@ import math
 from config import *
 
 class Creature:
-    DIAM = 8
+    DIAM = 20
 
     def __init__(self, x=None, y=None, energy=MAX_ENERGY * 0.5,
                  speed=BASE_SPEED, smell_radius=BASE_SMELL):
@@ -35,18 +35,36 @@ class Creature:
         return nearest
 
     def move(self, plants):
-        target = self._nearest_plant_in_smell(plants)
-        dx, dy = self._vector_towards(target.x, target.y) if target else self._vector_towards(self.tx, self.ty)
+        # Пытаемся "унюхать" ближайшее растение
+        nearest_plant = self._nearest_plant_in_smell(plants)
+
+        if nearest_plant:
+            # Если учуяли растение — идём к нему
+            dx, dy = self._vector_towards(nearest_plant.x, nearest_plant.y)
+        else:
+            # Иначе идём к случайной цели
+            dx, dy = self._vector_towards(self.tx, self.ty)
+
+        # Двигаемся, но не выходим за границы мира
         self.x = min(max(self.x + dx, self.DIAM), WORLD_WIDTH - self.DIAM)
         self.y = min(max(self.y + dy, self.DIAM), WORLD_HEIGHT - self.DIAM)
-        self.energy -= K_MOVE * self.speed ** 2 + K_SMELL * self.smell_radius
-        if not target and math.hypot(self.x - self.tx, self.y - self.ty) < self.speed:
-            self._choose_new_target()
+
+        # Тратим энергию за движение и за использование обоняния
+        move_cost = K_MOVE * self.speed ** 2
+        smell_cost = K_SMELL * self.smell_radius
+        self.energy -= move_cost + smell_cost + BASAL_METABOLISM
+
+        # Если мы не нашли еду и почти пришли к случайной цели — выбираем новую
+        if not nearest_plant:
+            distance_to_target = math.hypot(self.x - self.tx, self.y - self.ty)
+            if distance_to_target < self.speed:
+                self._choose_new_target()
 
     def try_eat(self, plants):
         for p in plants:
             if math.hypot(self.x - p.x, self.y - p.y) < self.DIAM:
                 plants.remove(p)
+                self._choose_new_target()  # <--- вот это добавь
                 self.energy = min(MAX_ENERGY, self.energy + ENERGY_FROM_PLANT)
                 return True
         return False
@@ -57,8 +75,8 @@ class Creature:
     def maybe_divide(self, creatures):
         if self.energy >= MAX_ENERGY * 0.8:
             self.energy -= MAX_ENERGY * 0.5
-            cx = min(max(self.x + random.randint(-15, 15), self.DIAM), WORLD_WIDTH - self.DIAM)
-            cy = min(max(self.y + random.randint(-15, 15), self.DIAM), WORLD_HEIGHT - self.DIAM)
+            cx = min(max(self.x + random.randint(-80, 80), self.DIAM), WORLD_WIDTH - self.DIAM)
+            cy = min(max(self.y + random.randint(-80, 80), self.DIAM), WORLD_HEIGHT - self.DIAM)
             child_speed = self.speed if random.random() >= 0.5 else self._mutate(self.speed)
             child_smell = self.smell_radius if random.random() >= 0.5 else self._mutate(self.smell_radius)
             creatures.append(Creature(cx, cy, MAX_ENERGY * 0.25, child_speed, child_smell))
