@@ -69,14 +69,15 @@ class Creature:
                 return True
         return False
 
-    def _mutate(self, value):
-        return value * (1 + random.uniform(-0.5, 0.5))
+    def _mutate(self, value, sigma=0.1):
+        factor = 1 + random.gauss(0, sigma)
+        return max(0.01, value * factor)
 
     def maybe_divide(self, creatures):
         if self.energy >= MAX_ENERGY * 0.8:
             self.energy -= MAX_ENERGY * 0.5
-            cx = min(max(self.x + random.randint(-80, 80), self.DIAM), WORLD_WIDTH - self.DIAM)
-            cy = min(max(self.y + random.randint(-80, 80), self.DIAM), WORLD_HEIGHT - self.DIAM)
+            cx = min(max(self.x + random.randint(-100, 100), self.DIAM), WORLD_WIDTH - self.DIAM)
+            cy = min(max(self.y + random.randint(-100, 100), self.DIAM), WORLD_HEIGHT - self.DIAM)
             child_speed = self.speed if random.random() >= 0.5 else self._mutate(self.speed)
             child_smell = self.smell_radius if random.random() >= 0.5 else self._mutate(self.smell_radius)
             creatures.append(Creature(cx, cy, MAX_ENERGY * 0.25, child_speed, child_smell))

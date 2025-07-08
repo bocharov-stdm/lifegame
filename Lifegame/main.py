@@ -16,7 +16,7 @@ def main():
     scale_x = WIDTH / WORLD_WIDTH
     scale_y = HEIGHT / WORLD_HEIGHT
 
-    creatures = [Creature() for _ in range(50)]
+    creatures = [Creature() for _ in range(GREATURES_AT_START)]
     plants = [Plant() for _ in range(PLANTS_AT_START)]
 
     while True:
