@@ -3,7 +3,7 @@ import pygame, random, math
 from config import *
 
 class Predator:
-    DIAM = 24
+    DIAM = 30
 
     def __init__(self, x=None, y=None,
                  energy=MAX_ENERGY * 0.5,
@@ -18,14 +18,33 @@ class Predator:
 
     # ---------- утилиты ----------
     def _choose_new_target(self):
-        self.tx = random.randint(
-            max(int(self.x) - WANDER_RADIUS, 0),
-            min(int(self.x) + WANDER_RADIUS, WORLD_WIDTH - 1)
-        )
-        self.ty = random.randint(
-            max(int(self.y) - WANDER_RADIUS, 0),
-            min(int(self.y) + WANDER_RADIUS, WORLD_HEIGHT - 1)
-        )
+        half = WANDER_RADIUS  # половина стороны квадрата
+
+        # --- горизонтальная полоса ---
+        xmin = self.x - half
+        xmax = self.x + half
+        if xmin < 0:  # залезли за левый край
+            xmax += -xmin  # двигаем полосу вправо
+            xmin = 0
+        if xmax > WORLD_WIDTH - 1:  # залезли за правый край
+            xmin -= xmax - (WORLD_WIDTH - 1)  # двигаем влево
+            xmax = WORLD_WIDTH - 1
+            xmin = max(xmin, 0)  # вдруг ушли левее нуля
+
+        # --- вертикальная полоса ---
+        ymin = self.y - half
+        ymax = self.y + half
+        if ymin < 0:
+            ymax += -ymin
+            ymin = 0
+        if ymax > WORLD_HEIGHT - 1:
+            ymin -= ymax - (WORLD_HEIGHT - 1)
+            ymax = WORLD_HEIGHT - 1
+            ymin = max(ymin, 0)
+
+        # используем float-цели — так плавнее
+        self.tx = random.uniform(xmin, xmax)
+        self.ty = random.uniform(ymin, ymax)
 
     def _vector_towards(self, tx, ty):
         dx, dy = tx - self.x, ty - self.y
@@ -50,7 +69,7 @@ class Predator:
         self.x = min(max(self.x + dx, self.DIAM), WORLD_WIDTH  - self.DIAM)
         self.y = min(max(self.y + dy, self.DIAM), WORLD_HEIGHT - self.DIAM)
 
-        self.energy -= (K_MOVE / 4 * self.speed**2) + (K_SMELL * self.smell_radius) + BASAL_METABOLISM / 2
+        self.energy -= (K_MOVE / 4 * self.speed**2) + (K_SMELL * self.smell_radius) + BASAL_METABOLISM
 
         if (not prey) and math.hypot(self.x - self.tx, self.y - self.ty) < self.speed:
             self._choose_new_target()
@@ -59,13 +78,13 @@ class Predator:
         for c in creatures:
             if math.hypot(self.x - c.x, self.y - c.y) < self.DIAM:
                 creatures.remove(c)
-                self.energy = min(MAX_ENERGY * 2, self.energy + c.energy)
+                self.energy = min(MAX_ENERGY * 2, self.energy + c.energy * 1.5)
                 self._choose_new_target()
                 return True
         return False
 
     # ---------- размножение ----------
-    def _mutate(self, value, sigma=0.5):
+    def _mutate(self, value, sigma=0.3):
         return max(0.01, value * (1 + random.gauss(0, sigma)))
 
     def maybe_divide(self, predators):
@@ -83,5 +102,4 @@ class Predator:
         sx, sy = int(self.x * scale_x), int(self.y * scale_y)
         pygame.draw.circle(surf, (255, 255, 255), (sx, sy),
                            max(1, int((self.DIAM // 2) * scale_x)))
-        pygame.draw.circle(surf, (0, 120, 255), (sx, sy),
-                           max(1, int(self.smell_radius * scale_x)), 1)
+

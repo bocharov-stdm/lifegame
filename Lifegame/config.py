@@ -6,14 +6,14 @@ FPS = 60
 TICKS_PER_FRAME = 5           # логических тиков на кадр
 
 BASE_SPEED  = 1.2
-BASE_SMELL  = 150.0
+BASE_SMELL  = 300.0
 
 MAX_ENERGY        = 100        # базовый максимум (но существа/хищники могут копить до 200)
 ENERGY_FROM_PLANT = 20
 
 K_MOVE           = 0.005
-K_SMELL          = 0.00005
-BASAL_METABOLISM = 0.005
+K_SMELL          = 0.000025
+BASAL_METABOLISM = 0.0020
 
 PLANT_RADIUS       = 3
 PLANTS_AT_START    = 100
