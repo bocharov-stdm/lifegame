@@ -19,9 +19,14 @@ class Creature:
 
     # ---------- утилиты ----------
     def _choose_new_target(self):
-        self.tx = random.randint(self.DIAM, WORLD_WIDTH  - self.DIAM)
-        self.ty = random.randint(self.DIAM, WORLD_HEIGHT - self.DIAM)
-
+        self.tx = random.randint(
+            max(int(self.x) - WANDER_RADIUS, 0),
+            min(int(self.x) + WANDER_RADIUS, WORLD_WIDTH - 1)
+        )
+        self.ty = random.randint(
+            max(int(self.y) - WANDER_RADIUS, 0),
+            min(int(self.y) + WANDER_RADIUS, WORLD_HEIGHT - 1)
+        )
     def _vector_towards(self, tx, ty):
         dx, dy = tx - self.x, ty - self.y
         dist   = math.hypot(dx, dy)
@@ -49,7 +54,7 @@ class Creature:
         if self.flee_ticks > 0:
             fleeing = True
             self.flee_ticks -= 1
-        if nearest_pred and best_pred_d < self.smell_radius / 3:
+        if nearest_pred and best_pred_d < self.smell_radius / 2:
             self.flee_ticks = FLEE_TICKS
             fleeing = True
 
@@ -83,7 +88,7 @@ class Creature:
             if math.hypot(self.x - p.x, self.y - p.y) < self.DIAM:
                 plants.remove(p)
                 self._choose_new_target()
-                self.energy = min(MAX_ENERGY * 2, self.energy + ENERGY_FROM_PLANT)
+                self.energy = min(MAX_ENERGY * 3, self.energy + ENERGY_FROM_PLANT)
                 return True
         return False
 

@@ -7,8 +7,8 @@ class Predator:
 
     def __init__(self, x=None, y=None,
                  energy=MAX_ENERGY * 0.5,
-                 speed=BASE_SPEED * 1.25,
-                 smell_radius=BASE_SMELL * 1.3):
+                 speed=BASE_SPEED * 2**0.5,
+                 smell_radius=BASE_SMELL * 1):
         self.x = x if x is not None else random.randint(self.DIAM, WORLD_WIDTH  - self.DIAM)
         self.y = y if y is not None else random.randint(self.DIAM, WORLD_HEIGHT - self.DIAM)
         self.energy       = energy
@@ -18,8 +18,14 @@ class Predator:
 
     # ---------- утилиты ----------
     def _choose_new_target(self):
-        self.tx = random.randint(self.DIAM, WORLD_WIDTH  - self.DIAM)
-        self.ty = random.randint(self.DIAM, WORLD_HEIGHT - self.DIAM)
+        self.tx = random.randint(
+            max(int(self.x) - WANDER_RADIUS, 0),
+            min(int(self.x) + WANDER_RADIUS, WORLD_WIDTH - 1)
+        )
+        self.ty = random.randint(
+            max(int(self.y) - WANDER_RADIUS, 0),
+            min(int(self.y) + WANDER_RADIUS, WORLD_HEIGHT - 1)
+        )
 
     def _vector_towards(self, tx, ty):
         dx, dy = tx - self.x, ty - self.y
@@ -44,7 +50,7 @@ class Predator:
         self.x = min(max(self.x + dx, self.DIAM), WORLD_WIDTH  - self.DIAM)
         self.y = min(max(self.y + dy, self.DIAM), WORLD_HEIGHT - self.DIAM)
 
-        self.energy -= (K_MOVE / 1.5 * self.speed**2) + (K_SMELL / 1.25 * self.smell_radius) + BASAL_METABOLISM
+        self.energy -= (K_MOVE / 4 * self.speed**2) + (K_SMELL * self.smell_radius) + BASAL_METABOLISM / 2
 
         if (not prey) and math.hypot(self.x - self.tx, self.y - self.ty) < self.speed:
             self._choose_new_target()
