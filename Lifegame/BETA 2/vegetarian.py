@@ -133,26 +133,28 @@ class Vegetarian:
             new_genom.append(max(0.01, mutated))
         return new_genom
 
-    def maybe_divide(self, vegetarians: list):
-        """Попытка размножиться — если хватает энергии."""
+    def maybe_divide(self, offspring: list):
+        """Размножаемся, если остаётся ≥ 20 энергии; детей кладём в отдельный список."""
+        RESERVE     = 20      # минимум, что должно остаться у родителя
+        REPRO_COST  = 10      # фикс-штраф за размножение
+
         threshold = self.max_energy * (self.repro_threshold / 100)
-        if self.energy >= threshold:
-            # Сколько энергии отдать ребёнку
-            child_energy = self.energy * (self.repro_share / 100)
-            self.energy -= child_energy + 10
+        if self.energy < threshold + RESERVE:
+            return                      # энергии недостаточно
 
-            # Мутируем геном для потомка
-            child_genom = self.mutate()
+        child_energy = self.energy * (self.repro_share / 100)
+        self.energy -= child_energy + REPRO_COST      # родитель платит
 
-            # Случайный сдвиг позиции, чтобы не заспавнить в себе
-            offset = random.uniform(-self.size*10, self.size*10)
-            child_x = min(max(self.x + offset, self.size), WORLD_WIDTH - self.size)
-            child_y = min(max(self.y + offset, self.size), WORLD_HEIGHT - self.size)
+        child_energy = min(child_energy, self.max_energy)  # не переливать
+        child_genom  = self.mutate()
 
-            # Создаём нового Vegetarian и добавляем в список
-            vegetarians.append(
-                Vegetarian(x=child_x, y=child_y, energy=child_energy, genom=child_genom)
-            )
+        offset = random.uniform(-self.size * 2, self.size * 2)
+        cx = min(max(self.x + offset, self.size), WORLD_WIDTH  - self.size)
+        cy = min(max(self.y + offset, self.size), WORLD_HEIGHT - self.size)
+
+        offspring.append(
+            Vegetarian(x=cx, y=cy, energy=child_energy, genom=child_genom)
+        )
 
 
 

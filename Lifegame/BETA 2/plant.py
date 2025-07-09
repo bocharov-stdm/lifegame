@@ -1,20 +1,22 @@
 # plant.py
 
-import pygame, random
-from config import WORLD_WIDTH, WORLD_HEIGHT, PLANT_RADIUS
+import pygame, random, math
+from config import *
+
 
 class Plant:
     def __init__(self):
         while True:
-            x = random.uniform(PLANT_RADIUS, WORLD_WIDTH  - PLANT_RADIUS)
-            y = random.uniform(PLANT_RADIUS, WORLD_HEIGHT - PLANT_RADIUS)
+            x = random.uniform(PLANT_RADIUS , WORLD_WIDTH  - PLANT_RADIUS)
+            y = random.uniform(PLANT_RADIUS + 200, WORLD_HEIGHT - PLANT_RADIUS)
 
-            #spawn_chance = x / WORLD_WIDTH
+            decay = 8.0
+            spawn_chance = math.exp(-decay * (y / WORLD_HEIGHT))
 
-            #if random.random() < spawn_chance:
-            self.x = x
-            self.y = y
-            break
+            if random.random() < spawn_chance:
+                self.x = x
+                self.y = y
+                break
 
     def draw(self, surf, scale_x, scale_y):
         pygame.draw.circle(
