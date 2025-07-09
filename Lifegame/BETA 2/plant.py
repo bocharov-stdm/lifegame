@@ -10,7 +10,7 @@ class Plant:
             x = random.uniform(PLANT_RADIUS , WORLD_WIDTH  - PLANT_RADIUS)
             y = random.uniform(PLANT_RADIUS + 200, WORLD_HEIGHT - PLANT_RADIUS)
 
-            decay = 8.0
+            decay = 7.0
             spawn_chance = math.exp(-decay * (y / WORLD_HEIGHT))
 
             if random.random() < spawn_chance:

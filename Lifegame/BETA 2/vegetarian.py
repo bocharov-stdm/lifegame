@@ -159,8 +159,8 @@ class Vegetarian:
 
     def maybe_divide(self, offspring: list):
         """Размножаемся, если остаётся ≥ 20 энергии; детей кладём в отдельный список."""
-        RESERVE     = 20      # минимум, что должно остаться у родителя
-        REPRO_COST  = 10      # фикс-штраф за размножение
+        RESERVE     = 10     # минимум, что должно остаться у родителя
+        REPRO_COST  = 5    # фикс-штраф за размножение
 
         threshold = self.max_energy * (self.repro_threshold / 100)
         if self.energy < threshold + RESERVE:
