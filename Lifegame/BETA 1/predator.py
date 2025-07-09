@@ -7,8 +7,8 @@ class Predator:
 
     def __init__(self, x=None, y=None,
                  energy=MAX_ENERGY * 0.5,
-                 speed=BASE_SPEED * 2**0.5,
-                 smell_radius=BASE_SMELL * 1):
+                 speed=BASE_SPEED * 1.25,
+                 smell_radius=BASE_SMELL ):
         self.x = x if x is not None else random.randint(self.DIAM, WORLD_WIDTH  - self.DIAM)
         self.y = y if y is not None else random.randint(self.DIAM, WORLD_HEIGHT - self.DIAM)
         self.energy       = energy
@@ -69,7 +69,7 @@ class Predator:
         self.x = min(max(self.x + dx, self.DIAM), WORLD_WIDTH  - self.DIAM)
         self.y = min(max(self.y + dy, self.DIAM), WORLD_HEIGHT - self.DIAM)
 
-        self.energy -= (K_MOVE / 2 * self.speed**2) + (K_SMELL * self.smell_radius) + BASAL_METABOLISM
+        self.energy -= (K_MOVE * self.speed**2) + (K_SMELL * self.smell_radius) + BASAL_METABOLISM
 
         if (not prey) and math.hypot(self.x - self.tx, self.y - self.ty) < self.speed:
             self._choose_new_target()
@@ -78,7 +78,7 @@ class Predator:
         for c in creatures:
             if math.hypot(self.x - c.x, self.y - c.y) < self.DIAM:
                 creatures.remove(c)
-                self.energy = min(MAX_ENERGY * 2, self.energy + c.energy * 1.5)
+                self.energy = min(MAX_ENERGY * 2, self.energy + c.energy * 1)
                 self._choose_new_target()
                 return True
         return False
