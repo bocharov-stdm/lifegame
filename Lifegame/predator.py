@@ -3,7 +3,7 @@ import pygame, random, math
 from config import *
 
 class Predator:
-    DIAM = 30
+    DIAM = 40
 
     def __init__(self, x=None, y=None,
                  energy=MAX_ENERGY * 0.5,
@@ -69,7 +69,7 @@ class Predator:
         self.x = min(max(self.x + dx, self.DIAM), WORLD_WIDTH  - self.DIAM)
         self.y = min(max(self.y + dy, self.DIAM), WORLD_HEIGHT - self.DIAM)
 
-        self.energy -= (K_MOVE / 4 * self.speed**2) + (K_SMELL * self.smell_radius) + BASAL_METABOLISM
+        self.energy -= (K_MOVE / 2 * self.speed**2) + (K_SMELL * self.smell_radius) + BASAL_METABOLISM
 
         if (not prey) and math.hypot(self.x - self.tx, self.y - self.ty) < self.speed:
             self._choose_new_target()

@@ -2,20 +2,21 @@
 WIDTH, HEIGHT = 1200, 800
 WORLD_WIDTH, WORLD_HEIGHT = 9000, 6000
 
+K_TICK = 1
 FPS = 60
-TICKS_PER_FRAME = 5           # логических тиков на кадр
+TICKS_PER_FRAME = 1   # логических тиков на кадр
 
-BASE_SPEED  = 1.2
-BASE_SMELL  = 300.0
+BASE_SPEED  = 10
+BASE_SMELL  = 200.0
 
 MAX_ENERGY        = 100        # базовый максимум (но существа/хищники могут копить до 200)
 ENERGY_FROM_PLANT = 20
 
-K_MOVE           = 0.005
-K_SMELL          = 0.000025
-BASAL_METABOLISM = 0.0020
+K_MOVE           = 0.00001
+K_SMELL          = 0.000005
+BASAL_METABOLISM = 0.002
 
-PLANT_RADIUS       = 3
+PLANT_RADIUS       = 5
 PLANTS_AT_START    = 100
 GREATURES_AT_START = 20
 

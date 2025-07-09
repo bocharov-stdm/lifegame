@@ -74,7 +74,7 @@ class Creature:
         if self.flee_ticks > 0:
             fleeing = True
             self.flee_ticks -= 1
-        if nearest_pred and best_pred_d < self.smell_radius / 3:
+        if nearest_pred and best_pred_d < self.smell_radius:
             self.flee_ticks = FLEE_TICKS
             fleeing = True
 
