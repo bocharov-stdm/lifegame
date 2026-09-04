@@ -8,3 +8,6 @@ __pycache__/
 
 # OS
 Thumbs.db
+
+# Прогоны симуляции
+run_*.csv
