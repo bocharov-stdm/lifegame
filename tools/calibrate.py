@@ -19,7 +19,8 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
-import config  # noqa: E402
+# Порядок важен: config правится ДО того, как симуляция его прочитает.
+import lifegame.config as config  # noqa: E402
 
 
 def apply_overrides(pairs):
@@ -33,7 +34,7 @@ def apply_overrides(pairs):
 
 
 def run(seed, ticks, report_every):
-    from world import World          # импорт после правки config
+    from lifegame.world import World      # импорт строго после правки config
 
     world = World(seed=seed)
     series = {"plants": [], "vegetarians": [], "predators": []}

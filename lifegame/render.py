@@ -14,11 +14,11 @@ import sys
 
 import pygame
 
-from config import (WIDTH, HEIGHT, WORLD_WIDTH, WORLD_HEIGHT, FPS,
+from .config import (WIDTH, HEIGHT, WORLD_WIDTH, WORLD_HEIGHT, FPS,
                     TICKS_PER_FRAME, MAX_TICKS_PER_FRAME, RANDOM_SEED,
                     GENE_NAMES, STATS_EVERY)
-from stats import History, draw_panel
-from world import World
+from .stats import History, draw_panel
+from .world import World
 
 
 def is_on_screen(obj, scale_x, scale_y):

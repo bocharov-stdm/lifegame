@@ -2,10 +2,10 @@
 
 import random
 
-import config
-from predator import Predator
-from vegetarian import Vegetarian
-from world import World
+import lifegame.config as config
+from lifegame.predator import Predator
+from lifegame.vegetarian import Vegetarian
+from lifegame.world import World
 
 
 def _veg(**genes):

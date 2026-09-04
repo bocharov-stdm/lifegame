@@ -1,9 +1,9 @@
 """Хищничество: слой, переваривание, питательность добычи."""
 
-import config
-from predator import Predator
-from spatial import SpatialHash
-from vegetarian import Vegetarian
+import lifegame.config as config
+from lifegame.predator import Predator
+from lifegame.spatial import SpatialHash
+from lifegame.vegetarian import Vegetarian
 
 
 def _pred(**genes):

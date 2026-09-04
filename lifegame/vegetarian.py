@@ -2,9 +2,9 @@
 
 import math
 
-from config import (ENERGY_FROM_PLANT, PLANT_RADIUS, FLEE_TICKS,
+from .config import (ENERGY_FROM_PLANT, PLANT_RADIUS, FLEE_TICKS,
                     FLEE_TRIGGER_FRAC, VEGETARIAN_BASE_GENOM)
-from organism import Organism, dist_point_to_segment
+from .organism import Organism, dist_point_to_segment
 
 
 class Vegetarian(Organism):

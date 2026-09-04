@@ -11,3 +11,6 @@ Thumbs.db
 
 # Прогоны симуляции
 run_*.csv
+
+# pytest
+.pytest_cache/

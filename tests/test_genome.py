@@ -2,9 +2,9 @@
 
 import random
 
-import config
-from organism import Organism
-from vegetarian import Vegetarian
+import lifegame.config as config
+from lifegame.organism import Organism
+from lifegame.vegetarian import Vegetarian
 
 
 def test_percent_genes_stay_in_range():

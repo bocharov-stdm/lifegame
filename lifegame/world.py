@@ -5,12 +5,12 @@
 
 import random
 
-from config import (PLANTS_AT_START, PLANT_SPAWN_RATE, REPRO_EVERY,
+from .config import (PLANTS_AT_START, PLANT_SPAWN_RATE, REPRO_EVERY,
                     SPATIAL_CELL_SIZE, VEGETARIANS_AT_START, PREDATORS_AT_START)
-from plant import Plant
-from predator import Predator
-from spatial import SpatialHash
-from vegetarian import Vegetarian
+from .plant import Plant
+from .predator import Predator
+from .spatial import SpatialHash
+from .vegetarian import Vegetarian
 
 
 class World:

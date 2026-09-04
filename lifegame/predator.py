@@ -6,9 +6,9 @@
 
 import math
 
-from config import (PREDATOR_BASE_GENOM, PREDATION_EFFICIENCY,
+from .config import (PREDATOR_BASE_GENOM, PREDATION_EFFICIENCY,
                     PREDATOR_DIGEST_TICKS, PREY_BIOMASS_COEF)
-from organism import Organism, dist_point_to_segment
+from .organism import Organism, dist_point_to_segment
 
 
 class Predator(Organism):

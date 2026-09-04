@@ -2,10 +2,10 @@
 
 import random
 
-import config
-from plant import Plant
-from spatial import SpatialHash
-from vegetarian import Vegetarian
+import lifegame.config as config
+from lifegame.plant import Plant
+from lifegame.spatial import SpatialHash
+from lifegame.vegetarian import Vegetarian
 
 
 def _veg(**genes):

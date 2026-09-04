@@ -5,7 +5,7 @@ import random
 
 import pygame
 
-from config import (WORLD_WIDTH, WORLD_HEIGHT, PLANT_RADIUS, PLANT_DEPTH_DECAY)
+from .config import (WORLD_WIDTH, WORLD_HEIGHT, PLANT_RADIUS, PLANT_DEPTH_DECAY)
 
 
 class Plant:

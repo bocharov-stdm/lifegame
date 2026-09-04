@@ -2,7 +2,7 @@
 
 import random
 
-from spatial import SpatialHash
+from lifegame.spatial import SpatialHash
 
 
 class Point:

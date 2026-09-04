@@ -9,7 +9,7 @@ import statistics
 
 import pygame
 
-from config import GENE_NAMES, STATS_HISTORY
+from .config import GENE_NAMES, STATS_HISTORY
 
 
 class History:
