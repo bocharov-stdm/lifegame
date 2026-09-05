@@ -8,10 +8,9 @@ class Plant:
     def __init__(self):
         while True:
             x = random.uniform(PLANT_RADIUS , WORLD_WIDTH  - PLANT_RADIUS)
-            y = random.uniform(PLANT_RADIUS + 200, WORLD_HEIGHT - PLANT_RADIUS)
+            y = random.uniform(PLANT_RADIUS + PLANT_TOP_MARGIN, WORLD_HEIGHT - PLANT_RADIUS)
 
-            decay = 8.0
-            spawn_chance = math.exp(-decay * (y / WORLD_HEIGHT))
+            spawn_chance = math.exp(-PLANT_DEPTH_DECAY * (y / WORLD_HEIGHT))
 
             if random.random() < spawn_chance:
                 self.x = x

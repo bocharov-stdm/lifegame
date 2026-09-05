@@ -13,7 +13,7 @@ class Predator:
                  vision=PREDATOR_BASE_VISION):
         self.x = x if x is not None else random.randint(self.DIAM, WORLD_WIDTH  - self.DIAM)
         self.y = y if y is not None else random.randint(self.DIAM, WORLD_HEIGHT - self.DIAM)
-        self.max_energy = 400
+        self.max_energy = PREDATOR_MAX_ENERGY
         self.energy = energy if energy is not None else self.max_energy * 0.5
         self.speed  = speed
         self.vision = vision
@@ -74,9 +74,9 @@ class Predator:
         self.y = min(max(self.y + dy, self.DIAM), WORLD_HEIGHT - self.DIAM)
 
         self.energy -= (
-                SIZE_ENERGY_COEF * self.DIAM ** 1.5 +
-                SPEED_ENERGY_COEF * self.speed ** 2 +
-                SIGHT_ENERGY_COEF * self.vision
+                SIZE_ENERGY_COEF  * self.DIAM   ** SIZE_ENERGY_POWER +
+                SPEED_ENERGY_COEF * self.speed  ** SPEED_ENERGY_POWER +
+                SIGHT_ENERGY_COEF * self.vision ** SIGHT_ENERGY_POWER
         )
         if self.energy <= 0:
             self.alive = False
@@ -97,17 +97,19 @@ class Predator:
         return False
 
     # ---------- размножение ----------
-    def _mutate(self, value, sigma=0.3):
+    def _mutate(self, value, sigma=PREDATOR_SIGMA):
         return max(0.01, value * (1 + random.gauss(0, sigma)))
 
     def maybe_divide(self, predators):
-        if self.energy >= self.max_energy * 0.8 and random.random() > 0.5:
-            self.energy -= self.max_energy * 0.30
+        if (self.energy >= self.max_energy * PREDATOR_REPRO_THRESHOLD
+                and random.random() > 1 - PREDATOR_DIVIDE_CHANCE):
+            self.energy -= self.max_energy * PREDATOR_REPRO_COST
             cx = min(max(self.x + random.randint(-300, 300), self.DIAM), WORLD_WIDTH  - self.DIAM)
             cy = min(max(self.y + random.randint(-300, 300), self.DIAM), WORLD_HEIGHT - self.DIAM)
             child_speed  = self.speed  if random.random() > 0.6 else self._mutate(self.speed)
             child_vision = self.vision if random.random() > 0.6 else self._mutate(self.vision)
-            predators.append(Predator(cx, cy, self.max_energy * 0.25, child_speed, child_vision))
+            predators.append(Predator(cx, cy, self.max_energy * PREDATOR_CHILD_ENERGY,
+                                      child_speed, child_vision))
             self._choose_new_target()
     # ----------------------------------
 

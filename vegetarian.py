@@ -28,13 +28,18 @@ class Vegetarian:
         # абсолютные границы слоя
         y_min_abs = int((self.min_y / 100) * WORLD_HEIGHT + self.size)
         y_max_abs = int((self.max_y / 100) * WORLD_HEIGHT - self.size)
+        # слой может оказаться уже собственного тела (эволюция сводит min_y и max_y):
+        # тогда границы переворачиваются и randint ниже падает — схлопываем в точку
+        if y_min_abs > y_max_abs:
+            y_min_abs = y_max_abs = (y_min_abs + y_max_abs) // 2
 
         # ─────────────────────────────────────────────────────────────────────
-        self.max_energy = self.size * 2.5
+        self.max_energy = self.size * VEGETARIAN_ENERGY_PER_SIZE
         self.energy = energy if energy is not None else self.max_energy * 0.5
         self.alive  = True
 
         self.flee_ticks = 0
+        self.flee_dx = self.flee_dy = 0.0   # последний вектор бегства (единичный)
 
         self.x = x if x is not None else random.randint(self.size, WORLD_WIDTH - self.size)
         # стартовая y строго в пределах своего биома
@@ -82,14 +87,16 @@ class Vegetarian:
             fleeing = True
 
         if fleeing:
+            # пока хищник виден — обновляем направление бегства;
+            # когда он пропал из виду, продолжаем бежать по последнему вектору
             if nearest_pred:
                 dx, dy = self.x - nearest_pred.x, self.y - nearest_pred.y
-            else:
-                dx, dy = 0, 0
-            d = math.hypot(dx, dy)
-            if d != 0:
-                dx *= self.speed / d
-                dy *= self.speed / d
+                d = math.hypot(dx, dy)
+                if d != 0:
+                    self.flee_dx, self.flee_dy = dx / d, dy / d
+
+            dx = self.flee_dx * self.speed
+            dy = self.flee_dy * self.speed
             tx, ty = self.x + dx, self.y + dy
         else:
             # поиск ближайшего растения
@@ -132,9 +139,9 @@ class Vegetarian:
 
         # энергозатраты
         self.energy -= (
-                SIZE_ENERGY_COEF * self.size ** 1.5 +
-                SPEED_ENERGY_COEF * self.speed ** 2 +
-                SIGHT_ENERGY_COEF * self.vision
+                SIZE_ENERGY_COEF  * self.size   ** SIZE_ENERGY_POWER +
+                SPEED_ENERGY_COEF * self.speed  ** SPEED_ENERGY_POWER +
+                SIGHT_ENERGY_COEF * self.vision ** SIGHT_ENERGY_POWER
         )
         if self.energy <= 0:
             self.alive = False
@@ -186,16 +193,13 @@ class Vegetarian:
         return new_genom
 
     def maybe_divide(self, offspring: list):
-        """Размножаемся, если остаётся ≥ 20 энергии; детей кладём в отдельный список."""
-        RESERVE     = 20      # минимум, что должно остаться у родителя
-        REPRO_COST  = 10      # фикс-штраф за размножение
-
+        """Размножаемся, если остаётся запас энергии; детей кладём в отдельный список."""
         threshold = self.max_energy * (self.repro_threshold / 100)
-        if self.energy < threshold + RESERVE:
+        if self.energy < threshold + VEGETARIAN_REPRO_RESERVE:
             return                      # энергии недостаточно
 
         child_energy = self.energy * (self.repro_share / 100)
-        self.energy -= child_energy + REPRO_COST      # родитель платит
+        self.energy -= child_energy + VEGETARIAN_REPRO_COST      # родитель платит
 
         child_energy = min(child_energy, self.max_energy)  # не переливать
         child_genom  = self.mutate()

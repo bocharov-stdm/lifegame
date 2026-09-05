@@ -1,10 +1,18 @@
-# main.py  — объединённая версия BETA 1 + BETA 2
+# main.py  — окно, события и отрисовка. Вся логика симуляции живёт в world.py
 
-import pygame, sys, random
-from config      import *
-from plant       import Plant
-from vegetarian  import Vegetarian
-from predator    import Predator
+import pygame, sys
+from config import *
+from world  import World
+
+
+def format_stats(s):
+    if s["avg_genom"] is None:
+        return f"Все умерли   Всего хищников: {s['predators']}"
+
+    genom_str = " ".join(f"{g:.1f}" for g in s["avg_genom"])
+    return (f"Средний геном: {genom_str}   Средняя Энергия: {s['avg_energy']:.1f} "
+            f"Всего вегетарианцев: {s['vegetarians']} Всего растений: {s['plants']} "
+            f"Всего хищников: {s['predators']}")
 
 
 def main():
@@ -18,12 +26,8 @@ def main():
     scale_x = WIDTH  / WORLD_WIDTH
     scale_y = HEIGHT / WORLD_HEIGHT
 
-    plants       = [Plant()       for _ in range(PLANTS_AT_START)]
-    vegetarians  = [Vegetarian()  for _ in range(VEGETARIANS_AT_START)]
-    predators    = [Predator()    for _ in range(PREDATORS_AT_START)]
-
-    tickcounter = 0
-    text_genom  = ""                       # строка-буфер для вывода статистики
+    world      = World()
+    text_genom = ""                        # строка-буфер для вывода статистики
 
     while True:
         # ── системные события ────────────────────────────────────────────────
@@ -32,70 +36,28 @@ def main():
                 pygame.quit()
                 sys.exit()
 
-        # ── логика спауна растений ──────────────────────────────────────────
-        for _ in range(TICKS_PER_FRAME):
-            if random.random() < PLANT_SPAWN_CHANCE:
-                plants.append(Plant())
-
-        # ── обработка хищников ──────────────────────────────────────────────
-        new_predators = []
-        for pr in predators:
-            pr.move(vegetarians)
-            pr.try_eat(vegetarians)
-            if tickcounter % 30 == 0:
-                pr.maybe_divide(predators)
-            if pr.alive:
-                new_predators.append(pr)
-        predators = new_predators
-
-        # ── обработка вегетарианцев ─────────────────────────────────────────
-        offspring        = []     # дети текущего тика
-        new_vegetarians  = []
-
-        for v in vegetarians:
-            v.move(plants, predators)
-            v.try_eat(plants)
-
-            if tickcounter % 30 == 0:
-                v.maybe_divide(offspring)         # ← добавляем детей в буфер
-
-            if v.alive:
-                new_vegetarians.append(v)
-
-        vegetarians = new_vegetarians + offspring  # объединяем списки
+        # ── логика ──────────────────────────────────────────────────────────
+        world.step()
 
         # ── обновляем строку статистики раз в 60 тиков ──────────────────────
-        if tickcounter % 60 == 0:
-            if vegetarians:
-                all_vegetarians = len(vegetarians)
-                all_plants = len(plants)
-                all_predators = len(predators)
-                avg_genom = [sum(v.genom[i] for v in vegetarians) / all_vegetarians
-                             for i in range(len(vegetarians[0].genom))]
-                genom_str  = " ".join(f"{g:.1f}" for g in avg_genom)
-                avg_energy = sum(v.energy for v in vegetarians) / all_vegetarians
-                text_genom = (f"Средний геном: {genom_str}   Средняя Энергия: {avg_energy:.1f} "
-                              f"Всего вегетарианцев: {all_vegetarians} Всего растений: {all_plants} "
-                              f"Всего хищников: {all_predators}")
-            else:
-                text_genom = f"Все умерли   Всего хищников: {len(predators)}"
+        if world.tick % 60 == 0:
+            text_genom = format_stats(world.stats())
 
         # ── рендер ─────────────────────────────────────────────────────────
         screen.fill((30, 30, 30))
 
-        for p in plants:
+        for p in world.plants:
             p.draw(screen, scale_x, scale_y)
 
-        for v in vegetarians:
+        for v in world.vegetarians:
             v.draw(screen, scale_x, scale_y)
 
-        for pr in predators:
+        for pr in world.predators:
             pr.draw(screen, scale_x, scale_y)
 
         # выводим статистику поверх всего
         screen.blit(font.render(text_genom, True, (255, 255, 255)), (10, 10))
 
-        tickcounter += 1
         pygame.display.flip()
         clock.tick(FPS)
 
