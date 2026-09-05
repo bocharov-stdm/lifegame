@@ -57,11 +57,15 @@ class Predator:
                                          dy * self.speed / dist)
 
     def _nearest_prey(self, vegetarians):
-        nearest, best_d = None, self.vision
+        # сравниваем квадраты расстояний — то же самое, но без вызова hypot
+        x, y = self.x, self.y
+        nearest, best_d2 = None, self.vision * self.vision
         for v in vegetarians:
-            d = math.hypot(self.x - v.x, self.y - v.y)
-            if d < best_d:
-                nearest, best_d = v, d
+            dx = x - v.x
+            dy = y - v.y
+            d2 = dx * dx + dy * dy
+            if d2 < best_d2:
+                nearest, best_d2 = v, d2
         return nearest
     # ----------------------------------
 
@@ -85,10 +89,14 @@ class Predator:
             self._choose_new_target()
 
     def try_eat(self, vegetarians):
+        x, y = self.x, self.y
+        r2 = self.DIAM * self.DIAM
         for v in vegetarians:
             if not v.alive:
                 continue
-            if math.hypot(self.x - v.x, self.y - v.y) < self.DIAM:
+            dx = x - v.x
+            dy = y - v.y
+            if dx * dx + dy * dy < r2:
                 self.energy = min(self.max_energy, self.energy + v.energy)
                 v.alive = False
                 v.energy = 0

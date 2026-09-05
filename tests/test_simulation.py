@@ -8,8 +8,10 @@
 
   * нет ни одного `while` — все циклы ограничены фиксированным числом тиков;
   * каждый прогон дополнительно ограничен дедлайном по часам и потолком
-    популяции (см. run_ticks). Стоимость тика квадратична по числу существ,
-    поэтому одного лимита тиков НЕДОСТАТОЧНО: популяция растёт — тик дорожает;
+    популяции (см. run_ticks). Стоимость тика растёт вместе с популяцией,
+    поэтому одного лимита тиков НЕДОСТАТОЧНО: популяция растёт — тик дорожает.
+    Сетка соседей (grid.py) сделала этот рост почти линейным вместо
+    квадратичного, но не отменила его — лимиты нужны по-прежнему;
   * если лимит достигнут, прогон останавливается, а проверки выполняются на
     том состоянии, до которого дошли. Тест не падает от медленной машины,
     но и не превращается в пустышку — инварианты всё равно проверены.
@@ -28,6 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config     import *
+from grid       import Grid
 from headless   import simulate
 from plant      import Plant
 from vegetarian import Vegetarian
@@ -191,6 +194,74 @@ class TestRegressions(BoundedRunMixin, unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Сетка соседей
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestGrid(unittest.TestCase):
+    """Сетка обязана быть НАДмножеством честного перебора.
+
+    Это главный риск оптимизации и единственная её часть, которую не поймает
+    ни один тест на численность: пропусти сетка соседа — существо перестанет
+    замечать еду под носом, симуляция останется правдоподобной, а поведение
+    тихо изменится. Поэтому сравниваем с перебором в лоб напрямую.
+    """
+
+    def test_grid_matches_brute_force(self):
+        random.seed(0)
+
+        class Point:
+            def __init__(self, x, y):
+                self.x, self.y = x, y
+
+        for _ in range(50):                       # фиксированное число прогонов
+            points = [Point(random.uniform(0, WORLD_WIDTH),
+                            random.uniform(0, WORLD_HEIGHT))
+                      for _ in range(random.randint(0, 200))]
+            cell = random.uniform(60, 900)
+            grid = Grid(cell, points)
+
+            for _ in range(10):                   # фиксированное число запросов
+                qx = random.uniform(0, WORLD_WIDTH)
+                qy = random.uniform(0, WORLD_HEIGHT)
+
+                # cell — максимальный радиус, на котором сетка обязана быть полной
+                expected = {id(p) for p in points
+                            if math.hypot(p.x - qx, p.y - qy) <= cell}
+                got      = {id(p) for p in grid.near(qx, qy)}
+
+                missed = expected - got
+                self.assertFalse(
+                    missed,
+                    f"сетка потеряла {len(missed)} соседей: клетка {cell:.0f}, "
+                    f"{len(points)} точек, запрос ({qx:.0f}, {qy:.0f})",
+                )
+
+    def test_grid_covers_vision_in_live_world(self):
+        """То же самое, но на живом мире: важен реальный размер клетки.
+
+        Сетку строит World, подбирая клетку под самый большой радиус запроса.
+        Здесь проверяется именно эта связка — что подобранная клетка накрывает
+        зрение каждого травоядного, каким бы оно ни выросло.
+        """
+        world = baseline().world
+        self.assertGreater(len(world.vegetarians), 0, "популяция вымерла — проверять нечего")
+
+        cell = max(GRID_MIN_CELL,
+                   max(max(v.vision, v.size) for v in world.vegetarians))
+        grid = Grid(cell, world.plants)
+
+        for v in world.vegetarians:
+            expected = {id(p) for p in world.plants
+                        if math.hypot(p.x - v.x, p.y - v.y) <= v.vision}
+            got      = {id(p) for p in grid.near(v.x, v.y)}
+            self.assertFalse(
+                expected - got,
+                f"травоядное не увидело еду в радиусе зрения: зрение {v.vision:.0f}, "
+                f"клетка {cell:.0f}",
+            )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Инварианты: то, что должно быть верно всегда, при любой эволюции
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -346,9 +417,10 @@ class TestPopulationDynamics(unittest.TestCase):
 
 class TestPerformance(unittest.TestCase):
 
-    # Бюджет кадра при 60 FPS — 16.7 мс. Порог с большим запасом,
-    # чтобы тест не мигал на медленной машине: ловим только обвал на порядок.
-    MAX_MS_PER_TICK = 150.0
+    # Бюджет кадра при 60 FPS — 16.7 мс, фактически тик стоит около 3 мс.
+    # Порог опущен со 150 после перехода на сетку соседей: прежний перестал
+    # что-либо сторожить. Запас всё ещё десятикратный — мигать не будет.
+    MAX_MS_PER_TICK = 50.0
 
     def test_tick_budget_at_fixed_load(self):
         """Фиксированная нагрузка: 400 травоядных, 400 растений, 10 хищников.

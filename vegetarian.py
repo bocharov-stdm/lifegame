@@ -45,6 +45,28 @@ class Vegetarian:
         # стартовая y строго в пределах своего биома
         self.y = y if y is not None else random.randint(y_min_abs, y_max_abs)
 
+        # ── предвычисленное ──────────────────────────────────────────────────
+        # Геном не меняется всю жизнь, поэтому всё производное от него считается
+        # один раз здесь, а не заново на каждом тике в move(). Особенно расход
+        # энергии: три возведения в степень за тик на каждое существо.
+        self.upkeep = (
+                SIZE_ENERGY_COEF  * self.size   ** SIZE_ENERGY_POWER +
+                SPEED_ENERGY_COEF * self.speed  ** SPEED_ENERGY_POWER +
+                SIGHT_ENERGY_COEF * self.vision ** SIGHT_ENERGY_POWER
+        )
+        # границы слоя: без запаса на тело — решить, дотянемся ли до еды;
+        # с запасом — прижать само тело, чтобы не торчало из слоя
+        self.layer_lo = (self.min_y / 100) * WORLD_HEIGHT
+        self.layer_hi = (self.max_y / 100) * WORLD_HEIGHT
+        self.body_lo  = self.layer_lo + self.size
+        self.body_hi  = self.layer_hi - self.size
+        self.x_lo     = self.size
+        self.x_hi     = WORLD_WIDTH - self.size
+        # квадраты радиусов: сравнивать квадраты расстояний дешевле, чем звать hypot
+        self.vision2 = self.vision * self.vision
+        self.size2   = self.size * self.size
+        self.flee2   = (self.vision / 3) * (self.vision / 3)
+
     # Функция отрисовки существа
 
     def draw(self, surf, scale_x, scale_y):
@@ -56,93 +78,111 @@ class Vegetarian:
     # Функция движения
     def _pick_random_target(self):
         """Случайная точка в пределах vision и своего вертикального слоя."""
-        y_min_abs = (self.min_y / 100) * WORLD_HEIGHT + self.size
-        y_max_abs = (self.max_y / 100) * WORLD_HEIGHT - self.size
+        lo, hi = self.body_lo, self.body_hi
+        x, y, vision = self.x, self.y, self.vision
+        x_lo, x_hi = self.x_lo, self.x_hi
 
         for _ in range(10):
             angle = random.uniform(0, 2 * math.pi)
-            dist  = random.uniform(self.vision * 0.5, self.vision * 2)
-            tx = self.x + math.cos(angle) * dist
-            ty = self.y + math.sin(angle) * dist
-            if (self.size <= tx <= WORLD_WIDTH - self.size and
-                y_min_abs   <= ty <= y_max_abs):
+            dist  = random.uniform(vision * 0.5, vision * 2)
+            tx = x + math.cos(angle) * dist
+            ty = y + math.sin(angle) * dist
+            if x_lo <= tx <= x_hi and lo <= ty <= hi:
                 self.tx, self.ty = tx, ty
                 return
-        self.tx, self.ty = self.x, self.y  # fallback
+        self.tx, self.ty = x, y  # fallback
 
+    # move() — самое горячее место всей симуляции: он вызывается за каждое
+    # травоядное каждый тик. Отсюда локальные переменные вместо self.x в циклах,
+    # квадраты расстояний вместо hypot и развёрнутые вручную min(max(...)).
     def move(self, plants, predators):
+        x, y, speed = self.x, self.y, self.speed
+
         # ── ищем ближайшего хищника в пределах vision ───────────────────────
-        nearest_pred, best_pred_d = None, self.vision
+        nearest_pred, best_pred_d2 = None, self.vision2
         for pr in predators:
-            d = math.hypot(pr.x - self.x, pr.y - self.y)
-            if d < best_pred_d:
-                nearest_pred, best_pred_d = pr, d
+            dx = pr.x - x
+            dy = pr.y - y
+            d2 = dx * dx + dy * dy
+            if d2 < best_pred_d2:
+                nearest_pred, best_pred_d2 = pr, d2
 
         fleeing = False
         if self.flee_ticks > 0:
             fleeing = True
             self.flee_ticks -= 1
-        if nearest_pred and best_pred_d < self.vision / 3:
+        if nearest_pred is not None and best_pred_d2 < self.flee2:
             self.flee_ticks = FLEE_TICKS
             fleeing = True
 
         if fleeing:
             # пока хищник виден — обновляем направление бегства;
             # когда он пропал из виду, продолжаем бежать по последнему вектору
-            if nearest_pred:
-                dx, dy = self.x - nearest_pred.x, self.y - nearest_pred.y
+            if nearest_pred is not None:
+                dx, dy = x - nearest_pred.x, y - nearest_pred.y
                 d = math.hypot(dx, dy)
                 if d != 0:
                     self.flee_dx, self.flee_dy = dx / d, dy / d
 
-            dx = self.flee_dx * self.speed
-            dy = self.flee_dy * self.speed
-            tx, ty = self.x + dx, self.y + dy
+            tx = x + self.flee_dx * speed
+            ty = y + self.flee_dy * speed
         else:
             # поиск ближайшего растения
-            nearest, best_dist = None, self.vision
+            nearest, best_d2 = None, self.vision2
             for p in plants:
-                d = math.hypot(p.x - self.x, p.y - self.y)
-                if d < best_dist:
-                    nearest, best_dist = p, d
+                if not p.alive:            # съедено раньше в этом же тике
+                    continue
+                dx = p.x - x
+                dy = p.y - y
+                d2 = dx * dx + dy * dy
+                if d2 < best_d2:
+                    nearest, best_d2 = p, d2
 
-            if nearest:
-                # проверяем попадает ли еда в наш вертикальный слой
-                y_min_abs = (self.min_y / 100) * WORLD_HEIGHT
-                y_max_abs = (self.max_y / 100) * WORLD_HEIGHT
-                if y_min_abs <= nearest.y <= y_max_abs:
-                    tx, ty = nearest.x, nearest.y
-                else:
-                    nearest = None  # игнорируем, съесть нельзя
+            # проверяем попадает ли еда в наш вертикальный слой.
+            # ВАЖНО: сперва ищем ближайшее вообще и только потом отбрасываем.
+            # Слить проверку слоя внутрь цикла — значит искать ближайшее В СЛОЕ,
+            # а это уже другое поведение: существо перестанет отвлекаться на еду,
+            # до которой не дотянуться, и пойдёт к следующей вместо блуждания.
+            if nearest is not None and not (self.layer_lo <= nearest.y <= self.layer_hi):
+                nearest = None
 
-            if not nearest:
-                if (not hasattr(self, "tx") or
-                        math.hypot(self.x - self.tx, self.y - self.ty) < self.speed):
+            if nearest is not None:
+                tx, ty = nearest.x, nearest.y
+            else:
+                # hasattr, а не tx=x в __init__: существо, родившееся во время
+                # бегства, иначе пошло бы потом к месту своего рождения
+                if not hasattr(self, "tx"):
                     self._pick_random_target()
+                else:
+                    dx, dy = x - self.tx, y - self.ty
+                    if dx * dx + dy * dy < speed * speed:
+                        self._pick_random_target()
                 tx, ty = self.tx, self.ty
 
         # вектор и шаг
-        dx, dy = tx - self.x, ty - self.y
+        dx, dy = tx - x, ty - y
         d = math.hypot(dx, dy)
         if d != 0:
-            dx *= self.speed / d
-            dy *= self.speed / d
+            step = speed / d      # именно так, а не (dx*speed)/d — округление разное
+            dx *= step
+            dy *= step
 
-        # новое положение
-        self.x = min(max(self.x + dx, self.size), WORLD_WIDTH - self.size)
-        self.y = min(max(self.y + dy, self.size), WORLD_HEIGHT - self.size)
+        # новое положение: границы мира, затем свой вертикальный слой
+        size = self.size
+        nx = x + dx
+        if   nx < self.x_lo: nx = self.x_lo
+        elif nx > self.x_hi: nx = self.x_hi
 
-        # ♦ ограничиваем по вертикальному слою
-        y_min_abs = (self.min_y / 100) * WORLD_HEIGHT + self.size
-        y_max_abs = (self.max_y / 100) * WORLD_HEIGHT - self.size
-        self.y = min(max(self.y, y_min_abs), y_max_abs)
+        ny = y + dy
+        if   ny < size:                 ny = size
+        elif ny > WORLD_HEIGHT - size:  ny = WORLD_HEIGHT - size
+        if   ny < self.body_lo: ny = self.body_lo
+        elif ny > self.body_hi: ny = self.body_hi
 
-        # энергозатраты
-        self.energy -= (
-                SIZE_ENERGY_COEF  * self.size   ** SIZE_ENERGY_POWER +
-                SPEED_ENERGY_COEF * self.speed  ** SPEED_ENERGY_POWER +
-                SIGHT_ENERGY_COEF * self.vision ** SIGHT_ENERGY_POWER
-        )
+        self.x, self.y = nx, ny
+
+        # энергозатраты (посчитаны один раз в __init__ — геном не меняется)
+        self.energy -= self.upkeep
         if self.energy <= 0:
             self.alive = False
 
@@ -150,27 +190,30 @@ class Vegetarian:
         """
         Съесть все растения, которые попали в диаметр `self.size`.
         Возвращает True, если хоть что-то съели.
+
+        `plants` — кандидаты от сетки соседей, а не весь мир (см. world.py).
+        Съеденное помечается alive=False, а не вырезается из списка: вырезание
+        стоило линейного поиска на каждое растение и сломало бы кэш сетки.
+        Мёртвые выметаются один раз за тик в World.
         """
-        eaten = []
-        r2 = self.size * self.size          # квадрат диаметра
+        eaten = 0
+        r2 = self.size2                     # квадрат диаметра
         cx, cy = self.x, self.y
 
-        # ищем «в лоб» — пока растений мало это дёшево
         for p in plants:
+            if not p.alive:
+                continue
             dx = cx - p.x
             dy = cy - p.y
             if dx * dx + dy * dy <= r2:
-                eaten.append(p)
+                p.alive = False
+                eaten += 1
 
         if not eaten:
             return False
 
-        # удаляем съеденное
-        for p in eaten:
-            plants.remove(p)
-
         # пополняем энергию
-        gain = ENERGY_FROM_PLANT * len(eaten)
+        gain = ENERGY_FROM_PLANT * eaten
         self.energy = min(self.max_energy, self.energy + gain)
 
         # ► сразу берём новую случайную цель — перестаём топтаться на месте

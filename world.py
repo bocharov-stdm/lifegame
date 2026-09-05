@@ -6,6 +6,7 @@
 import random
 
 from config     import *
+from grid       import Grid
 from plant      import Plant
 from vegetarian import Vegetarian
 from predator   import Predator
@@ -40,13 +41,27 @@ class World:
                 count += 1
             self.plants.extend(Plant() for _ in range(count))
 
+    # ── поиск соседей ───────────────────────────────────────────────────────
+    # Существа по-прежнему просто перебирают всех, кого им дали, — но дают им
+    # теперь не весь мир, а соседей по сетке. Индексацией занимается мир,
+    # сущности остаются наивными.
+    #
+    # Размер клетки считается по САМОМУ БОЛЬШОМУ радиусу запроса: блок 3x3
+    # накрывает всё, что ближе одной клетки, и при слишком мелкой клетке
+    # существа начали бы не замечать соседей у себя под носом. Зрение — ген,
+    # оно эволюционирует, поэтому размер пересчитывается каждый тик.
+
     def _update_predators(self):
+        cell = max(GRID_MIN_CELL, PREDATOR_DIAM,
+                   max((pr.vision for pr in self.predators), default=0.0))
+        prey = Grid(cell, self.vegetarians)
+
         offspring     = []     # дети текущего тика
         new_predators = []
 
         for pr in self.predators:
-            pr.move(self.vegetarians)
-            pr.try_eat(self.vegetarians)
+            pr.move(prey.near(pr.x, pr.y))
+            pr.try_eat(prey.near(pr.x, pr.y))   # уже с новой позиции
 
             if self.tick % DIVIDE_PERIOD == 0:
                 pr.maybe_divide(offspring)     # ← в буфер, а не в список итерации
@@ -57,6 +72,11 @@ class World:
         self.predators = new_predators + offspring
 
     def _update_vegetarians(self):
+        cell = max(GRID_MIN_CELL,
+                   max((max(v.vision, v.size) for v in self.vegetarians), default=0.0))
+        food    = Grid(cell, self.plants)
+        hunters = Grid(cell, self.predators)
+
         offspring       = []   # дети текущего тика
         new_vegetarians = []
 
@@ -64,8 +84,8 @@ class World:
             if not v.alive:                    # съеден хищником в этом же тике
                 continue
 
-            v.move(self.plants, self.predators)
-            v.try_eat(self.plants)
+            v.move(food.near(v.x, v.y), hunters.near(v.x, v.y))
+            v.try_eat(food.near(v.x, v.y))     # уже с новой позиции
 
             if self.tick % DIVIDE_PERIOD == 0:
                 v.maybe_divide(offspring)
@@ -74,6 +94,7 @@ class World:
                 new_vegetarians.append(v)
 
         self.vegetarians = new_vegetarians + offspring
+        self.plants      = [p for p in self.plants if p.alive]   # выметаем съеденное
 
     # ── статистика ──────────────────────────────────────────────────────────
     def stats(self):
