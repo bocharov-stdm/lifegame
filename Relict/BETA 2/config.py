@@ -25,3 +25,11 @@ DENSITY_PER_PIXEL  = 4e-9
 PLANT_SPAWN_CHANCE = DENSITY_PER_PIXEL * WORLD_WIDTH * WORLD_HEIGHT
 WANDER_RADIUS = 1000
 
+# Хищники — тот же формат генома, что и у вегетарианцев
+# [size, speed, vision, repro_threshold, repro_share, min_y, max_y]
+PREDATOR_BASE_GENOM = [60, 14, 600, 60, 25, 0, 100]
+PREDATORS_AT_START  = 5
+
+FLEE_DURATION_SEC = 1
+FLEE_TICKS        = int(FLEE_DURATION_SEC * FPS * TICKS_PER_FRAME)
+

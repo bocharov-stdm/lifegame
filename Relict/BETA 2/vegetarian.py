@@ -34,6 +34,8 @@ class Vegetarian:
         self.energy = energy if energy is not None else self.max_energy * 0.5
         self.alive  = True
 
+        self.flee_ticks = 0
+
         self.x = x if x is not None else random.randint(self.size, WORLD_WIDTH - self.size)
         # стартовая y строго в пределах своего биома
         self.y = y if y is not None else random.randint(y_min_abs, y_max_abs)
@@ -63,28 +65,54 @@ class Vegetarian:
                 return
         self.tx, self.ty = self.x, self.y  # fallback
 
-    def move(self, plants):
-        # поиск ближайшего растения
-        nearest, best_dist = None, self.vision
-        for p in plants:
-            d = math.hypot(p.x - self.x, p.y - self.y)
-            if d < best_dist:
-                nearest, best_dist = p, d
+    def move(self, plants, predators):
+        # ── ищем ближайшего хищника в пределах vision ───────────────────────
+        nearest_pred, best_pred_d = None, self.vision
+        for pr in predators:
+            d = math.hypot(pr.x - self.x, pr.y - self.y)
+            if d < best_pred_d:
+                nearest_pred, best_pred_d = pr, d
 
-        if nearest:
-            # проверяем попадает ли еда в наш вертикальный слой
-            y_min_abs = (self.min_y / 100) * WORLD_HEIGHT
-            y_max_abs = (self.max_y / 100) * WORLD_HEIGHT
-            if y_min_abs <= nearest.y <= y_max_abs:
-                tx, ty = nearest.x, nearest.y
+        fleeing = False
+        if self.flee_ticks > 0:
+            fleeing = True
+            self.flee_ticks -= 1
+        if nearest_pred and best_pred_d < self.vision / 3:
+            self.flee_ticks = FLEE_TICKS
+            fleeing = True
+
+        if fleeing:
+            if nearest_pred:
+                dx, dy = self.x - nearest_pred.x, self.y - nearest_pred.y
             else:
-                nearest = None  # игнорируем, съесть нельзя
+                dx, dy = 0, 0
+            d = math.hypot(dx, dy)
+            if d != 0:
+                dx *= self.speed / d
+                dy *= self.speed / d
+            tx, ty = self.x + dx, self.y + dy
+        else:
+            # поиск ближайшего растения
+            nearest, best_dist = None, self.vision
+            for p in plants:
+                d = math.hypot(p.x - self.x, p.y - self.y)
+                if d < best_dist:
+                    nearest, best_dist = p, d
 
-        if not nearest:
-            if (not hasattr(self, "tx") or
-                    math.hypot(self.x - self.tx, self.y - self.ty) < self.speed):
-                self._pick_random_target()
-            tx, ty = self.tx, self.ty
+            if nearest:
+                # проверяем попадает ли еда в наш вертикальный слой
+                y_min_abs = (self.min_y / 100) * WORLD_HEIGHT
+                y_max_abs = (self.max_y / 100) * WORLD_HEIGHT
+                if y_min_abs <= nearest.y <= y_max_abs:
+                    tx, ty = nearest.x, nearest.y
+                else:
+                    nearest = None  # игнорируем, съесть нельзя
+
+            if not nearest:
+                if (not hasattr(self, "tx") or
+                        math.hypot(self.x - self.tx, self.y - self.ty) < self.speed):
+                    self._pick_random_target()
+                tx, ty = self.tx, self.ty
 
         # вектор и шаг
         dx, dy = tx - self.x, ty - self.y
