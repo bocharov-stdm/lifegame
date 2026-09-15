@@ -11,7 +11,7 @@
 
 import argparse
 
-from headless import simulate
+from life.headless import simulate
 
 GENE_NAMES = ["размер", "скорость", "зрение", "порог_разм", "доля_потомку", "min_y%", "max_y%"]
 

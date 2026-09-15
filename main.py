@@ -1,8 +1,13 @@
-# main.py  — окно, события и отрисовка. Вся логика симуляции живёт в world.py
+# main.py — окно, события и игровой цикл.
+#
+# Логика симуляции живёт в пакете life/, отрисовка — в render.py.
+# Здесь остаётся только то, что связано с окном.
 
 import pygame, sys
-from config import *
-from world  import World
+
+from life.config import *
+from life.world  import World
+from render      import draw_world
 
 
 def format_stats(s):
@@ -46,14 +51,7 @@ def main():
         # ── рендер ─────────────────────────────────────────────────────────
         screen.fill((30, 30, 30))
 
-        for p in world.plants:
-            p.draw(screen, scale_x, scale_y)
-
-        for v in world.vegetarians:
-            v.draw(screen, scale_x, scale_y)
-
-        for pr in world.predators:
-            pr.draw(screen, scale_x, scale_y)
+        draw_world(screen, world, scale_x, scale_y)
 
         # выводим статистику поверх всего
         screen.blit(font.render(text_genom, True, (255, 255, 255)), (10, 10))

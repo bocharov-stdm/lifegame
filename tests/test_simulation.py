@@ -10,18 +10,19 @@
   * каждый прогон дополнительно ограничен дедлайном по часам и потолком
     популяции (см. run_ticks). Стоимость тика растёт вместе с популяцией,
     поэтому одного лимита тиков НЕДОСТАТОЧНО: популяция растёт — тик дорожает.
-    Сетка соседей (grid.py) сделала этот рост почти линейным вместо
+    Сетка соседей (life/grid.py) сделала этот рост почти линейным вместо
     квадратичного, но не отменила его — лимиты нужны по-прежнему;
   * если лимит достигнут, прогон останавливается, а проверки выполняются на
     том состоянии, до которого дошли. Тест не падает от медленной машины,
     но и не превращается в пустышку — инварианты всё равно проверены.
 
 Весь набор укладывается примерно в 10 секунд.
-pygame-окно не требуется: логика живёт в world.py и не трогает дисплей.
+pygame-окно не требуется: движок живёт в пакете life/ и не трогает дисплей.
 """
 
 import math
 import random
+import subprocess
 import sys
 import time
 import unittest
@@ -29,13 +30,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config     import *
-from grid       import Grid
-from headless   import simulate
-from plant      import Plant
-from vegetarian import Vegetarian
-from predator   import Predator
-from world      import World
+from life.config     import *
+from life.grid       import Grid
+from life.headless   import simulate
+from life.plant      import Plant
+from life.vegetarian import Vegetarian
+from life.predator   import Predator
+from life.world      import World
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -259,6 +262,35 @@ class TestGrid(unittest.TestCase):
                 f"травоядное не увидело еду в радиусе зрения: зрение {v.vision:.0f}, "
                 f"клетка {cell:.0f}",
             )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Границы слоёв проекта
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestLayering(unittest.TestCase):
+    """Движок не знает про экран — и это проверяется, а не только обещается."""
+
+    def test_engine_does_not_import_pygame(self):
+        """Импорт life/ не должен тянуть за собой pygame.
+
+        Раньше у каждой сущности был свой draw(), поэтому headless-прогон
+        импортировал pygame, хотя дисплея не касался. Отрисовка живёт в
+        render.py, и эта граница должна оставаться на месте.
+
+        Проверять приходится в подпроцессе: в самом наборе тестов pygame может
+        уже оказаться в sys.modules, и проверка стала бы пустышкой.
+        """
+        out = subprocess.run(
+            [sys.executable, "-c",
+             "import life.headless, life.world, sys; print('pygame' in sys.modules)"],
+            cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=60,
+        )
+        self.assertEqual(out.returncode, 0, "импорт life/ упал: " + out.stderr)
+        self.assertEqual(
+            out.stdout.strip(), "False",
+            "life/ снова тянет pygame — отрисовка просочилась в движок",
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

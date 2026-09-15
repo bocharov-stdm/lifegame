@@ -1,7 +1,7 @@
 #vegetarian py
 
-import pygame, random, math
-from config import *
+import random, math
+from .config import *
 
 class Vegetarian:
 
@@ -66,14 +66,6 @@ class Vegetarian:
         self.vision2 = self.vision * self.vision
         self.size2   = self.size * self.size
         self.flee2   = (self.vision / 3) * (self.vision / 3)
-
-    # Функция отрисовки существа
-
-    def draw(self, surf, scale_x, scale_y):
-        sx = int(self.x * scale_x)
-        sy = int(self.y * scale_y)
-        radius = max(1, int((self.size / 2) * scale_x))
-        pygame.draw.circle(surf, (255, 100, 255), (sx, sy), radius)
 
     # Функция движения
     def _pick_random_target(self):

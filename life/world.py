@@ -1,15 +1,15 @@
 # world.py — состояние симуляции и один логический тик.
 #
 # Здесь нет ни pygame-окна, ни отрисовки: World можно гонять headless
-# (тесты, подбор баланса на 100k тиков). Рисует и обрабатывает события main.py.
+# (тесты, подбор баланса на 100k тиков). Рисует render.py, события ловит main.py.
 
 import random
 
-from config     import *
-from grid       import Grid
-from plant      import Plant
-from vegetarian import Vegetarian
-from predator   import Predator
+from .config     import *
+from .grid       import Grid
+from .plant      import Plant
+from .vegetarian import Vegetarian
+from .predator   import Predator
 
 
 class World:

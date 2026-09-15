@@ -1,7 +1,7 @@
 # plant.py
 
-import pygame, random, math
-from config import *
+import random, math
+from .config import *
 
 
 # Растения гуще у поверхности: плотность падает как exp(-DECAY * y / глубина мира).
@@ -31,10 +31,3 @@ class Plant:
         # Съеденное помечается, а не вырезается из списка: вырезание — линейный
         # поиск, да ещё и рушит сетку соседей. Мёртвые выметаются раз за тик.
         self.alive = True
-
-    def draw(self, surf, scale_x, scale_y):
-        pygame.draw.circle(
-            surf, (0, 255, 0),
-            (int(self.x * scale_x), int(self.y * scale_y)),
-            max(1, int(PLANT_RADIUS * scale_x))
-        )

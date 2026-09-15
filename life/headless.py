@@ -9,14 +9,14 @@
 # дедлайн по часам и потолок популяции; потолок заодно и главный сторож времени,
 # потому что именно популяция разгоняет стоимость тика.
 #
-# Сетка соседей (grid.py) сделала этот рост почти линейным вместо квадратичного,
+# Сетка соседей (life/grid.py) сделала этот рост почти линейным вместо квадратичного,
 # но не отменила его — лимиты нужны по-прежнему.
 
 import time
 
-from world import World
-from predator import Predator
-from vegetarian import Vegetarian
+from .world import World
+from .predator import Predator
+from .vegetarian import Vegetarian
 
 
 class SimResult:

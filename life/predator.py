@@ -1,7 +1,7 @@
 # predator py
 
-import pygame, random, math
-from config import *
+import random, math
+from .config import *
 
 
 class Predator:
@@ -120,8 +120,3 @@ class Predator:
                                       child_speed, child_vision))
             self._choose_new_target()
     # ----------------------------------
-
-    def draw(self, surf, scale_x, scale_y):
-        sx, sy = int(self.x * scale_x), int(self.y * scale_y)
-        pygame.draw.circle(surf, (255, 255, 255), (sx, sy),
-                           max(1, int((self.DIAM // 2) * scale_x)))
