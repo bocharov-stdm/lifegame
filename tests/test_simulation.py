@@ -27,6 +27,7 @@ import sys
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -107,15 +108,34 @@ class TestRegressions(BoundedRunMixin, unittest.TestCase):
         world.vegetarians = []          # некому есть — считаем чистый прирост
         world.predators   = []
 
-        before = len(world.plants)
-        ticks  = self.bounded(world, 2000, seconds=10.0)
-        rate   = (len(world.plants) - before) / ticks
+        # 2000 тиков по 2.5 растения — это выше PLANT_MAX. Тест про скорость
+        # спауна, а не про потолок, поэтому потолок здесь снят (у потолка свой тест).
+        with mock.patch("life.world.PLANT_MAX", 10**9):
+            before = len(world.plants)
+            ticks  = self.bounded(world, 2000, seconds=10.0)
+            rate   = (len(world.plants) - before) / ticks
 
         # разброс среднего на 2000 тиках ~0.007, допуск 0.1 — мигать не может
         self.assertAlmostEqual(
             rate, PLANT_SPAWN_CHANCE, delta=0.1,
             msg=f"прирост {rate:.3f} растений/тик вместо {PLANT_SPAWN_CHANCE}",
         )
+
+    def test_plant_count_is_capped(self):
+        """Без травоядных растения упираются в PLANT_MAX, а не растут вечно.
+
+        Баг: растение исчезает только съеденным, и в мире без едоков их
+        становилось на 2.5 больше каждый тик — 15 тысяч за 6000 тиков.
+        К 600-му тику потолок достигнут; ещё 400 тиков проверяют, что он держится.
+        """
+        world = World(seed=7)
+        world.vegetarians = []
+        world.predators   = []
+
+        self.bounded(world, 1000, seconds=10.0)
+
+        self.assertEqual(len(world.plants), PLANT_MAX,
+                         f"растений {len(world.plants)} при потолке {PLANT_MAX}")
 
     def test_eaten_vegetarian_does_not_act(self):
         """Съеденный хищником в этом же тике не должен есть и размножаться.
@@ -435,7 +455,8 @@ class TestPopulationDynamics(unittest.TestCase):
 
         Проверяем именно его, потому что взрыв РАСТЕНИЙ (а не существ)
         счётчиком популяции не ловится: травоядных мало, а тик всё равно
-        становится неподъёмным. Такой прогон однажды уже уткнулся в дедлайн
+        становится неподъёмным. Теперь растения ограничены PLANT_MAX, но бюджет
+        остаётся страховкой на случай, если потолок поднимут или сломают. Такой прогон однажды уже уткнулся в дедлайн
         на 25 секундах вместо того, чтобы оборваться сразу.
         """
         res = simulate(seed=1, ticks=BASELINE_TICKS, seconds=15.0,

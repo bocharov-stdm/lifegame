@@ -16,7 +16,7 @@ Russian. Keep it that way when editing or adding code.
 ```bash
 python main.py                                      # run with the pygame window
 
-python -m unittest discover tests                   # full suite (16 tests, ~1.5 s, no display)
+python -m unittest discover tests                   # full suite (17 tests, ~1.5 s, no display)
 python -m unittest tests.test_simulation.TestGrid   # one class
 python -m unittest tests.test_simulation.TestGrid.test_grid_matches_brute_force   # one test
 
@@ -66,7 +66,10 @@ not care where it is launched from.
 predator earlier in the same tick is skipped (`if not v.alive: continue`) rather than removed
 mid-iteration. Likewise, eaten plants are marked `alive = False` and swept once per tick at the
 end of `_update_vegetarians` — removing them inline would cost a linear search and invalidate the
-grid cache. Offspring go into a separate `offspring` buffer and are appended after the loop, so
+grid cache. Because plants only ever leave by being eaten, spawning stops at `PLANT_MAX`; the cap is
+set well above any healthy run's peak so it only bites once herbivores are gone, and
+`_spawn_plants` still draws its random number when capped so the RNG stream stays identical.
+Offspring go into a separate `offspring` buffer and are appended after the loop, so
 children never act on the tick they were born.
 
 ### Neighbour search

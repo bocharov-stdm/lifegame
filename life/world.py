@@ -34,11 +34,17 @@ class World:
 
     def _spawn_plants(self):
         # PLANT_SPAWN_CHANCE — это ожидаемое число растений за тик, а не вероятность:
-        # целую часть спауним всегда, дробную — с соответствующим шансом
+        # целую часть спауним всегда, дробную — с соответствующим шансом.
+        #
+        # Выше PLANT_MAX не растём: без травоядных растения копились бы бесконечно.
+        # Жребий тянется в любом случае — так поток случайных чисел не зависит от
+        # того, упёрлись ли мы в потолок. Съеденное выметено в конце прошлого тика,
+        # поэтому len(self.plants) здесь — ровно живые растения.
         for _ in range(TICKS_PER_FRAME):
             count = int(PLANT_SPAWN_CHANCE)
             if random.random() < PLANT_SPAWN_CHANCE - count:
                 count += 1
+            count = min(count, max(0, PLANT_MAX - len(self.plants)))
             self.plants.extend(Plant() for _ in range(count))
 
     # ── поиск соседей ───────────────────────────────────────────────────────
