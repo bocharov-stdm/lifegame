@@ -98,9 +98,62 @@ def draw_panel(surf, font, creature):
         surf.blit(value, (rect.right - PAD - value.get_width(), y))   # числа — вправо
 
 
+# ── график популяций ───────────────────────────────────────────────────────
+
+GRAPH_SIZE   = (420, 170)
+GRAPH_SERIES = (("растения",   PLANT_COLOR),
+                ("травоядные", VEGETARIAN_COLOR),
+                ("хищники",    PREDATOR_COLOR))
+
+
+def draw_graph(surf, font, history):
+    """Бегущий график численности в правом нижнем углу.
+
+    history — последовательность (растения, травоядные, хищники), старые точки
+    первыми. Если это deque с maxlen, график заполняется справа налево и дальше
+    ползёт; обычный список растягивается на всю ширину.
+
+    Каждая линия нормирована на СВОЙ максимум: хищников единицы и десятки,
+    остальных — сотни, и на общей шкале хищники легли бы в ноль. А смысл
+    графика как раз в том, чтобы видеть сдвиг фаз «хищник — жертва».
+    """
+    line_h = font.get_linesize()
+
+    last   = history[-1] if history else (0, 0, 0)
+    legend = [font.render(f"{name} {value}", True, color)
+              for (name, color), value in zip(GRAPH_SERIES, last)]
+    legend_w = sum(s.get_width() for s in legend) + 2 * PAD * (len(legend) - 1)
+
+    width, height = max(GRAPH_SIZE[0], legend_w + 2 * PAD), GRAPH_SIZE[1]
+    rect = _backdrop(surf, (width, height),
+                     bottomright=(surf.get_width() - MARGIN, surf.get_height() - MARGIN))
+
+    x = rect.left + PAD
+    for s in legend:
+        surf.blit(s, (x, rect.top + PAD))
+        x += s.get_width() + 2 * PAD
+
+    n = len(history)
+    if n < 2:
+        return                                   # линию из одной точки не построить
+
+    plot = pygame.Rect(rect.left + PAD, rect.top + PAD + line_h,
+                       width - 2 * PAD, height - 2 * PAD - line_h)
+    span = (getattr(history, "maxlen", None) or n) - 1
+    dx   = plot.width / span
+    x0   = plot.right - (n - 1) * dx             # новые точки — у правого края
+
+    for k, (_, color) in enumerate(GRAPH_SERIES):
+        top = max(point[k] for point in history) or 1     # все нули — не делим на ноль
+        points = [(x0 + i * dx, plot.bottom - point[k] / top * plot.height)
+                  for i, point in enumerate(history)]
+        pygame.draw.lines(surf, color, False, points)
+
+
 # ── строка состояния ───────────────────────────────────────────────────────
 
-HINT = "Пробел — пауза   → — шаг   +/- — скорость   клик — существо"
+# без «→»: в стандартном шрифте pygame такого символа нет, рисуется квадратик
+HINT = "Пробел — пауза   Вправо — шаг   +/- — скорость   клик — существо   G — график"
 
 
 def draw_hud(surf, font, paused, speed, tick):

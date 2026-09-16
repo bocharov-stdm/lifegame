@@ -9,12 +9,14 @@
 #   + / -       скорость: 1, 2, 4, 8, 16 тиков за кадр
 #   ЛКМ         выбрать существо под курсором
 #   ПКМ, Esc    снять выбор
+#   G           показать / скрыть график популяций
 
 import pygame, sys
+from collections import deque
 
 from life.config import *
 from life.world  import World
-from render      import draw_world, draw_selection, draw_panel, draw_hud
+from render      import draw_world, draw_selection, draw_panel, draw_hud, draw_graph
 
 # Скорость — сколько раз за кадр вызывается world.step(). Это НЕ TICKS_PER_FRAME
 # из конфига: тот работает внутри движка (спаун растений, длительность бегства),
@@ -23,6 +25,12 @@ SPEEDS = (1, 2, 4, 8, 16)
 
 STATS_EVERY_FRAMES = 60      # строка статистики — раз в секунду
 PICK_RADIUS_PX     = 10      # насколько можно промахнуться кликом, в пикселях экрана
+
+# График: точка раз в GRAPH_EVERY тиков, всего GRAPH_POINTS точек — окно в
+# 3000 тиков, этого хватает, чтобы разглядеть колебания «хищник — жертва».
+# Это настройки экрана, а не движка, поэтому они здесь, а не в config.py.
+GRAPH_POINTS = 300
+GRAPH_EVERY  = 10
 
 
 def format_stats(s):
@@ -70,6 +78,9 @@ def main():
     speed    = 0                           # индекс в SPEEDS
     selected = None                        # существо, на которое кликнули
 
+    history    = deque(maxlen=GRAPH_POINTS)   # (растения, травоядные, хищники)
+    show_graph = True
+
     while True:
         # ── события ─────────────────────────────────────────────────────────
         step_once = False
@@ -90,6 +101,8 @@ def main():
                     speed = max(speed - 1, 0)
                 elif key == pygame.K_ESCAPE:
                     selected = None
+                elif key == pygame.K_g:
+                    show_graph = not show_graph
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:
@@ -106,6 +119,11 @@ def main():
             ticks = SPEEDS[speed]
         for _ in range(ticks):
             world.step()
+            # внутри цикла, по тикам: на ускорении точки не теряются
+            if world.tick % GRAPH_EVERY == 0:
+                history.append((len(world.plants),
+                                len(world.vegetarians),
+                                len(world.predators)))
 
         if selected is not None and not selected.alive:     # съели или умер с голоду
             selected = None
@@ -127,6 +145,8 @@ def main():
         # выводим статистику поверх всего
         screen.blit(font.render(text_genom, True, (255, 255, 255)), (10, 10))
         draw_hud(screen, font, paused, SPEEDS[speed], world.tick)
+        if show_graph:
+            draw_graph(screen, font, history)
 
         pygame.display.flip()
         clock.tick(FPS)

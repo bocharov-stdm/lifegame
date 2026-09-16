@@ -16,7 +16,7 @@ Russian. Keep it that way when editing or adding code.
 ```bash
 python main.py                                      # run with the pygame window
 
-python -m unittest discover tests                   # full suite (23 tests, ~1.5 s, no display)
+python -m unittest discover tests                   # full suite (25 tests, ~2 s, no display)
 python -m unittest tests.test_simulation.TestGrid   # one class
 python -m unittest tests.test_simulation.TestGrid.test_grid_matches_brute_force   # one test
 
@@ -50,9 +50,12 @@ new drawing goes in `render.py`.
   pass lists) and converts it with `Genom(*genom)`; access genes by name, never by index. Being a
   tuple, it still supports `v.genom[i]`, which `World.stats()` relies on for averaging.
 - `life/headless.py` — `simulate()`: one engine shared by tests and `sim_report.py`.
-- `main.py` — window, controls (pause, single step, speed, click-to-select), game loop.
+- `main.py` — window, controls (pause, single step, speed, click-to-select, graph toggle), game
+  loop. Population history for the graph is a `deque` sampled every `GRAPH_EVERY` ticks inside the
+  step loop, using list lengths rather than `world.stats()` (which averages the genome).
   `pick_creature()` is deliberately pygame-free so tests can call it.
-- `render.py` — all drawing (`draw_world`, `draw_selection`, `draw_panel`, `draw_hud`): the only
+- `render.py` — all drawing (`draw_world`, `draw_selection`, `draw_panel`, `draw_graph`,
+  `draw_hud`): the only
   module that knows about both pygame and the entities. Draw order is plants → herbivores →
   predators, which is what determines overlap.
 
@@ -64,6 +67,8 @@ skips past multiples.
 
 `tests/test_render.py` draws onto an in-memory `pygame.Surface` under `SDL_VIDEODRIVER=dummy` and
 skips itself when pygame is missing. It is the only test file allowed to import pygame.
+pygame's default font has no glyph for arrows like `→` (renders as a box) — spell keys out in
+on-screen text.
 - `sim_report.py` — CLI report over `simulate()`.
 - `Relict/` — **frozen 2025 archive** of early prototypes. See `Relict/ПАМЯТНИК.txt`: nothing
   there is edited, refactored, "fixed" or modernised. Its bugs are part of the monument.
