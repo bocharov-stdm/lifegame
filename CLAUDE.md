@@ -16,7 +16,7 @@ Russian. Keep it that way when editing or adding code.
 ```bash
 python main.py                                      # run with the pygame window
 
-python -m unittest discover tests                   # full suite (15 tests, ~1.5 s, no display)
+python -m unittest discover tests                   # full suite (16 tests, ~1.5 s, no display)
 python -m unittest tests.test_simulation.TestGrid   # one class
 python -m unittest tests.test_simulation.TestGrid.test_grid_matches_brute_force   # one test
 
@@ -45,6 +45,10 @@ new drawing goes in `render.py`.
 - `life/grid.py` — `Grid`: uniform spatial hash for neighbour lookup, rebuilt each tick.
 - `life/plant.py` / `life/vegetarian.py` / `life/predator.py` — the entities. Pure logic,
   no pygame.
+- `life/genome.py` — `Genom`, a `NamedTuple` of the 7 herbivore genes, plus `LAYER_GENES` and the
+  Russian display labels `GENE_LABELS`. `Vegetarian` accepts a plain list (`config.py` and the tests
+  pass lists) and converts it with `Genom(*genom)`; access genes by name, never by index. Being a
+  tuple, it still supports `v.genom[i]`, which `World.stats()` relies on for averaging.
 - `life/headless.py` — `simulate()`: one engine shared by tests and `sim_report.py`.
 - `main.py` — window, events, game loop.
 - `render.py` — `draw_world()`: the only module that knows about both pygame and the entities.

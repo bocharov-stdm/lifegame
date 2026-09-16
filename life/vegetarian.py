@@ -2,24 +2,26 @@
 
 import random, math
 from .config import *
+from .genome import Genom, LAYER_GENES
 
 class Vegetarian:
 
     # ── инициализация ────────────────────────────────────────────────────────
     def __init__(self, x=None, y=None, energy=None, genom=None):
         if genom is None:
-            genom = VEGETARIAN_BASE_GENOM[:]
+            genom = VEGETARIAN_BASE_GENOM
+        genom = Genom(*genom)          # принимаем и список (конфиг, тесты), и Genom
 
         self.genom = genom
-        self.size  = genom[0]
-        self.speed = genom[1]
-        self.vision = genom[2]
-        self.repro_threshold = genom[3]
-        self.repro_share     = genom[4]
+        self.size  = genom.size
+        self.speed = genom.speed
+        self.vision = genom.vision
+        self.repro_threshold = genom.repro_threshold
+        self.repro_share     = genom.repro_share
 
-        # ── НОВЫЕ ГЕНЫ: диапазон высот (в процентах) ────────────────────────
-        min_pct = max(0, min(100, genom[5]))      # clamp 0‒100
-        max_pct = max(0, min(100, genom[6]))
+        # ── гены слоя: диапазон высот (в процентах) ─────────────────────────
+        min_pct = max(0, min(100, genom.min_y))   # clamp 0‒100
+        max_pct = max(0, min(100, genom.max_y))
         if min_pct > max_pct:                     # гарантируем min ≤ max
             min_pct, max_pct = max_pct, min_pct
 
@@ -215,17 +217,17 @@ class Vegetarian:
 
     def mutate(self, sigma=VEGETARIAN_SIGMA):
         new_genom = []
-        for i, value in enumerate(self.genom):
+        for name, value in zip(Genom._fields, self.genom):
             while True:
                 gauss = random.gauss(0, sigma)
                 if gauss >= -0.9:
                     break
             mutated = value * (1 + gauss)
-            # Ограничиваем диапазон только для min_y и max_y (последние 2 гена)
-            if i == 5 or i == 6:
+            # гены слоя — проценты, их держим в 0‒100
+            if name in LAYER_GENES:
                 mutated = min(100, max(0, mutated))
             new_genom.append(max(0.01, mutated))
-        return new_genom
+        return Genom(*new_genom)
 
     def maybe_divide(self, offspring: list):
         """Размножаемся, если остаётся запас энергии; детей кладём в отдельный список."""

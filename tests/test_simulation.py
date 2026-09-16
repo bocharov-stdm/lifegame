@@ -31,6 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from life.config     import *
+from life.genome     import Genom
 from life.grid       import Grid
 from life.headless   import simulate
 from life.plant      import Plant
@@ -359,6 +360,23 @@ class TestInvariants(BoundedRunMixin, unittest.TestCase):
                         "координаты стали NaN при схлопнутом слое")
         self.assertTrue(0 <= veg.x <= WORLD_WIDTH,  f"вылетел за мир: x={veg.x}")
         self.assertTrue(0 <= veg.y <= WORLD_HEIGHT, f"вылетел за мир: y={veg.y}")
+
+
+    def test_mutation_keeps_layer_genes_in_range(self):
+        """Гены слоя (min_y, max_y) — проценты и при мутации остаются в 0‒100.
+
+        Сторожит место, где раньше стояло `if i == 5 or i == 6`: гены
+        выбираются по имени, и промах мимо них выпустил бы слой за пределы
+        мира. Родитель стоит у самых краёв, чтобы мутации туда и тянули.
+        """
+        random.seed(0)
+        parent = Vegetarian(genom=[40, 10, 400, 70, 30, 0.5, 99.5])
+
+        for _ in range(500):                             # фиксированное число мутаций
+            child = parent.mutate()
+            self.assertIsInstance(child, Genom)
+            self.assertTrue(0 <= child.min_y <= 100, f"min_y={child.min_y}")
+            self.assertTrue(0 <= child.max_y <= 100, f"max_y={child.max_y}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

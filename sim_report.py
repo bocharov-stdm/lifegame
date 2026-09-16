@@ -11,9 +11,8 @@
 
 import argparse
 
+from life.genome   import Genom, GENE_LABELS
 from life.headless import simulate
-
-GENE_NAMES = ["размер", "скорость", "зрение", "порог_разм", "доля_потомку", "min_y%", "max_y%"]
 
 
 def print_run(res, title):
@@ -33,8 +32,8 @@ def print_run(res, title):
 
     if final["avg_genom"]:
         print("\nсредний геном на финише:")
-        for name, value in zip(GENE_NAMES, final["avg_genom"]):
-            print(f"  {name:<14} {value:>8.1f}")
+        for name, value in zip(Genom._fields, final["avg_genom"]):
+            print(f"  {GENE_LABELS[name]:<14} {value:>8.1f}")
 
 
 def print_summary(rows):
