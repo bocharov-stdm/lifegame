@@ -124,6 +124,19 @@ class Slider(Widget):
         self.is_default = is_default
         self.dragging = False
 
+    # Скрытый виджет событий не получает (Scene.active_widgets), и отпускание
+    # кнопки до него не дойдёт: без сброса ползунок, спрятанный вкладкой
+    # посреди перетаскивания, потом ехал бы за мышью с отпущенной кнопкой.
+    @property
+    def visible(self):
+        return self._visible
+
+    @visible.setter
+    def visible(self, value):
+        self._visible = value
+        if not value:
+            self.dragging = False
+
     @property
     def track(self):
         r = self.rect
@@ -143,12 +156,17 @@ class Slider(Widget):
             self._set_from_x(event.pos[0])
             return True
         if event.type == pygame.MOUSEMOTION and self.dragging:
+            # кнопку отпустили там, где мы этого не видели (за окном)
+            if not getattr(event, "buttons", (1,))[0]:
+                self.dragging = False
+                return False
             self._set_from_x(event.pos[0])
             return True
         if event.type == pygame.MOUSEBUTTONUP and event.button == LEFT and self.dragging:
             self.dragging = False
             return True
-        if event.type == pygame.MOUSEWHEEL and self.rect.collidepoint(mouse):
+        # y == 0 — горизонтальная прокрутка (тачпад, наклон колеса): не наша
+        if event.type == pygame.MOUSEWHEEL and event.y and self.rect.collidepoint(mouse):
             f = self.field
             self.set(f.snap(self.get() + f.step * (1 if event.y > 0 else -1)))
             return True
@@ -297,7 +315,7 @@ class NumberField(Widget):
             if self.focused:
                 self.commit()                  # клик мимо — отдаём событие дальше
             return False
-        if event.type == pygame.MOUSEWHEEL and self.rect.collidepoint(mouse):
+        if event.type == pygame.MOUSEWHEEL and event.y and self.rect.collidepoint(mouse):
             self.set(min(max(self.get() + (1 if event.y > 0 else -1), self.lo), self.hi))
             return True
         if event.type == pygame.KEYDOWN and self.focused:

@@ -589,6 +589,51 @@ class TestDrawing(unittest.TestCase):
         self.assertEqual(tuple(self.surf.get_at((2, 400)))[:3], theme.PREDATOR_COLOR,
                          "хищник у левого края не нарисован")
 
+    def test_layer_band_out_of_view_tints_nothing(self):
+        """Слой выбранного существа вне кадра не красит кадр.
+
+        Баг: пустой прямоугольник полосы ложен, и `rect or surf.get_rect()`
+        подменял его всем экраном — весь вид становился сиреневым.
+        """
+        self.cam.zoom, self.cam.cx, self.cam.cy = 1.0, 3000, 3000   # глубина 2600..3400
+        world = World(seed=1, n_vegetarians=0, n_predators=0)
+        world.plants, world.vegetarians, world.predators = [], [], []
+        chosen = Vegetarian(x=3000, y=300, genom=[40, 10, 400, 70, 30, 5, 10])  # слой 200..400
+        render.draw_world(self.surf, world, self.cam)
+        plain = pygame.image.tobytes(self.surf, "RGB")
+        render.draw_world(self.surf, world, self.cam, selected=chosen)
+        self.assertEqual(pygame.image.tobytes(self.surf, "RGB"), plain)
+
+        render.veil(self.surf, pygame.Rect(10, 10, 0, 0))
+        self.assertEqual(pygame.image.tobytes(self.surf, "RGB"), plain, "пустая вуаль")
+
+    def test_veil_keeps_one_surface_per_color(self):
+        """Вуаль не копит поверхности под каждый размер окна и зум.
+
+        Баг: кэш по размеру держал до 32 полноэкранных поверхностей —
+        после 40 изменений размера окна +160 МиБ.
+        """
+        color = (1, 2, 3, 200)
+        for k in range(40):
+            render.veil(self.surf, pygame.Rect(0, 0, 400 + k * 13, 300 + k * 7), color)
+        self.assertEqual(render._fill_boxes[color].get_size(), (400 + 39 * 13, 300 + 39 * 7))
+
+        self.surf.fill((0, 0, 0))
+        render.veil(self.surf, pygame.Rect(100, 100, 50, 40), color)    # меньше запасённой
+        self.assertNotEqual(tuple(self.surf.get_at((149, 139)))[:3], (0, 0, 0))
+        self.assertEqual(tuple(self.surf.get_at((150, 139)))[:3], (0, 0, 0), "залило шире")
+        self.assertEqual(tuple(self.surf.get_at((149, 140)))[:3], (0, 0, 0), "залило ниже")
+
+    def test_genome_under_cursor_after_extinction(self):
+        """На тике без травоядных под курсором «нет», а не последний живой геном."""
+        points = [Sample(0, 0, 5, 0, (40.0,) * 7), Sample(10, 0, 0, 0, None)]
+        rect = pygame.Rect(0, 0, 300, 300)
+        with mock.patch.object(render, "blit_text", wraps=render.blit_text) as blit:
+            i = render.draw_genome_chart(self.surf, rect, points, hover_x=rect.right - 90)
+        self.assertEqual(i, 1)
+        values = [c.args[2] for c in blit.call_args_list if c.args[1] in ("bodyb", "tiny")]
+        self.assertEqual(values, ["нет"] * 7)
+
     def test_genome_change_is_from_the_start_of_the_game(self):
         """«Изменение от начала» одно и то же в окне «3000» и на всей партии.
 
@@ -817,6 +862,49 @@ class TestAppFlow(AppCase):
         self.assertEqual(setup.tab, "lab")
         self.click(app, setup.start_btn)
         self.assertEqual(app.session.seed, 42)
+
+    def test_slider_released_on_other_tab_lets_go(self):
+        """Ползунок, спрятанный вкладкой посреди перетаскивания, отпускается.
+
+        Баг: скрытый ползунок не получал отпускание кнопки и после возврата
+        на вкладку ехал за мышью с отпущенной кнопкой (101 -> 200).
+        """
+        app = self.make_app()
+        app.open_setup()
+        setup = app.scene
+        slider = {s.field.key: s for s in setup.sliders}["n_vegetarians"]
+        press = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=slider.track.center, button=1)
+        self.frame(app, press)
+        self.assertTrue(slider.dragging)
+        value = app.settings.n_vegetarians
+        self.key(app, pygame.K_TAB)
+        self.frame(app, pygame.event.Event(pygame.MOUSEBUTTONUP,
+                                           pos=slider.track.center, button=1))
+        self.key(app, pygame.K_TAB)
+        self.assertEqual(setup.tab, "world")
+        self.assertFalse(slider.dragging, "ползунок остался схваченным")
+        self.move(app, (slider.track.right + 50, slider.rect.centery))
+        self.assertEqual(app.settings.n_vegetarians, value)
+
+        # кнопку отпустили там, где окно этого не видело
+        self.frame(app, press)
+        value = app.settings.n_vegetarians
+        self.move(app, (slider.track.left - 50, slider.rect.centery))
+        self.assertEqual(app.settings.n_vegetarians, value)
+        self.assertFalse(slider.dragging)
+
+    def test_horizontal_wheel_changes_nothing(self):
+        """Прокрутка вбок (тачпад, наклон колеса) не уменьшает значения."""
+        app = self.make_app()
+        app.open_setup()
+        setup = app.scene
+        app.settings.seed = 500
+        slider = {s.field.key: s for s in setup.sliders}["n_vegetarians"]
+        before = (app.settings.n_vegetarians, app.settings.seed)
+        for widget in (slider, setup.seed_field):
+            self.move(app, widget.rect.center)
+            self.frame(app, pygame.event.Event(pygame.MOUSEWHEEL, x=1, y=0, flipped=False))
+        self.assertEqual((app.settings.n_vegetarians, app.settings.seed), before)
 
     def test_end_card_and_restart(self):
         app = self.make_app()

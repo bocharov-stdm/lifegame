@@ -36,18 +36,25 @@ class Vegetarian:
         # с запасом — полоса, в которой держится само тело, чтобы не торчало.
         self.layer_lo = (min_pct / 100) * WORLD_HEIGHT
         self.layer_hi = (max_pct / 100) * WORLD_HEIGHT
-        body_lo = self.layer_lo + self.size
-        body_hi = self.layer_hi - self.size
+        # Запас на тело — не больше половины мира. Размер — ген, и при дешёвом
+        # размере (лаборатория) тело бывает больше мира: с полным запасом границы
+        # переворачивались (x_lo > x_hi), зажимы в move() перекидывали существо
+        # от края к краю на сотни пикселей и выталкивали за мир. Тело шире мира
+        # целиком не уместить — такое существо держится на средней линии.
+        margin_x = min(self.size, WORLD_WIDTH / 2)
+        margin_y = min(self.size, WORLD_HEIGHT / 2)
+        body_lo = self.layer_lo + margin_y
+        body_hi = self.layer_hi - margin_y
         # Слой может оказаться уже собственного тела (эволюция сводит min_y и max_y),
         # и полоса переворачивается. Схлопываем её в линию посередине — один раз и
         # для всех: и для рождения, и для move(), и для выбора цели. Середину держим
         # в мире: у слоя на самом краю она легла бы за границу.
         if body_lo > body_hi:
-            body_lo = body_hi = min(max((body_lo + body_hi) / 2, self.size),
-                                    WORLD_HEIGHT - self.size)
+            body_lo = body_hi = min(max((body_lo + body_hi) / 2, margin_y),
+                                    WORLD_HEIGHT - margin_y)
         self.body_lo, self.body_hi = body_lo, body_hi
-        self.x_lo = self.size
-        self.x_hi = WORLD_WIDTH - self.size
+        self.x_lo = margin_x
+        self.x_hi = WORLD_WIDTH - margin_x
 
         # ─────────────────────────────────────────────────────────────────────
         self.max_energy = self.size * VEGETARIAN_ENERGY_PER_SIZE

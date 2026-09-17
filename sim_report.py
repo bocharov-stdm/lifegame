@@ -36,7 +36,10 @@ def parse_rules(pairs):
             changes[key] = float(value)
         except ValueError:
             raise SystemExit(f"--rule {pair!r}: {value!r} — не число")
-    return DEFAULT_RULES.with_(**changes)
+    try:
+        return DEFAULT_RULES.with_(**changes)
+    except ValueError as err:                  # nan, inf: см. Rules.__post_init__
+        raise SystemExit(f"--rule: {err}")
 
 
 def print_run(res, title):

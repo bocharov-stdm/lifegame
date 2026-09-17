@@ -33,10 +33,21 @@ def _text(font, text, color):
     return font.render(text, True, color)
 
 
-@lru_cache(maxsize=32)
+# Полупрозрачная заливка: по одной поверхности на цвет, не меньше самой
+# большой запрошенной; блитится её угол. Кэш по размеру держал бы по полному
+# экрану на каждый размер окна и на каждый зум (полоса слоя) — сотни МиБ.
+_fill_boxes = {}
+
+
 def _fill_box(size, color):
-    box = pygame.Surface(size, pygame.SRCALPHA)
-    box.fill(color)
+    w, h = size
+    box = _fill_boxes.get(color)
+    if box is None or box.get_width() < w or box.get_height() < h:
+        if box is not None:
+            w, h = max(w, box.get_width()), max(h, box.get_height())
+        box = pygame.Surface((w, h), pygame.SRCALPHA)
+        box.fill(color)
+        _fill_boxes[color] = box
     return box
 
 
@@ -82,9 +93,10 @@ def rounded(surf, color, rect, radius=8, width=0):
 
 def veil(surf, rect=None, color=theme.VEIL):
     """Полупрозрачное затемнение прямоугольника (по умолчанию — всего экрана)."""
-    rect = pygame.Rect(rect or surf.get_rect())
+    # не `rect or ...`: пустой Rect ложен, и пустая полоса стала бы всем экраном
+    rect = surf.get_rect() if rect is None else pygame.Rect(rect)
     if rect.w > 0 and rect.h > 0:
-        surf.blit(_fill_box(rect.size, color), rect)
+        surf.blit(_fill_box(rect.size, color), rect, (0, 0, rect.w, rect.h))
 
 
 def shadow(surf, rect, radius=12):
@@ -479,7 +491,11 @@ def draw_genome_chart(surf, rect, points, slots=None, hover_x=None, origin=None)
                             top + pad + (1 - (v - lo) / (hi - lo)) * span_h))
         _lines(surf, VEGETARIAN_COLOR, segment, thick)
 
-        shown = values[i] if i is not None and values[i] is not None else present[-1]
+        shown = values[i] if i is not None else present[-1]
+        if shown is None:              # под курсором тик, когда травоядных не было
+            blit_text(surf, "bodyb", "нет", MUTED, "midright",
+                      midright=(rect.right - S(40), mid))
+            continue
         blit_text(surf, "bodyb", format_gene(name, shown), TEXT, "midright",
                   midright=(rect.right - S(40), mid))
         if first[g]:

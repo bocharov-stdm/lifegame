@@ -345,6 +345,32 @@ class TestRegressions(BoundedRunMixin, unittest.TestCase):
 
         self.assertTrue(divided and blocked, "доли подобраны так, что одна из веток не проверена")
 
+    def test_huge_body_stays_in_world_and_never_jumps(self):
+        """Тело крупнее мира не выходит за мир и не прыгает дальше своей скорости.
+
+        Баг: запас на тело брался целиком, и при размере больше половины мира
+        границы переворачивались (x_lo > x_hi): зажим в move() перекидывал
+        существо на 1000 px, а при размере больше высоты мира y уходил в минус.
+        При пологой цене размера (лаборатория) такие тела вырастают сами.
+        """
+        random.seed(0)
+        for size in (2500, 3500, 4100, 9000):
+            for min_y, max_y in ((5, 10), (0, 100), (90, 100)):
+                with self.subTest(size=size, layer=(min_y, max_y)):
+                    veg = Vegetarian(x=100, y=100,
+                                     genom=[size, 60, 400, 70, 30, min_y, max_y])
+                    self.assertLessEqual(veg.x_lo, veg.x_hi)
+                    self.assertLessEqual(veg.body_lo, veg.body_hi)
+                    for _ in range(30):                  # фиксированное число ходов
+                        x, y = veg.x, veg.y
+                        veg.energy = veg.max_energy
+                        veg.move([], [])
+                        self.assertLessEqual(math.hypot(veg.x - x, veg.y - y),
+                                             veg.speed + 1e-9, "прыжок дальше скорости")
+                        self.assertTrue(0 <= veg.x <= WORLD_WIDTH
+                                        and 0 <= veg.y <= WORLD_HEIGHT,
+                                        f"центр вне мира: ({veg.x:.0f}, {veg.y:.0f})")
+
     def test_child_is_born_inside_its_layer(self):
         """Ребёнок рождается внутри своего слоя и не на диагонали от родителя.
 
@@ -492,6 +518,18 @@ class TestRules(unittest.TestCase):
     """Правила по умолчанию — ровно конфиг, а изменённые доходят до существ."""
 
     BASE = VEGETARIAN_BASE_GENOM[:3]
+
+    def test_non_finite_rules_are_rejected(self):
+        """NaN и бесконечность — ошибка сразу, а не вечный цикл в mutate().
+
+        Баг: `sim_report.py --rule mutation_sigma=nan` зависал: mutate() ждёт
+        gauss >= -0.9, а с NaN сравнение ложно всегда, и ограничение по
+        времени не срабатывало — оно проверяется между тиками.
+        """
+        for key in Rules.keys():
+            for bad in (math.nan, math.inf, -math.inf):
+                with self.subTest(key=key, value=bad), self.assertRaises(ValueError):
+                    DEFAULT_RULES.with_(**{key: bad})
 
     def test_default_upkeep_is_the_config_formula(self):
         """Бит в бит прежняя формула: иначе сдвинулись бы все прогоны по сидам."""
@@ -758,6 +796,13 @@ class TestPopulationDynamics(unittest.TestCase):
 
 class TestReport(unittest.TestCase):
     """Отчёт sim_report.py — инструмент проверки баланса, и врать он не должен."""
+
+    def test_rule_parser_rejects_non_numbers(self):
+        for pair in ("mutation_sigma=nan", "plant_energy=inf", "size_power=abc",
+                     "nonsense=1", "plant_energy"):
+            with self.subTest(pair), self.assertRaises(SystemExit):
+                sim_report.parse_rules([pair])
+        self.assertEqual(sim_report.parse_rules(["plant_energy=80"]).plant_energy, 80.0)
 
     def test_summary_reports_cut_runs(self):
         """Сводка не пишет «всё в порядке», если прогон оборван раньше срока.

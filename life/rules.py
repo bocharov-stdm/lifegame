@@ -8,6 +8,7 @@
 # Значения по умолчанию — ровно константы из config.py, и арифметика с ними
 # та же бит в бит: прогоны по умолчанию не меняются ни на одно число.
 
+import math
 from dataclasses import dataclass, field, fields, replace
 
 from .config import *
@@ -42,6 +43,12 @@ class Rules:
         # сколько стоил. Иначе показатель 1.5 вместо 2.5 сделал бы размер почти
         # бесплатным целиком, и опыт мерил бы не то. При показателях из конфига
         # множитель — base ** 0.0, то есть ровно 1.0, и числа не сдвигаются.
+        # NaN и бесконечность ломают не арифметику, а циклы: mutate() ждёт
+        # gauss >= -0.9, а с сигмой NaN сравнение не выполнится никогда.
+        for key in self.keys():
+            value = getattr(self, key)
+            if not math.isfinite(value):
+                raise ValueError(f"правило {key}: нужно конечное число, а не {value!r}")
         set_ = object.__setattr__           # dataclass заморожен
         set_(self, "size_coef", SIZE_ENERGY_COEF * self.cost_scale
              * _BASE_SIZE ** (SIZE_ENERGY_POWER - self.size_power))

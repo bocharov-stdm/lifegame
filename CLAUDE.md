@@ -16,7 +16,7 @@ Russian. Keep it that way when editing or adding code.
 ```bash
 python main.py                                      # the game: menu, setup, window
 
-python -m unittest discover tests                   # full suite (76 tests, ~3 s, no display)
+python -m unittest discover tests                   # full suite (88 tests, ~3 s, no display)
 python -m unittest tests.test_simulation.TestGrid   # one class
 python -m unittest tests.test_simulation.TestGrid.test_grid_matches_brute_force   # one test
 
@@ -212,7 +212,9 @@ local variables instead of `self.x` in loops, squared distances instead of `math
 unrolled `min(max(...))` clamps, and genome-derived values (`upkeep`, `vision2`, layer bounds)
 precomputed once in `__init__` because the genome never changes during a lifetime. The band
 `body_lo..body_hi` always lies inside the world (a layer thinner than the body collapses to a line
-kept inside it), which is why `move()` has no separate world-height clamp. `Predator.upkeep` is
+kept inside it; the body margin is capped at half the world, so a body bigger than the world —
+reachable with a cheap size in the lab — sits on the middle line instead of flipping `x_lo > x_hi`
+and teleporting), which is why `move()` has no separate world-height clamp. `Predator.upkeep` is
 precomputed the same way.
 `TestPerformance.test_tick_budget_at_fixed_load` guards against regressions at a fixed 400/400/10
 load.
