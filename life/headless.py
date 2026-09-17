@@ -15,8 +15,6 @@
 import time
 
 from .world import World
-from .predator import Predator
-from .vegetarian import Vegetarian
 
 
 class SimResult:
@@ -61,7 +59,7 @@ def simulate(seed=None, ticks=400, sample_every=100,
              seconds=15.0, max_creatures=3000, max_total_work=25_000_000,
              n_vegetarians=None, n_predators=None,
              predator_speed=None, predator_vision=None,
-             on_tick=None):
+             rules=None, on_tick=None):
     """Гоняет симуляцию под четырьмя независимыми лимитами.
 
       ticks           — сколько тиков максимум
@@ -88,22 +86,18 @@ def simulate(seed=None, ticks=400, sample_every=100,
     Одного max_creatures недостаточно: взорваться могут растения, а счётчик
     существ этого не заметит — тик при этом станет неподъёмным.
 
-    n_* и predator_* позволяют подбирать баланс, не трогая config.py.
+    n_*, predator_* и rules (life/rules.py) позволяют подбирать баланс, не
+    трогая config.py; None — значение из конфига.
 
     on_tick(world) вызывается после каждого тика — для тех, кому мало снимков
-    раз в sample_every (например, график в тестах окна копит точки потиково).
+    раз в sample_every (например, чтобы копить свои точки потиково).
     """
-    world = World(seed=seed)
-
-    if n_vegetarians is not None:
-        world.vegetarians = [Vegetarian() for _ in range(n_vegetarians)]
-
-    if n_predators is not None or predator_speed is not None or predator_vision is not None:
-        count  = n_predators if n_predators is not None else len(world.predators)
-        kwargs = {}
-        if predator_speed  is not None: kwargs["speed"]  = predator_speed
-        if predator_vision is not None: kwargs["vision"] = predator_vision
-        world.predators = [Predator(**kwargs) for _ in range(count)]
+    start = {}
+    if n_vegetarians   is not None: start["n_vegetarians"]   = n_vegetarians
+    if n_predators     is not None: start["n_predators"]     = n_predators
+    if predator_speed  is not None: start["predator_speed"]  = predator_speed
+    if predator_vision is not None: start["predator_vision"] = predator_vision
+    world = World(seed=seed, rules=rules, **start)
 
     history     = [world.stats()]
     stop_reason = "готово"

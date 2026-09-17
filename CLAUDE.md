@@ -14,9 +14,9 @@ Russian. Keep it that way when editing or adding code.
 ## Commands
 
 ```bash
-python main.py                                      # run with the pygame window
+python main.py                                      # the game: menu, setup, window
 
-python -m unittest discover tests                   # full suite (34 tests, ~2 s, no display)
+python -m unittest discover tests                   # full suite (76 tests, ~3 s, no display)
 python -m unittest tests.test_simulation.TestGrid   # one class
 python -m unittest tests.test_simulation.TestGrid.test_grid_matches_brute_force   # one test
 
@@ -24,6 +24,7 @@ python sim_report.py                                # headless balance report, s
 python sim_report.py --seeds 1 2 3 --ticks 3000     # multi-seed summary
 python sim_report.py --predators 20 --predator-speed 18 --predator-vision 800
 python sim_report.py --ticks 3000 --max-work 500000000   # override the compute budget
+python sim_report.py --rule plant_energy=80 --rule size_power=1.5   # world rules (life/rules.py)
 ```
 
 There is no build step, no linter config, and no dependency manifest — only `pygame` is needed
@@ -35,17 +36,28 @@ console; prefix commands with `PYTHONIOENCODING=utf-8` (bash) to read it.
 ## Architecture
 
 **Logic is separated from rendering, and that split is the load-bearing design decision.**
-The layout follows one rule: **`life/` is the engine and knows nothing about the screen; the
-project root is the application layer** — window, rendering, CLI report. That is what lets tests
+The layout follows one rule: **`life/` is the engine and knows nothing about the screen;
+`app/` is the application layer** — window, screens, rendering — and the root holds only the
+entry points (`main.py`, `sim_report.py`). That is what lets tests
 and balance tuning run headless — orders of magnitude faster than watching the screen.
 
 The boundary is enforced, not merely documented: `TestLayering.test_engine_does_not_import_pygame`
 fails if importing `life/` ever pulls in pygame again. Entities must not grow `draw()` methods —
-new drawing goes in `render.py`.
+new drawing goes in `app/render.py`.
 
 - `life/config.py` — every tunable constant, each with a comment explaining *why* it has
   that value.
-- `life/world.py` — `World`: populations, `step()` (one tick), `stats()`.
+- `life/rules.py` — `Rules`, a frozen dataclass of the world rules the game's «Лаборатория»
+  exposes (plant rate and energy, mutation sigma, stat cost scale and exponents, predator
+  fertility and tank). `World` owns one and every creature gets it at birth; children inherit
+  `self.rules`. Changing an exponent renormalises its coefficient so the *base* genome still pays
+  the same — only the steepness changes. `DEFAULT_RULES` is `config.py` bit for bit (the
+  renormalising factor is exactly `base ** 0.0`); `TestRules` guards that, because any drift
+  shifts every seed. Never reach for module globals in entities for these values — two worlds
+  (menu backdrop and the game) live in one process.
+- `life/world.py` — `World(seed, rules, n_vegetarians, n_predators, predator_speed,
+  predator_vision)`: populations, `step()` (one tick), `stats()`. With default arguments it draws
+  random numbers exactly as before.
 - `life/grid.py` — `Grid`: uniform spatial hash for neighbour lookup, rebuilt each tick.
 - `life/plant.py` / `life/vegetarian.py` / `life/predator.py` — the entities. Pure logic,
   no pygame.
@@ -54,16 +66,43 @@ new drawing goes in `render.py`.
   pass lists) and converts it with `Genom(*genom)`; access genes by name, never by index. Being a
   tuple, it still supports `v.genom[i]`, which `World.stats()` relies on for averaging.
 - `life/headless.py` — `simulate()`: one engine shared by tests and `sim_report.py`.
-- `main.py` — window, controls (pause, single step, speed, click-to-select, graph toggle), game
-  loop. Population history for the graph is a `deque` sampled every `GRAPH_EVERY` ticks inside the
-  step loop, using list lengths rather than `world.stats()` (which averages the genome).
-  `pick_creature()` is deliberately pygame-free so tests can call it.
-- `render.py` — all drawing (`draw_world`, `draw_selection`, `draw_panel`, `draw_graph`,
-  `draw_stats`, `draw_hud`): the only module that knows about both pygame and the entities. Draw
-  order is plants → herbivores → predators, which is what determines overlap. Text and panel
-  backgrounds go through the `lru_cache`d `_text` / `_backdrop_box` — render text via `_text`, not
-  `font.render`, so per-frame redraws stay cheap. The drawn circle is the body: `size` and `DIAM`
-  are diameters, while a herbivore eats anything within `size` of its centre.
+- `main.py` — entry point only: `App().run()`.
+- `app/` — the game. Four modules are **pygame-free on purpose** so tests check them without a
+  display (`TestAppLayering` enforces it):
+  - `settings.py` — `FIELDS`, the single spec of every slider (label, hint, range, step, format,
+    tab). The setup screen is built from it and `load()` clamps the settings file with it.
+    `Settings` holds start conditions, rules and display prefs; `rules()` / `make_world(seed)`
+    turn it into an engine world. Plant growth is a *multiplier* on the config rate, because
+    `PLANT_SPAWN_CHANCE` is 2.50008, not 2.5, and would not sit on a slider grid. Saved
+    atomically to `user_settings.json` (gitignored); bad files fall back to defaults.
+  - `session.py` — `Session`, a running game: speed, pause, events, end states (`"extinct"`,
+    `"explosion"` above `EXPLOSION_LIMIT`). `advance()` runs at most `speed` ticks within a frame
+    budget (at least one), so the window never freezes. **It keeps its own RNG state** and swaps
+    it in around its ticks: the menu backdrop and the seed dice also use `random`, and without
+    this «Заново» would not replay the same game. `TestSession.test_same_as_headless` checks a
+    paused/interleaved session against `simulate()`. `pick_creature()` lives here.
+  - `history.py` — graph points every `GRAPH_EVERY` ticks: counts averaged over `DIVIDE_PERIOD`
+    ticks (division happens in bursts and draws a sawtooth otherwise) plus the average genome.
+    A recent window and a whole-game series thinned 2x when full. `origin` keeps the first
+    average genome: the genome chart's «change from start» must not use the first point of
+    whatever slice is shown.
+  - `camera.py` — world↔screen transform, zoom to cursor, pan, clamp, follow. Following moves
+    the camera by the target's own displacement first and eases only the remainder, otherwise a
+    creature at x32 outruns the camera.
+  - `theme.py` (palette, `S()` UI scaling, Segoe UI loaded by file path — `SysFont("segoeui")`
+    picks the Light face — and Windows DPI awareness), `widgets.py`, `render.py`, `scenes/`
+    (menu, setup, prefs, help, game with pause/end overlays) and `app.py` (window, scene
+    switching, fullscreen, resize).
+  - `render.py` is the only module that knows about both pygame and the entities. Draw order is
+    plants → herbivores → predators, which is what determines overlap; anything whose *body*
+    is outside the camera is skipped (cull by body, not centre — size is a gene and can reach
+    thousands). Text goes through the `lru_cache`d `_text` (use `render.text` /
+    `blit_text`, not `font.render`), and the game scene caches its chart surface. The drawn
+    circle is the body: `size` and `DIAM` are diameters, while a herbivore eats anything within
+    `size` of its centre.
+  - All UI sizes go through `theme.S()`. `App.ui_scale()` takes the system/user scale but
+    shrinks it when the window is smaller than `MIN_W x MIN_H`, so layouts are designed for a
+    960x600 logical minimum.
 - `sim_report.py` — CLI report over `simulate()`. Its compute budget scales with `--ticks`
   (`WORK_PER_TICK`), and the summary lists runs cut short by the budget or deadline instead of
   calling them healthy.
@@ -72,16 +111,22 @@ new drawing goes in `render.py`.
 
 **Window speed is not `TICKS_PER_FRAME`.** That config constant is an engine parameter — it drives
 the plant spawn loop inside `World.step()` and `FLEE_TICKS` — so changing it changes the balance.
-The window's speed setting just calls `world.step()` several times per frame. For the same reason
-anything periodic in `main.py` counts frames, not `world.tick`: at higher speeds the tick counter
-skips past multiples.
+The game's speed (`session.SPEEDS`) just calls `world.step()` several times per frame. For the
+same reason anything periodic is checked per tick inside `Session._after_tick`, not per frame
+against `world.tick`: at higher speeds the tick counter skips past multiples.
 
-`tests/test_render.py` draws onto an in-memory `pygame.Surface` under `SDL_VIDEODRIVER=dummy` and
-skips itself when pygame is missing. It is the only test file allowed to import pygame. It grows
-live worlds through `simulate(..., on_tick=...)`, never a bare `world.step()` loop, so the same
-limits apply there as everywhere else.
-pygame's default font has no glyph for arrows like `→` (renders as a box) — spell keys out in
-on-screen text.
+`tests/test_app.py` is the only test file allowed to import pygame; its pygame parts skip
+themselves when pygame is missing. `App(headless=True)` draws into a plain `Surface` and
+`App.frame(events, dt)` is exactly one frame, so tests drive whole screens with synthetic events
+and a fixed number of frames — no `while`. `TestLayout` renders every screen at several window
+sizes and UI scales and fails if a widget leaves the window, widgets overlap, a label does not
+fit (`Widget.problems()`) or the game chart collapses: run it after any layout change, and add
+new widgets to a scene's `widgets` list so it sees them. Tests write settings only to temp dirs.
+Fonts have no glyphs for arrows and similar symbols (they render as boxes): spell keys out in
+on-screen text, and draw icons with primitives (`render.draw_icon`).
+
+To look at the UI, render screens to PNG under `SDL_VIDEODRIVER=dummy` with
+`App(headless=True)` and `pygame.image.save(app.screen, ...)`.
 
 Inside `life/`, intra-package imports are relative (`from .config import *`), so the package does
 not care where it is launched from.
@@ -139,6 +184,11 @@ radius equals vision (benefit ~ vision²), so cost must grow steeper — hence `
 Current values are validated by ~3000-tick runs over several seeds: both populations survive,
 predator–prey oscillation is visible, numbers stay in a playable corridor. Re-validate with
 `python sim_report.py --seeds 1 2 3 --ticks 3000` after touching `life/config.py`.
+
+The lab slider ranges in `app/settings.py` were checked with `sim_report.py --rule ...` at both
+ends of every range (2000 ticks, two seeds): every run finishes, the worst case (max growth, max
+plant energy, min cost) peaks near 3000 creatures at ~11 ms/tick and is caught by the session's
+explosion stop. Re-check the extremes when widening a range.
 
 ### Termination guarantees
 

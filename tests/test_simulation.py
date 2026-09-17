@@ -42,6 +42,7 @@ from life.headless   import simulate
 from life.plant      import Plant
 from life.vegetarian import Vegetarian
 from life.predator   import Predator
+from life.rules      import DEFAULT_RULES, Rules
 from life.world      import World
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -197,23 +198,23 @@ class TestRegressions(BoundedRunMixin, unittest.TestCase):
         цикл, — ребёнок попадал в текущий тик. Проверяем по энергии: движение
         её тратит, значит нетронутая энергия = ребёнок не обрабатывался.
         """
-        world = World(seed=5)
-        world.vegetarians = []                   # пустой мир — тик почти бесплатный
-        world.plants      = []
+        # Деление хищника случайно (predator_divide_chance), и ждать удачного
+        # броска значит зависеть от сида. Здесь шанс равен единице: хищник
+        # делится ровно на этом тике. Правило задаёт мир, а ребёнок его
+        # наследует — заодно проверено и это.
+        rules = DEFAULT_RULES.with_(predator_divide_chance=1.0)
+        world = World(seed=5, rules=rules,
+                      n_vegetarians=0, n_predators=1)   # пустой мир — тик почти бесплатный
         parent = world.predators[0]
-        world.predators = [parent]
         parent.energy = parent.max_energy        # сытый — готов делиться
         world.tick = 0                           # tick % 30 == 0 → ветка размножения
 
-        # Деление хищника случайно (PREDATOR_DIVIDE_CHANCE), и ждать удачного
-        # броска значит зависеть от сида. Здесь шанс равен единице: хищник
-        # делится ровно на этом тике.
-        with mock.patch("life.predator.PREDATOR_DIVIDE_CHANCE", 1.0):
-            world.step()
+        world.step()
 
         newborns = [p for p in world.predators if p is not parent]
         self.assertEqual(len(newborns), 1, "хищник не поделился — тест бессмыслен")
         child = newborns[0]
+        self.assertIs(child.rules, rules, "ребёнок не унаследовал правила мира")
         self.assertEqual(
             child.energy, child.max_energy * PREDATOR_CHILD_ENERGY,
             "ребёнок потратил энергию, значит его обработали в тике рождения",
@@ -484,6 +485,71 @@ class TestGrid(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Правила мира (life/rules.py)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestRules(unittest.TestCase):
+    """Правила по умолчанию — ровно конфиг, а изменённые доходят до существ."""
+
+    BASE = VEGETARIAN_BASE_GENOM[:3]
+
+    def test_default_upkeep_is_the_config_formula(self):
+        """Бит в бит прежняя формула: иначе сдвинулись бы все прогоны по сидам."""
+        for size, speed, vision in (self.BASE, (PREDATOR_DIAM, 12, 500.0),
+                                    (37.3, 11.9, 612.4)):
+            old = (SIZE_ENERGY_COEF  * size   ** SIZE_ENERGY_POWER +
+                   SPEED_ENERGY_COEF * speed  ** SPEED_ENERGY_POWER +
+                   SIGHT_ENERGY_COEF * vision ** SIGHT_ENERGY_POWER)
+            self.assertEqual(DEFAULT_RULES.upkeep(size, speed, vision), old)
+
+    def test_power_changes_steepness_not_base_cost(self):
+        """Другой показатель: базовый геном стоит столько же, крупный — иначе."""
+        base = DEFAULT_RULES.upkeep(*self.BASE)
+        flat = DEFAULT_RULES.with_(size_power=1.5, sight_power=1.0)
+        self.assertAlmostEqual(flat.upkeep(*self.BASE), base, places=12)
+
+        big = (160, 10, 1600)                       # размер и зрение вчетверо больше
+        self.assertLess(flat.upkeep(*big), DEFAULT_RULES.upkeep(*big),
+                        "пологая цена должна дешевить крупные статы")
+
+    def test_cost_scale_scales_everything(self):
+        double = DEFAULT_RULES.with_(cost_scale=2.0)
+        self.assertAlmostEqual(double.upkeep(*self.BASE),
+                               2 * DEFAULT_RULES.upkeep(*self.BASE), places=12)
+
+    def test_unknown_rule_is_an_error(self):
+        with self.assertRaises(TypeError):
+            DEFAULT_RULES.with_(no_such_rule=1)
+
+    def test_rules_reach_creatures_and_children(self):
+        """Энергия растения, сигма мутаций и темп роста берутся из правил мира."""
+        rules = Rules(plant_energy=7, mutation_sigma=0.0, plant_rate=4.0)
+        world = World(seed=3, rules=rules, n_vegetarians=1, n_predators=0)
+        veg = world.vegetarians[0]
+        self.assertIs(veg.rules, rules)
+
+        veg.energy = 1
+        food = Plant()
+        food.x, food.y = veg.x, veg.y
+        veg.try_eat([food])
+        self.assertEqual(veg.energy, 1 + 7, "энергия растения не из правил")
+
+        self.assertEqual(tuple(veg.mutate()), tuple(veg.genom),
+                         "сигма 0 из правил должна давать точную копию")
+
+        veg.energy = veg.max_energy
+        offspring = []
+        veg.maybe_divide(offspring)
+        self.assertEqual(len(offspring), 1, "не поделилось — тест бессмыслен")
+        self.assertIs(offspring[0].rules, rules, "ребёнок не унаследовал правила")
+
+        world.vegetarians = []
+        world.plants = []
+        world.step()
+        self.assertEqual(len(world.plants), 4, "темп роста растений не из правил")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Границы слоёв проекта
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -495,7 +561,7 @@ class TestLayering(unittest.TestCase):
 
         Раньше у каждой сущности был свой draw(), поэтому headless-прогон
         импортировал pygame, хотя дисплея не касался. Отрисовка живёт в
-        render.py, и эта граница должна оставаться на месте.
+        app/render.py, и эта граница должна оставаться на месте.
 
         Проверять приходится в подпроцессе: в самом наборе тестов pygame может
         уже оказаться в sys.modules, и проверка стала бы пустышкой.

@@ -4,6 +4,7 @@
     python sim_report.py --ticks 1500 --seed 3
     python sim_report.py --predators 20 --predator-speed 18 --predator-vision 800
     python sim_report.py --seeds 1 2 3 42         # сводка по нескольким прогонам
+    python sim_report.py --rule plant_energy=80 --rule size_power=1.5   # правила мира
 
 Прогон всегда ограничен по тикам, по часам, по потолку популяции и по бюджету
 вычислений, поэтому зависнуть или уехать в бесконечность не может.
@@ -13,12 +14,29 @@ import argparse
 
 from life.genome   import Genom, GENE_LABELS
 from life.headless import simulate
+from life.rules    import DEFAULT_RULES, Rules
 
 # Бюджет вычислений растёт с длиной прогона. Прежний фиксированный (25 млн, как
 # у тестов на 400 тиков) обрывал здоровые прогоны на 3000 тиков «перегрузкой»,
 # а сводка при этом рапортовала, что всё в порядке. 60 тысяч на тик — та же
 # доля, что у тестов, то есть примерно шестикратный запас над здоровым расходом.
 WORK_PER_TICK = 60_000
+
+
+def parse_rules(pairs):
+    """--rule КЛЮЧ=ЗНАЧЕНИЕ (сколько угодно раз) -> Rules; ключи — поля life/rules.py."""
+    changes = {}
+    for pair in pairs:
+        key, sep, value = pair.partition("=")
+        key = key.strip()
+        if not sep or key not in Rules.keys():
+            raise SystemExit(f"--rule {pair!r}: ожидается КЛЮЧ=ЧИСЛО, ключи: "
+                             + ", ".join(Rules.keys()))
+        try:
+            changes[key] = float(value)
+        except ValueError:
+            raise SystemExit(f"--rule {pair!r}: {value!r} — не число")
+    return DEFAULT_RULES.with_(**changes)
 
 
 def print_run(res, title):
@@ -83,6 +101,8 @@ def main():
     p.add_argument("--predators",   type=int, help="стартовое число хищников")
     p.add_argument("--predator-speed",  type=float)
     p.add_argument("--predator-vision", type=float)
+    p.add_argument("--rule", action="append", default=[], metavar="КЛЮЧ=ЗНАЧЕНИЕ",
+                   help="правило мира из life/rules.py, например plant_energy=80")
     args = p.parse_args()
 
     max_work = args.max_work if args.max_work is not None else WORK_PER_TICK * args.ticks
@@ -93,6 +113,7 @@ def main():
         max_total_work=max_work,
         n_vegetarians=args.vegetarians, n_predators=args.predators,
         predator_speed=args.predator_speed, predator_vision=args.predator_vision,
+        rules=parse_rules(args.rule),
     )
 
     if args.seeds:

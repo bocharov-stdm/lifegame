@@ -2,6 +2,7 @@
 
 import random, math
 from .config import *
+from .rules  import DEFAULT_RULES
 
 
 class Predator:
@@ -10,20 +11,19 @@ class Predator:
     def __init__(self, x=None, y=None,
                  energy=None,
                  speed=PREDATOR_BASE_SPEED,
-                 vision=PREDATOR_BASE_VISION):
+                 vision=PREDATOR_BASE_VISION,
+                 rules=None):
+        # правила мира (цена статов, запас энергии, плодовитость); дети наследуют их
+        self.rules = rules = rules or DEFAULT_RULES
         self.x = x if x is not None else random.randint(self.DIAM, WORLD_WIDTH  - self.DIAM)
         self.y = y if y is not None else random.randint(self.DIAM, WORLD_HEIGHT - self.DIAM)
-        self.max_energy = PREDATOR_MAX_ENERGY
+        self.max_energy = rules.predator_max_energy
         self.energy = energy if energy is not None else self.max_energy * 0.5
         self.speed  = speed
         self.vision = vision
         self.alive  = True
         # скорость и зрение не меняются всю жизнь — расход считаем один раз
-        self.upkeep = (
-                SIZE_ENERGY_COEF  * self.DIAM   ** SIZE_ENERGY_POWER +
-                SPEED_ENERGY_COEF * self.speed  ** SPEED_ENERGY_POWER +
-                SIGHT_ENERGY_COEF * self.vision ** SIGHT_ENERGY_POWER
-        )
+        self.upkeep = rules.upkeep(self.DIAM, self.speed, self.vision)
         self._choose_new_target()
 
     # ---------- утилиты ----------
@@ -107,13 +107,13 @@ class Predator:
 
     def maybe_divide(self, predators):
         if (self.energy >= self.max_energy * PREDATOR_REPRO_THRESHOLD
-                and random.random() > 1 - PREDATOR_DIVIDE_CHANCE):
+                and random.random() > 1 - self.rules.predator_divide_chance):
             self.energy -= self.max_energy * PREDATOR_REPRO_COST
             cx = min(max(self.x + random.randint(-300, 300), self.DIAM), WORLD_WIDTH  - self.DIAM)
             cy = min(max(self.y + random.randint(-300, 300), self.DIAM), WORLD_HEIGHT - self.DIAM)
             child_speed  = self.speed  if random.random() > 0.6 else self._mutate(self.speed)
             child_vision = self.vision if random.random() > 0.6 else self._mutate(self.vision)
             predators.append(Predator(cx, cy, self.max_energy * PREDATOR_CHILD_ENERGY,
-                                      child_speed, child_vision))
+                                      child_speed, child_vision, rules=self.rules))
             self._choose_new_target()
     # ----------------------------------

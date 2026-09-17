@@ -3,11 +3,14 @@
 import random, math
 from .config import *
 from .genome import Genom, PERCENT_GENES
+from .rules  import DEFAULT_RULES
 
 class Vegetarian:
 
     # ── инициализация ────────────────────────────────────────────────────────
-    def __init__(self, x=None, y=None, energy=None, genom=None):
+    def __init__(self, x=None, y=None, energy=None, genom=None, rules=None):
+        # правила мира (цена статов, энергия растения, мутации); дети наследуют их
+        self.rules = rules = rules or DEFAULT_RULES
         if genom is None:
             genom = VEGETARIAN_BASE_GENOM
         genom = Genom(*genom)          # принимаем и список (конфиг, тесты), и Genom
@@ -71,11 +74,7 @@ class Vegetarian:
         # Геном не меняется всю жизнь, поэтому всё производное от него считается
         # один раз здесь, а не заново на каждом тике в move(). Особенно расход
         # энергии: три возведения в степень за тик на каждое существо.
-        self.upkeep = (
-                SIZE_ENERGY_COEF  * self.size   ** SIZE_ENERGY_POWER +
-                SPEED_ENERGY_COEF * self.speed  ** SPEED_ENERGY_POWER +
-                SIGHT_ENERGY_COEF * self.vision ** SIGHT_ENERGY_POWER
-        )
+        self.upkeep = rules.upkeep(self.size, self.speed, self.vision)
         # квадраты радиусов: сравнивать квадраты расстояний дешевле, чем звать hypot
         self.vision2 = self.vision * self.vision
         self.size2   = self.size * self.size
@@ -225,7 +224,7 @@ class Vegetarian:
             return False
 
         # пополняем энергию
-        gain = ENERGY_FROM_PLANT * eaten
+        gain = self.rules.plant_energy * eaten
         self.energy = min(self.max_energy, self.energy + gain)
 
         # ► сразу берём новую случайную цель — перестаём топтаться на месте
@@ -233,7 +232,9 @@ class Vegetarian:
 
         return True
 
-    def mutate(self, sigma=VEGETARIAN_SIGMA):
+    def mutate(self, sigma=None):
+        if sigma is None:
+            sigma = self.rules.mutation_sigma
         new_genom = []
         for name, value in zip(Genom._fields, self.genom):
             while True:
@@ -274,5 +275,6 @@ class Vegetarian:
         cy = self.y + random.uniform(-span, span)
 
         offspring.append(
-            Vegetarian(x=cx, y=cy, energy=child_energy, genom=child_genom)
+            Vegetarian(x=cx, y=cy, energy=child_energy, genom=child_genom,
+                       rules=self.rules)
         )

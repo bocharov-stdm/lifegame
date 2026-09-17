@@ -1,7 +1,7 @@
 # world.py — состояние симуляции и один логический тик.
 #
 # Здесь нет ни pygame-окна, ни отрисовки: World можно гонять headless
-# (тесты, подбор баланса на 100k тиков). Рисует render.py, события ловит main.py.
+# (тесты, подбор баланса на 100k тиков). Рисует и ловит события пакет app/.
 
 import random
 
@@ -10,18 +10,32 @@ from .grid       import Grid
 from .plant      import Plant
 from .vegetarian import Vegetarian
 from .predator   import Predator
+from .rules      import DEFAULT_RULES
 
 
 class World:
     """Популяции и правила одного тика."""
 
-    def __init__(self, seed=None):
+    def __init__(self, seed=None, rules=None,
+                 n_vegetarians=VEGETARIANS_AT_START,
+                 n_predators=PREDATORS_AT_START,
+                 predator_speed=PREDATOR_BASE_SPEED,
+                 predator_vision=PREDATOR_BASE_VISION):
+        """Мир со стартовыми популяциями.
+
+        rules — правила мира (life/rules.py); без них — значения из config.py.
+        При аргументах по умолчанию случайные числа тянутся в прежнем порядке,
+        поэтому прогоны с тем же сидом не сдвигаются.
+        """
         if seed is not None:
             random.seed(seed)
+        self.rules = rules = rules or DEFAULT_RULES
 
-        self.plants      = [Plant()      for _ in range(PLANTS_AT_START)]
-        self.vegetarians = [Vegetarian() for _ in range(VEGETARIANS_AT_START)]
-        self.predators   = [Predator()   for _ in range(PREDATORS_AT_START)]
+        self.plants      = [Plant() for _ in range(PLANTS_AT_START)]
+        self.vegetarians = [Vegetarian(rules=rules) for _ in range(n_vegetarians)]
+        self.predators   = [Predator(speed=predator_speed, vision=predator_vision,
+                                     rules=rules)
+                            for _ in range(n_predators)]
 
         self.tick = 0
 
@@ -33,16 +47,18 @@ class World:
         self.tick += 1
 
     def _spawn_plants(self):
-        # PLANT_SPAWN_CHANCE — это ожидаемое число растений за тик, а не вероятность:
-        # целую часть спауним всегда, дробную — с соответствующим шансом.
+        # plant_rate (по умолчанию PLANT_SPAWN_CHANCE) — это ожидаемое число
+        # растений за тик, а не вероятность: целую часть спауним всегда,
+        # дробную — с соответствующим шансом.
         #
         # Выше PLANT_MAX не растём: без травоядных растения копились бы бесконечно.
         # Жребий тянется в любом случае — так поток случайных чисел не зависит от
         # того, упёрлись ли мы в потолок. Съеденное выметено в конце прошлого тика,
         # поэтому len(self.plants) здесь — ровно живые растения.
+        rate = self.rules.plant_rate
         for _ in range(TICKS_PER_FRAME):
-            count = int(PLANT_SPAWN_CHANCE)
-            if random.random() < PLANT_SPAWN_CHANCE - count:
+            count = int(rate)
+            if random.random() < rate - count:
                 count += 1
             count = min(count, max(0, PLANT_MAX - len(self.plants)))
             self.plants.extend(Plant() for _ in range(count))
