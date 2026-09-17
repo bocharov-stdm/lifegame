@@ -60,28 +60,42 @@ class World:
     def _update_predators(self):
         cell = max(GRID_MIN_CELL, PREDATOR_DIAM,
                    max((pr.vision for pr in self.predators), default=0.0))
-        prey = Grid(cell, self.vegetarians)
+        prey_near = Grid(cell, self.vegetarians).near
+        divide    = self.tick % DIVIDE_PERIOD == 0
 
         offspring     = []     # дети текущего тика
         new_predators = []
 
         for pr in self.predators:
-            pr.move(prey.near(pr.x, pr.y))
-            pr.try_eat(prey.near(pr.x, pr.y))   # уже с новой позиции
+            pr.move(prey_near(pr.x, pr.y))
+            if not pr.alive:                   # умер от голода на этом ходу:
+                continue                       # мёртвый не охотится и не делится
+            pr.try_eat(prey_near(pr.x, pr.y))   # уже с новой позиции
 
-            if self.tick % DIVIDE_PERIOD == 0:
+            if divide:
                 pr.maybe_divide(offspring)     # ← в буфер, а не в список итерации
 
-            if pr.alive:
-                new_predators.append(pr)
+            new_predators.append(pr)
 
         self.predators = new_predators + offspring
 
     def _update_vegetarians(self):
+        # Радиусы запросов травоядного: зрение (move) и размер (try_eat). Но
+        # try_eat спрашивает не свою клетку, а ту же окрестность, что и move, —
+        # вокруг позиции ДО шага. Шаг не длиннее speed, поэтому клетка берётся
+        # не меньше size + speed: тогда блок 3x3 вокруг старой позиции накрывает
+        # всё, до чего можно дотянуться с новой. Результат тот же — try_eat ест
+        # всё в радиусе, порядок кандидатов ему не важен, — а запрос к сетке на
+        # каждое травоядное на один меньше.
         cell = max(GRID_MIN_CELL,
-                   max((max(v.vision, v.size) for v in self.vegetarians), default=0.0))
-        food    = Grid(cell, self.plants)
-        hunters = Grid(cell, self.predators)
+                   max((max(v.vision, v.size + v.speed) for v in self.vegetarians),
+                       default=0.0))
+        # Здесь самый горячий цикл тика, поэтому методы взяты в локальные имена,
+        # а без хищников сетку хищников не спрашиваем вовсе.
+        food_near    = Grid(cell, self.plants).near
+        hunters_near = Grid(cell, self.predators).near if self.predators else None
+        no_hunters   = ()
+        divide       = self.tick % DIVIDE_PERIOD == 0
 
         offspring       = []   # дети текущего тика
         new_vegetarians = []
@@ -90,14 +104,17 @@ class World:
             if not v.alive:                    # съеден хищником в этом же тике
                 continue
 
-            v.move(food.near(v.x, v.y), hunters.near(v.x, v.y))
-            v.try_eat(food.near(v.x, v.y))     # уже с новой позиции
+            x, y = v.x, v.y
+            food = food_near(x, y)
+            v.move(food, hunters_near(x, y) if hunters_near else no_hunters)
+            if not v.alive:                    # умер от голода на этом ходу:
+                continue                       # мёртвый не ест и не делится
+            v.try_eat(food)                    # ест уже с новой позиции, см. выше
 
-            if self.tick % DIVIDE_PERIOD == 0:
+            if divide:
                 v.maybe_divide(offspring)
 
-            if v.alive:
-                new_vegetarians.append(v)
+            new_vegetarians.append(v)
 
         self.vegetarians = new_vegetarians + offspring
         self.plants      = [p for p in self.plants if p.alive]   # выметаем съеденное

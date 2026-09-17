@@ -16,10 +16,13 @@
     том состоянии, до которого дошли. Тест не падает от медленной машины,
     но и не превращается в пустышку — инварианты всё равно проверены.
 
-Весь набор укладывается примерно в 10 секунд.
+Весь набор укладывается в несколько секунд.
 pygame-окно не требуется: движок живёт в пакете life/ и не трогает дисплей.
 """
 
+import contextlib
+import copy
+import io
 import math
 import random
 import subprocess
@@ -31,8 +34,9 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import sim_report
 from life.config     import *
-from life.genome     import Genom
+from life.genome     import Genom, PERCENT_GENES
 from life.grid       import Grid
 from life.headless   import simulate
 from life.plant      import Plant
@@ -75,10 +79,10 @@ class BoundedRunMixin:
 
 
 # Базовый прогон считается один раз на весь набор: он нужен сразу нескольким
-# тестам, а 600 тиков с эволюцией — самая дорогая часть всего набора.
-BASELINE_TICKS   = 400            # ~3.8 млн работы, ~0.7 с
+# тестам, а 400 тиков с эволюцией — самая дорогая часть всего набора.
+BASELINE_TICKS   = 400            # ~3.6 млн работы, ~0.3 с
 BASELINE_CEILING = 3000           # ~6x от наблюдаемого пика популяции (~480)
-BASELINE_WORK    = 25_000_000     # ~6x от расхода здорового прогона (3.8 млн)
+BASELINE_WORK    = 25_000_000     # ~7x от расхода здорового прогона (3.6 млн)
 _baseline_cache  = None
 
 
@@ -198,23 +202,191 @@ class TestRegressions(BoundedRunMixin, unittest.TestCase):
         world.plants      = []
         parent = world.predators[0]
         world.predators = [parent]
+        parent.energy = parent.max_energy        # сытый — готов делиться
+        world.tick = 0                           # tick % 30 == 0 → ветка размножения
 
-        child, deadline = None, time.perf_counter() + 10.0
-        for _ in range(300):                     # жёсткий потолок по тикам
-            parent.energy = parent.max_energy    # держим сытым, чтобы делился
+        # Деление хищника случайно (PREDATOR_DIVIDE_CHANCE), и ждать удачного
+        # броска значит зависеть от сида. Здесь шанс равен единице: хищник
+        # делится ровно на этом тике.
+        with mock.patch("life.predator.PREDATOR_DIVIDE_CHANCE", 1.0):
             world.step()
-            newborns = [p for p in world.predators if p is not parent]
-            if newborns:
-                child = newborns[0]
-                break
-            if time.perf_counter() > deadline:   # и по часам
-                break
 
-        self.assertIsNotNone(child, "хищник так и не поделился — тест бессмыслен")
+        newborns = [p for p in world.predators if p is not parent]
+        self.assertEqual(len(newborns), 1, "хищник не поделился — тест бессмыслен")
+        child = newborns[0]
         self.assertEqual(
-            child.energy, child.max_energy * 0.25,
+            child.energy, child.max_energy * PREDATOR_CHILD_ENERGY,
             "ребёнок потратил энергию, значит его обработали в тике рождения",
         )
+
+    def test_starved_vegetarian_does_not_act(self):
+        """Травоядное, умершее от голода на своём ходу, не ест и не размножается.
+
+        Баг: move() ставил alive=False, но try_eat и maybe_divide вызывались
+        следом без проверки. Труп съедал растения (160 раз за 5 прогонов по
+        3000 тиков) и даже оставлял потомство.
+        """
+        random.seed(3)
+        world = World(seed=3)
+        world.predators = []
+
+        veg = Vegetarian(x=1000, y=1000)
+        veg.energy = veg.upkeep / 2              # этот ход — последний
+        plants = []
+        for dx in (0, 5):                        # двух растений хватило бы на деление
+            p = Plant()
+            p.x, p.y = veg.x + dx, veg.y
+            plants.append(p)
+        world.vegetarians = [veg]
+        world.plants      = list(plants)
+
+        world.tick = 0                           # tick % 30 == 0 → ветка размножения
+        world.step()
+
+        self.assertFalse(veg.alive, "не умер — тест бессмыслен")
+        self.assertEqual(world.vegetarians, [], "умершее от голода травоядное оставило потомство")
+        for p in plants:
+            self.assertIn(p, world.plants, "умершее от голода травоядное съело растение")
+
+    def test_starved_predator_does_not_hunt(self):
+        """Хищник, умерший от голода на своём ходу, никого не съедает.
+
+        Тот же баг у хищников: мёртвый хищник убивал добычу (3 раза за 5 прогонов).
+        """
+        random.seed(3)
+        world = World(seed=3)
+        world.plants = []
+
+        prey   = Vegetarian(x=1000, y=1000)
+        hunter = Predator(x=1010, y=1000)        # добыча в пасти
+        hunter.energy = hunter.upkeep / 2        # этот ход — последний
+        world.vegetarians = [prey]
+        world.predators   = [hunter]
+
+        world.step()
+
+        self.assertFalse(hunter.alive, "не умер — тест бессмыслен")
+        self.assertTrue(prey.alive, "умерший от голода хищник съел добычу")
+        self.assertEqual(world.predators, [], "умерший хищник остался в мире")
+
+    def test_predator_target_is_reachable(self):
+        """Цель блуждания хищника лежит там, куда он может дойти.
+
+        Баг: цель бралась до самой стены, а сам хищник держится в DIAM от края.
+        Цель у стены была недостижима: хищник упирался в стену и стоял, пока мимо
+        не пройдёт добыча. На сиде 1 один так простоял 426 тиков и умер от голода.
+        """
+        random.seed(0)
+        d = Predator.DIAM
+        spots = [(d, d), (WORLD_WIDTH - d, d), (d, WORLD_HEIGHT - d),
+                 (WORLD_WIDTH - d, WORLD_HEIGHT - d), (WORLD_WIDTH / 2, WORLD_HEIGHT / 2)]
+        for x, y in spots:
+            pr = Predator(x=x, y=y)
+            for _ in range(200):                     # фиксированное число целей
+                pr._choose_new_target()
+                self.assertTrue(d <= pr.tx <= WORLD_WIDTH - d,
+                                f"цель недостижима: x={pr.tx:.1f}, хищник у ({x}, {y})")
+                self.assertTrue(d <= pr.ty <= WORLD_HEIGHT - d,
+                                f"цель недостижима: y={pr.ty:.1f}, хищник у ({x}, {y})")
+
+        # и в движении: хищник из угла без добычи не застревает ни на тик
+        pr = Predator(x=d, y=d)
+        pr.energy = pr.upkeep * 10_000               # голод здесь ни при чём
+        stood = 0
+        for _ in range(2000):                        # фиксированное число ходов
+            before = (pr.x, pr.y)
+            pr.move([])
+            stood += (pr.x, pr.y) == before
+        self.assertEqual(stood, 0, f"хищник без добычи стоял на месте {stood} тиков")
+
+    def test_predator_ignores_eaten_prey(self):
+        """Хищник не гонится за травоядным, которого в этом тике уже съели.
+
+        Баг: поиск добычи не смотрел на alive, и хищник шёл к трупу, пока тот
+        не выметут в конце тика (1863 хода за 5 прогонов).
+        """
+        random.seed(0)
+        hunter = Predator(x=1000, y=1000)
+        corpse = Vegetarian(x=1100, y=1000)          # ближе, но уже съеден
+        corpse.alive = False
+        living = Vegetarian(x=1000, y=1300)
+
+        hunter.move([corpse, living])
+
+        self.assertEqual(hunter.x, 1000, "хищник свернул к трупу")
+        self.assertGreater(hunter.y, 1000, "хищник не пошёл к живой добыче")
+
+    def test_parent_keeps_reserve_after_division(self):
+        """После деления у родителя остаётся не меньше VEGETARIAN_REPRO_RESERVE.
+
+        Баг: резерв проверялся до вычета доли ребёнка. Родитель с большой долей
+        отдавал всё до нуля и ниже (201 раз за 5 прогонов) и умирал на следующем
+        ходу, а хищник, съевший такого, терял энергию.
+        """
+        random.seed(0)
+        energy = 60                    # порог 30% от бака 100 + резерв 20 = 50 — делиться можно
+        divided = blocked = 0
+        for share in (10, 30, 50, 70, 90):
+            with self.subTest(share=share):
+                parent = Vegetarian(x=1000, y=1000, energy=energy,
+                                    genom=[40, 10, 400, 30, share, 5, 100])
+                kids = []
+                parent.maybe_divide(kids)
+                if kids:
+                    divided += 1
+                    self.assertGreaterEqual(
+                        parent.energy, VEGETARIAN_REPRO_RESERVE,
+                        f"доля {share}%: после деления у родителя {parent.energy:.1f}",
+                    )
+                else:
+                    blocked += 1
+                    self.assertEqual(parent.energy, energy, "деления не было, а энергия ушла")
+
+        self.assertTrue(divided and blocked, "доли подобраны так, что одна из веток не проверена")
+
+    def test_child_is_born_inside_its_layer(self):
+        """Ребёнок рождается внутри своего слоя и не на диагонали от родителя.
+
+        Баги: y ребёнка зажималась только в мир, а слой у ребёнка уже свой,
+        мутировавший, — первый ход телепортировал его в слой (бывало на 2324 px).
+        А смещение по x и по y было одним и тем же числом, поэтому все дети
+        ложились на диагональ от родителя.
+        """
+        random.seed(0)
+        # родитель у нижнего края слоя: у детей эта граница мутирует и вверх, и вниз
+        parent = Vegetarian(x=3000, y=3900, genom=[40, 10, 400, 30, 30, 5, 100])
+        diagonal = 0
+        for _ in range(300):                         # фиксированное число делений
+            parent.energy = parent.max_energy
+            kids = []
+            parent.maybe_divide(kids)
+            self.assertEqual(len(kids), 1, "сытый родитель не поделился")
+            child = kids[0]
+
+            self.assertTrue(child.body_lo <= child.y <= child.body_hi,
+                            f"ребёнок вне своего слоя: y={child.y:.1f}, "
+                            f"слой [{child.body_lo:.1f}, {child.body_hi:.1f}]")
+            self.assertTrue(child.x_lo <= child.x <= child.x_hi, f"ребёнок вне мира: x={child.x}")
+            diagonal += (child.x - parent.x) == (child.y - parent.y)
+
+            x, y = child.x, child.y
+            child.move([], [])
+            jump = math.hypot(child.x - x, child.y - y)
+            self.assertLessEqual(jump, child.speed + 1e-9,
+                                 f"первый ход ребёнка — прыжок на {jump:.0f} px")
+
+        self.assertEqual(diagonal, 0, f"{diagonal} детей из 300 легли на диагональ от родителя")
+
+    def test_fractional_size_without_coordinates(self):
+        """Существо с дробным размером рождается без заданных координат.
+
+        Баг: x выбиралась через randint(self.size, ...), а размер после мутации
+        дробный. На Python 3.12+ randint дробных не берёт и падает с TypeError.
+        """
+        random.seed(0)
+        veg = Vegetarian(genom=[40.5, 10, 400, 70, 30, 5, 100])
+        self.assertTrue(veg.x_lo <= veg.x <= veg.x_hi, f"родился вне мира: x={veg.x}")
+        self.assertTrue(veg.body_lo <= veg.y <= veg.body_hi, f"родился вне слоя: y={veg.y}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -260,29 +432,55 @@ class TestGrid(unittest.TestCase):
                     f"{len(points)} точек, запрос ({qx:.0f}, {qy:.0f})",
                 )
 
-    def test_grid_covers_vision_in_live_world(self):
-        """То же самое, но на живом мире: важен реальный размер клетки.
+    def test_creatures_get_every_neighbour_in_live_world(self):
+        """Каждое существо получает от мира всех соседей в радиусе своего запроса.
 
-        Сетку строит World, подбирая клетку под самый большой радиус запроса.
-        Здесь проверяется именно эта связка — что подобранная клетка накрывает
-        зрение каждого травоядного, каким бы оно ни выросло.
+        Проверяется связка целиком: размер клетки, который подбирает World,
+        точка запроса и сама сетка. Вызовы сущностей перехватываются, и то, что
+        им дали, сверяется с перебором в лоб. Прежняя версия теста считала
+        формулу клетки сама и не замечала, если World считал клетку неверно:
+        подмена клетки на 100 px при зрении 400 проходила все тесты.
         """
-        world = baseline().world
+        world = copy.deepcopy(baseline().world)      # общий прогон не трогаем
         self.assertGreater(len(world.vegetarians), 0, "популяция вымерла — проверять нечего")
+        self.assertGreater(len(world.predators),   0, "хищники вымерли — проверять нечего")
+        missed = []
 
-        cell = max(GRID_MIN_CELL,
-                   max(max(v.vision, v.size) for v in world.vegetarians))
-        grid = Grid(cell, world.plants)
+        def check(who, radius, given, pool):
+            given = {id(o) for o in given}
+            r2 = radius * radius
+            for o in pool:
+                if id(o) not in given and (o.x - who.x) ** 2 + (o.y - who.y) ** 2 <= r2:
+                    missed.append(f"{type(who).__name__} (радиус {radius:.0f}) "
+                                  f"не получил {type(o).__name__}")
 
-        for v in world.vegetarians:
-            expected = {id(p) for p in world.plants
-                        if math.hypot(p.x - v.x, p.y - v.y) <= v.vision}
-            got      = {id(p) for p in grid.near(v.x, v.y)}
-            self.assertFalse(
-                expected - got,
-                f"травоядное не увидело еду в радиусе зрения: зрение {v.vision:.0f}, "
-                f"клетка {cell:.0f}",
-            )
+        veg_move, veg_eat = Vegetarian.move, Vegetarian.try_eat
+        pr_move,  pr_eat  = Predator.move,   Predator.try_eat
+
+        def v_move(v, plants, predators):
+            check(v, v.vision, plants,    world.plants)
+            check(v, v.vision, predators, world.predators)
+            return veg_move(v, plants, predators)
+
+        def v_eat(v, plants):                        # позиция уже новая, после шага
+            check(v, v.size, plants, world.plants)
+            return veg_eat(v, plants)
+
+        def p_move(pr, vegetarians):
+            check(pr, pr.vision, vegetarians, world.vegetarians)
+            return pr_move(pr, vegetarians)
+
+        def p_eat(pr, vegetarians):
+            check(pr, pr.DIAM, vegetarians, world.vegetarians)
+            return pr_eat(pr, vegetarians)
+
+        with mock.patch.object(Vegetarian, "move", v_move), \
+             mock.patch.object(Vegetarian, "try_eat", v_eat), \
+             mock.patch.object(Predator, "move", p_move), \
+             mock.patch.object(Predator, "try_eat", p_eat):
+            run_ticks(world, 3)
+
+        self.assertEqual(missed[:3], [], f"соседи потеряны {len(missed)} раз")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -333,14 +531,16 @@ class TestInvariants(BoundedRunMixin, unittest.TestCase):
             self.assertTrue(0 <= v.x <= WORLD_WIDTH,  f"травоядное вне мира: x={v.x}")
             self.assertTrue(0 <= v.y <= WORLD_HEIGHT, f"травоядное вне мира: y={v.y}")
 
-            # вертикальный слой (гены min_y/max_y) — только если полоса не схлопнулась
+            # вертикальный слой (гены min_y/max_y): тело внутри своей полосы,
+            # а схлопнутая полоса — хотя бы целиком внутри мира
             lo = (v.min_y / 100) * WORLD_HEIGHT + v.size
             hi = (v.max_y / 100) * WORLD_HEIGHT - v.size
-            if lo <= hi:
-                self.assertTrue(
-                    lo - 1 <= v.y <= hi + 1,
-                    f"травоядное вышло из своего слоя: y={v.y:.1f}, слой [{lo:.1f}, {hi:.1f}]",
-                )
+            if lo > hi:
+                lo, hi = v.size, WORLD_HEIGHT - v.size
+            self.assertTrue(
+                lo <= v.y <= hi,
+                f"травоядное вышло из своего слоя: y={v.y:.1f}, слой [{lo:.1f}, {hi:.1f}]",
+            )
 
         for pr in world.predators:
             self.assertTrue(math.isfinite(pr.x) and math.isfinite(pr.y), "NaN у хищника")
@@ -360,7 +560,10 @@ class TestInvariants(BoundedRunMixin, unittest.TestCase):
 
         Заменяет собой долгий случайный прогон «а вдруг выпадет»: тот же
         краевой случай задаётся геномом напрямую и проверяется мгновенно.
-        Регрессия на ValueError: empty range in randrange(6040, 5961).
+        Регрессии: ValueError: empty range in randrange(6040, 5961) при
+        рождении; тело, торчащее за край мира у слоя на границе; и существо,
+        которое со схлопнутым слоем стояло столбом — случайная цель никогда
+        не попадала в перевёрнутую полосу.
         """
         random.seed(0)
         genom = [40, 10, 400, 70, 30, 50.0, 50.0]      # min_y == max_y
@@ -370,33 +573,38 @@ class TestInvariants(BoundedRunMixin, unittest.TestCase):
 
         for pct in (0.0, 100.0):                        # слой на самой границе мира
             edge = Vegetarian(genom=[40, 10, 400, 70, 30, pct, pct])
-            self.assertTrue(0 <= edge.y <= WORLD_HEIGHT, f"родился вне мира: y={edge.y}")
+            self.assertTrue(edge.size <= edge.y <= WORLD_HEIGHT - edge.size,
+                            f"тело торчит за край мира: y={edge.y}")
 
         veg = Vegetarian(x=1000, y=6000, genom=genom)
+        line = veg.body_lo
+        self.assertEqual(veg.y, line, "заданная y не прижата к схлопнутому слою")
         for _ in range(50):                             # фиксированные 50 тиков
             veg.move([], [])
 
         self.assertTrue(math.isfinite(veg.x) and math.isfinite(veg.y),
                         "координаты стали NaN при схлопнутом слое")
         self.assertTrue(0 <= veg.x <= WORLD_WIDTH,  f"вылетел за мир: x={veg.x}")
-        self.assertTrue(0 <= veg.y <= WORLD_HEIGHT, f"вылетел за мир: y={veg.y}")
+        self.assertEqual(veg.y, line, "сошёл со схлопнутого слоя")
+        self.assertGreater(abs(veg.x - 1000), veg.speed,
+                           "со схлопнутым слоем существо стоит на месте")
 
-
-    def test_mutation_keeps_layer_genes_in_range(self):
-        """Гены слоя (min_y, max_y) — проценты и при мутации остаются в 0‒100.
+    def test_mutation_keeps_percent_genes_in_range(self):
+        """Гены-проценты (порог, доля потомку, слой) при мутации остаются в 0‒100.
 
         Сторожит место, где раньше стояло `if i == 5 or i == 6`: гены
         выбираются по имени, и промах мимо них выпустил бы слой за пределы
         мира. Родитель стоит у самых краёв, чтобы мутации туда и тянули.
         """
         random.seed(0)
-        parent = Vegetarian(genom=[40, 10, 400, 70, 30, 0.5, 99.5])
+        parent = Vegetarian(genom=[40, 10, 400, 99.5, 99.5, 0.5, 99.5])
 
         for _ in range(500):                             # фиксированное число мутаций
             child = parent.mutate()
             self.assertIsInstance(child, Genom)
-            self.assertTrue(0 <= child.min_y <= 100, f"min_y={child.min_y}")
-            self.assertTrue(0 <= child.max_y <= 100, f"max_y={child.max_y}")
+            for name in PERCENT_GENES:
+                value = getattr(child, name)
+                self.assertTrue(0 <= value <= 100, f"{name}={value}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -480,6 +688,27 @@ class TestPopulationDynamics(unittest.TestCase):
             res.total_work, BASELINE_WORK * 0.5,
             f"здоровый прогон съел {res.total_work:,} из {BASELINE_WORK:,} — запаса почти нет",
         )
+
+
+class TestReport(unittest.TestCase):
+    """Отчёт sim_report.py — инструмент проверки баланса, и врать он не должен."""
+
+    def test_summary_reports_cut_runs(self):
+        """Сводка не пишет «всё в порядке», если прогон оборван раньше срока.
+
+        Баг: на 3000 тиках seed 4 обрывался перегрузкой на 2604-м тике, а
+        сводка всё равно рапортовала, что прогоны в разумном коридоре.
+        """
+        res = simulate(seed=1, ticks=BASELINE_TICKS, seconds=15.0,
+                       max_total_work=1_000_000)       # заведомо ниже здорового расхода
+        self.assertTrue(res.overloaded, "прогон не оборвался — тест бессмыслен")
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            sim_report.print_summary([(1, res)])
+
+        self.assertIn("ОБОРВАНЫ", out.getvalue())
+        self.assertNotIn("в разумном коридоре", out.getvalue())
 
 
 # ─────────────────────────────────────────────────────────────────────────────

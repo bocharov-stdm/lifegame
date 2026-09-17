@@ -18,37 +18,36 @@ class Predator:
         self.speed  = speed
         self.vision = vision
         self.alive  = True
+        # скорость и зрение не меняются всю жизнь — расход считаем один раз
+        self.upkeep = (
+                SIZE_ENERGY_COEF  * self.DIAM   ** SIZE_ENERGY_POWER +
+                SPEED_ENERGY_COEF * self.speed  ** SPEED_ENERGY_POWER +
+                SIGHT_ENERGY_COEF * self.vision ** SIGHT_ENERGY_POWER
+        )
         self._choose_new_target()
 
     # ---------- утилиты ----------
     def _choose_new_target(self):
-        half = WANDER_RADIUS  # половина стороны квадрата
+        # Цель — случайная точка квадрата со стороной 2*WANDER_RADIUS вокруг себя.
+        # Квадрат сдвигается внутрь тех же границ, в которых держится сам хищник
+        # (DIAM от края). Раньше цель бралась до самой стены, и если она ложилась
+        # ближе DIAM - speed к краю, хищник упирался в стену и стоял, пока мимо не
+        # пройдёт добыча: один так простоял 426 тиков и умер от голода.
+        # float-цели — так плавнее.
+        self.tx = random.uniform(*self._wander_span(self.x, WORLD_WIDTH))
+        self.ty = random.uniform(*self._wander_span(self.y, WORLD_HEIGHT))
 
-        # --- горизонтальная полоса ---
-        xmin = self.x - half
-        xmax = self.x + half
-        if xmin < 0:  # залезли за левый край
-            xmax += -xmin  # двигаем полосу вправо
-            xmin = 0
-        if xmax > WORLD_WIDTH - 1:  # залезли за правый край
-            xmin -= xmax - (WORLD_WIDTH - 1)  # двигаем влево
-            xmax = WORLD_WIDTH - 1
-            xmin = max(xmin, 0)  # вдруг ушли левее нуля
-
-        # --- вертикальная полоса ---
-        ymin = self.y - half
-        ymax = self.y + half
-        if ymin < 0:
-            ymax += -ymin
-            ymin = 0
-        if ymax > WORLD_HEIGHT - 1:
-            ymin -= ymax - (WORLD_HEIGHT - 1)
-            ymax = WORLD_HEIGHT - 1
-            ymin = max(ymin, 0)
-
-        # используем float-цели — так плавнее
-        self.tx = random.uniform(xmin, xmax)
-        self.ty = random.uniform(ymin, ymax)
+    def _wander_span(self, pos, world_size):
+        """Отрезок длиной 2*WANDER_RADIUS вокруг pos, сдвинутый внутрь мира."""
+        lo, hi = self.DIAM, world_size - self.DIAM
+        a, b = pos - WANDER_RADIUS, pos + WANDER_RADIUS
+        if a < lo:                      # залезли за левый/верхний край
+            b += lo - a                 # двигаем отрезок внутрь
+            a = lo
+        if b > hi:                      # залезли за правый/нижний край
+            a = max(a - (b - hi), lo)   # двигаем внутрь, но не за другой край
+            b = hi
+        return a, b
 
     def _vector_towards(self, tx, ty):
         dx, dy = tx - self.x, ty - self.y
@@ -61,6 +60,8 @@ class Predator:
         x, y = self.x, self.y
         nearest, best_d2 = None, self.vision * self.vision
         for v in vegetarians:
+            if not v.alive:             # съеден другим хищником в этом же тике
+                continue
             dx = x - v.x
             dy = y - v.y
             d2 = dx * dx + dy * dy
@@ -77,11 +78,7 @@ class Predator:
         self.x = min(max(self.x + dx, self.DIAM), WORLD_WIDTH  - self.DIAM)
         self.y = min(max(self.y + dy, self.DIAM), WORLD_HEIGHT - self.DIAM)
 
-        self.energy -= (
-                SIZE_ENERGY_COEF  * self.DIAM   ** SIZE_ENERGY_POWER +
-                SPEED_ENERGY_COEF * self.speed  ** SPEED_ENERGY_POWER +
-                SIGHT_ENERGY_COEF * self.vision ** SIGHT_ENERGY_POWER
-        )
+        self.energy -= self.upkeep
         if self.energy <= 0:
             self.alive = False
 

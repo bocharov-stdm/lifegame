@@ -7,6 +7,8 @@
 # Мир большой (WORLD_WIDTH x WORLD_HEIGHT), окно маленькое — поэтому координаты
 # умножаются на масштаб, который считает вызывающий: он же владеет размером окна.
 
+from functools import lru_cache
+
 import pygame
 
 from life.config     import PLANT_RADIUS
@@ -31,6 +33,8 @@ def draw_world(surf, world, scale_x, scale_y):
     """Рисует один кадр: растения, затем травоядные, затем хищники.
 
     Порядок задаёт перекрытие — кто нарисован позже, тот сверху.
+    Круг — это тело: size травоядного и DIAM хищника — диаметры. Ест
+    существо дальше своего края (см. Vegetarian.try_eat).
     """
     circle = pygame.draw.circle
 
@@ -79,9 +83,9 @@ def draw_panel(surf, font, creature):
                 ("зрение",   f"{creature.vision:.1f}")]
     rows.append(("энергия", f"{creature.energy:.1f} / {creature.max_energy:.0f}"))
 
-    head   = font.render(title, True, ACCENT_COLOR)
-    labels = [font.render(label, True, TEXT_COLOR) for label, _ in rows]
-    values = [font.render(value, True, TEXT_COLOR) for _, value in rows]
+    head   = _text(font, title, ACCENT_COLOR)
+    labels = [_text(font, label, TEXT_COLOR) for label, _ in rows]
+    values = [_text(font, value, TEXT_COLOR) for _, value in rows]
 
     line_h = font.get_linesize()
     width  = max(head.get_width(),
@@ -120,7 +124,7 @@ def draw_graph(surf, font, history):
     line_h = font.get_linesize()
 
     last   = history[-1] if history else (0, 0, 0)
-    legend = [font.render(f"{name} {value}", True, color)
+    legend = [_text(font, f"{name} {value}", color)
               for (name, color), value in zip(GRAPH_SERIES, last)]
     legend_w = sum(s.get_width() for s in legend) + 2 * PAD * (len(legend) - 1)
 
@@ -156,22 +160,46 @@ def draw_graph(surf, font, history):
 HINT = "Пробел — пауза   Вправо — шаг   +/- — скорость   клик — существо   G — график"
 
 
+def draw_stats(surf, font, text):
+    """Строка статистики в левом верхнем углу."""
+    surf.blit(_text(font, text, TEXT_COLOR), (MARGIN, MARGIN))
+
+
 def draw_hud(surf, font, paused, speed, tick):
     """Состояние симуляции под строкой статистики и подсказка внизу."""
     text = f"тик {tick}   x{speed}"
     if paused:
         text = "ПАУЗА   " + text
-    surf.blit(font.render(text, True, ACCENT_COLOR if paused else TEXT_COLOR),
+    surf.blit(_text(font, text, ACCENT_COLOR if paused else TEXT_COLOR),
               (MARGIN, 34))
 
-    hint = font.render(HINT, True, HINT_COLOR)
+    hint = _text(font, HINT, HINT_COLOR)
     surf.blit(hint, (MARGIN, surf.get_height() - MARGIN - hint.get_height()))
+
+
+# ── кэши ───────────────────────────────────────────────────────────────────
+# Рендер текста — самое дорогое в панелях, а почти все надписи от кадра к кадру
+# одни и те же: подсказка не меняется никогда, строка статистики — раз в секунду,
+# подписи панели — никогда, числа — редко. То же с подложками: размер панели
+# меняется, только когда меняется ширина текста. Кэши ограничены, поэтому
+# надписи, которые меняются каждый кадр (номер тика), их не раздувают.
+# Отданные поверхности общие: их только блитят, но не рисуют на них.
+
+@lru_cache(maxsize=256)
+def _text(font, text, color):
+    return font.render(text, True, color)
+
+
+@lru_cache(maxsize=16)
+def _backdrop_box(size):
+    box = pygame.Surface(size, pygame.SRCALPHA)
+    box.fill(PANEL_BG)
+    return box
 
 
 def _backdrop(surf, size, **anchor):
     """Полупрозрачная подложка; anchor — как у Rect (topright=..., bottomright=...)."""
-    box = pygame.Surface(size, pygame.SRCALPHA)
-    box.fill(PANEL_BG)
+    box = _backdrop_box(size)
     rect = box.get_rect(**anchor)
     surf.blit(box, rect)
     return rect

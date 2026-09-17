@@ -5,6 +5,7 @@ __pycache__/
 # IDE / env
 .venv/
 .idea/
+.claude/settings.local.json
 
 # OS
 Thumbs.db

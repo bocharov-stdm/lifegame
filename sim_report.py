@@ -5,14 +5,20 @@
     python sim_report.py --predators 20 --predator-speed 18 --predator-vision 800
     python sim_report.py --seeds 1 2 3 42         # сводка по нескольким прогонам
 
-Прогон всегда ограничен по тикам, по часам и по потолку популяции,
-поэтому зависнуть или уехать в бесконечность не может.
+Прогон всегда ограничен по тикам, по часам, по потолку популяции и по бюджету
+вычислений, поэтому зависнуть или уехать в бесконечность не может.
 """
 
 import argparse
 
 from life.genome   import Genom, GENE_LABELS
 from life.headless import simulate
+
+# Бюджет вычислений растёт с длиной прогона. Прежний фиксированный (25 млн, как
+# у тестов на 400 тиков) обрывал здоровые прогоны на 3000 тиков «перегрузкой»,
+# а сводка при этом рапортовала, что всё в порядке. 60 тысяч на тик — та же
+# доля, что у тестов, то есть примерно шестикратный запас над здоровым расходом.
+WORK_PER_TICK = 60_000
 
 
 def print_run(res, title):
@@ -47,12 +53,19 @@ def print_summary(rows):
 
     exploded = [s for s, r in rows if r.exploded]
     extinct  = [s for s, r in rows if r.extinct]
+    # перегрузка и дедлайн — не приговор балансу, но и не проверка: прогон
+    # до конца не дошёл, и молчать об этом нельзя
+    cut      = [f"{s} ({r.stop_reason} на тике {r.ticks_done})"
+                for s, r in rows if not (r.ok or r.exploded or r.extinct)]
+    print()
     if exploded:
-        print(f"\nВЗРЫВ ЧИСЛЕННОСТИ на seed: {exploded}")
+        print(f"ВЗРЫВ ЧИСЛЕННОСТИ на seed: {exploded}")
     if extinct:
         print(f"ВЫМИРАНИЕ на seed: {extinct}")
-    if not exploded and not extinct:
-        print("\nвсе прогоны в разумном коридоре: без взрыва и без вымирания")
+    if cut:
+        print(f"ОБОРВАНЫ РАНЬШЕ СРОКА seed: {', '.join(cut)} — поднимите --max-work или --seconds")
+    if not (exploded or extinct or cut):
+        print("все прогоны в разумном коридоре: без взрыва и без вымирания")
 
 
 def main():
@@ -64,15 +77,20 @@ def main():
     p.add_argument("--sample", type=int, default=100, help="шаг снимка статистики")
     p.add_argument("--seconds", type=float, default=30.0, help="дедлайн одного прогона")
     p.add_argument("--max-creatures", type=int, default=3000, help="потолок популяции")
+    p.add_argument("--max-work", type=int,
+                   help=f"бюджет вычислений (по умолчанию {WORK_PER_TICK:,} на тик)")
     p.add_argument("--vegetarians", type=int, help="стартовое число травоядных")
     p.add_argument("--predators",   type=int, help="стартовое число хищников")
     p.add_argument("--predator-speed",  type=float)
     p.add_argument("--predator-vision", type=float)
     args = p.parse_args()
 
+    max_work = args.max_work if args.max_work is not None else WORK_PER_TICK * args.ticks
+
     common = dict(
         ticks=args.ticks, sample_every=args.sample,
         seconds=args.seconds, max_creatures=args.max_creatures,
+        max_total_work=max_work,
         n_vegetarians=args.vegetarians, n_predators=args.predators,
         predator_speed=args.predator_speed, predator_vision=args.predator_vision,
     )

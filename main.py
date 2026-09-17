@@ -16,7 +16,8 @@ from collections import deque
 
 from life.config import *
 from life.world  import World
-from render      import draw_world, draw_selection, draw_panel, draw_hud, draw_graph
+from render      import (draw_world, draw_selection, draw_panel, draw_stats,
+                         draw_hud, draw_graph)
 
 # Скорость — сколько раз за кадр вызывается world.step(). Это НЕ TICKS_PER_FRAME
 # из конфига: тот работает внутри движка (спаун растений, длительность бегства),
@@ -143,7 +144,7 @@ def main():
             draw_panel(screen, font, selected)
 
         # выводим статистику поверх всего
-        screen.blit(font.render(text_genom, True, (255, 255, 255)), (10, 10))
+        draw_stats(screen, font, text_genom)
         draw_hud(screen, font, paused, SPEEDS[speed], world.tick)
         if show_graph:
             draw_graph(screen, font, history)

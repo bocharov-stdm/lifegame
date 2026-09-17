@@ -60,7 +60,8 @@ class SimResult:
 def simulate(seed=None, ticks=400, sample_every=100,
              seconds=15.0, max_creatures=3000, max_total_work=25_000_000,
              n_vegetarians=None, n_predators=None,
-             predator_speed=None, predator_vision=None):
+             predator_speed=None, predator_vision=None,
+             on_tick=None):
     """Гоняет симуляцию под четырьмя независимыми лимитами.
 
       ticks           — сколько тиков максимум
@@ -81,13 +82,16 @@ def simulate(seed=None, ticks=400, sample_every=100,
     растения, а только соседей по клетке. То есть это по-прежнему честная
     верхняя оценка — просто с запасом, и как гарантия завершения она работает.
 
-    Ориентиры на текущем балансе: здоровый прогон расходует ~3.2 млн работы
-    на 400 тиков (~0.2 с).
+    Ориентиры на текущем балансе: здоровый прогон расходует ~3.6 млн работы
+    на 400 тиков (~0.3 с).
 
     Одного max_creatures недостаточно: взорваться могут растения, а счётчик
     существ этого не заметит — тик при этом станет неподъёмным.
 
     n_* и predator_* позволяют подбирать баланс, не трогая config.py.
+
+    on_tick(world) вызывается после каждого тика — для тех, кому мало снимков
+    раз в sample_every (например, график в тестах окна копит точки потиково).
     """
     world = World(seed=seed)
 
@@ -110,6 +114,8 @@ def simulate(seed=None, ticks=400, sample_every=100,
 
     for done in range(1, ticks + 1):
         world.step()
+        if on_tick is not None:
+            on_tick(world)
 
         creatures   = len(world.vegetarians) + len(world.predators)
         total_work += len(world.vegetarians) * len(world.plants)

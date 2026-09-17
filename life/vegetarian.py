@@ -2,7 +2,7 @@
 
 import random, math
 from .config import *
-from .genome import Genom, LAYER_GENES
+from .genome import Genom, PERCENT_GENES
 
 class Vegetarian:
 
@@ -27,25 +27,45 @@ class Vegetarian:
 
         self.min_y = min_pct      # храним в процентах, т.к. так уже использовали
         self.max_y = max_pct
-        # абсолютные границы слоя
-        y_min_abs = int((self.min_y / 100) * WORLD_HEIGHT + self.size)
-        y_max_abs = int((self.max_y / 100) * WORLD_HEIGHT - self.size)
-        # слой может оказаться уже собственного тела (эволюция сводит min_y и max_y):
-        # тогда границы переворачиваются и randint ниже падает — схлопываем в точку
-        if y_min_abs > y_max_abs:
-            y_min_abs = y_max_abs = (y_min_abs + y_max_abs) // 2
+
+        # ── границы ─────────────────────────────────────────────────────────
+        # Границы слоя без запаса на тело — по ним решается, дотянемся ли до еды;
+        # с запасом — полоса, в которой держится само тело, чтобы не торчало.
+        self.layer_lo = (min_pct / 100) * WORLD_HEIGHT
+        self.layer_hi = (max_pct / 100) * WORLD_HEIGHT
+        body_lo = self.layer_lo + self.size
+        body_hi = self.layer_hi - self.size
+        # Слой может оказаться уже собственного тела (эволюция сводит min_y и max_y),
+        # и полоса переворачивается. Схлопываем её в линию посередине — один раз и
+        # для всех: и для рождения, и для move(), и для выбора цели. Середину держим
+        # в мире: у слоя на самом краю она легла бы за границу.
+        if body_lo > body_hi:
+            body_lo = body_hi = min(max((body_lo + body_hi) / 2, self.size),
+                                    WORLD_HEIGHT - self.size)
+        self.body_lo, self.body_hi = body_lo, body_hi
+        self.x_lo = self.size
+        self.x_hi = WORLD_WIDTH - self.size
 
         # ─────────────────────────────────────────────────────────────────────
         self.max_energy = self.size * VEGETARIAN_ENERGY_PER_SIZE
-        self.energy = energy if energy is not None else self.max_energy * 0.5
+        # не переливать: у ребёнка свой бак, и он может быть меньше родительского
+        self.energy = (min(energy, self.max_energy) if energy is not None
+                       else self.max_energy * 0.5)
         self.alive  = True
 
         self.flee_ticks = 0
         self.flee_dx = self.flee_dy = 0.0   # последний вектор бегства (единичный)
 
-        self.x = x if x is not None else random.randint(self.size, WORLD_WIDTH - self.size)
-        # стартовая y строго в пределах своего биома
-        self.y = y if y is not None else random.randint(y_min_abs, y_max_abs)
+        # Позиция всегда внутри своей полосы — и случайная, и заданная. Ребёнок
+        # рождается у родителя, а слой у него уже свой, мутировавший: без зажима
+        # первый же ход телепортировал бы его в слой, бывало на 2000 px.
+        # uniform, а не randint: размер — ген, он дробный, а randint дробных не берёт.
+        if x is None:
+            x = random.uniform(self.x_lo, self.x_hi)
+        if y is None:
+            y = random.uniform(body_lo, body_hi)
+        self.x = min(max(x, self.x_lo), self.x_hi)
+        self.y = min(max(y, body_lo), body_hi)
 
         # ── предвычисленное ──────────────────────────────────────────────────
         # Геном не меняется всю жизнь, поэтому всё производное от него считается
@@ -56,14 +76,6 @@ class Vegetarian:
                 SPEED_ENERGY_COEF * self.speed  ** SPEED_ENERGY_POWER +
                 SIGHT_ENERGY_COEF * self.vision ** SIGHT_ENERGY_POWER
         )
-        # границы слоя: без запаса на тело — решить, дотянемся ли до еды;
-        # с запасом — прижать само тело, чтобы не торчало из слоя
-        self.layer_lo = (self.min_y / 100) * WORLD_HEIGHT
-        self.layer_hi = (self.max_y / 100) * WORLD_HEIGHT
-        self.body_lo  = self.layer_lo + self.size
-        self.body_hi  = self.layer_hi - self.size
-        self.x_lo     = self.size
-        self.x_hi     = WORLD_WIDTH - self.size
         # квадраты радиусов: сравнивать квадраты расстояний дешевле, чем звать hypot
         self.vision2 = self.vision * self.vision
         self.size2   = self.size * self.size
@@ -75,12 +87,15 @@ class Vegetarian:
         lo, hi = self.body_lo, self.body_hi
         x, y, vision = self.x, self.y, self.vision
         x_lo, x_hi = self.x_lo, self.x_hi
+        # слой схлопнут в линию: случайная точка на неё не попадёт никогда,
+        # и существо стояло бы столбом — гуляем только вдоль линии
+        flat = lo == hi
 
         for _ in range(10):
             angle = random.uniform(0, 2 * math.pi)
             dist  = random.uniform(vision * 0.5, vision * 2)
             tx = x + math.cos(angle) * dist
-            ty = y + math.sin(angle) * dist
+            ty = lo if flat else y + math.sin(angle) * dist
             if x_lo <= tx <= x_hi and lo <= ty <= hi:
                 self.tx, self.ty = tx, ty
                 return
@@ -161,15 +176,15 @@ class Vegetarian:
             dx *= step
             dy *= step
 
-        # новое положение: границы мира, затем свой вертикальный слой
-        size = self.size
+        # Новое положение: по x — границы мира, по y — своя полоса. Полоса
+        # (см. __init__) всегда лежит внутри мира, поэтому отдельный зажим по
+        # высоте мира не нужен. Существо уже стоит внутри своих границ, так что
+        # зажим только укорачивает шаг: за тик оно сдвигается не дальше speed.
         nx = x + dx
         if   nx < self.x_lo: nx = self.x_lo
         elif nx > self.x_hi: nx = self.x_hi
 
         ny = y + dy
-        if   ny < size:                 ny = size
-        elif ny > WORLD_HEIGHT - size:  ny = WORLD_HEIGHT - size
         if   ny < self.body_lo: ny = self.body_lo
         elif ny > self.body_hi: ny = self.body_hi
 
@@ -182,8 +197,11 @@ class Vegetarian:
 
     def try_eat(self, plants: list) -> bool:
         """
-        Съесть все растения, которые попали в диаметр `self.size`.
+        Съесть все растения не дальше `self.size` от центра.
         Возвращает True, если хоть что-то съели.
+
+        size — диаметр тела (так оно и рисуется), а дотягивается существо на
+        целый size, то есть на полтела дальше своего края.
 
         `plants` — кандидаты от сетки соседей, а не весь мир (см. world.py).
         Съеденное помечается alive=False, а не вырезается из списка: вырезание
@@ -191,7 +209,7 @@ class Vegetarian:
         Мёртвые выметаются один раз за тик в World.
         """
         eaten = 0
-        r2 = self.size2                     # квадрат диаметра
+        r2 = self.size2                     # квадрат радиуса поедания
         cx, cy = self.x, self.y
 
         for p in plants:
@@ -223,27 +241,37 @@ class Vegetarian:
                 if gauss >= -0.9:
                     break
             mutated = value * (1 + gauss)
-            # гены слоя — проценты, их держим в 0‒100
-            if name in LAYER_GENES:
+            # гены-проценты (порог, доля потомку, слой) держим в 0‒100
+            if name in PERCENT_GENES:
                 mutated = min(100, max(0, mutated))
             new_genom.append(max(0.01, mutated))
         return Genom(*new_genom)
 
     def maybe_divide(self, offspring: list):
-        """Размножаемся, если остаётся запас энергии; детей кладём в отдельный список."""
+        """Размножаемся, если после деления у родителя остаётся резерв.
+
+        Детей кладём в отдельный список: в этом тике они не ходят.
+        """
         threshold = self.max_energy * (self.repro_threshold / 100)
         if self.energy < threshold + VEGETARIAN_REPRO_RESERVE:
             return                      # энергии недостаточно
 
+        # Резерв проверяется ещё и ПОСЛЕ дележа: доля ребёнка считается от всей
+        # энергии, и без этой проверки родитель, бывало, отдавал всё до нуля и
+        # ниже — и умирал на следующем ходу, а хищник, съевший такого, терял энергию.
         child_energy = self.energy * (self.repro_share / 100)
-        self.energy -= child_energy + VEGETARIAN_REPRO_COST      # родитель платит
+        left = self.energy - child_energy - VEGETARIAN_REPRO_COST
+        if left < VEGETARIAN_REPRO_RESERVE:
+            return
 
-        child_energy = min(child_energy, self.max_energy)  # не переливать
-        child_genom  = self.mutate()
+        self.energy = left                                  # родитель платит
+        child_genom = self.mutate()
 
-        offset = random.uniform(-self.size * 2, self.size * 2)
-        cx = min(max(self.x + offset, self.size), WORLD_WIDTH  - self.size)
-        cy = min(max(self.y + offset, self.size), WORLD_HEIGHT - self.size)
+        # Смещения по осям независимые: с одним общим дети ложились строго на
+        # диагональ от родителя. В мир и в слой ребёнка зажимает его __init__.
+        span = self.size * 2
+        cx = self.x + random.uniform(-span, span)
+        cy = self.y + random.uniform(-span, span)
 
         offspring.append(
             Vegetarian(x=cx, y=cy, energy=child_energy, genom=child_genom)

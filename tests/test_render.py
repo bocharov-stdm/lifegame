@@ -27,6 +27,7 @@ except ImportError:
     pygame = None
 
 from life.config     import *
+from life.headless   import simulate
 from life.plant      import Plant
 from life.predator   import Predator
 from life.vegetarian import Vegetarian
@@ -41,11 +42,14 @@ SCALE_X = WIDTH  / WORLD_WIDTH
 SCALE_Y = HEIGHT / WORLD_HEIGHT
 
 
-def live_world(ticks=50):
-    world = World(seed=1)
-    for _ in range(ticks):                       # фиксированное число тиков
-        world.step()
-    return world
+def live_run(ticks, on_tick=None):
+    """Живой мир через simulate(): те же лимиты, что у всех прогонов в тестах.
+
+    Голый цикл по world.step() ограничен только числом тиков, а стоимость тика
+    растёт с популяцией — сломанный баланс превратил бы его в долгий прогон.
+    """
+    return simulate(seed=1, ticks=ticks, sample_every=ticks, seconds=10.0,
+                    on_tick=on_tick)
 
 
 @unittest.skipUnless(pygame is not None, "pygame не установлен")
@@ -84,7 +88,9 @@ class TestDrawing(unittest.TestCase):
 
     def test_selection_and_panel_for_both_kinds(self):
         """Кольцо и панель рисуются и для травоядного, и для хищника (у него нет генома)."""
-        world = live_world()
+        world = live_run(50).world
+        self.assertTrue(world.vegetarians, "травоядные вымерли — выбирать некого")
+        self.assertTrue(world.predators,   "хищники вымерли — выбирать некого")
         for creature in (world.vegetarians[0], world.predators[0]):
             with self.subTest(kind=type(creature).__name__):
                 self.setUp()
@@ -112,14 +118,16 @@ class TestDrawing(unittest.TestCase):
 
     def test_graph_from_live_world(self):
         """Настоящая история, как её копит main.py: линии всех трёх цветов на месте."""
-        world   = World(seed=1)
         history = deque(maxlen=main.GRAPH_POINTS)
-        for _ in range(600):                     # фиксированное число тиков
-            world.step()
+
+        def sample(world):
             if world.tick % main.GRAPH_EVERY == 0:
                 history.append((len(world.plants),
                                 len(world.vegetarians),
                                 len(world.predators)))
+
+        res = live_run(600, on_tick=sample)
+        self.assertEqual(res.stop_reason, "готово", f"прогон оборвался: {res.stop_reason}")
 
         render.draw_graph(self.surf, self.font, history)
 
@@ -137,6 +145,23 @@ class TestDrawing(unittest.TestCase):
         for paused in (False, True):
             with self.subTest(paused=paused):
                 render.draw_hud(self.surf, self.font, paused, 16, 12345)
+
+    def test_cached_text_follows_the_text(self):
+        """Кэш надписей отдаёт надпись для своего текста, а не прошлую.
+
+        Надписи кэшируются (render._text); ошибка в ключе кэша заморозила бы
+        строку статистики на первом значении — и это не упало бы, а просто
+        перестало обновляться.
+        """
+        shots = []
+        for text in ("111", "WWW", "111"):
+            self.setUp()
+            render.draw_stats(self.surf, self.font, text)
+            self.assertIn(render.TEXT_COLOR, self.colors(pygame.Rect(0, 0, 200, 40)))
+            shots.append(pygame.image.tobytes(self.surf, "RGB"))
+
+        self.assertNotEqual(shots[0], shots[1], "разный текст нарисован одинаково")
+        self.assertEqual(shots[0], shots[2], "один и тот же текст нарисован по-разному")
 
 
 class TestPicking(unittest.TestCase):
