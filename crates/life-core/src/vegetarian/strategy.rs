@@ -12,7 +12,7 @@
 //! конец, свой файл с `decide`, новое состояние — в `Mind`.
 
 use super::Phenotype;
-use super::cautious;
+use super::standard;
 use crate::genome::Variant;
 use crate::rng::Rng;
 use crate::senses::VegetarianSenses;
@@ -22,12 +22,12 @@ use crate::senses::VegetarianSenses;
 pub enum Strategy {
     /// Бежит от хищника; иначе идёт к ближайшему растению своего слоя; иначе бродит.
     #[default]
-    Cautious,
+    Standard,
 }
 
 impl Strategy {
     /// Все варианты в порядке `VARIANTS`.
-    pub const ALL: [Strategy; 1] = [Strategy::Cautious];
+    pub const ALL: [Strategy; 1] = [Strategy::Standard];
 
     /// Стратегия по значению гена — номеру варианта.
     #[inline]
@@ -42,8 +42,8 @@ impl Strategy {
 
 /// Варианты гена стратегии — в порядке `Strategy`. Только дописывать в конец.
 pub const VARIANTS: [Variant; 1] = [Variant {
-    key: "cautious",
-    label: "осторожный",
+    key: "standard",
+    label: "стандартный",
     about: "Бежит от хищника, иначе идёт к ближайшему растению своего слоя, иначе бродит.",
 }];
 
@@ -82,7 +82,7 @@ pub struct Intent {
 #[inline(always)]
 pub(crate) fn decide(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl VegetarianSenses) -> Intent {
     match me.pheno.strategy {
-        Strategy::Cautious => cautious::decide(me, mind, rng, senses),
+        Strategy::Standard => standard::decide(me, mind, rng, senses),
     }
 }
 
@@ -90,7 +90,7 @@ pub(crate) fn decide(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Vege
 #[inline(always)]
 pub(crate) fn after_eating(me: &Me, mind: &mut Mind, rng: &mut Rng) {
     match me.pheno.strategy {
-        Strategy::Cautious => cautious::after_eating(me, mind, rng),
+        Strategy::Standard => standard::after_eating(me, mind, rng),
     }
 }
 

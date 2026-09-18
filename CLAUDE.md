@@ -121,7 +121,7 @@ even on threads or I/O), `life-sim` adds only the bounded runner and the observe
   `PredatorGenome` (`Copy`, `[f64; N]`, indexed by `enum Gene`), the table-driven mutation.
 - `vegetarian/`, `predator/` — the entities: `mod.rs` (the creature, its `act` and the world
   hooks: `feed`/`eat`, `maybe_divide`, `apply_rules`), `phenotype.rs`, `strategy.rs` + one file
-  per strategy (`cautious.rs`, `hunter.rs`). `plant.rs` — plants.
+  per strategy (`standard.rs` — the original behaviour, the only one so far). `plant.rs` — plants.
 - `senses.rs` — what a creature can learn about the world (traits + grid-backed views + the
   query functions and their brute-force test).
 - `grid.rs` — `Grid`: counting-sort spatial grid with a fixed cell, rebuilt each tick.
@@ -201,7 +201,7 @@ migrate predators. Herbivores see predators already moved this tick.
 - No senses on a creature's *own* species until the parallel tick: herbivores move during their
   own phase, so the grid's copied coordinates of other herbivores would be stale.
 
-One subtlety in the herbivore's `cautious` strategy: the nearest plant is found first and *then* discarded if it
+One subtlety in the herbivore's `standard` strategy: the nearest plant is found first and *then* discarded if it
 falls outside the creature's vertical layer. Folding the layer check into the search would find
 the nearest plant *within the layer* — different behaviour, and the creature would stop
 wandering.

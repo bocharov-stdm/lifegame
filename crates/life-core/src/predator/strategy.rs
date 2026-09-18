@@ -3,7 +3,7 @@
 //! (`Predator::act`), после хода стратегия может передумать о цели (`settle`).
 
 use super::Phenotype;
-use super::hunter;
+use super::standard;
 use crate::genome::Variant;
 use crate::rng::Rng;
 use crate::senses::PredatorSenses;
@@ -14,12 +14,12 @@ use crate::space::Space;
 pub enum Strategy {
     /// Голодный гонится за ближайшей добычей с рывком вблизи, сытый бродит.
     #[default]
-    Hunter,
+    Standard,
 }
 
 impl Strategy {
     /// Все варианты в порядке `VARIANTS`.
-    pub const ALL: [Strategy; 1] = [Strategy::Hunter];
+    pub const ALL: [Strategy; 1] = [Strategy::Standard];
 
     /// Стратегия по значению гена — номеру варианта.
     #[inline]
@@ -34,8 +34,8 @@ impl Strategy {
 
 /// Варианты гена стратегии — в порядке `Strategy`. Только дописывать в конец.
 pub const VARIANTS: [Variant; 1] = [Variant {
-    key: "hunter",
-    label: "охотник",
+    key: "standard",
+    label: "стандартный",
     about: "Голодный гонится за ближайшей добычей, вблизи — рывком; сытый бродит и не ест.",
 }];
 
@@ -74,7 +74,7 @@ pub struct Intent {
 #[inline(always)]
 pub(crate) fn decide(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl PredatorSenses) -> Intent {
     match me.pheno.strategy {
-        Strategy::Hunter => hunter::decide(me, mind, rng, senses),
+        Strategy::Standard => standard::decide(me, mind, rng, senses),
     }
 }
 
@@ -82,7 +82,7 @@ pub(crate) fn decide(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Pred
 #[inline(always)]
 pub(crate) fn settle(me: &Me, mind: &mut Mind, rng: &mut Rng, space: &Space, intent: &Intent) {
     match me.pheno.strategy {
-        Strategy::Hunter => hunter::settle(me, mind, rng, space, intent),
+        Strategy::Standard => standard::settle(me, mind, rng, space, intent),
     }
 }
 

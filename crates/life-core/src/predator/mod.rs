@@ -1,7 +1,7 @@
 //! Хищник: бродит, голодный — охотится с рывком вблизи, ловит при касании тел.
 
-mod hunter;
 mod phenotype;
+mod standard;
 pub mod strategy;
 
 pub use phenotype::Phenotype;
@@ -61,9 +61,9 @@ impl Predator {
         p
     }
 
-    /// Новая цель блуждания (`hunter::choose_target`).
+    /// Новая цель блуждания (`standard::choose_target`).
     pub fn choose_new_target(&mut self, space: &Space) {
-        hunter::choose_target(self.x, self.y, &mut self.mind, &mut self.rng, space);
+        standard::choose_target(self.x, self.y, &mut self.mind, &mut self.rng, space);
     }
 
     /// Правила поменялись посреди жизни: фенотип — как у только что

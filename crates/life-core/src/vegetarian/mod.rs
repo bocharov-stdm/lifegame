@@ -5,8 +5,8 @@
 //! о сетке, а тесты подсовывают вместо неё обычные замыкания. Чувства ленивые:
 //! пока существо бежит, растения оно не ищет вовсе.
 
-mod cautious;
 mod phenotype;
+mod standard;
 pub mod strategy;
 
 pub use phenotype::Phenotype;
