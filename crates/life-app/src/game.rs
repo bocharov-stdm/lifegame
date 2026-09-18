@@ -3,7 +3,8 @@
 //! конец игры.
 
 use eframe::egui::{self, Align2, Key, RichText, Vec2};
-use life_core::genome::{GENE_LABELS, PERCENT};
+use life_core::genome::vegetarian::N;
+use life_core::genome::{GeneSpec, predator, vegetarian};
 use life_core::{Creature, Rules, WorldConfig};
 use life_sim::observe::EventKind;
 
@@ -325,7 +326,8 @@ impl LifeApp {
                     Some(
                         EventKind::VegetariansRise | EventKind::PredatorsRise | EventKind::PredatorsReturn,
                     ) => GOOD,
-                    Some(EventKind::GeneShift) => rgb(VEGETARIAN_COLOR),
+                    Some(EventKind::GeneShift | EventKind::StrategyShift) => rgb(VEGETARIAN_COLOR),
+                    Some(EventKind::PredatorGeneShift) => rgb(PREDATOR_COLOR),
                     Some(_) => TEXT,
                     None => ACCENT,
                 };
@@ -453,7 +455,7 @@ impl LifeApp {
 }
 
 /// Карточка выбранного существа: вид, энергия, состояние, гены.
-fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; 7]>) {
+fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; N]>) {
     let is_veg = matches!(s.creature, Creature::Vegetarian(_));
     let color = rgb(if is_veg { VEGETARIAN_COLOR } else { PREDATOR_COLOR });
     ui.horizontal(|ui| {
@@ -484,34 +486,45 @@ fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; 7]>) {
     }
     ui.add_space(6.0);
 
-    egui::Grid::new("карточка").num_columns(3).spacing([14.0, 4.0]).show(ui, |ui| match s.genom {
-        Some(g) => {
-            for i in 0..7 {
-                ui.colored_label(MUTED, GENE_LABELS[i]);
-                ui.label(if PERCENT[i] { format!("{:.0}%", g[i]) } else { format!("{:.0}", g[i]) });
-                // сравнение со средним по популяции: кто этот — крупнее, дальнозорче?
-                let delta = avg.map(|a| {
-                    if PERCENT[i] {
-                        format!("{:+.0} п.п. к среднему", g[i] - a[i])
-                    } else if a[i] > 0.0 {
-                        format!("{:+.0}% к среднему", (g[i] / a[i] - 1.0) * 100.0)
-                    } else {
-                        String::new()
-                    }
-                });
-                ui.colored_label(MUTED, delta.unwrap_or_default());
-                ui.end_row();
-            }
-        }
-        None => {
-            for (label, value) in [("скорость", s.speed), ("зрение", s.vision)] {
-                ui.colored_label(MUTED, label);
-                ui.label(format!("{value:.1}"));
-                ui.label("");
-                ui.end_row();
-            }
+    egui::Grid::new("карточка").num_columns(3).spacing([14.0, 4.0]).show(ui, |ui| {
+        match (s.genome, s.predator_genome) {
+            (Some(g), _) => gene_rows(ui, &vegetarian::GENES, &g, avg.as_ref()),
+            (None, Some(g)) => gene_rows(ui, &predator::GENES, &g, None),
+            (None, None) => {}
         }
     });
+}
+
+/// Гены существа по таблице вида. `avg` — средний геном популяции: кто этот —
+/// крупнее, дальнозорче? Ген-выбор с одним вариантом не показывается.
+fn gene_rows(ui: &mut egui::Ui, genes: &[GeneSpec], g: &[f64], avg: Option<&[f64; N]>) {
+    for (i, spec) in genes.iter().enumerate().filter(|(_, spec)| charts::shown(spec)) {
+        ui.colored_label(MUTED, spec.label);
+        if let Some(variants) = spec.variants() {
+            ui.label(variants.get(g[i] as usize).map_or("?", |v| v.label));
+            ui.label("");
+            ui.end_row();
+            continue;
+        }
+        let percent = spec.is_percent();
+        // мелкие величины (скорость) — с десятыми, крупные — целыми
+        ui.label(match (percent, g[i] < 20.0) {
+            (true, _) => format!("{:.0}%", g[i]),
+            (false, true) => format!("{:.1}", g[i]),
+            (false, false) => format!("{:.0}", g[i]),
+        });
+        let delta = avg.map(|a| {
+            if percent {
+                format!("{:+.0} п.п. к среднему", g[i] - a[i])
+            } else if a[i] > 0.0 {
+                format!("{:+.0}% к среднему", (g[i] / a[i] - 1.0) * 100.0)
+            } else {
+                String::new()
+            }
+        });
+        ui.colored_label(MUTED, delta.unwrap_or_default());
+        ui.end_row();
+    }
 }
 
 #[cfg(test)]

@@ -12,12 +12,13 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use life_core::config::{DIVIDE_PERIOD, VEGETARIAN_BASE_GENOM};
-use life_core::{Creature, Genom, Rules, World, WorldConfig};
+use life_core::config::DIVIDE_PERIOD;
+use life_core::{Creature, Rules, VegetarianGenome, World, WorldConfig};
 use life_sim::observe::{EventTracker, Snapshot};
 
 use crate::frame::{self, Ending, Frame, Instance, LogEntry, Raster, Selected, Status, ViewRequest};
 use crate::history::{GenePoint, Sample};
+use crate::motion::Motion;
 
 /// Скорости, тиков в секунду; None — «максимум», сколько успеет процессор.
 pub const SPEEDS: [Option<f64>; 9] = [
@@ -195,6 +196,8 @@ struct Sim {
     /// Окно не забрало прошлый кадр (например, свёрнуто): не крутимся вхолостую.
     blocked: bool,
     last_minimap: Option<Instant>,
+    /// Память прошлого кадра: движение, рождения, призраки.
+    motion: Motion,
 }
 
 impl Sim {
@@ -238,6 +241,7 @@ impl Sim {
             frame_interval: MIN_FRAME_INTERVAL,
             blocked: false,
             last_minimap: None,
+            motion: Motion::default(),
         };
         sim.observe_start();
         sim
@@ -338,7 +342,7 @@ impl Sim {
                     self.world.spawn_predator(x, y, None);
                     "подсажен хищник"
                 } else {
-                    self.world.spawn_vegetarian(Genom::from_array(VEGETARIAN_BASE_GENOM), x, y, None);
+                    self.world.spawn_vegetarian(VegetarianGenome::BASE, x, y, None);
                     "подсажено травоядное"
                 };
                 self.log(None, text.into());
@@ -391,6 +395,7 @@ impl Sim {
         self.due = 0.0;
         self.last_time = Instant::now();
         self.last_minimap = None;
+        self.motion = Motion::default();
         self.tick_ms = 0.0;
         self.reset_tps();
         self.pending = Pending::default();
@@ -553,7 +558,7 @@ impl Sim {
         if let Some(view) = self.view {
             let rect = view.padded();
             origin = (rect.0, rect.1);
-            if !frame::collect_instances(w, rect, &mut instances) {
+            if !self.motion.collect(w, rect, &mut instances) {
                 instances.clear();
                 // Карта плотности ровно по видимой области, клетка — пара пикселей.
                 let (dw, dh) =
@@ -596,6 +601,7 @@ impl Sim {
             samples: pending.samples,
             gene_points: pending.gene_points,
             log: pending.log,
+            built: Some(Instant::now()),
             build_ms: start.elapsed().as_secs_f64() * 1000.0,
             tick_ms: self.tick_ms,
         }
@@ -723,7 +729,7 @@ mod tests {
         let f = wait_frame(&h, |f| f.selected.is_some());
         let s = f.selected.unwrap();
         assert_eq!(s.creature, Creature::Vegetarian(1));
-        assert!(s.genom.is_some() && s.layer.is_some());
+        assert!(s.genome.is_some() && s.layer.is_some());
         // клик в пустоту снимает выбор
         h.send(Command::Pick { x: -1e6, y: -1e6, radius: 1.0 });
         wait_frame(&h, |f| f.selected.is_none());

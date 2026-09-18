@@ -2,11 +2,11 @@
 //! каждый срез целиком. Ключи — машинные (английские, как в эталоне Python),
 //! тексты событий — по-русски.
 
-use life_core::genome::{GENE_KEYS, GENE_LABELS};
+use life_core::genome::{GeneKind, GeneSpec, predator, vegetarian};
 use life_core::rules::RULE_KEYS;
 use life_core::{Counters, Rules, WorldConfig};
 use life_sim::SimResult;
-use life_sim::observe::{Event, MAP_LEGEND, Snapshot, Spread};
+use life_sim::observe::{Event, GeneStat, MAP_LEGEND, Snapshot, Spread};
 use serde_json::{Map, Value, json};
 
 use crate::story;
@@ -33,10 +33,56 @@ fn counters(c: &Counters) -> Value {
     })
 }
 
+/// Сводка генов по таблице: у числового гена — разброс, у гена-выбора — доли
+/// вариантов по их ключам.
+fn gene_stats(genes: &[GeneSpec], stats: &[GeneStat]) -> Value {
+    let map: Map<_, _> = genes
+        .iter()
+        .zip(stats)
+        .map(|(spec, stat)| {
+            let v = match stat {
+                GeneStat::Number(s) => spread(s),
+                GeneStat::Shares(s) => {
+                    let variants = spec.variants().unwrap_or_default();
+                    let shares: Map<_, _> = variants
+                        .iter()
+                        .zip(s)
+                        .map(|(v, share)| (v.key.to_string(), json!(r(*share))))
+                        .collect();
+                    json!({ "shares": shares })
+                }
+            };
+            (spec.key.to_string(), v)
+        })
+        .collect();
+    Value::Object(map)
+}
+
+/// Таблица генов вида: чтобы JSON описывал сам себя.
+fn gene_table(genes: &[GeneSpec]) -> Value {
+    genes
+        .iter()
+        .map(|g| {
+            let (kind, variants) = match g.kind {
+                GeneKind::Absolute => ("absolute", None),
+                GeneKind::Percent => ("percent", None),
+                GeneKind::Choice(v) => (
+                    "choice",
+                    Some(v.iter().map(|v| json!({ "key": v.key, "label": v.label })).collect::<Vec<_>>()),
+                ),
+            };
+            let mut row = json!({ "key": g.key, "label": g.label, "kind": kind, "base": g.base });
+            if let Some(v) = variants {
+                row["variants"] = json!(v);
+            }
+            row
+        })
+        .collect()
+}
+
 fn snapshot(s: &Snapshot) -> Value {
-    let genes = s
-        .genes
-        .map(|g| GENE_KEYS.iter().zip(&g).map(|(k, v)| (k.to_string(), spread(v))).collect::<Map<_, _>>());
+    let genes = s.genes.map(|g| gene_stats(&vegetarian::GENES, &g));
+    let predator_genes = s.predator_genes.map(|g| gene_stats(&predator::GENES, &g));
     json!({
         "tick": s.tick,
         "plants": s.plants,
@@ -52,8 +98,7 @@ fn snapshot(s: &Snapshot) -> Value {
         "vegetarian_fullness": s.vegetarian_fullness.map(r),
         "predators_hungry": s.predators_hungry.map(r),
         "predator_fullness": s.predator_fullness.map(r),
-        "predator_speed": s.predator_speed.map(r),
-        "predator_vision": s.predator_vision.map(r),
+        "predator_genes": predator_genes,
     })
 }
 
@@ -72,7 +117,7 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
     let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(rules.get(k)))).collect();
     let space = life_core::Space::scaled(cfg.scale);
     json!({
-        "format": "life-report/1",
+        "format": "life-report/2",
         "world": { "scale": cfg.scale, "width": space.width, "height": space.height },
         "ticks": ticks,
         "sample_every": sample_every,
@@ -83,9 +128,10 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
             "predators": cfg.predators_at_start(),
             "predator_speed": cfg.predator_speed,
             "predator_vision": cfg.predator_vision,
+            "vegetarian_strategies": cfg.vegetarian_strategies,
+            "predator_strategies": cfg.predator_strategies,
         },
-        "gene_keys": GENE_KEYS,
-        "gene_labels": GENE_LABELS,
+        "genes": { "vegetarian": gene_table(&vegetarian::GENES), "predator": gene_table(&predator::GENES) },
         "map_legend": MAP_LEGEND,
         "runs": runs.iter().map(|run| {
             let snaps = &run.res.snapshots;

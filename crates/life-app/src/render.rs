@@ -1,10 +1,21 @@
-//! Кружки мира на видеокарте: один draw call на весь кадр.
+//! Существа на видеокарте: один draw call на весь кадр.
 //!
-//! Каждый кружок — экземпляр квадрата; окружность вырезает фрагментный
-//! шейдер по расстоянию до центра, с мягким краем в один пиксель (сглаживание
-//! бесплатно). Круг — это тело: радиус — половина `size` травоядного и `DIAM`
-//! хищника. Буфер кружков заливается в видеокарту только когда пришёл новый
-//! кадр, а не каждый кадр окна.
+//! Каждое существо — экземпляр квадрата; фигуру вырезает фрагментный шейдер
+//! (`creatures.wgsl`) по расстоянию до края, с мягким краем в один пиксель.
+//! Круг — это тело: радиус — половина `size` травоядного и `DIAM` хищника; нос
+//! хищника — только украшение поверх тела.
+//!
+//! Что делает шейдер, чтобы мир не мельтешил:
+//! - рисует существо между позицией прошлого и нового кадра (`k` — доля
+//!   пути), а не прыжками от кадра к кадру;
+//! - новорождённое вырастает из точки, съеденное сжимается, умершее с голоду
+//!   сереет и гаснет (возраст кружка плюс `since` — время с его сборки);
+//! - мельче пикселя рисует пиксель, но тусклее по площади: точка при движении
+//!   не вспыхивает и не гаснет;
+//! - кайму, ядро сытости, глазок и нос рисует, только когда существо на
+//!   экране крупнее нескольких пикселей: мелкие детали рябили бы.
+//!
+//! Буфер кружков заливается в видеокарту только когда пришёл новый кадр.
 
 use std::sync::Arc;
 
@@ -13,58 +24,7 @@ use eframe::wgpu::util::DeviceExt;
 
 use crate::frame::Instance;
 
-const SHADER: &str = r#"
-struct U {
-    // где на экране (в точках, от левого верхнего угла вьюпорта) начало координат кадра
-    origin: vec2<f32>,
-    // размер вьюпорта в точках
-    view: vec2<f32>,
-    zoom: f32,
-    pixels_per_point: f32,
-    // наименьший радиус в точках: мелочь при отдалении остаётся точкой, а не исчезает
-    min_r: f32,
-    _pad: f32,
-};
-@group(0) @binding(0) var<uniform> u: U;
-
-struct VOut {
-    @builtin(position) clip: vec4<f32>,
-    @location(0) local: vec2<f32>,
-    @location(1) r_px: f32,
-    @location(2) color: vec4<f32>,
-};
-
-@vertex
-fn vs_main(
-    @builtin(vertex_index) vi: u32,
-    @location(0) pos: vec2<f32>,
-    @location(1) r: f32,
-    @location(2) color: u32,
-) -> VOut {
-    var corners = array<vec2<f32>, 6>(
-        vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0),
-        vec2(-1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0),
-    );
-    let corner = corners[vi];
-    let r_pt = max(r * u.zoom, u.min_r);
-    // квадрат на пиксель больше круга: место для мягкого края
-    let half = r_pt + 1.0 / u.pixels_per_point;
-    let p = u.origin + pos * u.zoom + corner * half;
-    var out: VOut;
-    out.clip = vec4(p.x / u.view.x * 2.0 - 1.0, 1.0 - p.y / u.view.y * 2.0, 0.0, 1.0);
-    out.local = corner * half * u.pixels_per_point;
-    out.r_px = r_pt * u.pixels_per_point;
-    out.color = unpack4x8unorm(color);
-    return out;
-}
-
-@fragment
-fn fs_main(in: VOut) -> @location(0) vec4<f32> {
-    let d = length(in.local) - in.r_px;
-    let a = clamp(0.5 - d, 0.0, 1.0) * in.color.a;
-    return vec4(in.color.rgb * a, a);
-}
-"#;
+const SHADER: &str = include_str!("creatures.wgsl");
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -73,8 +33,8 @@ struct Uniforms {
     view: [f32; 2],
     zoom: f32,
     pixels_per_point: f32,
-    min_r: f32,
-    _pad: f32,
+    k: f32,
+    since: f32,
 }
 
 /// Всё, что живёт в видеокарте между кадрами.
@@ -123,7 +83,9 @@ pub fn init(render_state: &egui_wgpu::RenderState) {
             buffers: &[Some(wgpu::VertexBufferLayout {
                 array_stride: std::mem::size_of::<Instance>() as u64,
                 step_mode: wgpu::VertexStepMode::Instance,
-                attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32, 2 => Uint32],
+                attributes: &wgpu::vertex_attr_array![
+                    0 => Float32x2, 1 => Float32x2, 2 => Float32, 3 => Uint32, 4 => Float32, 5 => Uint32
+                ],
             })],
             compilation_options: Default::default(),
         },
@@ -184,6 +146,10 @@ pub struct Circles {
     pub view: [f32; 2],
     pub zoom: f32,
     pub pixels_per_point: f32,
+    /// Доля пути от позиции прошлого кадра к новой (0‒1).
+    pub k: f32,
+    /// Секунды с тех пор, как кадр собран: прибавляется к возрасту кружков.
+    pub since: f32,
 }
 
 impl egui_wgpu::CallbackTrait for Circles {
@@ -201,8 +167,8 @@ impl egui_wgpu::CallbackTrait for Circles {
             view: self.view,
             zoom: self.zoom,
             pixels_per_point: self.pixels_per_point,
-            min_r: 0.6 / self.pixels_per_point,
-            _pad: 0.0,
+            k: self.k,
+            since: self.since,
         };
         queue.write_buffer(&res.uniforms, 0, bytemuck::bytes_of(&u));
         if res.generation != self.generation {

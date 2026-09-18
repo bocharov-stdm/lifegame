@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use life_core::genome::GENE_KEYS;
+use life_core::genome::vegetarian::{GENES, Gene};
 use life_core::rules::RULE_KEYS;
 use life_core::{Rules, Stats, WorldConfig};
 use life_sim::{SimResult, StopReason};
@@ -48,6 +48,9 @@ pub struct Reference {
     rules: Rules,
     start: (usize, usize),
     predator: (f64, f64),
+    strategies: (Vec<f64>, Vec<f64>),
+    /// Гены травоядных, на которых снят эталон (у старого — семь).
+    pub genes: Vec<String>,
 }
 
 impl Reference {
@@ -57,6 +60,15 @@ impl Reference {
         let field = |v: &Value, k: &str| v.get(k).cloned().ok_or(format!("нет поля {k}"));
         let ticks = field(&data, "ticks")?.as_u64().ok_or("ticks — не число")?;
         let sample_every = field(&data, "sample_every")?.as_u64().ok_or("sample_every — не число")?;
+        // Средний геном в точках ряда — списком по порядку генов эталона. Размер
+        // ищем по имени: порядок генов эталона может отличаться от нашей таблицы.
+        let size_at = match data.get("genes").and_then(Value::as_array) {
+            Some(keys) => keys
+                .iter()
+                .position(|k| k.as_str() == Some(GENES[Gene::Size as usize].key))
+                .ok_or("в эталоне нет гена size")?,
+            None => 0,
+        };
         let mut seeds = Vec::new();
         let mut runs = Vec::new();
         for run in field(&data, "runs")?.as_array().ok_or("runs — не список")? {
@@ -70,7 +82,7 @@ impl Reference {
                     plants: s["plants"].as_f64().unwrap_or(0.0),
                     vegetarians: s["vegetarians"].as_f64().unwrap_or(0.0),
                     predators: s["predators"].as_f64().unwrap_or(0.0),
-                    size: s["genom"].get(0).and_then(Value::as_f64),
+                    size: s["genom"].get(size_at).and_then(Value::as_f64),
                 })
                 .collect();
             // Python писал причину остановки русским текстом — формат сохранён
@@ -107,6 +119,12 @@ impl Reference {
                 num(&start["predator_speed"], world.predator_speed),
                 num(&start["predator_vision"], world.predator_vision),
             ),
+            strategies: (mix(&start["vegetarian_strategies"])?, mix(&start["predator_strategies"])?),
+            genes: data
+                .get("genes")
+                .and_then(Value::as_array)
+                .map(|keys| keys.iter().filter_map(|k| k.as_str().map(str::to_string)).collect())
+                .unwrap_or_default(),
         })
     }
 
@@ -136,7 +154,42 @@ impl Reference {
                 cfg.predator_speed, cfg.predator_vision, self.predator.0, self.predator.1
             ));
         }
+        if (&cfg.vegetarian_strategies, &cfg.predator_strategies) != (&self.strategies.0, &self.strategies.1)
+        {
+            diff.push(format!(
+                "смесь стратегий {:?}/{:?} (в эталоне {:?}/{:?})",
+                cfg.vegetarian_strategies, cfg.predator_strategies, self.strategies.0, self.strategies.1
+            ));
+        }
         if diff.is_empty() { Ok(()) } else { Err(diff.join(", ")) }
+    }
+
+    /// Предупреждение, если эталон снят на другом наборе генов: сравнивать
+    /// можно (метрики — численности и размер), но расхождение тогда ожидаемо, и
+    /// эталон пора переснять. Ген-выбор с одним вариантом инертен (не тянет
+    /// случайных чисел и ничего не различает) и в сравнении не участвует.
+    pub fn genes_note(&self) -> Option<String> {
+        let inert =
+            |key: &str| GENES.iter().any(|g| g.key == key && g.variants().is_some_and(|v| v.len() < 2));
+        let ours: Vec<&str> = GENES.iter().map(|g| g.key).filter(|k| !inert(k)).collect();
+        let theirs: Vec<&str> = self.genes.iter().map(String::as_str).filter(|k| !inert(k)).collect();
+        (!theirs.is_empty() && theirs != ours).then(|| {
+            format!(
+                "эталон снят на генах травоядных {theirs:?}, сейчас {ours:?} — после намеренной смены \
+                 поведения эталон переснимают (--save-reference)"
+            )
+        })
+    }
+}
+
+/// Стартовая смесь стратегий из эталона: список долей, у старого эталона — пустой.
+fn mix(v: &Value) -> Result<Vec<f64>, String> {
+    match v {
+        Value::Null => Ok(Vec::new()),
+        Value::Array(a) => {
+            a.iter().map(|x| x.as_f64().ok_or("смесь стратегий — не числа".to_string())).collect()
+        }
+        _ => Err("смесь стратегий — не список".into()),
     }
 }
 
@@ -179,7 +232,7 @@ pub fn save_reference(
         "source": "rust",
         "sample_every": sample_every,
         "ticks": ticks,
-        "genes": GENE_KEYS,
+        "genes": GENES.iter().map(|g| g.key).collect::<Vec<_>>(),
         "scale": cfg.scale,
         "rules": rules,
         "start": {
@@ -187,6 +240,8 @@ pub fn save_reference(
             "predators": cfg.predators_at_start(),
             "predator_speed": cfg.predator_speed,
             "predator_vision": cfg.predator_vision,
+            "vegetarian_strategies": cfg.vegetarian_strategies,
+            "predator_strategies": cfg.predator_strategies,
         },
         "runs": runs,
     });
@@ -204,7 +259,7 @@ fn from_stats(history: &[Stats]) -> Vec<Point> {
             plants: s.plants as f64,
             vegetarians: s.vegetarians as f64,
             predators: s.predators as f64,
-            size: s.avg_genom.map(|g| g[0]),
+            size: s.avg_genom.map(|g| g[Gene::Size as usize]),
         })
         .collect()
 }

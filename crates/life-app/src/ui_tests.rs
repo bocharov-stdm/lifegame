@@ -15,6 +15,7 @@ use egui_kittest::kittest::{NodeT, Queryable};
 use life_core::{Creature, WorldConfig};
 
 use crate::app::{LifeApp, Screen, SideTab};
+use crate::frame::Instance;
 use crate::settings::Tab;
 use crate::sim::Command;
 
@@ -148,6 +149,43 @@ fn игра_помещается_в_окно() {
             shot(h, &format!("игра-{tab:?}-{tag}"));
         }
     });
+}
+
+/// Крупный план: вблизи у существ кайма, ядро сытости, глазок и нос хищника
+/// (`creatures.wgsl`). Шейдер компилируется и рисует — остальное видно на
+/// картинке с TINYLIFE_SHOTS.
+#[test]
+fn крупный_план_рисуется() {
+    let _gpu = gpu();
+    let mut h = harness(NORMAL);
+    h.state_mut().side_open = false;
+    // там, где существ гуще всего: травоядное с наибольшим числом соседей
+    let (x, y) = {
+        let f = h.state().view.frame.as_ref().expect("кадр");
+        let all = h.state().view.instances();
+        let animals: Vec<_> =
+            all.iter().filter(|i| (i.meta >> 16) & 3 != crate::motion::KIND_PLANT).collect();
+        let near = |a: &Instance| {
+            animals.iter().filter(|b| (a.x - b.x).abs() < 500.0 && (a.y - b.y).abs() < 300.0).count()
+        };
+        let i = animals.iter().max_by_key(|a| near(a)).expect("кружки");
+        (f.origin.0 + i.x as f64, f.origin.1 + i.y as f64)
+    };
+    settle(&mut h);
+    let generation = h.state().view.frame.as_ref().map(|f| f.tick);
+    {
+        let cam = h.state_mut().view.camera.as_mut().expect("камера");
+        cam.zoom = 1.5;
+        cam.center_on(x, y);
+    }
+    // кадр для нового вида приходит из потока симуляции
+    for _ in 0..100 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(h.state().view.frame.as_ref().map(|f| f.tick), generation, "на паузе мир стоит");
+    assert!(!h.state().view.instances().is_empty(), "вблизи есть кого рисовать");
+    shot(&mut h, "крупный-план-1600x900");
 }
 
 #[test]

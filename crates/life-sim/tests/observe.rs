@@ -4,7 +4,7 @@
 
 use life_core::config::*;
 use life_core::{World, WorldConfig};
-use life_sim::observe::{DEPTH_BANDS, EventKind, Snapshot, ascii_map, events};
+use life_sim::observe::{DEPTH_BANDS, EventKind, GeneStat, MAX_VARIANTS, Snapshot, ascii_map, events};
 use life_sim::{Limits, simulate};
 
 fn world() -> World {
@@ -23,7 +23,14 @@ fn срез_раскладывает_всех_по_глубине() {
     assert_eq!(s.plants_by_depth.iter().sum::<usize>(), w.plants.len());
     assert_eq!(s.vegetarians_by_depth.len(), DEPTH_BANDS);
     let g = s.genes.expect("травоядные есть");
-    assert_eq!(g[0].p50, VEGETARIAN_BASE_GENOM[0], "на старте геном у всех базовый");
+    for (stat, base) in g.iter().zip(life_core::VegetarianGenome::BASE.to_values()) {
+        match stat {
+            GeneStat::Number(s) => assert_eq!(s.p50, base, "на старте геном у всех базовый"),
+            GeneStat::Shares(s) => assert_eq!(s[base as usize], 1.0, "на старте у всех базовый вариант"),
+        }
+    }
+    let p = s.predator_genes.expect("хищники есть");
+    assert!(matches!(p[0], GeneStat::Number(s) if s.p50 == PREDATOR_BASE_SPEED));
 
     let mut empty = w.clone();
     empty.vegetarians.clear();
@@ -104,4 +111,15 @@ fn прогон_снимает_срезы_вместе_с_историей() {
     let ev = events(&res.snapshots);
     assert!(ev.windows(2).all(|p| p[0].tick <= p[1].tick));
     assert!(ev.iter().all(|e| !e.text.is_empty()));
+}
+
+/// Доли гена-выбора лежат в массиве на `MAX_VARIANTS`: вариантов в таблицах
+/// не больше.
+#[test]
+fn вариантов_не_больше_места_в_срезе() {
+    use life_core::genome::{predator, vegetarian};
+    for spec in vegetarian::GENES.iter().chain(predator::GENES.iter()) {
+        let n = spec.variants().map_or(0, <[_]>::len);
+        assert!(n <= MAX_VARIANTS, "у гена {} {n} вариантов", spec.key);
+    }
 }

@@ -27,6 +27,7 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use life_core::config::*;
+use life_core::genome::vegetarian::Gene;
 use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::{Rules, WorldConfig};
 use life_sim::observe::{self, Event, ascii_map};
@@ -155,6 +156,7 @@ fn main() {
         n_predators: args.predators,
         predator_speed: args.predator_speed,
         predator_vision: args.predator_vision,
+        ..Default::default()
     };
 
     let reference = args.compare.as_ref().map(|path| {
@@ -164,6 +166,9 @@ fn main() {
         // сравнивать можно только одинаковые миры: иначе «расхождение» — это
         // разница условий, а не баланса
         r.check_same_world(&base_cfg).unwrap_or_else(|e| fail(format!("эталон снят на другом мире: {e}")));
+        if let Some(note) = r.genes_note() {
+            eprintln!("заметка: {note}");
+        }
         args.seeds = r.seeds.clone();
         args.ticks = Some(r.ticks);
         args.sample = Some(r.sample_every);
@@ -264,7 +269,8 @@ fn print_summary(results: &[(u64, SimResult)]) {
     for (seed, r) in results {
         let last = r.last();
         let with_pred = r.history.iter().filter(|s| s.predators > 0).count() as f64 / r.history.len() as f64;
-        let sizes: Vec<f64> = r.history.iter().filter_map(|s| s.avg_genom.map(|g| g[0])).collect();
+        let sizes: Vec<f64> =
+            r.history.iter().filter_map(|s| s.avg_genom.map(|g| g[Gene::Size as usize])).collect();
         let smax = sizes.iter().copied().fold(f64::NAN, f64::max);
         let sfin = sizes.last().copied().unwrap_or(f64::NAN);
         println!(

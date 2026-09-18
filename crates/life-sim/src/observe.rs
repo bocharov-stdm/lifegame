@@ -10,7 +10,7 @@
 //! - [`ascii_map`] — карта мира текстом: слои, скопления, пустые края.
 
 use life_core::config::*;
-use life_core::genome::{GENE_LABELS, PERCENT};
+use life_core::genome::{GeneSpec, Genome, predator, vegetarian};
 use life_core::{Counters, World};
 
 /// На сколько полос делится глубина в срезе (0 — поверхность).
@@ -38,6 +38,68 @@ impl Spread {
     }
 }
 
+/// Больше вариантов у гена-выбора не бывает (тест в `tests/observe.rs`
+/// сверяет с таблицами генов): доли лежат в массиве, а не в векторе, чтобы
+/// срез оставался дешёвым в копировании.
+pub const MAX_VARIANTS: usize = 8;
+
+/// Сводка одного гена по популяции.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GeneStat {
+    /// Числовой ген: разброс.
+    Number(Spread),
+    /// Ген-выбор: доля каждого варианта (0..1) в порядке вариантов.
+    Shares([f64; MAX_VARIANTS]),
+}
+
+impl GeneStat {
+    pub fn spread(&self) -> Option<&Spread> {
+        match self {
+            GeneStat::Number(s) => Some(s),
+            GeneStat::Shares(_) => None,
+        }
+    }
+
+    pub fn shares(&self) -> Option<&[f64; MAX_VARIANTS]> {
+        match self {
+            GeneStat::Shares(s) => Some(s),
+            GeneStat::Number(_) => None,
+        }
+    }
+}
+
+/// Сводка генов популяции по таблице вида: разброс числовых генов (одна
+/// сортировка на ген), доли у генов-выборов (один проход). None — никого нет.
+pub fn gene_stats<'a, G: Genome, const N: usize>(
+    genes: &[GeneSpec; N],
+    genomes: impl Iterator<Item = &'a G> + Clone,
+) -> Option<[GeneStat; N]> {
+    let n = genomes.clone().count();
+    if n == 0 {
+        return None;
+    }
+    let mut column = vec![0.0; n];
+    Some(std::array::from_fn(|g| match genes[g].variants() {
+        Some(_) => {
+            let mut shares = [0.0; MAX_VARIANTS];
+            for genome in genomes.clone() {
+                let k = genome.values()[g] as usize;
+                if k < MAX_VARIANTS {
+                    shares[k] += 1.0;
+                }
+            }
+            shares.iter_mut().for_each(|s| *s /= n as f64);
+            GeneStat::Shares(shares)
+        }
+        None => {
+            for (c, genome) in column.iter_mut().zip(genomes.clone()) {
+                *c = genome.values()[g];
+            }
+            GeneStat::Number(Spread::of(&mut column).expect("популяция не пуста"))
+        }
+    }))
+}
+
 /// Срез мира на одном тике.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
@@ -52,8 +114,9 @@ pub struct Snapshot {
     /// Накопленные с начала мира; потоки за промежуток — `b.counters.since(&a.counters)`.
     pub counters: Counters,
     pub migrants: u64,
-    /// Разброс каждого гена травоядных, порядок — `GENE_LABELS`. None — травоядных нет.
-    pub genes: Option<[Spread; 7]>,
+    /// Сводка каждого гена травоядных, порядок — таблица `vegetarian::GENES`.
+    /// None — травоядных нет.
+    pub genes: Option<[GeneStat; vegetarian::N]>,
     /// Глубина травоядных, % высоты мира (0 — поверхность, где гуще растения).
     pub vegetarian_depth: Option<Spread>,
     pub vegetarians_by_depth: [usize; DEPTH_BANDS],
@@ -63,9 +126,8 @@ pub struct Snapshot {
     /// Доля голодных хищников — тех, кто сейчас охотится.
     pub predators_hungry: Option<f64>,
     pub predator_fullness: Option<f64>,
-    /// Средние скорость и зрение хищников: они тоже мутируют при делении.
-    pub predator_speed: Option<f64>,
-    pub predator_vision: Option<f64>,
+    /// Сводка генов хищников (таблица `predator::GENES`). None — хищников нет.
+    pub predator_genes: Option<[GeneStat; predator::N]>,
 }
 
 fn band(y: f64, height: f64) -> usize {
@@ -83,15 +145,7 @@ impl Snapshot {
         let vegs = &world.vegetarians;
         let preds = &world.predators;
 
-        let genes = (!vegs.is_empty()).then(|| {
-            let mut column = vec![0.0; vegs.len()];
-            std::array::from_fn(|g| {
-                for (c, v) in column.iter_mut().zip(vegs) {
-                    *c = v.genom.to_array()[g];
-                }
-                Spread::of(&mut column).expect("травоядные есть")
-            })
-        });
+        let genes = gene_stats(&vegetarian::GENES, vegs.iter().map(|v| &v.genome));
         let mut depth: Vec<f64> = vegs.iter().map(|v| v.y / h * 100.0).collect();
 
         let mut vegetarians_by_depth = [0; DEPTH_BANDS];
@@ -116,11 +170,10 @@ impl Snapshot {
             vegetarian_depth: Spread::of(&mut depth),
             vegetarians_by_depth,
             plants_by_depth,
-            vegetarian_fullness: average(vegs.iter().map(|v| v.energy / v.max_energy)),
+            vegetarian_fullness: average(vegs.iter().map(|v| v.energy / v.pheno.max_energy)),
             predators_hungry: average(preds.iter().map(|p| p.hungry() as u8 as f64)),
-            predator_fullness: average(preds.iter().map(|p| p.energy / p.max_energy)),
-            predator_speed: average(preds.iter().map(|p| p.speed)),
-            predator_vision: average(preds.iter().map(|p| p.vision)),
+            predator_fullness: average(preds.iter().map(|p| p.energy / p.pheno.max_energy)),
+            predator_genes: gene_stats(&predator::GENES, preds.iter().map(|p| &p.genome)),
         }
     }
 }
@@ -142,6 +195,8 @@ pub enum EventKind {
     GeneShift,
     LayerNarrow,
     LayerWide,
+    PredatorGeneShift,
+    StrategyShift,
 }
 
 impl EventKind {
@@ -159,6 +214,8 @@ impl EventKind {
             EventKind::GeneShift => "gene_shift",
             EventKind::LayerNarrow => "layer_narrow",
             EventKind::LayerWide => "layer_wide",
+            EventKind::PredatorGeneShift => "predator_gene_shift",
+            EventKind::StrategyShift => "strategy_shift",
         }
     }
 }
@@ -181,6 +238,9 @@ const SWING_MIN_PREDATORS: f64 = 4.0;
 /// относительный, для генов-процентов — в процентных пунктах.
 const GENE_SHIFT_REL: f64 = 0.3;
 const GENE_SHIFT_PTS: f64 = 15.0;
+/// Доля варианта гена-выбора (стратегии) сдвинулась на столько процентных
+/// пунктов — или вариант появился либо исчез.
+const SHARE_SHIFT_PTS: f64 = 15.0;
 /// Слой травоядных (10‒90% по глубине) уже этого — «сжались», шире второго —
 /// «расселились». Зазор между порогами не даёт событию мигать туда-сюда.
 const LAYER_NARROW: f64 = 25.0;
@@ -204,6 +264,66 @@ pub fn predator_flows(c: &Counters, migrants: u64) -> String {
     )
 }
 
+/// Сдвиги генов вида с прошлых отметок: (части текста для числовых генов,
+/// для генов-выборов). Сдвинувшийся ген переносит свою отметку сюда.
+fn gene_shifts<const N: usize>(
+    genes: &[GeneSpec; N],
+    cur: Option<[GeneStat; N]>,
+    base: &mut Option<[(GeneStat, u64); N]>,
+    t: u64,
+) -> (Vec<String>, Vec<String>) {
+    let (mut numbers, mut choices) = (Vec::new(), Vec::new());
+    let Some(cur) = cur else { return (numbers, choices) };
+    let Some(base) = base.as_mut() else {
+        *base = Some(cur.map(|s| (s, t)));
+        return (numbers, choices);
+    };
+    for (g, spec) in genes.iter().enumerate() {
+        let (was, since) = base[g];
+        match (cur[g], was) {
+            (GeneStat::Number(s), GeneStat::Number(w)) => {
+                let (now, was) = (s.p50, w.p50);
+                let percent = spec.is_percent();
+                let shifted = if percent {
+                    (now - was).abs() >= GENE_SHIFT_PTS
+                } else {
+                    was > 0.0 && (now / was - 1.0).abs() >= GENE_SHIFT_REL
+                };
+                if shifted {
+                    let change = if percent {
+                        format!("{:+.0} п.п.", now - was)
+                    } else {
+                        format!("{:+.0}%", (now / was - 1.0) * 100.0)
+                    };
+                    numbers.push(format!(
+                        "{} {was:.1}→{now:.1} ({change} с тика {since}; 10‒90%: {:.1}‒{:.1})",
+                        spec.label, s.p10, s.p90
+                    ));
+                    base[g] = (cur[g], t);
+                }
+            }
+            (GeneStat::Shares(now), GeneStat::Shares(was)) => {
+                let variants = spec.variants().unwrap_or_default();
+                let moved = variants.iter().enumerate().any(|(k, _)| {
+                    (now[k] - was[k]).abs() * 100.0 >= SHARE_SHIFT_PTS || (now[k] > 0.0) != (was[k] > 0.0)
+                });
+                if moved {
+                    let parts: Vec<String> = variants
+                        .iter()
+                        .enumerate()
+                        .filter(|&(k, _)| now[k] > 0.0 || was[k] > 0.0)
+                        .map(|(k, v)| format!("{} {:.0}→{:.0}%", v.label, was[k] * 100.0, now[k] * 100.0))
+                        .collect();
+                    choices.push(format!("{} {} (с тика {since})", spec.label, parts.join(", ")));
+                    base[g] = (cur[g], t);
+                }
+            }
+            _ => {}
+        }
+    }
+    (numbers, choices)
+}
+
 /// Колебание одной популяции: пик и дно с прошлого события.
 #[derive(Clone, Debug)]
 struct Swing {
@@ -218,8 +338,9 @@ pub struct EventTracker {
     prev: Option<Snapshot>,
     /// Травоядные и хищники.
     swings: Vec<Swing>,
-    /// Медиана каждого гена на прошлой отметке и тик этой отметки.
-    gene_base: Option<[(f64, u64); 7]>,
+    /// Сводка каждого гена на прошлой отметке и тик этой отметки.
+    gene_base: Option<[(GeneStat, u64); vegetarian::N]>,
+    predator_gene_base: Option<[(GeneStat, u64); predator::N]>,
     narrow: bool,
     capped: bool,
 }
@@ -233,7 +354,8 @@ impl EventTracker {
     pub fn observe(&mut self, cur: &Snapshot, out: &mut Vec<Event>) {
         let Some(prev) = self.prev.replace(cur.clone()) else {
             self.swings = vec![Swing { peak: cur.clone(), trough: cur.clone() }; 2];
-            self.gene_base = cur.genes.map(|g| g.map(|s| (s.p50, cur.tick)));
+            self.gene_base = cur.genes.map(|g| g.map(|s| (s, cur.tick)));
+            self.predator_gene_base = cur.predator_genes.map(|g| g.map(|s| (s, cur.tick)));
             self.narrow = cur.vegetarian_depth.is_some_and(|d| d.p90 - d.p10 < LAYER_NARROW);
             self.capped = cur.plants as f64 >= cur.plant_cap as f64 * CAP_HIGH;
             return;
@@ -322,36 +444,20 @@ impl EventTracker {
 
         // ── гены: медиана ушла от прошлой отметки — отметка переносится; все
         // сдвиги одного среза — одно событие, иначе хроника тонет в генах
-        match (cur.genes, self.gene_base.as_mut()) {
-            (Some(genes), Some(base)) => {
-                let mut parts = Vec::new();
-                for (g, s) in genes.iter().enumerate() {
-                    let (was, since) = base[g];
-                    let now = s.p50;
-                    let shifted = if PERCENT[g] {
-                        (now - was).abs() >= GENE_SHIFT_PTS
-                    } else {
-                        was > 0.0 && (now / was - 1.0).abs() >= GENE_SHIFT_REL
-                    };
-                    if shifted {
-                        let change = if PERCENT[g] {
-                            format!("{:+.0} п.п.", now - was)
-                        } else {
-                            format!("{:+.0}%", (now / was - 1.0) * 100.0)
-                        };
-                        parts.push(format!(
-                            "{} {was:.1}→{now:.1} ({change} с тика {since}; 10‒90%: {:.1}‒{:.1})",
-                            GENE_LABELS[g], s.p10, s.p90
-                        ));
-                        base[g] = (now, t);
-                    }
-                }
-                if !parts.is_empty() {
-                    push(EventKind::GeneShift, format!("геном, медиана: {}", parts.join("; ")));
-                }
-            }
-            (Some(genes), None) => self.gene_base = Some(genes.map(|s| (s.p50, t))),
-            _ => {}
+        let (numbers, choices) = gene_shifts(&vegetarian::GENES, cur.genes, &mut self.gene_base, t);
+        if !numbers.is_empty() {
+            push(EventKind::GeneShift, format!("геном, медиана: {}", numbers.join("; ")));
+        }
+        if !choices.is_empty() {
+            push(EventKind::StrategyShift, format!("травоядные: {}", choices.join("; ")));
+        }
+        let (numbers, choices) =
+            gene_shifts(&predator::GENES, cur.predator_genes, &mut self.predator_gene_base, t);
+        if !numbers.is_empty() {
+            push(EventKind::PredatorGeneShift, format!("хищники, медиана: {}", numbers.join("; ")));
+        }
+        if !choices.is_empty() {
+            push(EventKind::StrategyShift, format!("хищники: {}", choices.join("; ")));
         }
 
         // ── слой: где по глубине держатся 80% травоядных
@@ -435,4 +541,46 @@ pub fn ascii_map(world: &World, cols: usize) -> Vec<String> {
     }
     out.push(border);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use life_core::genome::{GeneKind, Mutation, Variant};
+
+    const THREE: [Variant; 3] = [
+        Variant { key: "a", label: "первый", about: "" },
+        Variant { key: "b", label: "второй", about: "" },
+        Variant { key: "c", label: "третий", about: "" },
+    ];
+    const STRATEGY: [GeneSpec; 1] = [GeneSpec {
+        key: "strategy",
+        label: "стратегия",
+        about: "",
+        kind: GeneKind::Choice(&THREE),
+        base: 0.0,
+        mutation: Mutation::Switch { chance: 0.1 },
+    }];
+
+    fn shares(v: [f64; 3]) -> Option<[GeneStat; 1]> {
+        let mut s = [0.0; MAX_VARIANTS];
+        s[..3].copy_from_slice(&v);
+        Some([GeneStat::Shares(s)])
+    }
+
+    #[test]
+    fn сдвиг_долей_стратегий_попадает_в_хронику() {
+        let mut base = None;
+        let (_, c) = gene_shifts(&STRATEGY, shares([1.0, 0.0, 0.0]), &mut base, 0);
+        assert!(c.is_empty(), "первый срез — только отметка");
+
+        let (_, c) = gene_shifts(&STRATEGY, shares([0.95, 0.05, 0.0]), &mut base, 60);
+        assert_eq!(c, ["стратегия первый 100→95%, второй 0→5% (с тика 0)"], "вариант появился");
+
+        let (_, c) = gene_shifts(&STRATEGY, shares([0.9, 0.1, 0.0]), &mut base, 120);
+        assert!(c.is_empty(), "5 п.п. — шум");
+
+        let (_, c) = gene_shifts(&STRATEGY, shares([0.7, 0.3, 0.0]), &mut base, 180);
+        assert_eq!(c, ["стратегия первый 95→70%, второй 5→30% (с тика 60)"]);
+    }
 }

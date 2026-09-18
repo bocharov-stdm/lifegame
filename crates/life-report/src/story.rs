@@ -2,9 +2,13 @@
 //! геном, глубина, хроника событий и карты. Написан так, чтобы по нему одному —
 //! без графиков и окна — можно было понять, что происходило в мире.
 
-use life_core::genome::GENE_LABELS;
+use life_core::genome::vegetarian::Gene;
+use life_core::genome::{GeneSpec, predator, vegetarian};
 use life_sim::SimResult;
-use life_sim::observe::{DEPTH_BANDS, Event, MAP_LEGEND, Snapshot, Spread, predator_flows, vegetarian_flows};
+use life_sim::observe::{
+    DEPTH_BANDS, Event, GeneStat, MAP_LEGEND, MAX_VARIANTS, Snapshot, Spread, predator_flows,
+    vegetarian_flows,
+};
 
 /// Карта: тик и строки.
 pub type Map = (u64, Vec<String>);
@@ -92,7 +96,7 @@ fn print_intervals(snaps: &[Snapshot], rows: usize) {
         let to = r * steps / rows;
         let (a, b) = (&snaps[from], &snaps[to]);
         let c = b.counters.since(&a.counters);
-        let gene = |g: usize| opt(b.genes.map(|s| s[g].p50), 1);
+        let gene = |g: Gene| opt(b.genes.and_then(|s| s[g as usize].spread().map(|x| x.p50)), 1);
         let layer = b.vegetarian_depth.map_or("—".into(), |d| format!("{:.0}‒{:.0}", d.p10, d.p90));
         println!(
             "{:>13} {:>6} {:>5} {:>4} │ {:>7} {:>6} {:>6} │ {:>6} {:>6} │ {:>6} {:>5} {:>6} │ {:>9} {:>5}",
@@ -105,9 +109,9 @@ fn print_intervals(snaps: &[Snapshot], rows: usize) {
             format!("−{}", c.vegetarians_starved),
             format!("+{}", c.predators_born + (b.migrants - a.migrants)),
             format!("−{}", c.predators_starved),
-            gene(0),
-            gene(1),
-            gene(2),
+            gene(Gene::Size),
+            gene(Gene::Speed),
+            gene(Gene::Vision),
             layer,
             opt(b.vegetarian_fullness.map(|f| f * 100.0), 0),
         );
@@ -119,21 +123,54 @@ fn print_intervals(snaps: &[Snapshot], rows: usize) {
 fn print_genome(first: &Snapshot, last: &Snapshot) {
     println!("\nГеном травоядных, медиана (10‒90% популяции): начало → конец");
     match (first.genes, last.genes) {
-        (Some(a), Some(b)) => {
-            for (g, label) in GENE_LABELS.iter().enumerate() {
-                println!("  {label:<13} {:>22} → {}", spread(&a[g]), spread(&b[g]));
-            }
-        }
+        (Some(a), Some(b)) => print_genes(&vegetarian::GENES, &a, &b),
         (Some(_), None) => println!("  к концу травоядных не осталось"),
         _ => println!("  травоядных не было"),
     }
+    // Средние генов хищников: крупные (зрение) — без дробной части.
+    let genes = last.predator_genes.map_or(String::new(), |g| {
+        predator::GENES
+            .iter()
+            .zip(&g)
+            .filter_map(|(spec, stat)| stat.spread().map(|s| (spec, s.mean)))
+            .map(|(spec, mean)| {
+                format!("{} {}, ", spec.label, opt(Some(mean), if mean >= 100.0 { 0 } else { 1 }))
+            })
+            .collect()
+    });
     println!(
-        "Хищники в конце: скорость {}, зрение {}, голодных {}, заполненность бака {}.",
-        opt(last.predator_speed, 1),
-        opt(last.predator_vision, 0),
+        "Хищники в конце: {genes}голодных {}, заполненность бака {}.",
         opt(last.predators_hungry.map(|h| h * 100.0), 0) + "%",
         opt(last.predator_fullness.map(|f| f * 100.0), 0) + "%"
     );
+}
+
+/// Гены вида от начала к концу: у числовых — медиана и разброс, у генов-выборов
+/// — доли вариантов. Ген-выбор с одним вариантом не печатается: он ничего не
+/// различает.
+fn print_genes<const N: usize>(genes: &[GeneSpec; N], a: &[GeneStat; N], b: &[GeneStat; N]) {
+    for (g, spec) in genes.iter().enumerate() {
+        let text = |stat: &GeneStat| match stat {
+            GeneStat::Number(s) => spread(s),
+            GeneStat::Shares(s) => shares(spec, s),
+        };
+        if spec.variants().is_some_and(|v| v.len() < 2) {
+            continue;
+        }
+        println!("  {:<13} {:>22} → {}", spec.label, text(&a[g]), text(&b[g]));
+    }
+}
+
+/// «осторожный 70%, трусливый 30%» — варианты, которые есть в популяции.
+fn shares(spec: &GeneSpec, s: &[f64; MAX_VARIANTS]) -> String {
+    let variants = spec.variants().unwrap_or_default();
+    let parts: Vec<String> = variants
+        .iter()
+        .zip(s)
+        .filter(|&(_, &share)| share > 0.0)
+        .map(|(v, share)| format!("{} {:.0}%", v.label, share * 100.0))
+        .collect();
+    parts.join(", ")
 }
 
 /// Кто где по глубине: доли травоядных и растений в каждой десятой части.

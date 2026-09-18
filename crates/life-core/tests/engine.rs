@@ -3,19 +3,21 @@
 //! Циклов без границы нет: все прогоны ограничены числом тиков.
 
 use life_core::config::*;
+use life_core::genome::vegetarian::{GENES, Gene};
 use life_core::grid::Grid;
 use life_core::plant::Plant;
 use life_core::predator::{Predator, Prey};
 use life_core::rng::Rng;
+use life_core::senses::{Blind, predator_senses, vegetarian_senses};
 use life_core::vegetarian::Vegetarian;
-use life_core::{Counters, Creature, Genom, Rules, Space, World, WorldConfig};
+use life_core::{
+    Counters, Creature, Genome, PredatorGenome, Rules, Space, VegetarianGenome, World, WorldConfig,
+};
 
-const BASE: [f64; 7] = VEGETARIAN_BASE_GENOM;
+const BASE: VegetarianGenome = VegetarianGenome::BASE;
 
-fn genom(size: f64) -> Genom {
-    let mut g = BASE;
-    g[0] = size;
-    Genom::from_array(g)
+fn genom(size: f64) -> VegetarianGenome {
+    BASE.with(Gene::Size, size)
 }
 
 /// Пустой мир: ни существ, ни растений.
@@ -31,7 +33,7 @@ fn empty_world(rules: Rules) -> World {
     w
 }
 
-fn veg(x: f64, y: f64, g: Genom) -> Vegetarian {
+fn veg(x: f64, y: f64, g: VegetarianGenome) -> Vegetarian {
     Vegetarian::new(&Space::default(), &Rules::default(), g, Some(x), Some(y), None, Rng::new(0))
 }
 
@@ -39,11 +41,10 @@ fn predator(x: f64, y: f64, energy: Option<f64>) -> Predator {
     Predator::new(
         &Space::default(),
         &Rules::default(),
+        PredatorGenome::BASE,
         Some(x),
         Some(y),
         energy,
-        PREDATOR_BASE_SPEED,
-        PREDATOR_BASE_VISION,
         Rng::new(0),
     )
 }
@@ -89,18 +90,18 @@ fn съеденный_не_действует() {
 #[test]
 fn бегство_продолжается_без_хищника() {
     let mut v = veg(1000.0, 1000.0, genom(40.0));
-    let px = 1000.0 + v.vision / 4.0;
+    let px = 1000.0 + v.pheno.vision / 4.0;
     let d2 = (px - 1000.0) * (px - 1000.0);
-    v.step(|_, _, _| Some((px, 1000.0, d2)), |_, _, _| None);
-    assert!(v.flee_ticks > 0, "испуг не сработал — тест бессмыслен");
+    v.step(&vegetarian_senses(|_, _, _| Some((px, 1000.0, d2)), |_, _, _| None));
+    assert!(v.mind.flee_ticks > 0, "испуг не сработал — тест бессмыслен");
 
     let (x0, y0) = (v.x, v.y);
     for _ in 0..10 {
-        v.energy = v.max_energy;
-        v.step(|_, _, _| None, |_, _, _| None);
+        v.energy = v.pheno.max_energy;
+        v.step(&Blind);
     }
     let travelled = (v.x - x0).hypot(v.y - y0);
-    assert!(travelled > 9.0 * v.speed, "убежал всего на {travelled:.1} px за 10 тиков");
+    assert!(travelled > 9.0 * v.pheno.speed, "убежал всего на {travelled:.1} px за 10 тиков");
     assert!(v.x < x0, "убегает не в ту сторону");
 }
 
@@ -115,7 +116,7 @@ fn новорождённый_хищник_не_ходит() {
     let child = &w.predators[1];
     assert_eq!(
         child.energy,
-        child.max_energy * PREDATOR_CHILD_ENERGY,
+        child.pheno.max_energy * PREDATOR_CHILD_ENERGY,
         "ребёнок потратил энергию — его обработали в тике рождения"
     );
 }
@@ -126,7 +127,7 @@ fn умерший_от_голода_не_ест() {
     let mut w = empty_world(Rules::default());
     w.spawn_vegetarian(genom(40.0), 1000.0, 1000.0, None);
     let v = &mut w.vegetarians[0];
-    v.energy = v.upkeep / 2.0; // этот ход — последний
+    v.energy = v.pheno.upkeep / 2.0; // этот ход — последний
     let (x, y) = (v.x, v.y);
     w.plants.push(Plant::at(x, y));
     w.plants.push(Plant::at(x + 5.0, y));
@@ -141,7 +142,7 @@ fn умерший_от_голода_хищник_не_охотится() {
     let mut w = empty_world(Rules::default());
     w.spawn_vegetarian(genom(40.0), 1000.0, 1000.0, None);
     w.spawn_predator(1010.0, 1000.0, None);
-    w.predators[0].energy = w.predators[0].upkeep / 2.0;
+    w.predators[0].energy = w.predators[0].pheno.upkeep / 2.0;
     w.step();
     assert!(w.predators.is_empty(), "умерший хищник остался в мире");
     assert_eq!(w.vegetarians.len(), 1, "умерший от голода хищник съел добычу");
@@ -157,17 +158,18 @@ fn цель_хищника_достижима() {
         let mut p = predator(x, y, None);
         for _ in 0..200 {
             p.choose_new_target(&s);
-            assert!(d <= p.tx && p.tx <= s.width - d, "цель x={} от ({x}, {y})", p.tx);
-            assert!(d <= p.ty && p.ty <= s.height - d, "цель y={} от ({x}, {y})", p.ty);
+            let (tx, ty) = (p.mind.tx, p.mind.ty);
+            assert!(d <= tx && tx <= s.width - d, "цель x={tx} от ({x}, {y})");
+            assert!(d <= ty && ty <= s.height - d, "цель y={ty} от ({x}, {y})");
         }
     }
     let mut p = predator(d, d, None);
     p.energy = 1e9; // голод ни при чём
-    p.max_energy = 1e9;
+    p.pheno.max_energy = 1e9;
     let mut stood = 0;
     for _ in 0..2000 {
         let before = (p.x, p.y);
-        p.step(&s, |_, _, _| None);
+        p.step(&s, &Blind);
         stood += ((p.x, p.y) == before) as u32;
     }
     assert_eq!(stood, 0, "хищник без добычи стоял {stood} тиков");
@@ -193,7 +195,7 @@ fn родитель_сохраняет_резерв() {
     let (s, r) = (Space::default(), Rules::default());
     let (mut divided, mut blocked) = (0, 0);
     for share in [10.0, 30.0, 50.0, 70.0, 90.0] {
-        let g = Genom::from_array([40.0, 10.0, 400.0, 30.0, share, 5.0, 100.0]);
+        let g = BASE.with(Gene::ReproThreshold, 30.0).with(Gene::ReproShare, share);
         let mut p = Vegetarian::new(&s, &r, g, Some(1000.0), Some(1000.0), Some(60.0), Rng::new(0));
         match p.maybe_divide(&s, &r) {
             Some(_) => {
@@ -215,14 +217,15 @@ fn огромное_тело_не_прыгает() {
     let s = Space::default();
     for size in [2500.0, 3500.0, 4100.0, 9000.0] {
         for (lo, hi) in [(5.0, 10.0), (0.0, 100.0), (90.0, 100.0)] {
-            let g = Genom::from_array([size, 60.0, 400.0, 70.0, 30.0, lo, hi]);
+            let g =
+                BASE.with(Gene::Size, size).with(Gene::Speed, 60.0).with(Gene::MinY, lo).with(Gene::MaxY, hi);
             let mut v = veg(100.0, 100.0, g);
-            assert!(v.x_lo <= v.x_hi && v.body_lo <= v.body_hi);
+            assert!(v.pheno.x_lo <= v.pheno.x_hi && v.pheno.body_lo <= v.pheno.body_hi);
             for _ in 0..30 {
                 let (x, y) = (v.x, v.y);
-                v.energy = v.max_energy;
-                v.step(|_, _, _| None, |_, _, _| None);
-                assert!((v.x - x).hypot(v.y - y) <= v.speed + 1e-9, "прыжок дальше скорости");
+                v.energy = v.pheno.max_energy;
+                v.step(&Blind);
+                assert!((v.x - x).hypot(v.y - y) <= v.pheno.speed + 1e-9, "прыжок дальше скорости");
                 assert!(
                     (0.0..=s.width).contains(&v.x) && (0.0..=s.height).contains(&v.y),
                     "центр вне мира: ({}, {})",
@@ -238,18 +241,18 @@ fn огромное_тело_не_прыгает() {
 #[test]
 fn ребёнок_в_своём_слое() {
     let (s, r) = (Space::default(), Rules::default());
-    let g = Genom::from_array([40.0, 10.0, 400.0, 30.0, 30.0, 5.0, 100.0]);
+    let g = BASE.with(Gene::ReproThreshold, 30.0);
     let mut parent = Vegetarian::new(&s, &r, g, Some(3000.0), Some(3900.0), None, Rng::new(0));
     let mut diagonal = 0;
     for _ in 0..300 {
-        parent.energy = parent.max_energy;
+        parent.energy = parent.pheno.max_energy;
         let mut c = parent.maybe_divide(&s, &r).expect("сытый родитель не поделился");
-        assert!(c.body_lo <= c.y && c.y <= c.body_hi, "ребёнок вне слоя: y={}", c.y);
-        assert!(c.x_lo <= c.x && c.x <= c.x_hi);
+        assert!(c.pheno.body_lo <= c.y && c.y <= c.pheno.body_hi, "ребёнок вне слоя: y={}", c.y);
+        assert!(c.pheno.x_lo <= c.x && c.x <= c.pheno.x_hi);
         diagonal += ((c.x - parent.x) == (c.y - parent.y)) as u32;
         let (x, y) = (c.x, c.y);
-        c.step(|_, _, _| None, |_, _, _| None);
-        assert!((c.x - x).hypot(c.y - y) <= c.speed + 1e-9, "первый ход ребёнка — прыжок");
+        c.step(&Blind);
+        assert!((c.x - x).hypot(c.y - y) <= c.pheno.speed + 1e-9, "первый ход ребёнка — прыжок");
     }
     assert_eq!(diagonal, 0);
 }
@@ -257,14 +260,14 @@ fn ребёнок_в_своём_слое() {
 /// Слой уже тела: существо живёт на линии и не стоит столбом.
 #[test]
 fn схлопнутый_слой_проходим() {
-    let g = Genom::from_array([40.0, 10.0, 400.0, 70.0, 30.0, 50.0, 50.5]);
+    let g = BASE.with(Gene::MinY, 50.0).with(Gene::MaxY, 50.5);
     let mut v = veg(3000.0, 2000.0, g);
-    assert_eq!(v.body_lo, v.body_hi);
+    assert_eq!(v.pheno.body_lo, v.pheno.body_hi);
     let x0 = v.x;
     for _ in 0..50 {
-        v.energy = v.max_energy;
-        v.step(|_, _, _| None, |_, _, _| None);
-        assert_eq!(v.y, v.body_lo);
+        v.energy = v.pheno.max_energy;
+        v.step(&Blind);
+        assert_eq!(v.y, v.pheno.body_lo);
     }
     assert!(v.x != x0, "существо на схлопнутом слое стоит столбом");
 }
@@ -313,18 +316,18 @@ fn рывок_вблизи_стоит_энергии() {
     let s = Space::default();
     let mut far = predator(1000.0, 2000.0, Some(50.0));
     let mut near = predator(1000.0, 2000.0, Some(50.0));
-    far.step(&s, |_, _, _| Some(Prey { x: 1400.0, y: 2000.0, half: 20.0 }));
-    near.step(&s, |_, _, _| Some(Prey { x: 1150.0, y: 2000.0, half: 20.0 }));
-    assert!((far.x - 1000.0 - far.speed).abs() < 1e-9);
-    assert!((near.x - 1000.0 - near.speed * PREDATOR_SPRINT_MULT).abs() < 1e-9);
-    assert!((far.energy - (50.0 - far.upkeep)).abs() < 1e-12);
-    assert!((near.energy - (50.0 - near.upkeep - PREDATOR_SPRINT_COST)).abs() < 1e-12);
+    far.step(&s, &predator_senses(|_, _, _| Some(Prey { x: 1400.0, y: 2000.0, half: 20.0 })));
+    near.step(&s, &predator_senses(|_, _, _| Some(Prey { x: 1150.0, y: 2000.0, half: 20.0 })));
+    assert!((far.x - 1000.0 - far.pheno.speed).abs() < 1e-9);
+    assert!((near.x - 1000.0 - near.pheno.speed * PREDATOR_SPRINT_MULT).abs() < 1e-9);
+    assert!((far.energy - (50.0 - far.pheno.upkeep)).abs() < 1e-12);
+    assert!((near.energy - (50.0 - near.pheno.upkeep - PREDATOR_SPRINT_COST)).abs() < 1e-12);
 }
 
 #[test]
 fn рывок_не_проскакивает_добычу() {
     let mut p = predator(1000.0, 2000.0, None);
-    p.step(&Space::default(), |_, _, _| Some(Prey { x: 1010.0, y: 2000.0, half: 20.0 }));
+    p.step(&Space::default(), &predator_senses(|_, _, _| Some(Prey { x: 1010.0, y: 2000.0, half: 20.0 })));
     assert!((p.x - 1010.0).abs() < 1e-9);
 }
 
@@ -336,7 +339,7 @@ fn мигрант_приходит_когда_хищников_нет() {
     w.migrate_predators();
     assert_eq!((w.predators.len(), w.migrants), (1, 1));
     let p = &w.predators[0];
-    assert_eq!((p.speed, p.vision), (PREDATOR_BASE_SPEED, PREDATOR_BASE_VISION));
+    assert_eq!((p.pheno.speed, p.pheno.vision), (PREDATOR_BASE_SPEED, PREDATOR_BASE_VISION));
     let d = PREDATOR_DIAM;
     let edge = p.x == d || p.y == d || p.x == WORLD_WIDTH - d || p.y == WORLD_HEIGHT - d;
     assert!(edge, "мигрант не у края: ({}, {})", p.x, p.y);
@@ -368,7 +371,7 @@ fn мигранта_нет_когда_не_положено() {
         assert!(w.predators.is_empty(), "{name}");
         w.spawn_predator(100.0, 100.0, None);
         twin.spawn_predator(100.0, 100.0, None);
-        assert_eq!(w.predators[0].tx, twin.predators[0].tx, "{name}: жребий тянется без мигранта");
+        assert_eq!(w.predators[0].mind, twin.predators[0].mind, "{name}: жребий тянется без мигранта");
     }
 }
 
@@ -510,14 +513,27 @@ fn инварианты_держатся_со_временем() {
         w.step();
         let s = w.space;
         for v in &w.vegetarians {
-            assert!(v.alive && v.energy > 0.0 && v.energy <= v.max_energy + 1e-9);
-            assert!(v.x_lo <= v.x && v.x <= v.x_hi && v.body_lo <= v.y && v.y <= v.body_hi);
-            let g = v.genom.to_array();
-            assert!(g[3..].iter().all(|p| (0.0..=100.0).contains(p)), "ген-процент вне 0‒100: {g:?}");
-            assert!(g.iter().all(|&x| x >= 0.01));
+            assert!(v.alive && v.energy > 0.0 && v.energy <= v.pheno.max_energy + 1e-9);
+            assert!(
+                v.pheno.x_lo <= v.x
+                    && v.x <= v.pheno.x_hi
+                    && v.pheno.body_lo <= v.y
+                    && v.y <= v.pheno.body_hi
+            );
+            let g = v.genome.values();
+            for (spec, x) in GENES.iter().zip(g) {
+                match spec.variants() {
+                    // ген-выбор — номер существующего варианта
+                    Some(variants) => {
+                        assert!(x.fract() == 0.0 && (*x as usize) < variants.len(), "ген {} = {x}", spec.key)
+                    }
+                    None => assert!(*x >= 0.01, "ген {} ниже 0.01: {g:?}", spec.key),
+                }
+                assert!(!spec.is_percent() || (0.0..=100.0).contains(x), "ген-процент вне 0‒100: {g:?}");
+            }
         }
         for p in &w.predators {
-            assert!(p.alive && p.energy > 0.0 && p.energy <= p.max_energy + 1e-9);
+            assert!(p.alive && p.energy > 0.0 && p.energy <= p.pheno.max_energy + 1e-9);
             assert!(PREDATOR_DIAM <= p.x && p.x <= s.width - PREDATOR_DIAM);
             assert!(PREDATOR_DIAM <= p.y && p.y <= s.height - PREDATOR_DIAM);
         }
@@ -674,7 +690,7 @@ fn выбор_кликом_совпадает_с_перебором_в_живо�
             };
             for v in &w.vegetarians {
                 consider(
-                    ((v.x - x).powi(2) + (v.y - y).powi(2)).sqrt() - v.size / 2.0,
+                    ((v.x - x).powi(2) + (v.y - y).powi(2)).sqrt() - v.pheno.size / 2.0,
                     Creature::Vegetarian(v.id),
                 );
             }
@@ -722,13 +738,13 @@ fn новые_правила_пересчитывают_живых_как_нов
     w.set_rules(rules.clone());
     let space = w.space;
     for v in &w.vegetarians {
-        let fresh = Vegetarian::new(&space, &rules, v.genom, Some(v.x), Some(v.y), None, Rng::new(0));
-        assert_eq!(v.upkeep, fresh.upkeep);
+        let fresh = Vegetarian::new(&space, &rules, v.genome, Some(v.x), Some(v.y), None, Rng::new(0));
+        assert_eq!(v.pheno, fresh.pheno, "фенотип живого — как у новорождённого с тем же геномом");
     }
     for p in &w.predators {
-        let fresh = Predator::new(&space, &rules, Some(p.x), Some(p.y), None, p.speed, p.vision, Rng::new(0));
-        assert_eq!((p.upkeep, p.max_energy), (fresh.upkeep, fresh.max_energy));
-        assert!(p.energy <= p.max_energy);
+        let fresh = Predator::new(&space, &rules, p.genome, Some(p.x), Some(p.y), None, Rng::new(0));
+        assert_eq!(p.pheno, fresh.pheno, "фенотип живого — как у новорождённого с тем же геномом");
+        assert!(p.energy <= p.pheno.max_energy);
     }
     assert_eq!(w.rules, rules);
 }

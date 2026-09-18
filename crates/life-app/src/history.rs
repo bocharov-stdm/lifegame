@@ -11,7 +11,9 @@
 
 use std::collections::VecDeque;
 
-use life_sim::observe::Spread;
+use life_core::genome::vegetarian;
+
+use life_sim::observe::GeneStat;
 
 pub const RECENT: usize = 300;
 pub const FULL: usize = 600;
@@ -26,14 +28,14 @@ pub struct Sample {
     pub vegetarians: f64,
     pub predators: f64,
     /// Средний геном травоядных; None — травоядных нет.
-    pub genom: Option<[f64; 7]>,
+    pub genom: Option<[f64; vegetarian::N]>,
 }
 
-/// Точка графика генома: разброс каждого гена (медиана и 10‒90%).
+/// Точка графика генома: сводка каждого гена (разброс или доли вариантов).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GenePoint {
     pub tick: u64,
-    pub genes: [Spread; 7],
+    pub genes: [GeneStat; vegetarian::N],
 }
 
 /// Ряд с окном недавнего и прореженной всей партией.
@@ -97,8 +99,8 @@ pub struct History {
     pub genes: Series<GenePoint>,
     /// Первый средний геном партии — база «изменения от начала»: в окне
     /// недавнего первая точка уже не начало партии.
-    pub origin: Option<[f64; 7]>,
-    pub gene_origin: Option<[Spread; 7]>,
+    pub origin: Option<[f64; vegetarian::N]>,
+    pub gene_origin: Option<[GeneStat; vegetarian::N]>,
 }
 
 impl History {
@@ -156,8 +158,8 @@ mod tests {
         let mut h = History::default();
         let at = |tick, genom| Sample { tick, plants: 0.0, vegetarians: 0.0, predators: 0.0, genom };
         h.add_sample(at(0, None));
-        h.add_sample(at(10, Some([1.0; 7])));
-        h.add_sample(at(20, Some([2.0; 7])));
-        assert_eq!(h.origin, Some([1.0; 7]));
+        h.add_sample(at(10, Some([1.0; vegetarian::N])));
+        h.add_sample(at(20, Some([2.0; vegetarian::N])));
+        assert_eq!(h.origin, Some([1.0; vegetarian::N]));
     }
 }

@@ -4,10 +4,11 @@
 //! игра). Значения по умолчанию — ровно константы из config.rs.
 
 use crate::config::*;
+use crate::genome::vegetarian::{GENES, Gene};
 
-const BASE_SIZE: f64 = VEGETARIAN_BASE_GENOM[0];
-const BASE_SPEED: f64 = VEGETARIAN_BASE_GENOM[1];
-const BASE_VISION: f64 = VEGETARIAN_BASE_GENOM[2];
+const BASE_SIZE: f64 = GENES[Gene::Size as usize].base;
+const BASE_SPEED: f64 = GENES[Gene::Speed as usize].base;
+const BASE_VISION: f64 = GENES[Gene::Vision as usize].base;
 
 /// Имена настраиваемых правил — для отчёта (`--rule имя=число`) и настроек.
 pub const RULE_KEYS: [&str; 10] = [

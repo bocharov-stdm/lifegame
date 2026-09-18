@@ -3,6 +3,7 @@
 //! никогда не ждёт нового.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use eframe::egui::{
     self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, TextureOptions, Vec2,
@@ -18,6 +19,9 @@ use crate::theme::{ACCENT, BG, LINE, MUTED, rgb};
 
 /// Полос глубины на фоне: у поверхности светлее, на глубине темнее.
 const BANDS: usize = 32;
+/// Сколько после последнего кадра ещё идут анимации (рост, угасание
+/// призраков — `creatures.wgsl`): столько окно перерисовывается само.
+const ANIMATION: f32 = 0.7;
 /// Насколько можно промахнуться кликом по существу, точек экрана.
 pub const PICK_RADIUS: f64 = 10.0;
 
@@ -37,6 +41,12 @@ pub struct WorldView {
     minimap: Option<TextureHandle>,
     pub camera: Option<Camera>,
     last_view: Option<ViewRequest>,
+    /// Когда пришёл последний кадр и сглаженный промежуток между кадрами, с:
+    /// по ним окно рисует движение между прошлым и новым кадром.
+    arrived: Option<Instant>,
+    interval: f64,
+    /// Выделенное в прошлом кадре: кольцо едет вместе с кружком.
+    prev_selected: Option<(Creature, f64, f64)>,
 }
 
 fn pos(x: f64, y: f64) -> Pos2 {
@@ -58,6 +68,14 @@ impl WorldView {
         }
         self.generation += 1;
 
+        let now = Instant::now();
+        if let Some(last) = self.arrived {
+            let gap = now.duration_since(last).as_secs_f64().clamp(1.0 / 240.0, 0.25);
+            self.interval = if self.interval > 0.0 { self.interval * 0.8 + gap * 0.2 } else { gap };
+        }
+        self.arrived = Some(now);
+        self.prev_selected = self.frame.as_ref().and_then(|old| old.selected).map(|s| (s.creature, s.x, s.y));
+
         self.density = f.density.take().map(|r| {
             let tex = match self.density.take() {
                 Some((mut tex, _)) => {
@@ -77,6 +95,7 @@ impl WorldView {
         // новый мир — новая камера
         if self.frame.as_ref().is_some_and(|old| old.world_gen != f.world_gen) {
             self.camera = None;
+            self.prev_selected = None;
         }
         self.frame = Some(f);
     }
@@ -95,6 +114,7 @@ impl WorldView {
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, BG);
 
+        let k = self.progress();
         let Some(f) = &self.frame else {
             painter.text(
                 rect.center(),
@@ -182,6 +202,10 @@ impl WorldView {
             );
         } else if !self.instances.is_empty() {
             let (ox, oy) = cam.to_screen(f.origin.0, f.origin.1);
+            let since = f.built.map_or(ANIMATION, |b| b.elapsed().as_secs_f32());
+            if k < 1.0 || since < ANIMATION {
+                ui.ctx().request_repaint();
+            }
             painter.add(egui_wgpu::Callback::new_paint_callback(
                 rect,
                 Circles {
@@ -191,6 +215,8 @@ impl WorldView {
                     view: [rect.width(), rect.height()],
                     zoom: cam.zoom as f32,
                     pixels_per_point: ui.ctx().pixels_per_point(),
+                    k,
+                    since,
                 },
             ));
         }
@@ -198,7 +224,8 @@ impl WorldView {
 
         // ── выделенное: кольцо вокруг тела и круг зрения ─────────────────────
         if let Some(s) = f.selected {
-            let (sx, sy) = cam.to_screen(s.x, s.y);
+            let (x, y) = between(self.prev_selected, &s, k);
+            let (sx, sy) = cam.to_screen(x, y);
             let vision = (s.vision * cam.zoom) as f32;
             if vision < 8000.0 {
                 painter.circle_stroke(pos(sx, sy), vision, Stroke::new(1.0, ACCENT.gamma_multiply(0.45)));
@@ -274,11 +301,25 @@ impl WorldView {
         }
     }
 
-    /// Слежение за выбранным: камера едет за ним, пока оно живо и выбрано.
+    /// Доля пути от прошлого кадра к новому: окно рисует существ между ними.
+    /// Без новых кадров (пауза) доходит до 1, и мир замирает.
+    fn progress(&self) -> f32 {
+        match self.arrived {
+            Some(a) if self.interval > 0.0 => (a.elapsed().as_secs_f64() / self.interval).min(1.0) as f32,
+            _ => 1.0,
+        }
+    }
+
+    /// Слежение за выбранным: камера едет за ним, пока оно живо и выбрано —
+    /// за той же точкой, где его рисует шейдер, иначе дёргался бы весь экран.
     pub fn follow_step(&mut self, dt: f64) {
+        let k = self.progress();
         let (Some(cam), Some(f)) = (&mut self.camera, &self.frame) else { return };
         let Some(target) = cam.target else { return };
-        let at = f.selected.filter(|s| creature_id(s.creature) == target).map(|s| (s.x, s.y));
+        let at = f
+            .selected
+            .filter(|s| creature_id(s.creature) == target)
+            .map(|s| between(self.prev_selected, &s, k));
         cam.update(dt, at);
     }
 
@@ -298,6 +339,14 @@ impl WorldView {
 
     pub fn following(&self) -> bool {
         self.camera.as_ref().is_some_and(|c| c.target.is_some())
+    }
+}
+
+/// Где выделенное сейчас на экране: между прошлым кадром и новым.
+fn between(prev: Option<(Creature, f64, f64)>, s: &frame::Selected, k: f32) -> (f64, f64) {
+    match prev {
+        Some((c, px, py)) if c == s.creature => (px + (s.x - px) * k as f64, py + (s.y - py) * k as f64),
+        _ => (s.x, s.y),
     }
 }
 

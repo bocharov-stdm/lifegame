@@ -320,6 +320,7 @@ impl Settings {
             n_predators: Some(per_area(Key::Predators)),
             predator_speed: self.get(Key::PredatorSpeed),
             predator_vision: self.get(Key::PredatorVision),
+            ..Default::default()
         }
     }
 
@@ -460,6 +461,19 @@ pub fn describe_change(old: &Settings, new: &Settings) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Подсказки называют числа из таблицы генов словами: поменяли базу —
+    /// подсказка не должна врать.
+    #[test]
+    fn подсказки_цитируют_базы_генов() {
+        use life_core::config::VEGETARIAN_ENERGY_PER_SIZE;
+        use life_core::genome::vegetarian::{GENES, Gene};
+        let hint = |key| FIELDS.iter().find(|f| f.key == key).expect("поле есть").hint;
+        let vision = GENES[Gene::Vision as usize].base;
+        assert!(hint(Key::PredatorVision).contains(&format!("видит на {vision:.0}")));
+        let tank = GENES[Gene::Size as usize].base * VEGETARIAN_ENERGY_PER_SIZE;
+        assert!(hint(Key::PlantEnergy).contains(&format!("травоядного — {tank:.0}")));
+    }
 
     #[test]
     fn по_умолчанию_правила_как_в_конфиге_бит_в_бит() {

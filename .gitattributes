@@ -1,0 +1,3 @@
+# cmd.exe читает .bat с переводами строк Windows, sh — с переводами Unix.
+*.bat text eol=crlf
+*.sh text eol=lf

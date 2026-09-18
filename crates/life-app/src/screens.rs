@@ -1,6 +1,7 @@
 //! Меню, «Новый мир», настройки экрана и справка.
 
 use eframe::egui::{self, Align2, RichText, Vec2};
+use life_core::genome::{predator, vegetarian};
 use life_core::space::{MAX_SCALE, MIN_SCALE};
 
 use crate::app::{LifeApp, Screen};
@@ -210,15 +211,28 @@ impl LifeApp {
             egui::ScrollArea::vertical().max_height(520.0).show(ui, |ui| {
                 ui.label(RichText::new("Что происходит").strong());
                 ui.label(
-                    "Растения растут гуще у поверхности (вверху). Травоядные едят их, делятся и мутируют: у каждого \
-                     семь генов — размер, скорость, зрение, порог деления, доля энергии потомку и слой глубины, в \
-                     котором оно живёт. Хищники охотятся на травоядных. Отбор никто не задаёт: выживают те, чей \
-                     геном окупается.",
+                    "Растения растут гуще у поверхности (вверху). Травоядные едят их, делятся и мутируют; хищники \
+                     охотятся на травоядных и тоже мутируют. Отбор никто не задаёт: выживают те, чей геном \
+                     окупается.",
                 );
                 ui.label(
-                    "Яркость травоядного — сколько у него энергии: тусклые голодают. Рамка на миникарте — то, \
-                     что сейчас на экране.",
+                    "Светлое ядро травоядного — сколько у него энергии: у голодных оно маленькое. Глазок и нос \
+                     хищника смотрят туда, куда существо идёт. Рамка на миникарте — то, что сейчас на экране.",
                 );
+                ui.add_space(6.0);
+                ui.label(RichText::new("Гены").strong());
+                egui::Grid::new("гены").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
+                    for (who, genes) in [("травоядные", &vegetarian::GENES[..]), ("хищники", &predator::GENES[..])] {
+                        ui.colored_label(MUTED, who);
+                        ui.label("");
+                        ui.end_row();
+                        for spec in genes.iter().filter(|s| crate::charts::shown(s)) {
+                            ui.label(spec.label);
+                            ui.label(spec.about);
+                            ui.end_row();
+                        }
+                    }
+                });
                 ui.add_space(6.0);
                 ui.label(RichText::new("Управление").strong());
                 egui::Grid::new("клавиши").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {

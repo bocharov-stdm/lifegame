@@ -4,7 +4,9 @@
 //! шкала, под курсором — значения в этой точке, справа — изменение от начала.
 
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
-use life_core::genome::{GENE_LABELS, PERCENT};
+use life_core::genome::GeneSpec;
+use life_core::genome::vegetarian::{GENES, N};
+use life_sim::observe::{GeneStat, MAX_VARIANTS, Spread};
 
 use crate::frame::{PLANT_COLOR, PREDATOR_COLOR, VEGETARIAN_COLOR};
 use crate::history::{GenePoint, History, Sample};
@@ -79,17 +81,19 @@ pub fn populations(ui: &mut egui::Ui, history: &History, whole: bool, height: f3
 
 /// Геном: по мини-графику на ген, у каждого своя шкала. Линия — медиана,
 /// полоса — где живут 80% популяции (10‒90%): среднее прячет раскол на два
-/// вида, а полоса его показывает. Справа — значение и изменение от начала.
+/// вида, а полоса его показывает. У гена-выбора (стратегии) — доли вариантов
+/// слоями. Справа — значение и изменение от начала.
 pub fn genome(ui: &mut egui::Ui, history: &History, whole: bool, row_h: f32) {
     let points: Vec<GenePoint> = history.genes.points(whole);
     if points.is_empty() {
         ui.colored_label(MUTED, "травоядных нет — нет и генома");
         return;
     }
+    let rows: Vec<usize> = (0..N).filter(|&g| shown(&GENES[g])).collect();
     let n = points.len();
     let width = ui.available_width();
     let (label_w, value_w) = (118.0, 112.0);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, row_h * 7.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, row_h * rows.len() as f32), Sense::hover());
     let painter = ui.painter_at(rect.expand(2.0));
     let spark_rect = Rect::from_min_max(
         Pos2::new(rect.left() + label_w, rect.top()),
@@ -101,53 +105,36 @@ pub fn genome(ui: &mut egui::Ui, history: &History, whole: bool, row_h: f32) {
     let font = FontId::proportional(12.5);
     let color = rgb(VEGETARIAN_COLOR);
 
-    for g in 0..7 {
-        let top = rect.top() + row_h * g as f32;
+    for (row_i, &g) in rows.iter().enumerate() {
+        let spec = &GENES[g];
+        let top = rect.top() + row_h * row_i as f32;
         let row = Rect::from_min_size(Pos2::new(rect.left(), top), Vec2::new(width, row_h));
-        if g > 0 {
+        if row_i > 0 {
             painter.line_segment([row.left_top(), row.right_top()], Stroke::new(1.0, LINE));
         }
         painter.text(
             Pos2::new(row.left(), row.center().y),
             Align2::LEFT_CENTER,
-            GENE_LABELS[g],
+            spec.label,
             font.clone(),
             MUTED,
         );
-
         let spark = Rect::from_min_max(
             Pos2::new(spark_rect.left(), top + 3.0),
             Pos2::new(spark_rect.right(), top + row_h - 3.0),
         );
-        let (lo, hi) = points.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
-            (lo.min(p.genes[g].p10), hi.max(p.genes[g].p90))
-        });
-        let span = (hi - lo).max(if PERCENT[g] { 1.0 } else { hi.abs() * 0.05 + 1e-9 });
-        let y = |v: f64| spark.bottom() - ((v - lo) / span) as f32 * spark.height();
-        if n >= 2 {
-            let mut band: Vec<Pos2> =
-                (0..n).map(|i| Pos2::new(x_at(spark, i, n), y(points[i].genes[g].p90))).collect();
-            band.extend((0..n).rev().map(|i| Pos2::new(x_at(spark, i, n), y(points[i].genes[g].p10))));
-            // полоса — набором четырёхугольников: egui заливает только выпуклые фигуры
-            for i in 0..n - 1 {
-                let quad = vec![band[i], band[i + 1], band[2 * n - 2 - i], band[2 * n - 1 - i]];
-                painter.add(Shape::convex_polygon(quad, color.gamma_multiply(0.18), Stroke::NONE));
-            }
-            let line: Vec<Pos2> =
-                (0..n).map(|i| Pos2::new(x_at(spark, i, n), y(points[i].genes[g].p50))).collect();
-            painter.add(Shape::line(line, Stroke::new(1.4, color)));
-        }
 
-        let now = at.genes[g].p50;
-        let was = origin[g].p50;
-        let change = if PERCENT[g] {
-            format!("{:+.0} п.п.", now - was)
-        } else if was > 0.0 {
-            format!("{:+.0}%", (now / was - 1.0) * 100.0)
-        } else {
-            String::new()
+        let (value, change) = match (at.genes[g], origin[g]) {
+            (GeneStat::Number(now), GeneStat::Number(was)) => {
+                number_row(&painter, spark, &points, g, spec.is_percent(), color);
+                number_text(now.p50, was.p50, spec.is_percent())
+            }
+            (GeneStat::Shares(now), GeneStat::Shares(was)) => {
+                shares_row(&painter, spark, &points, g, spec.variants().unwrap_or_default().len());
+                shares_text(spec, &now, &was)
+            }
+            _ => (String::new(), String::new()),
         };
-        let value = if PERCENT[g] { format!("{now:.0}%") } else { format!("{now:.0}") };
         painter.text(
             Pos2::new(rect.right() - value_w + 8.0, row.center().y),
             Align2::LEFT_CENTER,
@@ -175,6 +162,104 @@ pub fn genome(ui: &mut egui::Ui, history: &History, whole: bool, row_h: f32) {
             spaced(at.tick)
         ),
     );
+}
+
+/// Показывать ли ген: ген-выбор с одним вариантом ничего не различает.
+pub fn shown(spec: &GeneSpec) -> bool {
+    spec.variants().is_none_or(|v| v.len() >= 2)
+}
+
+fn spread_at(p: &GenePoint, g: usize) -> Spread {
+    p.genes[g].spread().copied().expect("числовой ген")
+}
+
+/// Мини-график числового гена: полоса 10‒90% и линия медианы.
+fn number_row(
+    painter: &egui::Painter,
+    spark: Rect,
+    points: &[GenePoint],
+    g: usize,
+    percent: bool,
+    color: Color32,
+) {
+    let n = points.len();
+    let (lo, hi) = points.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+        let s = spread_at(p, g);
+        (lo.min(s.p10), hi.max(s.p90))
+    });
+    let span = (hi - lo).max(if percent { 1.0 } else { hi.abs() * 0.05 + 1e-9 });
+    let y = |v: f64| spark.bottom() - ((v - lo) / span) as f32 * spark.height();
+    if n < 2 {
+        return;
+    }
+    let mut band: Vec<Pos2> =
+        (0..n).map(|i| Pos2::new(x_at(spark, i, n), y(spread_at(&points[i], g).p90))).collect();
+    band.extend((0..n).rev().map(|i| Pos2::new(x_at(spark, i, n), y(spread_at(&points[i], g).p10))));
+    // полоса — набором четырёхугольников: egui заливает только выпуклые фигуры
+    for i in 0..n - 1 {
+        let quad = vec![band[i], band[i + 1], band[2 * n - 2 - i], band[2 * n - 1 - i]];
+        painter.add(Shape::convex_polygon(quad, color.gamma_multiply(0.18), Stroke::NONE));
+    }
+    let line: Vec<Pos2> =
+        (0..n).map(|i| Pos2::new(x_at(spark, i, n), y(spread_at(&points[i], g).p50))).collect();
+    painter.add(Shape::line(line, Stroke::new(1.4, color)));
+}
+
+fn number_text(now: f64, was: f64, percent: bool) -> (String, String) {
+    let change = if percent {
+        format!("{:+.0} п.п.", now - was)
+    } else if was > 0.0 {
+        format!("{:+.0}%", (now / was - 1.0) * 100.0)
+    } else {
+        String::new()
+    };
+    let value = if percent { format!("{now:.0}%") } else { format!("{now:.0}") };
+    (value, change)
+}
+
+/// Цвета вариантов гена-выбора — по порядку.
+const VARIANT_COLORS: [Color32; 5] = [
+    Color32::from_rgb(205, 134, 255),
+    Color32::from_rgb(245, 197, 66),
+    Color32::from_rgb(93, 211, 158),
+    Color32::from_rgb(110, 170, 255),
+    Color32::from_rgb(239, 99, 81),
+];
+
+/// Мини-график гена-выбора: доли вариантов слоями снизу вверх.
+fn shares_row(painter: &egui::Painter, spark: Rect, points: &[GenePoint], g: usize, variants: usize) {
+    let n = points.len();
+    if n < 2 {
+        return;
+    }
+    let share = |i: usize, k: usize| points[i].genes[g].shares().map_or(0.0, |s| s[k]) as f32;
+    let mut below = vec![0.0f32; n];
+    for k in 0..variants {
+        let color = VARIANT_COLORS[k % VARIANT_COLORS.len()].gamma_multiply(0.7);
+        let y = |v: f32| spark.bottom() - v * spark.height();
+        for i in 0..n - 1 {
+            let (a, b) = (share(i, k), share(i + 1, k));
+            let quad = vec![
+                Pos2::new(x_at(spark, i, n), y(below[i])),
+                Pos2::new(x_at(spark, i + 1, n), y(below[i + 1])),
+                Pos2::new(x_at(spark, i + 1, n), y(below[i + 1] + b)),
+                Pos2::new(x_at(spark, i, n), y(below[i] + a)),
+            ];
+            painter.add(Shape::convex_polygon(quad, color, Stroke::NONE));
+        }
+        for (i, b) in below.iter_mut().enumerate() {
+            *b += share(i, k);
+        }
+    }
+}
+
+/// Самый частый вариант и изменение его доли от начала.
+fn shares_text(spec: &GeneSpec, now: &[f64; MAX_VARIANTS], was: &[f64; MAX_VARIANTS]) -> (String, String) {
+    let variants = spec.variants().unwrap_or_default();
+    let Some((k, v)) = variants.iter().enumerate().max_by(|a, b| now[a.0].total_cmp(&now[b.0])) else {
+        return (String::new(), String::new());
+    };
+    (format!("{} {:.0}%", v.label, now[k] * 100.0), format!("{:+.0} п.п.", (now[k] - was[k]) * 100.0))
 }
 
 /// Цвет-подсказка для полос энергии: голодные — красным.

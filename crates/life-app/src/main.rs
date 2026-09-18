@@ -15,6 +15,7 @@ mod charts;
 mod frame;
 mod game;
 mod history;
+mod motion;
 mod render;
 mod screens;
 mod settings;

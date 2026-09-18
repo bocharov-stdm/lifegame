@@ -7,26 +7,38 @@
 //! крупное торчит в кадр, даже когда центр далеко). Если видимых слишком много,
 //! вместо кружков идёт карта плотности — одна картинка размером с экран.
 
-use life_core::config::PLANT_RADIUS;
+use life_core::genome::{predator, vegetarian};
 use life_core::predator::Predator;
 use life_core::{Creature, Rules, World};
 use life_sim::observe::EventKind;
 
 use crate::history::{GenePoint, Sample};
 
-/// Больше кружков в кадре не шлём: дальше — карта плотности. 16 байт на
-/// существо — 6,4 МБ, это ещё легко заливается в видеокарту каждый кадр.
-pub const MAX_INSTANCES: usize = 400_000;
+/// Больше кружков в кадре не шлём: дальше — карта плотности. 32 байта на
+/// существо — 8 МБ, это ещё легко заливается в видеокарту каждый кадр; а при
+/// таком числе кружки всё равно мельче пикселя.
+pub const MAX_INSTANCES: usize = 250_000;
 
-/// Один кружок: центр относительно `Frame::origin`, радиус в единицах мира,
-/// цвет RGBA. Ровно 16 байт — так их и читает шейдер.
+/// Один кружок. Ровно 32 байта — так их и читает шейдер (`render.rs`).
+/// Координаты — относительно `Frame::origin`; вид, курс и флаги призрака —
+/// в `meta` (см. `motion.rs`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Instance {
+    /// Позиция на тике кадра.
     pub x: f32,
     pub y: f32,
+    /// Позиция в прошлом кадре: окно рисует движение между ними.
+    pub px: f32,
+    pub py: f32,
+    /// Радиус тела в единицах мира.
     pub r: f32,
+    /// RGB и сытость (0‒255) в последнем байте.
     pub color: u32,
+    /// Секунды с рождения на момент сборки кадра, у призрака — со смерти.
+    pub age: f32,
+    /// Курс u16 | вид << 16 | призрак | умер с голоду.
+    pub meta: u32,
 }
 
 /// Картинка RGBA, натянутая на прямоугольник мира `rect` (x0, y0, x1, y1).
@@ -91,8 +103,10 @@ pub struct Selected {
     pub max_energy: f64,
     /// Расход энергии за тик.
     pub upkeep: f64,
-    /// Геном травоядного; у хищника генома нет.
-    pub genom: Option<[f64; 7]>,
+    /// Геном травоядного (у хищника — None).
+    pub genome: Option<[f64; vegetarian::N]>,
+    /// Геном хищника (у травоядного — None).
+    pub predator_genome: Option<[f64; predator::N]>,
     /// Слой травоядного по глубине (y от и до): где ему можно жить и есть.
     pub layer: Option<(f64, f64)>,
     pub fleeing: bool,
@@ -106,15 +120,16 @@ impl Selected {
                 creature: c,
                 x: v.x,
                 y: v.y,
-                half: v.half,
-                vision: v.vision,
-                speed: v.speed,
+                half: v.pheno.half,
+                vision: v.pheno.vision,
+                speed: v.pheno.speed,
                 energy: v.energy,
-                max_energy: v.max_energy,
-                upkeep: v.upkeep,
-                genom: Some(v.genom.to_array()),
-                layer: Some((v.layer_lo, v.layer_hi)),
-                fleeing: v.flee_ticks > 0,
+                max_energy: v.pheno.max_energy,
+                upkeep: v.pheno.upkeep,
+                genome: Some(v.genome.to_values()),
+                predator_genome: None,
+                layer: Some((v.pheno.layer_lo, v.pheno.layer_hi)),
+                fleeing: v.mind.flee_ticks > 0,
                 hungry: false,
             }),
             Creature::Predator(id) => world.predator(id).map(|p| Selected {
@@ -122,12 +137,13 @@ impl Selected {
                 x: p.x,
                 y: p.y,
                 half: Predator::DIAM / 2.0,
-                vision: p.vision,
-                speed: p.speed,
+                vision: p.pheno.vision,
+                speed: p.pheno.speed,
                 energy: p.energy,
-                max_energy: p.max_energy,
-                upkeep: p.upkeep,
-                genom: None,
+                max_energy: p.pheno.max_energy,
+                upkeep: p.pheno.upkeep,
+                genome: None,
+                predator_genome: Some(p.genome.to_values()),
                 layer: None,
                 fleeing: false,
                 hungry: p.hungry(),
@@ -177,6 +193,8 @@ pub struct Frame {
     pub samples: Vec<Sample>,
     pub gene_points: Vec<GenePoint>,
     pub log: Vec<LogEntry>,
+    /// Когда кадр собран: от этого момента окно отсчитывает возраст кружков.
+    pub built: Option<std::time::Instant>,
     /// Сколько времени потока симуляции ушло на сборку кадра, мс.
     pub build_ms: f64,
     /// Средняя цена тика, мс.
@@ -195,65 +213,19 @@ pub fn lerp(a: [u8; 3], b: [u8; 3], t: f64) -> [u8; 3] {
     std::array::from_fn(|i| (a[i] as f64 + (b[i] as f64 - a[i] as f64) * t).round() as u8)
 }
 
-fn pack(c: [u8; 3]) -> u32 {
-    u32::from_le_bytes([c[0], c[1], c[2], 255])
+/// Цвет и байт в последнем канале (у существ — сытость) одним u32.
+pub fn rgba(c: [u8; 3], a: u8) -> u32 {
+    u32::from_le_bytes([c[0], c[1], c[2], a])
 }
 
-/// Травоядное тем ярче, чем полнее его бак: голодающих видно сразу.
-const SHADES: usize = 6;
-
-struct Palette {
-    plant: u32,
-    vegetarian: [u32; SHADES],
-    predator: u32,
+/// Растения тусклее животных: их много, и они не должны спорить с теми, кто движется.
+pub fn plant_color() -> [u8; 3] {
+    lerp(WORLD_BOTTOM, PLANT_COLOR, 0.6)
 }
 
-impl Palette {
-    fn new() -> Self {
-        Palette {
-            plant: pack(lerp(WORLD_BOTTOM, PLANT_COLOR, 0.8)),
-            vegetarian: std::array::from_fn(|i| {
-                pack(lerp(WORLD_BOTTOM, VEGETARIAN_COLOR, 0.45 + 0.55 * i as f64 / (SHADES - 1) as f64))
-            }),
-            predator: pack(PREDATOR_COLOR),
-        }
-    }
-
-    fn vegetarian(&self, energy: f64, max_energy: f64) -> u32 {
-        let shade = (energy / max_energy * SHADES as f64).clamp(0.0, (SHADES - 1) as f64);
-        self.vegetarian[shade as usize]
-    }
-}
-
-/// Кружки видимой части мира в `out`. false — видимых больше `MAX_INSTANCES`,
-/// и `out` недособран: тогда нужна карта плотности.
-pub fn collect_instances(world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) -> bool {
-    let palette = Palette::new();
-    let (x0, y0, x1, y1) = rect;
-    out.clear();
-    let visible =
-        |x: f64, y: f64, half: f64| x + half >= x0 && x - half <= x1 && y + half >= y0 && y - half <= y1;
-    let mut push = |x: f64, y: f64, r: f64, color: u32| {
-        out.push(Instance { x: (x - x0) as f32, y: (y - y0) as f32, r: r as f32, color });
-        out.len() <= MAX_INSTANCES
-    };
-    for p in &world.plants {
-        if visible(p.x, p.y, PLANT_RADIUS) && !push(p.x, p.y, PLANT_RADIUS, palette.plant) {
-            return false;
-        }
-    }
-    for v in &world.vegetarians {
-        if visible(v.x, v.y, v.half) && !push(v.x, v.y, v.half, palette.vegetarian(v.energy, v.max_energy)) {
-            return false;
-        }
-    }
-    let half = Predator::DIAM / 2.0;
-    for p in &world.predators {
-        if visible(p.x, p.y, half) && !push(p.x, p.y, half, palette.predator) {
-            return false;
-        }
-    }
-    true
+/// Голодный хищник (охотится) ярче сытого (бродит и не ест).
+pub fn predator_color(hungry: bool) -> [u8; 3] {
+    if hungry { PREDATOR_COLOR } else { lerp(WORLD_BOTTOM, PREDATOR_COLOR, 0.8) }
 }
 
 /// Карта плотности: сколько растений, травоядных и хищников в каждой клетке
@@ -309,31 +281,17 @@ mod tests {
     use life_core::WorldConfig;
 
     #[test]
-    fn кружок_ровно_16_байт() {
-        assert_eq!(std::mem::size_of::<Instance>(), 16);
-    }
-
-    #[test]
-    fn в_кадр_попадают_только_видимые_по_телу() {
-        let mut world =
-            World::new(&WorldConfig { n_vegetarians: Some(0), n_predators: Some(0), ..Default::default() });
-        world.plants.clear();
-        // Центр за левым краем, но тело крупное — торчит в кадр.
-        let big = life_core::Genom::from_array([400.0, 10.0, 400.0, 70.0, 30.0, 0.0, 100.0]);
-        world.spawn_vegetarian(big, 1000.0 - 150.0, 2000.0, None);
-        world.spawn_vegetarian(big, 100.0, 2000.0, None); // далеко слева
-        world.spawn_predator(1500.0, 2000.0, None);
-        let mut out = Vec::new();
-        assert!(collect_instances(&world, (1000.0, 0.0, 2000.0, 4000.0), &mut out));
-        assert_eq!(out.len(), 2, "крупное травоядное у края и хищник");
-        assert!(out[0].x < 0.0, "координаты — от начала видимой области");
+    fn кружок_ровно_32_байта() {
+        assert_eq!(std::mem::size_of::<Instance>(), 32);
     }
 
     /// Страж скорости кадра: 200 тыс. видимых существ собираются в кадр
-    /// быстро, а мир ×400 целиком (600 тыс. растений) уходит в карту
-    /// плотности, и кадр весит не больше пары мегабайт, а не десятки.
+    /// быстро — вместе с сопоставлением с прошлым кадром (`motion.rs`), — а мир
+    /// ×400 целиком (600 тыс. растений) уходит в карту плотности, и кадр весит
+    /// не больше пары мегабайт, а не десятки.
     #[test]
     fn кадр_огромного_мира_быстрый_и_лёгкий() {
+        use crate::motion::Motion;
         use life_core::plant::Plant;
         use life_core::rng::Rng;
 
@@ -349,18 +307,22 @@ mod tests {
             .collect();
         let (w, h) = (world.space.width, world.space.height);
 
-        // вид на часть мира: ~200 тыс. растений в кадре
+        // вид на часть мира: ~200 тыс. растений в кадре; все родились на одном
+        // тике — худший случай для сопоставления растений (одна большая группа)
         let part = (0.0, 0.0, w / 3.0, h);
         let mut out = Vec::new();
+        let mut motion = Motion::default();
+        assert!(motion.collect(&world, part, &mut out));
+        world.plants.retain(|p| p.x.to_bits() % 7 != 0); // часть съели
         let start = std::time::Instant::now();
-        assert!(collect_instances(&world, part, &mut out));
+        assert!(motion.collect(&world, part, &mut out));
         let ms = start.elapsed().as_secs_f64() * 1000.0;
         eprintln!("  [кадр] {} кружков за {ms:.1} мс", out.len());
         assert!(out.len() > 150_000);
         assert!(ms < 60.0, "сборка кадра {ms:.1} мс — окно получало бы кадры редко");
 
         // весь мир: кружков больше потолка — карта плотности размером с экран
-        assert!(!collect_instances(&world, (0.0, 0.0, w, h), &mut out));
+        assert!(!motion.collect(&world, (0.0, 0.0, w, h), &mut out));
         let start = std::time::Instant::now();
         let r = density(&world, (0.0, 0.0, w, h), 960, 300, Raster::default());
         let ms = start.elapsed().as_secs_f64() * 1000.0;
