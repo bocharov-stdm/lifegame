@@ -8,7 +8,7 @@ use life_core::plant::Plant;
 use life_core::predator::{Predator, Prey};
 use life_core::rng::Rng;
 use life_core::vegetarian::Vegetarian;
-use life_core::{Genom, Rules, Space, World, WorldConfig};
+use life_core::{Counters, Genom, Rules, Space, World, WorldConfig};
 
 const BASE: [f64; 7] = VEGETARIAN_BASE_GENOM;
 
@@ -372,6 +372,20 @@ fn мигранта_нет_когда_не_положено() {
     }
 }
 
+/// Приток на единицу площади тот же, что в базовом мире: в мире x10 приходят десятеро.
+#[test]
+fn мигрантов_больше_в_большом_мире() {
+    let mut w = World::new(&WorldConfig {
+        scale: 10.0,
+        n_vegetarians: Some(PREDATOR_MIGRATION_PREY * 10),
+        ..Default::default()
+    });
+    w.predators.clear();
+    w.tick = PREDATOR_MIGRATION_PERIOD as u64;
+    w.migrate_predators();
+    assert_eq!((w.predators.len(), w.migrants), (10, 10));
+}
+
 #[test]
 fn мигранта_нет_пока_хищников_хватает() {
     let mut w = World::new(&WorldConfig { n_vegetarians: Some(40), ..Default::default() });
@@ -503,6 +517,28 @@ fn один_сид_один_мир() {
     assert_ne!(run(5), run(6));
 }
 
+/// Счётчики — бухгалтерия без потерь: сколько было, плюс родилось и пришло,
+/// минус съедено и умерло, равно тому, сколько есть. Пропусти мир одну смерть —
+/// отчёт стал бы объяснять численность неверными причинами.
+#[test]
+fn счётчики_сходятся_с_численностью() {
+    let mut w = World::new(&WorldConfig { seed: 3, ..Default::default() });
+    let (veg0, pred0, plants0) =
+        (w.vegetarians.len() as u64, w.predators.len() as u64, w.plants.len() as u64);
+    for _ in 0..3000 {
+        w.step();
+    }
+    let c = w.counters;
+    assert!(c.vegetarians_born > 0 && c.vegetarians_eaten > 0 && c.plants_eaten > 0, "{c:?}");
+    assert_eq!(
+        w.vegetarians.len() as u64,
+        veg0 + c.vegetarians_born - c.vegetarians_eaten - c.vegetarians_starved
+    );
+    assert_eq!(w.predators.len() as u64, pred0 + c.predators_born + w.migrants - c.predators_starved);
+    assert_eq!(w.plants.len() as u64, plants0 + c.plants_grown - c.plants_eaten);
+    assert_eq!(c.since(&c), Counters::default());
+}
+
 /// Большой мир — тот же мир, только шире: стартовые популяции и потолки растут
 /// с площадью, высота прежняя.
 #[test]
@@ -524,4 +560,12 @@ fn масштаб_растит_площадь() {
         e.step();
     }
     assert_eq!(e.plants.len(), PLANT_MAX * 2);
+}
+
+/// Мир уже базового не строится: при ширине 60 полоса хищника переворачивалась,
+/// и мир падал на первом же тике вместо внятной ошибки.
+#[test]
+#[should_panic(expected = "масштаб мира")]
+fn масштаб_меньше_базового_отвергается() {
+    Space::scaled(0.01);
 }

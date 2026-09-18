@@ -30,9 +30,36 @@ cargo run -p life-report --release -- --rule plant_energy=80 --scale 10 --thread
 cargo run -p life-report --release -- --compare reference/fingerprint.json   # parity with Python
 ```
 
+### Watching a run without a window
+
+To understand *what happens and why* in a world (balance work, debugging, answering "why did
+they die out"), use the observer rather than raw counts:
+
+```bash
+cargo run -p life-report --release -- --ticks 20000 --maps 3        # story + 3 text maps
+cargo run -p life-report --release -- --seeds 1 2 3 --story --rows 8
+cargo run -p life-report --release -- --ticks 5000 --json -          # everything as JSON on stdout
+cargo run -p life-report --release -- --ticks 5000 --json run.json   # JSON to a file + text
+```
+
+The story (always on for a single seed) prints: final state; herbivore and predator
+births/deaths **by cause** (eaten vs starved) — the counters in `World::counters`; a table by
+intervals with flows, gene medians, the depth layer holding 80% of herbivores and their
+fullness; genome start → end as median (10‒90%); herbivores vs plants by depth band; a
+chronicle of events (crashes and rises with their causes, predators extinct/returning, plants
+hitting the cap, gene shifts, herbivores squeezing into a thin layer); ASCII maps (top =
+surface, `X` predator, `O`/`o` herbivores, `:`/`.` plants). The JSON has the same plus every
+snapshot (`life_sim::observe::Snapshot`: gene spreads, depth histograms, cumulative counters);
+keys are English (`gene_keys`, event `kind`), texts Russian. Long runs may stop on the work
+budget ("перегрузка") — raise it with `--max-work`.
+
+`observe.rs` lives in `life-sim`, not in the report, so the future app can reuse snapshots
+and the event chronicle for its in-game event feed.
+
 `reference/fingerprint.json` is the Python balance fingerprint (8 seeds x 20 000 ticks, series
 every 60 ticks), made by `python/fingerprint.py`. `--compare` reruns the same seeds in Rust and
-checks each metric's Rust mean against the Python per-seed range. Re-take the fingerprint only
+checks each metric's Rust mean against the Python per-seed range; any mismatch exits with code 1
+(CI relies on it). Re-take the fingerprint only
 when the Python balance changes deliberately.
 
 ### Rust core: what differs from Python on purpose
@@ -48,8 +75,9 @@ when the Python balance changes deliberately.
 - **Creatures do not see the grid**: `Vegetarian::step` / `Predator::step` take closures
   ("nearest plant", "nearest predator", "nearest prey"); tests pass plain closures.
 - **World scale** (`space.rs`): scale grows the width only; everything defined per world
-  (plant rate and cap, start populations, migration thresholds, report limits) is multiplied by
-  `area_ratio`, so densities — and the balance — stay the same.
+  (plant rate and cap, start populations, migration thresholds and arrivals per event, report
+  limits) is multiplied by `area_ratio`, so densities — and the balance — stay the same. Scale is
+  at least `MIN_SCALE` = 1: narrower worlds break predator geometry.
 - Stable `id: u64` per creature (for picking and following in the future app).
 
 ## Commands: Python reference (run from `python/`)

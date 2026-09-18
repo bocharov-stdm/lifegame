@@ -152,6 +152,17 @@ class TestSettings(unittest.TestCase):
         self.assertEqual([p.name for p in folder.iterdir()], ["s.json"],
                          "после записи остались временные файлы")
 
+    def test_load_falls_back_to_legacy_file(self):
+        """После переезда в python/ настройки из старого места не теряются."""
+        folder = self.tmp_path()
+        old, new = folder / "old.json", folder / "new.json"
+        s = Settings(seed=321, random_seed=False)
+        self.assertTrue(settings_io.save(s, old))
+        self.assertEqual(settings_io.load(new, legacy=old), s)
+        # новый файл, раз появился, главнее старого
+        self.assertTrue(settings_io.save(Settings(), new))
+        self.assertEqual(settings_io.load(new, legacy=old), Settings())
+
     def test_save_failure_is_not_fatal(self):
         path = self.tmp_path() / "нет такой папки" / "s.json"
         self.assertFalse(settings_io.save(Settings(), path))

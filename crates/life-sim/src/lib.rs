@@ -5,10 +5,13 @@
 //! бюджет вычислений (гарантирует завершение, примерно одинаково на разных
 //! машинах) и дедлайн по часам (страховка на совсем медленной машине).
 
+pub mod observe;
+
 use std::fmt;
 use std::time::{Duration, Instant};
 
 use life_core::{Stats, World, WorldConfig};
+use observe::Snapshot;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StopReason {
@@ -17,6 +20,19 @@ pub enum StopReason {
     Overload,
     Extinct,
     Deadline,
+}
+
+impl StopReason {
+    /// Машинное имя — для JSON отчёта.
+    pub fn key(self) -> &'static str {
+        match self {
+            StopReason::Done => "done",
+            StopReason::Explosion => "explosion",
+            StopReason::Overload => "overload",
+            StopReason::Extinct => "extinct",
+            StopReason::Deadline => "deadline",
+        }
+    }
 }
 
 impl fmt::Display for StopReason {
@@ -58,6 +74,9 @@ impl Default for Limits {
 pub struct SimResult {
     /// Снимки `world.stats()` раз в `sample_every` тиков плюс финальный.
     pub history: Vec<Stats>,
+    /// Подробные срезы в те же моменты, что и `history`: разброс генов,
+    /// глубина, счётчики рождений и смертей (см. `observe`).
+    pub snapshots: Vec<Snapshot>,
     pub ticks_done: u64,
     pub stop: StopReason,
     pub elapsed: Duration,
@@ -98,6 +117,7 @@ pub fn run(mut world: World, limits: &Limits, on_tick: &mut dyn FnMut(&World)) -
     let max_work = limits.max_total_work * area * area;
 
     let mut history = vec![world.stats()];
+    let mut snapshots = vec![Snapshot::of(&world)];
     let mut stop = StopReason::Done;
     let started = Instant::now();
     let mut done = 0;
@@ -129,11 +149,13 @@ pub fn run(mut world: World, limits: &Limits, on_tick: &mut dyn FnMut(&World)) -
         }
         if tick % limits.sample_every == 0 {
             history.push(world.stats());
+            snapshots.push(Snapshot::of(&world));
         }
     }
 
     if history.last().map(|h| h.tick) != Some(world.tick) {
         history.push(world.stats()); // финальный снимок всегда в истории
+        snapshots.push(Snapshot::of(&world));
     }
-    SimResult { history, ticks_done: done, stop, elapsed: started.elapsed(), world, total_work }
+    SimResult { history, snapshots, ticks_done: done, stop, elapsed: started.elapsed(), world, total_work }
 }

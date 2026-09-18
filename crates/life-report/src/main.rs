@@ -7,19 +7,28 @@
 //!     cargo run -p life-report --release -- --scale 100 --ticks 2000   # мир в 100 раз больше
 //!     cargo run -p life-report --release -- --compare reference/fingerprint.json
 //!
+//! Чтобы понять, что происходило (человеку или ИИ, без окна):
+//!
+//!     cargo run -p life-report --release -- --ticks 20000 --maps 4       # рассказ + карты
+//!     cargo run -p life-report --release -- --seeds 1 2 3 --story        # рассказ по каждому сиду
+//!     cargo run -p life-report --release -- --ticks 5000 --json -        # всё в JSON в stdout
+//!
 //! Сиды считаются параллельно, по одному на ядро. Лимиты те же, что в Python:
 //! бюджет работы растёт с числом тиков, и оборванные прогоны сводка
 //! перечисляет отдельно, а не выдаёт за здоровые.
 
+mod json;
 mod metrics;
+mod story;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
 use life_core::config::*;
-use life_core::genome::GENE_LABELS;
+use life_core::space::MIN_SCALE;
 use life_core::{Rules, WorldConfig};
+use life_sim::observe::{self, Event, ascii_map};
 use life_sim::{Limits, SimResult, simulate};
 use rayon::prelude::*;
 
@@ -37,11 +46,11 @@ struct Args {
     seeds: Vec<u64>,
     #[arg(long, default_value_t = 600)]
     ticks: u64,
-    /// Снимок раз во столько тиков.
+    /// Срез раз во столько тиков (по умолчанию — 50 срезов на прогон).
     #[arg(long)]
     sample: Option<u64>,
-    /// Масштаб мира по площади (1 — базовый 6000x4000).
-    #[arg(long, default_value_t = 1.0)]
+    /// Масштаб мира по площади (1 — базовый 6000x4000, меньше нельзя).
+    #[arg(long, default_value_t = 1.0, value_parser = parse_scale)]
     scale: f64,
     #[arg(long)]
     vegetarians: Option<usize>,
@@ -67,6 +76,32 @@ struct Args {
     /// берутся его сиды и число тиков.
     #[arg(long)]
     compare: Option<PathBuf>,
+    /// Рассказ о каждом прогоне: причины смертей, промежутки, геном, глубина,
+    /// хроника событий. Для одного сида печатается и без флага.
+    #[arg(long)]
+    story: bool,
+    /// Строк в таблице промежутков рассказа.
+    #[arg(long, default_value_t = 12)]
+    rows: usize,
+    /// Карт мира текстом на прогон — через равные промежутки, последняя в конце
+    /// (включает рассказ).
+    #[arg(long, default_value_t = 0)]
+    maps: usize,
+    /// Ширина карты, символов.
+    #[arg(long, default_value_t = 72)]
+    map_width: usize,
+    /// Весь отчёт в JSON: каждый срез, хроника, карты. «-» — в stdout вместо текста.
+    #[arg(long, value_name = "ФАЙЛ")]
+    json: Option<PathBuf>,
+}
+
+fn parse_scale(s: &str) -> Result<f64, String> {
+    let scale: f64 = s.trim().parse().map_err(|_| format!("«{s}» — не число"))?;
+    if scale.is_finite() && scale >= MIN_SCALE {
+        Ok(scale)
+    } else {
+        Err(format!("масштаб должен быть не меньше {MIN_SCALE}"))
+    }
 }
 
 fn parse_rules(pairs: &[String]) -> Result<Rules, String> {
@@ -84,16 +119,19 @@ fn main() {
     if let Some(n) = args.threads {
         rayon::ThreadPoolBuilder::new().num_threads(n).build_global().expect("пул потоков");
     }
-    let rules = parse_rules(&args.rules).unwrap_or_else(|e| {
+    let fail = |e: String| -> ! {
         eprintln!("ошибка: {e}");
         std::process::exit(2);
-    });
+    };
+    let rules = parse_rules(&args.rules).unwrap_or_else(|e| fail(e));
+    // JSON в stdout — и больше ничего: текст сломал бы разбор
+    let quiet = args.json.as_deref().is_some_and(|p| p.as_os_str() == "-");
+    if quiet && args.compare.is_some() {
+        fail("сверку нельзя печатать вместе с JSON в stdout: укажите --json ФАЙЛ".into());
+    }
 
     let reference = args.compare.as_ref().map(|path| {
-        metrics::Reference::load(path).unwrap_or_else(|e| {
-            eprintln!("ошибка: {}: {e}", path.display());
-            std::process::exit(2);
-        })
+        metrics::Reference::load(path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())))
     });
     if let Some(r) = &reference {
         args.seeds = r.seeds.clone();
@@ -104,7 +142,7 @@ fn main() {
     }
 
     let seeds = if args.seeds.is_empty() { vec![args.seed] } else { args.seeds.clone() };
-    let sample = args.sample.unwrap_or((args.ticks / 20).max(1));
+    let sample = args.sample.unwrap_or((args.ticks / 50).max(1));
     let limits = Limits {
         ticks: args.ticks,
         sample_every: sample,
@@ -112,50 +150,88 @@ fn main() {
         max_total_work: args.max_work.unwrap_or(WORK_PER_TICK * args.ticks as f64),
         deadline: Duration::from_secs(args.seconds),
     };
+    let base_cfg = WorldConfig {
+        seed: 0,
+        scale: args.scale,
+        rules: rules.clone(),
+        n_vegetarians: args.vegetarians,
+        n_predators: args.predators,
+        predator_speed: args.predator_speed,
+        predator_vision: args.predator_vision,
+    };
 
-    println!(
-        "Мир x{}: {:.0}x{:.0}, {} тиков, сиды {:?}, потоков {}",
-        args.scale,
-        WORLD_WIDTH * args.scale,
-        WORLD_HEIGHT,
-        args.ticks,
-        seeds,
-        rayon::current_num_threads()
-    );
+    if !quiet {
+        println!(
+            "Мир x{}: {:.0}x{:.0}, {} тиков, сиды {:?}, потоков {}",
+            args.scale,
+            WORLD_WIDTH * args.scale,
+            WORLD_HEIGHT,
+            args.ticks,
+            seeds,
+            rayon::current_num_threads()
+        );
+    }
     let started = Instant::now();
-    let results: Vec<(u64, SimResult)> = seeds
+    let map_every = if args.maps > 0 { (args.ticks / args.maps as u64).max(1) } else { u64::MAX };
+    let (results, maps): (Vec<(u64, SimResult)>, Vec<Vec<story::Map>>) = seeds
         .par_iter()
         .map(|&seed| {
-            let cfg = WorldConfig {
-                seed,
-                scale: args.scale,
-                rules: rules.clone(),
-                n_vegetarians: args.vegetarians,
-                n_predators: args.predators,
-                predator_speed: args.predator_speed,
-                predator_vision: args.predator_vision,
-            };
-            (seed, simulate(&cfg, &limits, |_| {}))
+            let cfg = WorldConfig { seed, ..base_cfg.clone() };
+            let mut maps = Vec::new();
+            let res = simulate(&cfg, &limits, |w| {
+                if w.tick.is_multiple_of(map_every) {
+                    maps.push((w.tick, ascii_map(w, args.map_width)));
+                }
+            });
+            // последняя карта — всегда конечное состояние, даже если прогон оборван
+            if args.maps > 0 && maps.last().map(|m| m.0) != Some(res.world.tick) {
+                maps.push((res.world.tick, ascii_map(&res.world, args.map_width)));
+            }
+            ((seed, res), maps)
         })
-        .collect();
+        .unzip();
+    let events: Vec<Vec<Event>> = results.iter().map(|(_, r)| observe::events(&r.snapshots)).collect();
 
-    if results.len() == 1 && reference.is_none() {
-        print_trajectory(&results[0].1);
+    if let Some(path) = &args.json {
+        let runs: Vec<json::Run> = results
+            .iter()
+            .zip(&events)
+            .zip(&maps)
+            .map(|(((seed, res), events), maps)| json::Run { seed: *seed, res, events, maps })
+            .collect();
+        let text = serde_json::to_string_pretty(&json::report(&base_cfg, &rules, args.ticks, sample, &runs))
+            .expect("JSON собирается всегда");
+        if quiet {
+            println!("{text}");
+            return;
+        }
+        std::fs::write(path, text).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+    }
+
+    let story = args.story || args.maps > 0 || (results.len() == 1 && reference.is_none());
+    if story {
+        for (((seed, res), events), maps) in results.iter().zip(&events).zip(&maps) {
+            story::print_story(*seed, res, events, maps, args.rows);
+        }
     }
     print_summary(&results);
-    if let Some(r) = &reference {
-        metrics::print_comparison(r, &results);
+    let agrees = reference.as_ref().is_none_or(|r| metrics::print_comparison(r, &results));
+    if let Some(path) = &args.json {
+        println!(
+            "
+JSON: {}",
+            path.display()
+        );
     }
-    println!("\nвсего {:.1} с", started.elapsed().as_secs_f64());
-}
-
-fn print_trajectory(res: &SimResult) {
-    println!("\n{:>7} {:>7} {:>6} {:>6}  средний геном", "тик", "растен", "трав", "хищн");
-    for s in &res.history {
-        let genom = s.avg_genom.map_or("—".to_string(), |g| {
-            g.iter().zip(GENE_LABELS).map(|(v, l)| format!("{l} {v:.1}")).collect::<Vec<_>>().join("  ")
-        });
-        println!("{:>7} {:>7} {:>6} {:>6}  {genom}", s.tick, s.plants, s.vegetarians, s.predators);
+    println!(
+        "
+всего {:.1} с",
+        started.elapsed().as_secs_f64()
+    );
+    // Сверка — проверка, а не справка: расхождение с эталоном должно ронять CI.
+    if !agrees {
+        eprintln!("ошибка: баланс разошёлся с эталоном Python");
+        std::process::exit(1);
     }
 }
 

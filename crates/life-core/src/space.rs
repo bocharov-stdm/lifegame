@@ -9,6 +9,10 @@
 
 use crate::config::{WORLD_HEIGHT, WORLD_WIDTH};
 
+/// Меньше базового мира не бывает. Баланс подобран на нём, а в узком мире
+/// ломается геометрия: при ширине 60 полоса блуждания хищника — [40, 20].
+pub const MIN_SCALE: f64 = 1.0;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Space {
     pub width: f64,
@@ -24,7 +28,10 @@ impl Default for Space {
 impl Space {
     /// Мир в `scale` раз больше базового по площади (растёт ширина).
     pub fn scaled(scale: f64) -> Self {
-        assert!(scale.is_finite() && scale > 0.0, "масштаб мира должен быть > 0, а не {scale}");
+        assert!(
+            scale.is_finite() && scale >= MIN_SCALE,
+            "масштаб мира должен быть не меньше {MIN_SCALE}, а не {scale}"
+        );
         Space { width: WORLD_WIDTH * scale, height: WORLD_HEIGHT }
     }
 

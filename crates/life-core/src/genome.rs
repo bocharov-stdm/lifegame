@@ -19,6 +19,10 @@ pub struct Genom {
     pub max_y: f64,
 }
 
+/// Машинные имена генов (JSON отчёта и эталона Python), порядок — как в `Genom`.
+pub const GENE_KEYS: [&str; 7] =
+    ["size", "speed", "vision", "repro_threshold", "repro_share", "min_y", "max_y"];
+
 /// Русские подписи генов в порядке `Genom::to_array`.
 pub const GENE_LABELS: [&str; 7] =
     ["размер", "скорость", "зрение", "порог_разм", "доля_потомку", "min_y%", "max_y%"];
@@ -26,7 +30,7 @@ pub const GENE_LABELS: [&str; 7] =
 /// Какие гены — проценты: при мутации они держатся в 0‒100. Для слоя это
 /// граница мира; для порога и доли выше 100 размножение всё равно невозможно,
 /// но число вроде 180% в среднем геноме только путало бы.
-const PERCENT: [bool; 7] = [false, false, false, true, true, true, true];
+pub const PERCENT: [bool; 7] = [false, false, false, true, true, true, true];
 
 impl Genom {
     pub const fn from_array(g: [f64; 7]) -> Self {

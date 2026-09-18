@@ -21,6 +21,9 @@ from life.rules  import DEFAULT_RULES
 from life.world  import World
 
 SETTINGS_PATH = Path(__file__).resolve().parent.parent / "user_settings.json"
+# До переезда игры в python/ файл лежал в корне репозитория. Его читаем, пока
+# нового нет; первая же запись создаёт новый, и дальше старый не нужен.
+LEGACY_SETTINGS_PATH = SETTINGS_PATH.parent.parent / "user_settings.json"
 
 SEED_MAX   = 99_999
 UI_SCALES  = (0.0, 1.0, 1.25, 1.5, 1.75, 2.0)      # 0 — как в системе
@@ -187,9 +190,18 @@ def _clean(key, value):
     return None
 
 
-def load(path=SETTINGS_PATH):
-    """Настройки из файла. Битый файл, мусор и чужие ключи не роняют игру."""
+def load(path=SETTINGS_PATH, legacy=None):
+    """Настройки из файла. Битый файл, мусор и чужие ключи не роняют игру.
+
+    Нет файла — читается `legacy`. Для штатного пути это старое место в корне;
+    для любого другого (тесты пишут во временные папки) отката нет, иначе тест
+    прочёл бы настоящие настройки игрока.
+    """
     settings = Settings()
+    if legacy is None and Path(path) == SETTINGS_PATH:
+        legacy = LEGACY_SETTINGS_PATH
+    if legacy is not None and not Path(path).exists():
+        path = legacy
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):

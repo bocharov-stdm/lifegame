@@ -18,4 +18,4 @@ pub mod world;
 pub use genome::Genom;
 pub use rules::Rules;
 pub use space::Space;
-pub use world::{Stats, World, WorldConfig};
+pub use world::{Counters, Stats, World, WorldConfig};

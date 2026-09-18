@@ -54,6 +54,36 @@ pub struct Stats {
     pub avg_energy: Option<f64>,
 }
 
+/// Сколько всего выросло, родилось и умерло с начала мира. Численность говорит,
+/// ЧТО стало, а разность двух снимков счётчиков — ОТЧЕГО: травоядных стало
+/// меньше, потому что их съели или потому что им нечего есть. Стартовые
+/// существа и мигранты рождениями не считаются (мигранты — `World::migrants`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Counters {
+    pub plants_grown: u64,
+    pub plants_eaten: u64,
+    pub vegetarians_born: u64,
+    pub vegetarians_eaten: u64,
+    pub vegetarians_starved: u64,
+    pub predators_born: u64,
+    pub predators_starved: u64,
+}
+
+impl Counters {
+    /// Потоки за промежуток от `earlier` до `self`.
+    pub fn since(&self, earlier: &Counters) -> Counters {
+        Counters {
+            plants_grown: self.plants_grown - earlier.plants_grown,
+            plants_eaten: self.plants_eaten - earlier.plants_eaten,
+            vegetarians_born: self.vegetarians_born - earlier.vegetarians_born,
+            vegetarians_eaten: self.vegetarians_eaten - earlier.vegetarians_eaten,
+            vegetarians_starved: self.vegetarians_starved - earlier.vegetarians_starved,
+            predators_born: self.predators_born - earlier.predators_born,
+            predators_starved: self.predators_starved - earlier.predators_starved,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct World {
     pub space: Space,
@@ -69,6 +99,7 @@ pub struct World {
     /// Мир без охоты мигрантов не ждёт.
     pub hunting: bool,
     pub migrants: u64,
+    pub counters: Counters,
 
     next_id: u64,
     /// Поток мира: растения и мигранты. У каждого существа поток свой.
@@ -97,6 +128,7 @@ impl World {
             predator_vision: cfg.predator_vision,
             hunting: n_pred > 0,
             migrants: 0,
+            counters: Counters::default(),
             next_id: 1,
             rng: Rng::new(0),
             prey_grid: Grid::new(GRID_CELL),
@@ -184,13 +216,16 @@ impl World {
         }
         let cap = self.space.per_area(PLANT_MAX);
         let count = count.min(cap.saturating_sub(self.plants.len()));
+        self.counters.plants_grown += count as u64;
         for _ in 0..count {
             let p = Plant::random(&self.space, &mut self.rng);
             self.plants.push(p);
         }
     }
 
-    /// Если хищников почти не осталось, раз в период с края мира приходит новый.
+    /// Если хищников почти не осталось, раз в период с краёв мира приходят новые:
+    /// по одному на базовую площадь. Иначе в мире x100 пороги выросли бы, а приток
+    /// остался прежним — на единицу площади в сто раз слабее.
     pub fn migrate_predators(&mut self) {
         let period = self.rules.predator_migration as u64;
         if period == 0
@@ -203,18 +238,20 @@ impl World {
         }
         let d = PREDATOR_DIAM;
         let (w, h) = (self.space.width, self.space.height);
-        let (x, y) = if self.rng.random() < 0.5 {
-            (self.rng.choose2(d, w - d), self.rng.uniform(d, h - d)) // левый/правый край
-        } else {
-            (self.rng.uniform(d, w - d), self.rng.choose2(d, h - d)) // верхний/нижний
-        };
-        self.spawn_predator(x, y, None);
-        self.migrants += 1;
+        for _ in 0..self.space.per_area(1) {
+            let (x, y) = if self.rng.random() < 0.5 {
+                (self.rng.choose2(d, w - d), self.rng.uniform(d, h - d)) // левый/правый край
+            } else {
+                (self.rng.uniform(d, w - d), self.rng.choose2(d, h - d)) // верхний/нижний
+            };
+            self.spawn_predator(x, y, None);
+            self.migrants += 1;
+        }
     }
 
     fn update_predators(&mut self) {
         let divide = self.tick.is_multiple_of(DIVIDE_PERIOD);
-        let World { space, rules, vegetarians, predators, prey_grid, .. } = self;
+        let World { space, rules, vegetarians, predators, prey_grid, counters, .. } = self;
         prey_grid.rebuild(space, vegetarians.iter().map(|v| (v.x, v.y)));
         // Хищник видит и ловит по краю тела, поэтому к радиусу запроса к сетке
         // прибавляется половина самого крупного травоядного.
@@ -239,6 +276,7 @@ impl World {
                 best.map(|(_, p)| p)
             });
             if !pr.alive {
+                counters.predators_starved += 1;
                 continue; // умер от голода на этом ходу: не охотится и не делится
             }
 
@@ -259,6 +297,7 @@ impl World {
                     let gain = v.energy;
                     v.alive = false;
                     v.energy = 0.0;
+                    counters.vegetarians_eaten += 1;
                     pr.eat(gain, space);
                 }
             }
@@ -268,6 +307,7 @@ impl World {
             }
         }
         predators.retain(|p| p.alive);
+        counters.predators_born += offspring.len() as u64;
         for child in offspring {
             self.add_predator(child);
         }
@@ -275,7 +315,8 @@ impl World {
 
     fn update_vegetarians(&mut self) {
         let divide = self.tick.is_multiple_of(DIVIDE_PERIOD);
-        let World { space, rules, plants, vegetarians, predators, food_grid, hunter_grid, .. } = self;
+        let World { space, rules, plants, vegetarians, predators, food_grid, hunter_grid, counters, .. } =
+            self;
         food_grid.rebuild(space, plants.iter().map(|p| (p.x, p.y)));
         hunter_grid.rebuild(space, predators.iter().map(|p| (p.x, p.y)));
 
@@ -312,6 +353,7 @@ impl World {
                 },
             );
             if !v.alive {
+                counters.vegetarians_starved += 1;
                 continue; // умер от голода на этом ходу: не ест и не делится
             }
 
@@ -326,6 +368,7 @@ impl World {
                     eaten += 1;
                 }
             });
+            counters.plants_eaten += eaten as u64;
             v.feed(eaten, rules);
 
             if divide && let Some(child) = v.maybe_divide(space, rules) {
@@ -334,6 +377,7 @@ impl World {
         }
         vegetarians.retain(|v| v.alive);
         plants.retain(|p| p.alive); // выметаем съеденное
+        counters.vegetarians_born += offspring.len() as u64;
         for child in offspring {
             self.add_vegetarian(child);
         }

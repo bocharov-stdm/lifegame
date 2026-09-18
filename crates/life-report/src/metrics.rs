@@ -95,7 +95,9 @@ const METRICS: [Metric; 6] = [
     ("средний размер, финал", |s| s.iter().rev().find_map(|p| p.size).unwrap_or(f64::NAN)),
 ];
 
-pub fn print_comparison(reference: &Reference, results: &[(u64, SimResult)]) {
+/// Печатает сверку; true — все метрики сошлись в обоих окнах.
+pub fn print_comparison(reference: &Reference, results: &[(u64, SimResult)]) -> bool {
+    let mut all_agree = true;
     let ours: Vec<Run> = results
         .iter()
         .map(|(_, r)| Run { extinct: r.stop == StopReason::Extinct, series: from_stats(&r.history) })
@@ -130,6 +132,7 @@ pub fn print_comparison(reference: &Reference, results: &[(u64, SimResult)]) {
             );
         }
         println!("сходится {agree} из {}", METRICS.len());
+        all_agree &= agree == METRICS.len();
     }
     let py_ext = reference.runs.iter().filter(|r| r.extinct).count();
     let rs_ext = ours.iter().filter(|r| r.extinct).count();
@@ -138,4 +141,5 @@ pub fn print_comparison(reference: &Reference, results: &[(u64, SimResult)]) {
         reference.runs.len(),
         ours.len()
     );
+    all_agree
 }
