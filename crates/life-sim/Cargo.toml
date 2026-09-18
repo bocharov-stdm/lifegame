@@ -1,0 +1,9 @@
+[package]
+name        = "life-sim"
+description = "Прогон Tiny Life без окна с жёсткими лимитами: общий движок тестов и отчёта."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+life-core.workspace = true

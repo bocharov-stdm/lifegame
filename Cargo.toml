@@ -1,0 +1,23 @@
+# Tiny Life на Rust. Граница «движок не знает об экране» проведена по crate'ам:
+# life-core не зависит ни от чего графического, и компилятор это стережёт.
+[workspace]
+resolver = "3"
+members  = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+
+[workspace.dependencies]
+life-core = { path = "crates/life-core" }
+life-sim  = { path = "crates/life-sim" }
+
+# Тесты гоняют настоящие симуляции на тысячи тиков: без оптимизаций они
+# идут в десятки раз медленнее, поэтому даже отладочная сборка оптимизируется.
+[profile.dev]
+opt-level = 2
+
+[profile.release]
+lto           = "thin"
+codegen-units = 1

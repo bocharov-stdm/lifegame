@@ -1,0 +1,13 @@
+[package]
+name        = "life-report"
+description = "Отчёт о балансе Tiny Life без окна: прогоны по сидам параллельно, сводка и сверка с эталоном."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+life-core.workspace = true
+life-sim.workspace  = true
+clap       = { version = "4", features = ["derive"] }
+rayon      = "1"
+serde_json = "1"

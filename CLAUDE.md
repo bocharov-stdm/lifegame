@@ -4,14 +4,58 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Tiny Life Simulation — an evolutionary sandbox in Python + pygame: plants, herbivores
-(`Vegetarian`) and predators in a 2D world. Herbivores carry a 7-gene genome that mutates on
-division; selection is emergent, not scripted.
+Tiny Life Simulation — an evolutionary sandbox: plants, herbivores (`Vegetarian`) and predators
+in a 2D world. Herbivores carry a 7-gene genome that mutates on division; selection is
+emergent, not scripted.
 
 Everything — comments, docstrings, commit messages, README, test output — is written in
 Russian. Keep it that way when editing or adding code.
 
-## Commands
+**The project is mid-migration from Python + pygame to Rust** (plan: phases 0‒8, from a
+1:1 core to a native wgpu/egui app with player-chosen world scale up to ~1M creatures). Done so
+far: phases 0‒2 — the Python version moved to `python/` and stays as the reference; the Rust
+workspace has the engine (`crates/life-core`), the bounded headless runner (`crates/life-sim`)
+and the balance report (`crates/life-report`). There is no Rust game window yet (phase 4).
+
+## Commands: Rust
+
+```bash
+cargo test --workspace                              # engine tests (~0.1 s)
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all                                     # rustfmt.toml: width 110
+
+cargo run -p life-report --release                  # seed 1, 600 ticks, trajectory + summary
+cargo run -p life-report --release -- --seeds 1 2 3 --ticks 3000
+cargo run -p life-report --release -- --rule plant_energy=80 --scale 10 --threads 4
+cargo run -p life-report --release -- --compare reference/fingerprint.json   # parity with Python
+```
+
+`reference/fingerprint.json` is the Python balance fingerprint (8 seeds x 20 000 ticks, series
+every 60 ticks), made by `python/fingerprint.py`. `--compare` reruns the same seeds in Rust and
+checks each metric's Rust mean against the Python per-seed range. Re-take the fingerprint only
+when the Python balance changes deliberately.
+
+### Rust core: what differs from Python on purpose
+
+- **Per-creature RNG** (`life-core/src/rng.rs`): no global generator; a child's stream is forked
+  from its parent's at birth, the world has its own stream for plants and migrants. Results
+  depend on the seed only — not on iteration order or thread count. Not bit-compatible with
+  Python, only statistically (`--compare`).
+- **Fixed grid cell** (`GRID_CELL`, `grid.rs`): a query scans as many cells as its own radius
+  covers; `for_each_near` returns a superset, callers check distance. The grid stores copies of
+  coordinates — valid because the queried entities do not move within the phase (herbivores
+  stand still while predators move and vice versa). `alive` is always read from the entity.
+- **Creatures do not see the grid**: `Vegetarian::step` / `Predator::step` take closures
+  ("nearest plant", "nearest predator", "nearest prey"); tests pass plain closures.
+- **World scale** (`space.rs`): scale grows the width only; everything defined per world
+  (plant rate and cap, start populations, migration thresholds, report limits) is multiplied by
+  `area_ratio`, so densities — and the balance — stay the same.
+- Stable `id: u64` per creature (for picking and following in the future app).
+
+## Commands: Python reference (run from `python/`)
+
+The rest of this file describes the Python version; its paths (`life/`, `app/`, `tests/`) are
+relative to `python/`.
 
 ```bash
 python main.py                                      # the game: menu, setup, window
