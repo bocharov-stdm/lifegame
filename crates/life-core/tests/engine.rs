@@ -1,4 +1,4 @@
-//! Тесты движка — перенос `python/tests/test_simulation.py` по смыслу.
+//! Тесты движка — перенос по смыслу `python/tests/test_simulation.py` (тег python-final).
 //! Каждый тест на регрессию закрывает баг, который уже был в Python-коде.
 //! Циклов без границы нет: все прогоны ограничены числом тиков.
 
@@ -443,6 +443,32 @@ fn не_конечные_правила_отвергаются() {
     assert!(Rules::default().with("нет_такого", 1.0).is_err());
 }
 
+/// Значения, при которых правило теряет смысл, отвергаются; края допустимого — нет.
+#[test]
+fn бессмысленные_правила_отвергаются() {
+    let r = Rules::default();
+    for (key, bad) in [
+        ("cost_scale", -1.0),
+        ("plant_energy", -5.0),
+        ("mutation_sigma", -0.1),
+        ("predator_divide_chance", 1.5),
+        ("predator_max_energy", 0.0),
+        ("predator_migration", 0.5),
+        ("predator_migration", -500.0),
+    ] {
+        assert!(r.with(key, bad).is_err(), "{key}={bad} принято");
+    }
+    for (key, ok) in [
+        ("cost_scale", 0.0),
+        ("plant_rate", 0.0),
+        ("predator_divide_chance", 1.0),
+        ("predator_migration", 0.0),
+        ("predator_migration", 250.0),
+    ] {
+        assert!(r.with(key, ok).is_ok(), "{key}={ok} отвергнуто");
+    }
+}
+
 #[test]
 fn расход_по_умолчанию_это_формула_конфига() {
     let r = Rules::default();
@@ -568,4 +594,59 @@ fn масштаб_растит_площадь() {
 #[should_panic(expected = "масштаб мира")]
 fn масштаб_меньше_базового_отвергается() {
     Space::scaled(0.01);
+}
+
+/// Гигантский масштаб — внятная ошибка, а не падение на выделении памяти.
+#[test]
+#[should_panic(expected = "масштаб мира")]
+fn масштаб_больше_предела_отвергается() {
+    Space::scaled(1e7);
+}
+
+#[test]
+fn стартовые_численности_известны_до_постройки_мира() {
+    for cfg in [
+        WorldConfig::default(),
+        WorldConfig { scale: 3.0, ..Default::default() },
+        WorldConfig { n_vegetarians: Some(7), n_predators: Some(0), ..Default::default() },
+    ] {
+        let w = World::new(&cfg);
+        assert_eq!(
+            (w.vegetarians.len(), w.predators.len()),
+            (cfg.vegetarians_at_start(), cfg.predators_at_start())
+        );
+    }
+}
+
+// ── производительность ─────────────────────────────────────────────────────
+
+/// Страж от обвала скорости: мир x10 на фиксированной нагрузке 4000 травоядных,
+/// 4000 растений, 100 хищников. На 400 существах (как было в Python-версии) Rust
+/// и полным перебором успевал бы, а здесь перебор — десятки миллионов пар за тик.
+/// Порог с большим запасом: тест ловит поломку вроде «сетка перестала работать
+/// и всё стало O(n²)», а не шум машины CI: с сеткой ~2 мс, без неё ~80 мс,
+/// порог 20. Растения подсыпаются каждый тик,
+/// чтобы нагрузка не таяла.
+#[test]
+fn тик_укладывается_в_бюджет_на_фиксированной_нагрузке() {
+    let mut w = World::new(&WorldConfig {
+        seed: 9,
+        scale: 10.0,
+        n_vegetarians: Some(4000),
+        n_predators: Some(100),
+        ..Default::default()
+    });
+    let mut rng = Rng::new(9);
+    let ticks = 100;
+    let started = std::time::Instant::now();
+    for _ in 0..ticks {
+        while w.plants.len() < 4000 {
+            w.plants.push(Plant::random(&w.space, &mut rng));
+        }
+        w.step();
+    }
+    let ms = started.elapsed().as_secs_f64() * 1000.0 / ticks as f64;
+    eprintln!("  [скорость] {ms:.3} мс/тик при 4000/4000/100");
+    assert!(w.vegetarians.len() > 1000, "нагрузка растаяла — замер бессмыслен");
+    assert!(ms < 20.0, "тик {ms:.2} мс при 4000/4000/100: где-то перебор вместо сетки?");
 }

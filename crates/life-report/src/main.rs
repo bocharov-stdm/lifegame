@@ -1,4 +1,4 @@
-//! Отчёт о балансе без окна — преемник `python/sim_report.py`.
+//! Отчёт о балансе без окна — преемник `python/sim_report.py` (тег python-final).
 //!
 //!     cargo run -p life-report --release                              # сид 1, 600 тиков
 //!     cargo run -p life-report --release -- --seeds 1 2 3 --ticks 3000
@@ -6,6 +6,7 @@
 //!     cargo run -p life-report --release -- --rule plant_energy=80 --rule size_power=1.5
 //!     cargo run -p life-report --release -- --scale 100 --ticks 2000   # мир в 100 раз больше
 //!     cargo run -p life-report --release -- --compare reference/fingerprint.json
+//!     cargo run -p life-report --release -- --save-reference reference/fingerprint.json
 //!
 //! Чтобы понять, что происходило (человеку или ИИ, без окна):
 //!
@@ -26,7 +27,7 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use life_core::config::*;
-use life_core::space::MIN_SCALE;
+use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::{Rules, WorldConfig};
 use life_sim::observe::{self, Event, ascii_map};
 use life_sim::{Limits, SimResult, simulate};
@@ -44,12 +45,14 @@ struct Args {
     /// Несколько сидов — сводная таблица.
     #[arg(long, num_args = 1..)]
     seeds: Vec<u64>,
-    #[arg(long, default_value_t = 600)]
-    ticks: u64,
-    /// Срез раз во столько тиков (по умолчанию — 50 срезов на прогон).
+    /// Тиков на прогон (по умолчанию 600; для --save-reference — 20 000).
     #[arg(long)]
+    ticks: Option<u64>,
+    /// Срез раз во столько тиков (по умолчанию — 50 срезов на прогон; для
+    /// --save-reference — 60, кратно периоду деления).
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     sample: Option<u64>,
-    /// Масштаб мира по площади (1 — базовый 6000x4000, меньше нельзя).
+    /// Масштаб мира по площади (1 — базовый 6000x4000; от 1 до 10 000).
     #[arg(long, default_value_t = 1.0, value_parser = parse_scale)]
     scale: f64,
     #[arg(long)]
@@ -72,10 +75,14 @@ struct Args {
     /// Потоков процессора (по умолчанию все).
     #[arg(long)]
     threads: Option<usize>,
-    /// Сверить с эталонным отпечатком Python-версии (reference/fingerprint.json):
-    /// берутся его сиды и число тиков.
+    /// Сверить с эталонным отпечатком (reference/fingerprint.json): берутся его
+    /// сиды и число тиков; правила, масштаб и старт обязаны совпадать.
     #[arg(long)]
     compare: Option<PathBuf>,
+    /// Снять новый эталон с Rust и записать в ФАЙЛ (формат --compare). Сиды по
+    /// умолчанию 1‒8. Нужно после намеренной смены баланса.
+    #[arg(long, value_name = "ФАЙЛ")]
+    save_reference: Option<PathBuf>,
     /// Рассказ о каждом прогоне: причины смертей, промежутки, геном, глубина,
     /// хроника событий. Для одного сида печатается и без флага.
     #[arg(long)]
@@ -97,10 +104,10 @@ struct Args {
 
 fn parse_scale(s: &str) -> Result<f64, String> {
     let scale: f64 = s.trim().parse().map_err(|_| format!("«{s}» — не число"))?;
-    if scale.is_finite() && scale >= MIN_SCALE {
+    if (MIN_SCALE..=MAX_SCALE).contains(&scale) {
         Ok(scale)
     } else {
-        Err(format!("масштаб должен быть не меньше {MIN_SCALE}"))
+        Err(format!("масштаб должен быть от {MIN_SCALE} до {MAX_SCALE}"))
     }
 }
 
@@ -126,30 +133,20 @@ fn main() {
     let rules = parse_rules(&args.rules).unwrap_or_else(|e| fail(e));
     // JSON в stdout — и больше ничего: текст сломал бы разбор
     let quiet = args.json.as_deref().is_some_and(|p| p.as_os_str() == "-");
-    if quiet && args.compare.is_some() {
-        fail("сверку нельзя печатать вместе с JSON в stdout: укажите --json ФАЙЛ".into());
+    if quiet && (args.compare.is_some() || args.save_reference.is_some()) {
+        fail("сверку и эталон нельзя печатать вместе с JSON в stdout: укажите --json ФАЙЛ".into());
     }
-
-    let reference = args.compare.as_ref().map(|path| {
-        metrics::Reference::load(path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())))
-    });
-    if let Some(r) = &reference {
-        args.seeds = r.seeds.clone();
-        args.ticks = r.ticks;
-        args.sample = Some(r.sample_every);
-        // эталон снят без бюджета работы — иначе сравнивали бы оборванное с целым
-        args.max_work.get_or_insert(1e15);
+    if args.compare.is_some() && args.save_reference.is_some() {
+        fail("--compare и --save-reference вместе не имеют смысла".into());
     }
-
-    let seeds = if args.seeds.is_empty() { vec![args.seed] } else { args.seeds.clone() };
-    let sample = args.sample.unwrap_or((args.ticks / 50).max(1));
-    let limits = Limits {
-        ticks: args.ticks,
-        sample_every: sample,
-        max_creatures: 50_000,
-        max_total_work: args.max_work.unwrap_or(WORK_PER_TICK * args.ticks as f64),
-        deadline: Duration::from_secs(args.seconds),
-    };
+    let saving = args.save_reference.is_some();
+    if saving {
+        if args.seeds.is_empty() {
+            args.seeds = (1..=8).collect();
+        }
+        args.ticks.get_or_insert(20_000);
+        args.sample.get_or_insert(metrics::REFERENCE_SAMPLE);
+    }
     let base_cfg = WorldConfig {
         seed: 0,
         scale: args.scale,
@@ -160,19 +157,46 @@ fn main() {
         predator_vision: args.predator_vision,
     };
 
+    let reference = args.compare.as_ref().map(|path| {
+        metrics::Reference::load(path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())))
+    });
+    if let Some(r) = &reference {
+        // сравнивать можно только одинаковые миры: иначе «расхождение» — это
+        // разница условий, а не баланса
+        r.check_same_world(&base_cfg).unwrap_or_else(|e| fail(format!("эталон снят на другом мире: {e}")));
+        args.seeds = r.seeds.clone();
+        args.ticks = Some(r.ticks);
+        args.sample = Some(r.sample_every);
+    }
+    if reference.is_some() || saving {
+        // эталон снимается без бюджета работы — иначе сравнивали бы оборванное с целым
+        args.max_work.get_or_insert(1e15);
+    }
+
+    let ticks = args.ticks.unwrap_or(600);
+    let seeds = if args.seeds.is_empty() { vec![args.seed] } else { args.seeds.clone() };
+    let sample = args.sample.unwrap_or((ticks / 50).max(1));
+    let limits = Limits {
+        ticks,
+        sample_every: sample,
+        max_creatures: 50_000,
+        max_total_work: args.max_work.unwrap_or(WORK_PER_TICK * ticks as f64),
+        deadline: Duration::from_secs(args.seconds),
+    };
+
     if !quiet {
         println!(
             "Мир x{}: {:.0}x{:.0}, {} тиков, сиды {:?}, потоков {}",
             args.scale,
             WORLD_WIDTH * args.scale,
             WORLD_HEIGHT,
-            args.ticks,
+            ticks,
             seeds,
             rayon::current_num_threads()
         );
     }
     let started = Instant::now();
-    let map_every = if args.maps > 0 { (args.ticks / args.maps as u64).max(1) } else { u64::MAX };
+    let map_every = if args.maps > 0 { (ticks / args.maps as u64).max(1) } else { u64::MAX };
     let (results, maps): (Vec<(u64, SimResult)>, Vec<Vec<story::Map>>) = seeds
         .par_iter()
         .map(|&seed| {
@@ -199,7 +223,7 @@ fn main() {
             .zip(&maps)
             .map(|(((seed, res), events), maps)| json::Run { seed: *seed, res, events, maps })
             .collect();
-        let text = serde_json::to_string_pretty(&json::report(&base_cfg, &rules, args.ticks, sample, &runs))
+        let text = serde_json::to_string_pretty(&json::report(&base_cfg, &rules, ticks, sample, &runs))
             .expect("JSON собирается всегда");
         if quiet {
             println!("{text}");
@@ -217,20 +241,17 @@ fn main() {
     print_summary(&results);
     let agrees = reference.as_ref().is_none_or(|r| metrics::print_comparison(r, &results));
     if let Some(path) = &args.json {
-        println!(
-            "
-JSON: {}",
-            path.display()
-        );
+        println!("\nJSON: {}", path.display());
     }
-    println!(
-        "
-всего {:.1} с",
-        started.elapsed().as_secs_f64()
-    );
+    if let Some(path) = &args.save_reference {
+        metrics::save_reference(path, &base_cfg, ticks, sample, &results)
+            .unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+        println!("\nэталон записан: {}", path.display());
+    }
+    println!("\nвсего {:.1} с", started.elapsed().as_secs_f64());
     // Сверка — проверка, а не справка: расхождение с эталоном должно ронять CI.
     if !agrees {
-        eprintln!("ошибка: баланс разошёлся с эталоном Python");
+        eprintln!("ошибка: баланс разошёлся с эталоном");
         std::process::exit(1);
     }
 }

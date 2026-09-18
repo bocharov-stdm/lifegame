@@ -116,6 +116,8 @@ pub fn run(mut world: World, limits: &Limits, on_tick: &mut dyn FnMut(&World)) -
     // работа ~ травоядные x растения, обе величины растут с площадью
     let max_work = limits.max_total_work * area * area;
 
+    // шаг 0 — «снимать как можно чаще», а не деление на ноль
+    let sample_every = limits.sample_every.max(1);
     let mut history = vec![world.stats()];
     let mut snapshots = vec![Snapshot::of(&world)];
     let mut stop = StopReason::Done;
@@ -147,7 +149,7 @@ pub fn run(mut world: World, limits: &Limits, on_tick: &mut dyn FnMut(&World)) -
             stop = StopReason::Deadline;
             break;
         }
-        if tick % limits.sample_every == 0 {
+        if tick.is_multiple_of(sample_every) {
             history.push(world.stats());
             snapshots.push(Snapshot::of(&world));
         }

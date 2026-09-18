@@ -12,6 +12,11 @@ use crate::config::{WORLD_HEIGHT, WORLD_WIDTH};
 /// Меньше базового мира не бывает. Баланс подобран на нём, а в узком мире
 /// ломается геометрия: при ширине 60 полоса блуждания хищника — [40, 20].
 pub const MIN_SCALE: f64 = 1.0;
+/// И больше этого тоже не бывает: мир x10 000 — уже 200 тыс. травоядных на
+/// старте и 15 млн растений в потолке. Дальше память кончается раньше, чем
+/// видна разница, и без предела процесс падал бы на выделении памяти вместо
+/// внятной ошибки.
+pub const MAX_SCALE: f64 = 10_000.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Space {
@@ -29,8 +34,8 @@ impl Space {
     /// Мир в `scale` раз больше базового по площади (растёт ширина).
     pub fn scaled(scale: f64) -> Self {
         assert!(
-            scale.is_finite() && scale >= MIN_SCALE,
-            "масштаб мира должен быть не меньше {MIN_SCALE}, а не {scale}"
+            (MIN_SCALE..=MAX_SCALE).contains(&scale),
+            "масштаб мира должен быть от {MIN_SCALE} до {MAX_SCALE}, а не {scale}"
         );
         Space { width: WORLD_WIDTH * scale, height: WORLD_HEIGHT }
     }

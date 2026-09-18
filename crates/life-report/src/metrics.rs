@@ -1,15 +1,25 @@
-//! Сверка с эталонным отпечатком Python-версии (`python/fingerprint.py`).
+//! Эталонный отпечаток баланса: сверка (`--compare`) и запись нового (`--save-reference`).
 //!
-//! Бит в бит ядра не совпадут (другой генератор случайных чисел), поэтому
+//! Первый эталон снят с Python-версии (`python/fingerprint.py`, тег python-final).
+//! Бит в бит ядра не совпадают (другой генератор случайных чисел), поэтому
 //! сравнивается статистика: для каждой метрики берётся разброс по сидам у
-//! Python и среднее у Rust. Метрика «сходится», если среднее Rust попадает в
-//! диапазон значений отдельных сидов Python.
+//! эталона и среднее у текущего прогона. Метрика «сходится», если среднее
+//! попадает в диапазон значений отдельных сидов эталона.
+//!
+//! После намеренной смены баланса эталон переснимается уже с Rust тем же
+//! форматом; в нём записаны условия мира, и сверка на других условиях
+//! отказывается работать — иначе «расхождение» мерило бы разницу условий.
 
 use std::path::Path;
 
-use life_core::Stats;
+use life_core::genome::GENE_KEYS;
+use life_core::rules::RULE_KEYS;
+use life_core::{Rules, Stats, WorldConfig};
 use life_sim::{SimResult, StopReason};
-use serde_json::Value;
+use serde_json::{Map, Value, json};
+
+/// Шаг рядов эталона: кратно периоду деления, чтобы пила деления не шумела.
+pub const REFERENCE_SAMPLE: u64 = 60;
 
 /// Ряд одного прогона: тик и численности плюс средний размер.
 #[derive(Clone, Debug)]
@@ -27,10 +37,17 @@ struct Run {
 }
 
 pub struct Reference {
+    /// Откуда эталон: «Python» или «Rust».
+    pub source: String,
     pub seeds: Vec<u64>,
     pub ticks: u64,
     pub sample_every: u64,
     runs: Vec<Run>,
+    /// Условия мира. У Python-эталона их нет — он снят на умолчаниях.
+    scale: f64,
+    rules: Rules,
+    start: (usize, usize),
+    predator: (f64, f64),
 }
 
 impl Reference {
@@ -56,10 +73,127 @@ impl Reference {
                     size: s["genom"].get(0).and_then(Value::as_f64),
                 })
                 .collect();
-            runs.push(Run { extinct: run["stop"] == "вымерли", series });
+            // Python писал причину остановки русским текстом — формат сохранён
+            runs.push(Run { extinct: run["stop"] == StopReason::Extinct.to_string().as_str(), series });
         }
-        Ok(Reference { seeds, ticks, sample_every, runs })
+
+        let world = WorldConfig::default();
+        let mut rules = Rules::default();
+        if let Some(saved) = data.get("rules").and_then(Value::as_object) {
+            for (key, value) in saved {
+                let value = value.as_f64().ok_or(format!("правило {key} — не число"))?;
+                rules = rules.with(key, value)?;
+            }
+        }
+        let start = &data["start"];
+        let num = |v: &Value, default: f64| v.as_f64().unwrap_or(default);
+        Ok(Reference {
+            source: match data["source"].as_str() {
+                Some("rust") => "Rust",
+                _ => "Python", // первый эталон поля source не имел
+            }
+            .to_string(),
+            seeds,
+            ticks,
+            sample_every,
+            runs,
+            scale: num(&data["scale"], 1.0),
+            rules,
+            start: (
+                num(&start["vegetarians"], world.vegetarians_at_start() as f64) as usize,
+                num(&start["predators"], world.predators_at_start() as f64) as usize,
+            ),
+            predator: (
+                num(&start["predator_speed"], world.predator_speed),
+                num(&start["predator_vision"], world.predator_vision),
+            ),
+        })
     }
+
+    /// Совпадают ли условия мира с теми, на которых снят эталон.
+    pub fn check_same_world(&self, cfg: &WorldConfig) -> Result<(), String> {
+        let mut diff = Vec::new();
+        if cfg.scale != self.scale {
+            diff.push(format!("масштаб {} (в эталоне {})", cfg.scale, self.scale));
+        }
+        for key in RULE_KEYS {
+            let (ours, theirs) = (cfg.rules.get(key), self.rules.get(key));
+            if ours != theirs {
+                diff.push(format!(
+                    "{key}={} (в эталоне {})",
+                    ours.unwrap_or(f64::NAN),
+                    theirs.unwrap_or(f64::NAN)
+                ));
+            }
+        }
+        let start = (cfg.vegetarians_at_start(), cfg.predators_at_start());
+        if start != self.start {
+            diff.push(format!("старт {}/{} (в эталоне {}/{})", start.0, start.1, self.start.0, self.start.1));
+        }
+        if (cfg.predator_speed, cfg.predator_vision) != self.predator {
+            diff.push(format!(
+                "хищники {}/{} (в эталоне {}/{})",
+                cfg.predator_speed, cfg.predator_vision, self.predator.0, self.predator.1
+            ));
+        }
+        if diff.is_empty() { Ok(()) } else { Err(diff.join(", ")) }
+    }
+}
+
+/// Записать эталон с текущих прогонов — в формате, который читает `Reference::load`.
+pub fn save_reference(
+    path: &Path,
+    cfg: &WorldConfig,
+    ticks: u64,
+    sample_every: u64,
+    results: &[(u64, SimResult)],
+) -> Result<(), String> {
+    let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(cfg.rules.get(k)))).collect();
+    let runs: Vec<Value> = results
+        .iter()
+        .map(|(seed, r)| {
+            let series: Vec<Value> = r
+                .history
+                .iter()
+                .map(|s| {
+                    json!({
+                        "tick": s.tick,
+                        "plants": s.plants,
+                        "vegetarians": s.vegetarians,
+                        "predators": s.predators,
+                        "genom": s.avg_genom,
+                    })
+                })
+                .collect();
+            json!({
+                "seed": seed,
+                "stop": r.stop.to_string(),
+                "ticks_done": r.ticks_done,
+                "migrants": r.world.migrants,
+                "ms_per_tick": r.ms_per_tick(),
+                "series": series,
+            })
+        })
+        .collect();
+    let data = json!({
+        "source": "rust",
+        "sample_every": sample_every,
+        "ticks": ticks,
+        "genes": GENE_KEYS,
+        "scale": cfg.scale,
+        "rules": rules,
+        "start": {
+            "vegetarians": cfg.vegetarians_at_start(),
+            "predators": cfg.predators_at_start(),
+            "predator_speed": cfg.predator_speed,
+            "predator_vision": cfg.predator_vision,
+        },
+        "runs": runs,
+    });
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, serde_json::to_string(&data).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
 }
 
 fn from_stats(history: &[Stats]) -> Vec<Point> {
@@ -102,30 +236,34 @@ pub fn print_comparison(reference: &Reference, results: &[(u64, SimResult)]) -> 
         .iter()
         .map(|(_, r)| Run { extinct: r.stop == StopReason::Extinct, series: from_stats(&r.history) })
         .collect();
+    let source = &reference.source;
 
     for window in [Some(3000), None] {
         let cut = |s: &[Point]| -> Vec<Point> {
             s.iter().filter(|p| window.is_none_or(|w| p.tick <= w)).cloned().collect()
         };
         match window {
-            Some(w) => println!("\nСверка с Python, первые {w} тиков"),
-            None => println!("\nСверка с Python, весь прогон"),
+            Some(w) => println!("\nСверка с эталоном ({source}), первые {w} тиков"),
+            None => println!("\nСверка с эталоном ({source}), весь прогон"),
         }
-        println!("{:<28} {:>24} {:>10} {:>9}", "метрика", "Python: мин … среднее … макс", "Rust", "сходится");
+        println!(
+            "{:<28} {:>24} {:>10} {:>9}",
+            "метрика", "эталон: мин … среднее … макс", "сейчас", "сходится"
+        );
         let mut agree = 0;
         for (name, f) in METRICS {
-            let py: Vec<f64> =
+            let theirs: Vec<f64> =
                 reference.runs.iter().map(|r| f(&cut(&r.series))).filter(|x| x.is_finite()).collect();
             let rs: Vec<f64> = ours.iter().map(|r| f(&cut(&r.series))).filter(|x| x.is_finite()).collect();
             let (lo, hi) =
-                py.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
+                theirs.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
             let ours_mean = mean(rs.iter().copied());
             let ok = lo <= ours_mean && ours_mean <= hi;
             agree += ok as usize;
             println!(
                 "{name:<28} {:>7.2} … {:>6.2} … {:>7.2} {:>10.2} {:>9}",
                 lo,
-                mean(py.iter().copied()),
+                mean(theirs.iter().copied()),
                 hi,
                 ours_mean,
                 if ok { "да" } else { "НЕТ" }
@@ -134,10 +272,10 @@ pub fn print_comparison(reference: &Reference, results: &[(u64, SimResult)]) -> 
         println!("сходится {agree} из {}", METRICS.len());
         all_agree &= agree == METRICS.len();
     }
-    let py_ext = reference.runs.iter().filter(|r| r.extinct).count();
-    let rs_ext = ours.iter().filter(|r| r.extinct).count();
+    let ref_ext = reference.runs.iter().filter(|r| r.extinct).count();
+    let our_ext = ours.iter().filter(|r| r.extinct).count();
     println!(
-        "\nполное вымирание: Python {py_ext} из {}, Rust {rs_ext} из {}",
+        "\nполное вымирание: эталон {ref_ext} из {}, сейчас {our_ext} из {}",
         reference.runs.len(),
         ours.len()
     );

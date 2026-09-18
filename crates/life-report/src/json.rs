@@ -78,8 +78,9 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
         "sample_every": sample_every,
         "rules": rules,
         "start": {
-            "vegetarians": cfg.n_vegetarians,
-            "predators": cfg.n_predators,
+            // настоящие числа, даже если заданы «по умолчанию»: null читателю ничего не говорит
+            "vegetarians": cfg.vegetarians_at_start(),
+            "predators": cfg.predators_at_start(),
             "predator_speed": cfg.predator_speed,
             "predator_vision": cfg.predator_vision,
         },

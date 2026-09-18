@@ -1,7 +1,7 @@
 # Rust
 /target/
 
-# Python
+# Python — прототипы в Relict/ ещё можно запустить
 __pycache__/
 *.pyc
 
@@ -9,9 +9,6 @@ __pycache__/
 .venv/
 .idea/
 .claude/settings.local.json
-
-# настройки игры (app/settings.py)
-user_settings.json
 
 # OS
 Thumbs.db

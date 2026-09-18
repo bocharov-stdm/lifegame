@@ -95,6 +95,25 @@ impl Rules {
             "predator_migration" => r.predator_migration = value,
             _ => return Err(format!("нет такого правила: {key}; есть {}", RULE_KEYS.join(", "))),
         }
+        // Пределы — только те, за которыми правило теряет смысл, а не «разумные»:
+        // лаборатория для того и нужна, чтобы ломать баланс. Отрицательная цена
+        // статов кормила бы существ за то, что они живут; дробный период миграции
+        // молча становился бы нулём, то есть выключал её.
+        let allowed = match key {
+            "predator_divide_chance" => (0.0..=1.0).contains(&value),
+            "predator_max_energy" => value > 0.0,
+            "predator_migration" => value >= 0.0 && value.fract() == 0.0,
+            _ => value >= 0.0,
+        };
+        if !allowed {
+            let need = match key {
+                "predator_divide_chance" => "число от 0 до 1",
+                "predator_max_energy" => "число больше 0",
+                "predator_migration" => "целое число тиков, 0 — без миграции",
+                _ => "число не меньше 0",
+            };
+            return Err(format!("правило {key}: нужно {need}, а не {value}"));
+        }
         r.renormalize();
         Ok(r)
     }
