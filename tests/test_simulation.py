@@ -417,6 +417,95 @@ class TestRegressions(BoundedRunMixin, unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Охота: поимка по краю тела, рывок, миграция
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestHunting(unittest.TestCase):
+
+    GENOM = [40, 10, 400, 70, 30, 5, 100]
+
+    def veg(self, x, y, size):
+        return Vegetarian(x=x, y=y, genom=[size] + self.GENOM[1:])
+
+    def test_large_body_is_caught_on_contact(self):
+        """Центр далеко, но тела соприкасаются — крупного ловят, мелкого нет."""
+        random.seed(0)
+        hunter = Predator(x=1000, y=2000)
+        small  = self.veg(1070, 2000, 40)            # 70 > 20 + 20
+        big    = self.veg(1000, 2070, 120)           # 70 < 20 + 60
+        self.assertFalse(hunter.try_eat([small]))
+        self.assertTrue(hunter.try_eat([small, big]))
+        self.assertTrue(small.alive)
+        self.assertFalse(big.alive)
+
+    def test_large_body_is_seen_from_farther(self):
+        random.seed(0)
+        hunter = Predator(x=1000, y=2000, vision=500)
+        self.assertIsNone(hunter._nearest_prey([self.veg(1540, 2000, 40)]))
+        big = self.veg(1540, 2000, 120)
+        self.assertIs(hunter._nearest_prey([big]), big)
+
+    def test_sprint_near_prey_costs_energy(self):
+        """Вблизи хищник бежит быстрее и платит сверх обычного расхода."""
+        random.seed(0)
+        far  = Predator(x=1000, y=2000, energy=50)
+        near = Predator(x=1000, y=2000, energy=50)
+        far.move([self.veg(1400, 2000, 40)])
+        near.move([self.veg(1150, 2000, 40)])
+        self.assertAlmostEqual(far.x - 1000, far.speed)
+        self.assertAlmostEqual(near.x - 1000, near.speed * PREDATOR_SPRINT_MULT)
+        self.assertAlmostEqual(far.energy,  50 - far.upkeep)
+        self.assertAlmostEqual(near.energy, 50 - near.upkeep - PREDATOR_SPRINT_COST)
+
+    def test_sprint_does_not_overshoot_prey(self):
+        random.seed(0)
+        hunter = Predator(x=1000, y=2000)
+        hunter.move([self.veg(1010, 2000, 40)])
+        self.assertAlmostEqual(hunter.x, 1010)
+
+    def world(self, n_predators=6, n_vegetarians=40, **rules):
+        return World(seed=0, rules=DEFAULT_RULES.with_(**rules),
+                     n_vegetarians=n_vegetarians, n_predators=n_predators)
+
+    def migrate_at(self, world, tick):
+        world.predators = []
+        world.tick = tick
+        world._migrate_predators()
+        return len(world.predators)
+
+    def test_migrant_arrives_when_predators_are_gone(self):
+        world = self.world()
+        self.assertEqual(self.migrate_at(world, PREDATOR_MIGRATION_PERIOD), 1)
+        self.assertEqual(world.migrants, 1)
+        pr = world.predators[0]
+        self.assertEqual((pr.speed, pr.vision), (PREDATOR_BASE_SPEED, PREDATOR_BASE_VISION))
+        on_edge = PREDATOR_DIAM in (pr.x, pr.y) or pr.x == WORLD_WIDTH - PREDATOR_DIAM \
+            or pr.y == WORLD_HEIGHT - PREDATOR_DIAM
+        self.assertTrue(on_edge, f"мигрант не у края: {pr.x}, {pr.y}")
+
+    def test_no_migrant_when_not_due(self):
+        cases = {
+            "не тот тик":          (self.world(), PREDATOR_MIGRATION_PERIOD + 1),
+            "миграция выключена":  (self.world(predator_migration=0), PREDATOR_MIGRATION_PERIOD),
+            "мир без охоты":       (self.world(n_predators=0), PREDATOR_MIGRATION_PERIOD),
+            "нечего есть":         (self.world(n_vegetarians=PREDATOR_MIGRATION_PREY - 1),
+                                    PREDATOR_MIGRATION_PERIOD),
+        }
+        for name, (world, tick) in cases.items():
+            with self.subTest(name):
+                state = random.getstate()
+                self.assertEqual(self.migrate_at(world, tick), 0)
+                self.assertEqual(random.getstate(), state, "жребий тянется без мигранта")
+
+    def test_no_migrant_while_enough_predators(self):
+        world = self.world()
+        world.tick = PREDATOR_MIGRATION_PERIOD
+        world.predators = world.predators[:PREDATOR_MIGRATION_MIN]
+        world._migrate_predators()
+        self.assertEqual(len(world.predators), PREDATOR_MIGRATION_MIN)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Сетка соседей
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -473,11 +562,12 @@ class TestGrid(unittest.TestCase):
         self.assertGreater(len(world.predators),   0, "хищники вымерли — проверять нечего")
         missed = []
 
-        def check(who, radius, given, pool):
+        def check(who, radius, given, pool, by_body=False):
+            # by_body: хищник видит и ловит по краю тела, радиус растёт на полтела
             given = {id(o) for o in given}
-            r2 = radius * radius
             for o in pool:
-                if id(o) not in given and (o.x - who.x) ** 2 + (o.y - who.y) ** 2 <= r2:
+                r = radius + (o.half if by_body else 0)
+                if id(o) not in given and (o.x - who.x) ** 2 + (o.y - who.y) ** 2 <= r * r:
                     missed.append(f"{type(who).__name__} (радиус {radius:.0f}) "
                                   f"не получил {type(o).__name__}")
 
@@ -494,11 +584,11 @@ class TestGrid(unittest.TestCase):
             return veg_eat(v, plants)
 
         def p_move(pr, vegetarians):
-            check(pr, pr.vision, vegetarians, world.vegetarians)
+            check(pr, pr.vision, vegetarians, world.vegetarians, by_body=True)
             return pr_move(pr, vegetarians)
 
         def p_eat(pr, vegetarians):
-            check(pr, pr.DIAM, vegetarians, world.vegetarians)
+            check(pr, pr.DIAM / 2, vegetarians, world.vegetarians, by_body=True)
             return pr_eat(pr, vegetarians)
 
         with mock.patch.object(Vegetarian, "move", v_move), \
@@ -532,11 +622,16 @@ class TestRules(unittest.TestCase):
                     DEFAULT_RULES.with_(**{key: bad})
 
     def test_default_upkeep_is_the_config_formula(self):
-        """Бит в бит прежняя формула: иначе сдвинулись бы все прогоны по сидам."""
+        """Бит в бит формула конфига: иначе сдвинулись бы все прогоны по сидам.
+
+        Скорость дорожает с размером (SPEED_MASS_POWER), но у тела диаметром 40 —
+        базового травоядного и хищника — множитель ровно 1.
+        """
         for size, speed, vision in (self.BASE, (PREDATOR_DIAM, 12, 500.0),
                                     (37.3, 11.9, 612.4)):
+            mass = (size / VEGETARIAN_BASE_GENOM[0]) ** SPEED_MASS_POWER
             old = (SIZE_ENERGY_COEF  * size   ** SIZE_ENERGY_POWER +
-                   SPEED_ENERGY_COEF * speed  ** SPEED_ENERGY_POWER +
+                   SPEED_ENERGY_COEF * speed  ** SPEED_ENERGY_POWER * mass +
                    SIGHT_ENERGY_COEF * vision ** SIGHT_ENERGY_POWER)
             self.assertEqual(DEFAULT_RULES.upkeep(size, speed, vision), old)
 

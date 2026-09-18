@@ -16,7 +16,7 @@ Russian. Keep it that way when editing or adding code.
 ```bash
 python main.py                                      # the game: menu, setup, window
 
-python -m unittest discover tests                   # full suite (88 tests, ~3 s, no display)
+python -m unittest discover tests                   # full suite (95 tests, ~4 s, no display)
 python -m unittest tests.test_simulation.TestGrid   # one class
 python -m unittest tests.test_simulation.TestGrid.test_grid_matches_brute_force   # one test
 
@@ -133,7 +133,12 @@ not care where it is launched from.
 
 ### Tick ordering and the death flag
 
-`World.step()` runs: spawn plants → update predators → update herbivores. A herbivore eaten by a
+`World.step()` runs: spawn plants → update predators → update herbivores → `tick += 1` →
+migrate predators. Migration (`rules.predator_migration`, a period in ticks, 0 = off) adds one
+predator at a world edge when fewer than `PREDATOR_MIGRATION_MIN` are left, at least
+`PREDATOR_MIGRATION_PREY` herbivores exist and the world started with predators; it draws random
+numbers only when it fires, and `World.migrants` counts arrivals (the session turns them into
+events). A herbivore eaten by a
 predator earlier in the same tick is skipped (`if not v.alive: continue`) rather than removed
 mid-iteration. The same check runs again right after each creature's own `move()`: starving
 there sets `alive = False`, and a creature that died on its move must not go on to eat or
@@ -152,6 +157,8 @@ Entities stayed naive: they still loop over everything handed to them. The chang
 handed to them — `World` builds a `Grid` per tick and passes `grid.near(x, y)`, a 3x3 block of
 cells, instead of the whole world. Invariants:
 
+- Predators see and catch by the prey's body edge (`vision + v.half`, `DIAM/2 + v.half`), so
+  their cell adds half of the largest herbivore to the radius.
 - **Cell size must be ≥ the largest query radius** (vision is a gene, so `World` recomputes it
   every tick from actual values, floored at `GRID_MIN_CELL`). A smaller cell breaks the guarantee
   that 3x3 covers everything within the radius, and creatures start missing neighbours under
@@ -173,9 +180,20 @@ entity call in a live world and checks that what `World` handed over is complete
 a wrong cell formula, a wrong query point or a broken grid. Keep it passing when touching
 `life/grid.py`, the cell-size computation in `life/world.py`, or how creatures move.
 
+### Predators
+
+A predator hunts only while hungry (`energy < max * PREDATOR_HUNGRY`); a full one wanders and
+does not eat. Near prey (`PREDATOR_SPRINT_RANGE` between body edges) it sprints at
+`PREDATOR_SPRINT_MULT` x speed for `PREDATOR_SPRINT_COST` extra energy a tick, never stepping past
+the prey. Catching by body contact is the natural pressure against giant herbivores: a big body
+is easier to spot and to grab. Without sprint, predators died out in every seed; without
+satiety, they ate everything and died next.
+
 ### Balance: exponents, not coefficients
 
-Upkeep is `COEF * stat ** POWER` summed over size, speed and sight. The *exponents* decide
+Upkeep is `COEF * stat ** POWER` summed over size, speed and sight, with the speed term also
+multiplied by `(size / 40) ** SPEED_MASS_POWER` — moving a big body costs more (the factor is 1
+for the base genome and for predators). The *exponents* decide
 whether evolution has a trade-off at all: eating radius equals size (benefit ~ size²) and search
 radius equals vision (benefit ~ vision²), so cost must grow steeper — hence `size ** 2.5` and
 `vision ** 2`. With shallower exponents the stats run away to infinity. Read the comment block in

@@ -56,29 +56,47 @@ class Predator:
                                          dy * self.speed / dist)
 
     def _nearest_prey(self, vegetarians):
-        # сравниваем квадраты расстояний — то же самое, но без вызова hypot
-        x, y = self.x, self.y
-        nearest, best_d2 = None, self.vision * self.vision
+        # Видим добычу по краю её тела, а не по центру: крупное заметно издалека.
+        # Ближайшая — по расстоянию между центрами; квадраты — чтобы без hypot.
+        x, y, vision = self.x, self.y, self.vision
+        nearest, best_d2 = None, math.inf
         for v in vegetarians:
             if not v.alive:             # съеден другим хищником в этом же тике
                 continue
             dx = x - v.x
             dy = y - v.y
             d2 = dx * dx + dy * dy
-            if d2 < best_d2:
+            reach = vision + v.half
+            if d2 < best_d2 and d2 < reach * reach:
                 nearest, best_d2 = v, d2
         return nearest
     # ----------------------------------
 
+    def hungry(self):
+        return self.energy < self.max_energy * PREDATOR_HUNGRY
+
     def move(self, vegetarians):
-        prey = self._nearest_prey(vegetarians)
-        dx, dy = (self._vector_towards(prey.x, prey.y) if prey
-                  else self._vector_towards(self.tx, self.ty))
+        prey = self._nearest_prey(vegetarians) if self.hungry() else None
+        energy_cost = self.upkeep
+        if prey:
+            dx, dy = prey.x - self.x, prey.y - self.y
+            dist = math.hypot(dx, dy)
+            step = self.speed
+            # Рывок: вблизи хищник догоняет и того, кто быстрее его на дистанции.
+            # Он стоит энергии, поэтому гнаться рывком бесконечно нельзя.
+            if dist - prey.half - self.DIAM / 2 < PREDATOR_SPRINT_RANGE:
+                step *= PREDATOR_SPRINT_MULT
+                energy_cost += PREDATOR_SPRINT_COST
+            step = min(step, dist)          # не проскакивать добычу насквозь
+            if dist != 0:
+                dx, dy = dx * step / dist, dy * step / dist
+        else:
+            dx, dy = self._vector_towards(self.tx, self.ty)
 
         self.x = min(max(self.x + dx, self.DIAM), WORLD_WIDTH  - self.DIAM)
         self.y = min(max(self.y + dy, self.DIAM), WORLD_HEIGHT - self.DIAM)
 
-        self.energy -= self.upkeep
+        self.energy -= energy_cost
         if self.energy <= 0:
             self.alive = False
 
@@ -86,14 +104,18 @@ class Predator:
             self._choose_new_target()
 
     def try_eat(self, vegetarians):
+        # поймал, если тела соприкоснулись: крупную добычу схватить проще
+        if not self.hungry():
+            return False
         x, y = self.x, self.y
-        r2 = self.DIAM * self.DIAM
+        own = self.DIAM / 2
         for v in vegetarians:
             if not v.alive:
                 continue
             dx = x - v.x
             dy = y - v.y
-            if dx * dx + dy * dy < r2:
+            reach = own + v.half
+            if dx * dx + dy * dy < reach * reach:
                 self.energy = min(self.max_energy, self.energy + v.energy)
                 v.alive = False
                 v.energy = 0

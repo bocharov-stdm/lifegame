@@ -96,6 +96,10 @@ FIELDS = (
     Field("predator_max_energy", "Запас энергии хищника",
           "Сколько энергии вмещает хищник, то есть как долго он живёт без добычи.",
           30, 300, 5, "{:.0f}", "lab"),
+    Field("predator_migration", "Миграция хищников",
+          "Когда хищников почти не осталось, раз в столько тиков с края мира "
+          "приходит новый. Ноль — хищники могут вымереть навсегда.",
+          0, 2000, 100, lambda v: f"раз в {v:.0f}" if v else "выкл", "lab"),
 )
 FIELD_BY_KEY = {f.key: f for f in FIELDS}
 
@@ -121,6 +125,7 @@ class Settings:
     sight_power:            float = DEFAULT_RULES.sight_power
     predator_divide_chance: float = DEFAULT_RULES.predator_divide_chance
     predator_max_energy:    float = DEFAULT_RULES.predator_max_energy
+    predator_migration:     float = DEFAULT_RULES.predator_migration
     # ── экран ────────────────────────────────────────────────────────────────
     fullscreen: bool  = False
     ui_scale:   float = 0.0                 # 0 — как в системе

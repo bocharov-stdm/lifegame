@@ -85,6 +85,7 @@ class Vegetarian:
         # квадраты радиусов: сравнивать квадраты расстояний дешевле, чем звать hypot
         self.vision2 = self.vision * self.vision
         self.size2   = self.size * self.size
+        self.half    = self.size / 2        # радиус тела: по нему ловят хищники
         self.flee2   = (self.vision / 3) * (self.vision / 3)
 
     # Функция движения

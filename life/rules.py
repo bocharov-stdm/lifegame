@@ -32,6 +32,7 @@ class Rules:
     sight_power:            float = SIGHT_ENERGY_POWER      # крутизна цены зрения
     predator_divide_chance: float = PREDATOR_DIVIDE_CHANCE  # шанс деления хищника
     predator_max_energy:    float = PREDATOR_MAX_ENERGY     # запас энергии хищника
+    predator_migration:     float = PREDATOR_MIGRATION_PERIOD  # тиков между мигрантами, 0 — нет
 
     # производные коэффициенты — считаются один раз в __post_init__
     size_coef:  float = field(init=False, repr=False, compare=False)
@@ -58,9 +59,13 @@ class Rules:
              * _BASE_VISION ** (SIGHT_ENERGY_POWER - self.sight_power))
 
     def upkeep(self, size, speed, vision):
-        """Расход энергии за тик: COEF * стат ** POWER, суммарно по трём статам."""
+        """Расход энергии за тик: COEF * стат ** POWER, суммарно по трём статам.
+
+        Цена скорости ещё и растёт с размером: см. SPEED_MASS_POWER в config.py.
+        """
+        mass = (size / _BASE_SIZE) ** SPEED_MASS_POWER
         return (self.size_coef  * size   ** self.size_power +
-                self.speed_coef * speed  ** self.speed_power +
+                self.speed_coef * speed  ** self.speed_power * mass +
                 self.sight_coef * vision ** self.sight_power)
 
     def with_(self, **changes):

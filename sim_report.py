@@ -65,12 +65,20 @@ def print_run(res, title):
 
 def print_summary(rows):
     print(f"\n=== сводка по {len(rows)} прогонам ===")
+    # хищн% — доля снимков с живыми хищниками; мигр — сколько пришло извне;
+    # размер — средний размер травоядных: максимум по снимкам и на финише
     print(f"{'seed':>6} {'тиков':>7} {'травояд':>9} {'хищн':>6} {'растен':>8} "
+          f"{'хищн%':>6} {'мигр':>5} {'разм.макс':>10} {'разм.фин':>9} "
           f"{'мс/тик':>8}  остановка")
     for seed, res in rows:
         f = res.final
+        with_pred = sum(h["predators"] > 0 for h in res.history) / len(res.history)
+        sizes = [h["avg_genom"][0] for h in res.history if h["avg_genom"]]
+        top  = f"{max(sizes):.1f}" if sizes else "—"
+        last = f"{f['avg_genom'][0]:.1f}" if f["avg_genom"] else "—"
         print(f"{seed:>6} {res.ticks_done:>7} {f['vegetarians']:>9} {f['predators']:>6} "
-              f"{f['plants']:>8} {res.ms_per_tick():>8.1f}  {res.stop_reason}")
+              f"{f['plants']:>8} {with_pred:>6.0%} {res.world.migrants:>5} {top:>10} "
+              f"{last:>9} {res.ms_per_tick():>8.1f}  {res.stop_reason}")
 
     exploded = [s for s, r in rows if r.exploded]
     extinct  = [s for s, r in rows if r.extinct]

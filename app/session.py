@@ -59,6 +59,7 @@ class Session:
         self.peaks = [len(w.plants), len(w.vegetarians), len(w.predators)]
         self._had_vegetarians = bool(w.vegetarians)
         self._had_predators   = bool(w.predators)
+        self._migrants        = w.migrants
 
     # ── темп ────────────────────────────────────────────────────────────────
     @property
@@ -132,6 +133,11 @@ class Session:
         if self._had_predators and not n_pred:
             self._had_predators = False
             self.events.append(Event(w.tick, f"Хищники вымерли на тике {spaced(w.tick)}"))
+
+        if w.migrants != self._migrants:
+            self._migrants = w.migrants
+            self._had_predators = True
+            self.events.append(Event(w.tick, f"Пришёл хищник-мигрант на тике {spaced(w.tick)}"))
 
         if not n_veg and not n_pred:
             self.ended = "extinct"

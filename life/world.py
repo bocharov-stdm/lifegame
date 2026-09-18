@@ -37,6 +37,11 @@ class World:
                                      rules=rules)
                             for _ in range(n_predators)]
 
+        self.predator_speed  = predator_speed      # такими приходят мигранты
+        self.predator_vision = predator_vision
+        self.hunting         = n_predators > 0     # мир без охоты мигрантов не ждёт
+        self.migrants        = 0
+
         self.tick = 0
 
     # ── один логический тик ─────────────────────────────────────────────────
@@ -45,6 +50,7 @@ class World:
         self._update_predators()
         self._update_vegetarians()
         self.tick += 1
+        self._migrate_predators()           # после счёта: на тике 0 мигрантов нет
 
     def _spawn_plants(self):
         # plant_rate (по умолчанию PLANT_SPAWN_CHANCE) — это ожидаемое число
@@ -63,6 +69,24 @@ class World:
             count = min(count, max(0, PLANT_MAX - len(self.plants)))
             self.plants.extend(Plant() for _ in range(count))
 
+    def _migrate_predators(self):
+        # Случайные числа тянутся только при срабатывании, см. config.py.
+        period = int(self.rules.predator_migration)
+        if (period <= 0 or not self.hunting or self.tick % period
+                or len(self.predators) >= PREDATOR_MIGRATION_MIN
+                or len(self.vegetarians) < PREDATOR_MIGRATION_PREY):
+            return
+        d = PREDATOR_DIAM
+        if random.random() < 0.5:           # левый/правый край
+            x = random.choice((d, WORLD_WIDTH - d))
+            y = random.uniform(d, WORLD_HEIGHT - d)
+        else:                               # верхний/нижний
+            x = random.uniform(d, WORLD_WIDTH - d)
+            y = random.choice((d, WORLD_HEIGHT - d))
+        self.predators.append(Predator(x, y, speed=self.predator_speed,
+                                       vision=self.predator_vision, rules=self.rules))
+        self.migrants += 1
+
     # ── поиск соседей ───────────────────────────────────────────────────────
     # Существа по-прежнему просто перебирают всех, кого им дали, — но дают им
     # теперь не весь мир, а соседей по сетке. Индексацией занимается мир,
@@ -74,8 +98,11 @@ class World:
     # оно эволюционирует, поэтому размер пересчитывается каждый тик.
 
     def _update_predators(self):
-        cell = max(GRID_MIN_CELL, PREDATOR_DIAM,
-                   max((pr.vision for pr in self.predators), default=0.0))
+        # Хищник видит и ловит по краю тела добычи, поэтому к радиусу запроса
+        # прибавляется половина самого крупного травоядного.
+        half = max((v.half for v in self.vegetarians), default=0.0)
+        cell = max(GRID_MIN_CELL, PREDATOR_DIAM / 2 + half,
+                   max((pr.vision for pr in self.predators), default=0.0) + half)
         prey_near = Grid(cell, self.vegetarians).near
         divide    = self.tick % DIVIDE_PERIOD == 0
 

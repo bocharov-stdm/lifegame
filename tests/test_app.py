@@ -375,7 +375,7 @@ class TestSession(unittest.TestCase):
         self.assertEqual([random.random() for _ in range(3)], expected)
 
     def test_extinction_events_and_end(self):
-        session = Session(self.settings())
+        session = Session(self.settings(predator_migration=0))
         session.world.predators = []
         run_session(session, 1)
         self.assertEqual(len(session.events), 1)
