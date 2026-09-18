@@ -14,9 +14,12 @@ in Russian. Keep it that way when editing or adding code.
 **The project is Rust-only now.** It was migrated from Python + pygame (plan: phases 0‒8, from a
 1:1 core to a native wgpu/egui app with player-chosen world scale up to ~1M creatures). Done:
 phases 0‒2 — engine (`crates/life-core`), bounded headless runner with an observer
-(`crates/life-sim`), balance report (`crates/life-report`). The Python version, including the
-only game with a window, was removed; it lives at the git tag **`python-final`** (`python/`
-there). There is no Rust game window yet (phases 4‒5); see "Porting the game" below.
+(`crates/life-sim`), balance report (`crates/life-report`) — and the game itself
+(`crates/life-app`, phases 4‒5 done ahead of phase 3). The Python version was removed; it lives
+at the git tag **`python-final`** (`python/` there) and is the behavioural spec the game was
+ported from. Still open: phase 3 (two-phase parallel tick — big worlds are single-threaded and
+lag at ×1000), phase 6 (machine benchmark instead of the scale estimate), the extinction
+balance problem.
 
 ## Commands
 
@@ -30,7 +33,15 @@ cargo run -p life-report --release                  # seed 1, 600 ticks: story +
 cargo run -p life-report --release -- --seeds 1 2 3 --ticks 3000
 cargo run -p life-report --release -- --rule plant_energy=80 --scale 10 --threads 4
 cargo run -p life-report --release -- --compare reference/fingerprint.json   # parity with Python
+
+cargo run -p life-app --release                          # the game: menu
+cargo run -p life-app --release -- --scale 100 --seed 7  # straight into a world (same flags as the report)
+TINYLIFE_SHOTS=some/dir cargo test -p life-app ui_tests  # screen tests + PNGs of every screen
 ```
+
+Looking at the game from an agent: don't take screenshots of the desktop (other windows get
+captured) and don't inject mouse/keyboard input. Render screens headless with `TINYLIFE_SHOTS`
+(egui_kittest), and drive state through `LifeApp` fields / `sim::Command` in `ui_tests.rs`.
 
 CI (`.github/workflows/ci.yml`, Windows + Linux) runs fmt, clippy, tests and `--compare`.
 Dev builds use `opt-level = 2`: tests run real multi-thousand-tick simulations.
@@ -58,7 +69,7 @@ snapshot (`life_sim::observe::Snapshot`: gene spreads, depth histograms, cumulat
 keys are English (`gene_keys`, event `kind`), texts Russian. Long runs may stop on the work
 budget ("перегрузка") — raise it with `--max-work`.
 
-`observe.rs` lives in `life-sim`, not in the report, so the future app can reuse snapshots
+`observe.rs` lives in `life-sim`, not in the report, so the game reuses snapshots
 and the event chronicle for its in-game event feed.
 
 ### The reference fingerprint
@@ -82,15 +93,15 @@ cargo run -p life-report --release -- --save-reference reference/fingerprint.jso
 **Logic is separated from rendering, and that split is the load-bearing design decision** — it
 is what lets tests and balance tuning run headless, orders of magnitude faster than watching
 the screen. It is enforced by crate boundaries: `life-core` depends on nothing graphical (not
-even on threads or I/O), `life-sim` adds only the bounded runner and the observer, and the
-future `life-app` will be the only crate that knows about both the screen and the entities.
+even on threads or I/O), `life-sim` adds only the bounded runner and the observer, and
+`life-app` is the only crate that knows about both the screen and the entities.
 
 `crates/life-core/src/`:
 
 - `config.rs` — every tunable constant, each with a comment explaining *why* it has that value.
-- `rules.rs` — `Rules`, the world rules the game's «Лаборатория» will expose (plant rate and
-  energy, mutation sigma, stat cost scale and exponents, predator fertility, tank and
-  migration). `World` owns one and every creature gets it at birth. Changing an exponent
+- `rules.rs` — `Rules`, the world rules the game's «Лаборатория» exposes, at setup and live via
+  `World::set_rules` (plant rate and energy, mutation sigma, stat cost scale and exponents,
+  predator fertility, tank and migration). `World` owns one and every creature gets it at birth. Changing an exponent
   renormalises its coefficient so the *base* genome still pays the same — only the steepness
   changes. `Rules::default()` is `config.rs` bit for bit (the factor is exactly
   `base ** 0.0`); tests guard that. `with()` rejects unknown keys, non-finite values (a NaN
@@ -229,10 +240,44 @@ its buffers between ticks.
 full scan, threshold 20 ms. (At the old 400-creature load Rust is fast enough even by brute
 force, so the guard would not catch anything there.)
 
-## Porting the game (phases 4‒5)
+## The game (`crates/life-app`)
 
-The Python game at `python-final` is the behavioural spec for the Rust app
-(`git show python-final:python/app/<file>`). What to carry over:
+**The window never waits for the simulation** — that is the rule every change must keep.
+
+- `sim.rs` — the simulation thread owns `World`. The UI sends `Command`s over a channel (pause,
+  speed, step, view rect, pick/select, `SetRules`, spawn, restart, new world); they apply
+  between ticks. Frames go through a one-slot mailbox: the thread publishes only when the UI
+  took the previous frame, so frames are never dropped — that is why history/log/gene points
+  travel as *deltas* in `Frame` (a test checks none are lost). Tempo: ticks per second with a
+  capped debt (lag is shown, never caught up in a burst), `SLICE` bounds a tick burst so
+  commands stay responsive; frame building is throttled to ≤ 1/3 of the thread's time.
+  `Snapshot::of` (sorting) runs every `SNAPSHOT_EVERY` ticks, stretched on big worlds to ≤ 5%.
+- `frame.rs` — what the UI needs: instances (16 bytes, relative to `origin` in f64 — f32
+  absolute coords break at ×10 000) **culled to the visible rect** (padded by half a view,
+  culled by body, not centre), or a density raster when more than `MAX_INSTANCES` are
+  visible; the minimap raster every 0.4 s. `кадр_огромного_мира_быстрый_и_лёгкий` guards it.
+- `render.rs` — one instanced draw call through `egui_wgpu::CallbackTrait`; the circle is cut
+  by an SDF in the fragment shader; the buffer is uploaded only when a new frame arrives.
+- `view.rs` (world, selection, minimap), `camera.rs` (port of `camera.py`, f64), `game.rs`
+  (game screen, lab window, creature card, `report_command`), `screens.rs` (menu, «Новый мир»,
+  prefs, help), `charts.rs` (drawn with the painter — no plot crate), `history.rs`
+  (port of `history.py`), `settings.rs` (`FIELDS`, the single slider spec; start counts are
+  *per base area* and scale with the world; file in `%APPDATA%\TinyLife`, atomic, clamped).
+- Chronicle texts come from `life_sim::observe::EventTracker` — the same incremental tracker
+  the report's `events()` wraps, so game and report print identical events.
+- Live rules: `World::set_rules` recomputes what creatures derived from rules at birth
+  (`apply_rules`); a test checks they match newborns. `World::pick` / `vegetarian(id)` /
+  `predator(id)` serve selection and follow (creature vecs stay sorted by id — tested).
+- `ui_tests.rs` — egui_kittest: every screen at 960×600 and 1600×900, buttons/sliders inside
+  the window and not overlapping (scrolled-away side-panel content excluded). They share one
+  GPU lock: parallel wgpu renderers crash the driver on Windows. CI installs lavapipe on Linux.
+- Release on Windows builds with `windows_subsystem = "windows"` (no console on double-click)
+  and attaches to the parent console so flag errors still print.
+
+### Behavioural spec at `python-final`
+
+The Python game at `python-final` remains the reference for behaviour details
+(`git show python-final:python/app/<file>`):
 
 - `app/settings.py` — `FIELDS`, the single spec of every slider (label, hint, range, step,
   format, tab «Мир» / «Лаборатория»); the setup screen is built from it and the settings file is

@@ -4,7 +4,7 @@
 //! - [`Snapshot`] — срез мира: численности, накопленные счётчики рождений и
 //!   смертей, разброс каждого гена (не только среднее: среднее прячет раскол
 //!   на два вида), где по глубине живут травоядные и растут растения, сытость.
-//! - [`events`] — хроника по срезам: обвалы и подъёмы численности с причинами,
+//! - [`EventTracker`] / [`events`] — хроника по срезам: обвалы и подъёмы численности с причинами,
 //!   вымирание и возвращение хищников, растения у потолка, сдвиги генов,
 //!   сжатие травоядных в узкий слой.
 //! - [`ascii_map`] — карта мира текстом: слои, скопления, пустые края.
@@ -205,45 +205,55 @@ pub fn predator_flows(c: &Counters, migrants: u64) -> String {
 }
 
 /// Колебание одной популяции: пик и дно с прошлого события.
+#[derive(Clone, Debug)]
 struct Swing {
-    peak: usize,
-    trough: usize,
+    peak: Snapshot,
+    trough: Snapshot,
 }
 
-impl Swing {
-    fn new() -> Self {
-        Swing { peak: 0, trough: 0 }
+/// Хроника, которая пишется по ходу: срез за срезом. Её ведёт и отчёт
+/// ([`events`]), и игра — поэтому тексты событий у них одинаковые.
+#[derive(Clone, Debug, Default)]
+pub struct EventTracker {
+    prev: Option<Snapshot>,
+    /// Травоядные и хищники.
+    swings: Vec<Swing>,
+    /// Медиана каждого гена на прошлой отметке и тик этой отметки.
+    gene_base: Option<[(f64, u64); 7]>,
+    narrow: bool,
+    capped: bool,
+}
+
+impl EventTracker {
+    pub fn new() -> Self {
+        Self::default()
     }
-}
 
-/// Хроника прогона по срезам (они должны идти по возрастанию тиков).
-pub fn events(snaps: &[Snapshot]) -> Vec<Event> {
-    let mut out = Vec::new();
-    let Some(first) = snaps.first() else { return out };
-    let mut push = |tick, kind, text: String| out.push(Event { tick, kind, text });
-
-    let (mut veg, mut pred) = (Swing::new(), Swing::new());
-    let mut gene_base = first.genes.map(|g| g.map(|s| (s.p50, first.tick)));
-    let mut narrow = first.vegetarian_depth.is_some_and(|d| d.p90 - d.p10 < LAYER_NARROW);
-    let mut capped = first.plants as f64 >= first.plant_cap as f64 * CAP_HIGH;
-
-    for i in 1..snaps.len() {
-        let (prev, cur) = (&snaps[i - 1], &snaps[i]);
+    /// Следующий срез (тики должны расти); события между прошлым и этим — в `out`.
+    pub fn observe(&mut self, cur: &Snapshot, out: &mut Vec<Event>) {
+        let Some(prev) = self.prev.replace(cur.clone()) else {
+            self.swings = vec![Swing { peak: cur.clone(), trough: cur.clone() }; 2];
+            self.gene_base = cur.genes.map(|g| g.map(|s| (s.p50, cur.tick)));
+            self.narrow = cur.vegetarian_depth.is_some_and(|d| d.p90 - d.p10 < LAYER_NARROW);
+            self.capped = cur.plants as f64 >= cur.plant_cap as f64 * CAP_HIGH;
+            return;
+        };
         let t = cur.tick;
+        let mut push = |kind, text: String| out.push(Event { tick: t, kind, text });
 
         // ── численности: обвал и подъём считаются от пика/дна с прошлого события,
         // причины — счётчики между ними
-        for (swing, species) in [(&mut veg, 0), (&mut pred, 1)] {
+        for (species, swing) in self.swings.iter_mut().enumerate() {
             let count = |s: &Snapshot| if species == 0 { s.vegetarians } else { s.predators };
             let min = cur.area * if species == 0 { SWING_MIN_VEGETARIANS } else { SWING_MIN_PREDATORS };
             let n = count(cur);
-            if count(&snaps[swing.peak]) < n {
-                swing.peak = i;
+            if count(&swing.peak) < n {
+                swing.peak = cur.clone();
             }
-            if count(&snaps[swing.trough]) > n {
-                swing.trough = i;
+            if count(&swing.trough) > n {
+                swing.trough = cur.clone();
             }
-            let (peak, trough) = (&snaps[swing.peak], &snaps[swing.trough]);
+            let (peak, trough) = (&swing.peak, &swing.trough);
             let flows = |from: &Snapshot| {
                 let c = cur.counters.since(&from.counters);
                 if species == 0 {
@@ -254,21 +264,18 @@ pub fn events(snaps: &[Snapshot]) -> Vec<Event> {
             };
             let name = if species == 0 { "травоядных" } else { "хищников" };
 
-            if n == 0 && count(prev) > 0 {
+            let event = if n == 0 && count(&prev) > 0 {
                 let (kind, who) = if species == 0 {
                     (EventKind::VegetariansExtinct, "травоядные вымерли")
                 } else {
                     (EventKind::PredatorsExtinct, "хищники вымерли")
                 };
-                push(
-                    t,
+                Some((
                     kind,
                     format!("{who} (пик {} на тике {}); с пика: {}", count(peak), peak.tick, flows(peak)),
-                );
-                (swing.peak, swing.trough) = (i, i);
-            } else if n > 0 && count(prev) == 0 && species == 1 {
-                push(t, EventKind::PredatorsReturn, format!("хищники вернулись: {n}; {}", flows(prev)));
-                (swing.peak, swing.trough) = (i, i);
+                ))
+            } else if n > 0 && count(&prev) == 0 && species == 1 {
+                Some((EventKind::PredatorsReturn, format!("хищники вернулись: {n}; {}", flows(&prev))))
             } else if count(peak) as f64 >= min && n as f64 * SWING <= count(peak) as f64 {
                 let kind = if species == 0 { EventKind::VegetariansCrash } else { EventKind::PredatorsCrash };
                 let text = format!(
@@ -277,8 +284,7 @@ pub fn events(snaps: &[Snapshot]) -> Vec<Event> {
                     peak.tick,
                     flows(peak)
                 );
-                push(t, kind, text);
-                (swing.peak, swing.trough) = (i, i);
+                Some((kind, text))
             } else if n as f64 >= min && count(trough) as f64 * SWING <= n as f64 && count(trough) > 0 {
                 let kind = if species == 0 { EventKind::VegetariansRise } else { EventKind::PredatorsRise };
                 let text = format!(
@@ -287,24 +293,28 @@ pub fn events(snaps: &[Snapshot]) -> Vec<Event> {
                     trough.tick,
                     flows(trough)
                 );
-                push(t, kind, text);
-                (swing.peak, swing.trough) = (i, i);
+                Some((kind, text))
+            } else {
+                None
+            };
+            if let Some((kind, text)) = event {
+                push(kind, text);
+                *swing = Swing { peak: cur.clone(), trough: cur.clone() };
             }
         }
 
         // ── растения у потолка: их растёт больше, чем успевают съесть
         let fill = cur.plants as f64 / cur.plant_cap as f64;
-        if !capped && fill >= CAP_HIGH {
-            capped = true;
+        if !self.capped && fill >= CAP_HIGH {
+            self.capped = true;
             let text = format!(
                 "растения упёрлись в потолок ({} из {}): травоядных {} — есть их некому или не там",
                 cur.plants, cur.plant_cap, cur.vegetarians
             );
-            push(t, EventKind::PlantsAtCap, text);
-        } else if capped && fill < CAP_LOW {
-            capped = false;
+            push(EventKind::PlantsAtCap, text);
+        } else if self.capped && fill < CAP_LOW {
+            self.capped = false;
             push(
-                t,
                 EventKind::PlantsEatenAgain,
                 format!("растения снова поедаются: {} из {}", cur.plants, cur.plant_cap),
             );
@@ -312,7 +322,7 @@ pub fn events(snaps: &[Snapshot]) -> Vec<Event> {
 
         // ── гены: медиана ушла от прошлой отметки — отметка переносится; все
         // сдвиги одного среза — одно событие, иначе хроника тонет в генах
-        match (cur.genes, gene_base.as_mut()) {
+        match (cur.genes, self.gene_base.as_mut()) {
             (Some(genes), Some(base)) => {
                 let mut parts = Vec::new();
                 for (g, s) in genes.iter().enumerate() {
@@ -337,10 +347,10 @@ pub fn events(snaps: &[Snapshot]) -> Vec<Event> {
                     }
                 }
                 if !parts.is_empty() {
-                    push(t, EventKind::GeneShift, format!("геном, медиана: {}", parts.join("; ")));
+                    push(EventKind::GeneShift, format!("геном, медиана: {}", parts.join("; ")));
                 }
             }
-            (Some(genes), None) => gene_base = Some(genes.map(|s| (s.p50, t))),
+            (Some(genes), None) => self.gene_base = Some(genes.map(|s| (s.p50, t))),
             _ => {}
         }
 
@@ -353,14 +363,23 @@ pub fn events(snaps: &[Snapshot]) -> Vec<Event> {
                     d.p10, d.p90, d.p50
                 )
             };
-            if !narrow && width < LAYER_NARROW {
-                narrow = true;
-                push(t, EventKind::LayerNarrow, text("сжались в узкий слой"));
-            } else if narrow && width > LAYER_WIDE {
-                narrow = false;
-                push(t, EventKind::LayerWide, text("снова расселились по глубине"));
+            if !self.narrow && width < LAYER_NARROW {
+                self.narrow = true;
+                push(EventKind::LayerNarrow, text("сжались в узкий слой"));
+            } else if self.narrow && width > LAYER_WIDE {
+                self.narrow = false;
+                push(EventKind::LayerWide, text("снова расселились по глубине"));
             }
         }
+    }
+}
+
+/// Хроника прогона по срезам (они должны идти по возрастанию тиков).
+pub fn events(snaps: &[Snapshot]) -> Vec<Event> {
+    let mut tracker = EventTracker::new();
+    let mut out = Vec::new();
+    for s in snaps {
+        tracker.observe(s, &mut out);
     }
     out
 }

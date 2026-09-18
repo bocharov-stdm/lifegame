@@ -233,6 +233,12 @@ impl Vegetarian {
         }
     }
 
+    /// Правила поменялись посреди жизни (лаборатория на ходу): пересчитать то,
+    /// что при рождении было вычислено из правил. Как в `new`.
+    pub fn apply_rules(&mut self, rules: &Rules) {
+        self.upkeep = rules.upkeep(self.size, self.speed, self.vision);
+    }
+
     /// Съедено `eaten` растений: энергия и сразу новая цель, чтобы не топтаться.
     pub fn feed(&mut self, eaten: usize, rules: &Rules) {
         if eaten == 0 {

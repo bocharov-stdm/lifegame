@@ -360,6 +360,53 @@ impl World {
             avg_energy,
         }
     }
+
+    /// Новые правила посреди партии (лаборатория на ходу). Живые существа
+    /// пересчитывают всё, что вычислили из правил при рождении, — иначе новая
+    /// цена действовала бы только на новорождённых, и игрок двигал бы ползунок,
+    /// не видя последствий.
+    pub fn set_rules(&mut self, rules: Rules) {
+        for v in &mut self.vegetarians {
+            v.apply_rules(&rules);
+        }
+        for p in &mut self.predators {
+            p.apply_rules(&rules);
+        }
+        self.rules = rules;
+    }
+
+    // ── выбор существа (для игры) ───────────────────────────────────────────
+
+    /// Ближайшее к точке травоядное или хищник, до края тела которого не дальше
+    /// `radius`. Мелкое существо находится, даже если промахнуться на `radius`;
+    /// крупное — если кликнуть в любое место его тела. Вызывается по клику,
+    /// поэтому простой перебор: сетки мира строятся внутри тика и к этому
+    /// моменту уже устарели.
+    pub fn pick(&self, x: f64, y: f64, radius: f64) -> Option<Creature> {
+        let dist = |cx: f64, cy: f64, half: f64| ((cx - x).powi(2) + (cy - y).powi(2)).sqrt() - half;
+        let vegs = self.vegetarians.iter().map(|v| (dist(v.x, v.y, v.half), Creature::Vegetarian(v.id)));
+        let half = Predator::DIAM / 2.0;
+        let preds = self.predators.iter().map(|p| (dist(p.x, p.y, half), Creature::Predator(p.id)));
+        vegs.chain(preds).filter(|(d, _)| *d <= radius).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, c)| c)
+    }
+
+    /// Травоядное по id. Номера выдаются по возрастанию, новые встают в конец,
+    /// а умершие удаляются с сохранением порядка — поэтому список отсортирован
+    /// по id и поиск двоичный: следить за существом можно и среди миллиона.
+    pub fn vegetarian(&self, id: u64) -> Option<&Vegetarian> {
+        self.vegetarians.binary_search_by_key(&id, |v| v.id).ok().map(|i| &self.vegetarians[i])
+    }
+
+    pub fn predator(&self, id: u64) -> Option<&Predator> {
+        self.predators.binary_search_by_key(&id, |p| p.id).ok().map(|i| &self.predators[i])
+    }
+}
+
+/// Выбранное существо: вид и постоянный номер.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Creature {
+    Vegetarian(u64),
+    Predator(u64),
 }
 
 // ── запросы к сеткам ────────────────────────────────────────────────────────

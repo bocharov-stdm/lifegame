@@ -1,5 +1,5 @@
-# Проверки на каждый push и PR: Rust на Windows и Linux плюс сверка баланса
-# с эталоном, снятым с Python-версии (тег python-final).
+# Проверки на каждый push и PR: Rust на Windows и Linux (включая тесты экранов
+# игры) плюс сверка баланса с эталоном, снятым с Python-версии (тег python-final).
 name: CI
 
 on:
@@ -18,6 +18,11 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # Тесты экранов игры рисуют через wgpu: на Linux без видеокарты нужен
+      # программный Vulkan (lavapipe); на Windows есть встроенный WARP.
+      - name: Программный Vulkan и заголовки окна (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libxkbcommon-dev libwayland-dev
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace

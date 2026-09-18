@@ -76,6 +76,14 @@ impl Predator {
         self.ty = self.rng.uniform(a, b);
     }
 
+    /// Правила поменялись посреди жизни: бак и расход — как у только что
+    /// рождённого, энергия не больше нового бака.
+    pub fn apply_rules(&mut self, rules: &Rules) {
+        self.max_energy = rules.predator_max_energy;
+        self.energy = self.energy.min(self.max_energy);
+        self.upkeep = rules.upkeep(Self::DIAM, self.speed, self.vision);
+    }
+
     pub fn hungry(&self) -> bool {
         self.energy < self.max_energy * PREDATOR_HUNGRY
     }

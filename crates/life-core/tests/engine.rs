@@ -8,7 +8,7 @@ use life_core::plant::Plant;
 use life_core::predator::{Predator, Prey};
 use life_core::rng::Rng;
 use life_core::vegetarian::Vegetarian;
-use life_core::{Counters, Genom, Rules, Space, World, WorldConfig};
+use life_core::{Counters, Creature, Genom, Rules, Space, World, WorldConfig};
 
 const BASE: [f64; 7] = VEGETARIAN_BASE_GENOM;
 
@@ -649,4 +649,86 @@ fn тик_укладывается_в_бюджет_на_фиксированно
     eprintln!("  [скорость] {ms:.3} мс/тик при 4000/4000/100");
     assert!(w.vegetarians.len() > 1000, "нагрузка растаяла — замер бессмыслен");
     assert!(ms < 20.0, "тик {ms:.2} мс при 4000/4000/100: где-то перебор вместо сетки?");
+}
+
+// ── игра: выбор, слежение, правила на ходу ──────────────────────────────────
+
+#[test]
+fn выбор_кликом_совпадает_с_перебором_в_живом_мире() {
+    let mut w = World::new(&WorldConfig { seed: 5, ..Default::default() });
+    for _ in 0..300 {
+        w.step();
+    }
+    assert!(w.vegetarians.len() > 20);
+    // Клики по сетке точек: ответ — ближайший по краю тела среди тех, кто ближе radius.
+    let radius = 15.0;
+    let mut hits = 0;
+    for i in 0..60 {
+        for j in 0..40 {
+            let (x, y) = (i as f64 * 100.0 + 13.0, j as f64 * 100.0 + 7.0);
+            let mut best: Option<(f64, Creature)> = None;
+            let mut consider = |d: f64, c: Creature| {
+                if d <= radius && best.is_none_or(|(bd, _)| d < bd) {
+                    best = Some((d, c));
+                }
+            };
+            for v in &w.vegetarians {
+                consider(
+                    ((v.x - x).powi(2) + (v.y - y).powi(2)).sqrt() - v.size / 2.0,
+                    Creature::Vegetarian(v.id),
+                );
+            }
+            for p in &w.predators {
+                consider(
+                    ((p.x - x).powi(2) + (p.y - y).powi(2)).sqrt() - Predator::DIAM / 2.0,
+                    Creature::Predator(p.id),
+                );
+            }
+            assert_eq!(w.pick(x, y, radius), best.map(|(_, c)| c));
+            hits += best.is_some() as usize;
+        }
+    }
+    assert!(hits > 10, "клики хоть куда-то попали ({hits})");
+}
+
+#[test]
+fn существо_находится_по_номеру_после_смертей_и_рождений() {
+    let mut w = World::new(&WorldConfig { seed: 2, ..Default::default() });
+    for _ in 0..600 {
+        w.step();
+        assert!(w.vegetarians.windows(2).all(|p| p[0].id < p[1].id), "травоядные по возрастанию id");
+        assert!(w.predators.windows(2).all(|p| p[0].id < p[1].id), "хищники по возрастанию id");
+    }
+    for v in &w.vegetarians {
+        assert_eq!(w.vegetarian(v.id).map(|f| f.id), Some(v.id));
+    }
+    for p in &w.predators {
+        assert_eq!(w.predator(p.id).map(|f| f.id), Some(p.id));
+    }
+    assert!(w.vegetarian(u64::MAX).is_none());
+}
+
+#[test]
+fn новые_правила_пересчитывают_живых_как_новорождённых() {
+    let mut w = World::new(&WorldConfig { seed: 4, ..Default::default() });
+    for _ in 0..200 {
+        w.step();
+    }
+    let rules = Rules::default()
+        .with("cost_scale", 3.0)
+        .and_then(|r| r.with("size_power", 2.0))
+        .and_then(|r| r.with("predator_max_energy", 40.0))
+        .unwrap();
+    w.set_rules(rules.clone());
+    let space = w.space;
+    for v in &w.vegetarians {
+        let fresh = Vegetarian::new(&space, &rules, v.genom, Some(v.x), Some(v.y), None, Rng::new(0));
+        assert_eq!(v.upkeep, fresh.upkeep);
+    }
+    for p in &w.predators {
+        let fresh = Predator::new(&space, &rules, Some(p.x), Some(p.y), None, p.speed, p.vision, Rng::new(0));
+        assert_eq!((p.upkeep, p.max_energy), (fresh.upkeep, fresh.max_energy));
+        assert!(p.energy <= p.max_energy);
+    }
+    assert_eq!(w.rules, rules);
 }

@@ -1,0 +1,18 @@
+[package]
+name        = "life-app"
+description = "Игра Tiny Life: окно, рендер мира, меню и графики. Симуляция идёт в своём потоке."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+life-core.workspace = true
+life-sim.workspace  = true
+eframe   = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "x11", "wayland"] }
+bytemuck = { version = "1", features = ["derive"] }
+clap     = { version = "4", features = ["derive"] }
+directories = "6"
+serde_json  = "1"
+
+[dev-dependencies]
+egui_kittest = { version = "0.36", features = ["eframe", "wgpu", "snapshot"] }

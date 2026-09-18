@@ -1,0 +1,552 @@
+//! Что игрок может настроить, в каких пределах и где это хранится. Порт
+//! `app/settings.py` (тег python-final).
+//!
+//! `FIELDS` — единственное место, где описан каждый ползунок: подпись,
+//! пояснение, пределы, шаг и формат. По нему строятся экран «Новый мир» и
+//! лаборатория на ходу, и по нему же зажимаются значения из файла настроек —
+//! поэтому они не могут разойтись.
+
+use std::path::{Path, PathBuf};
+
+use life_core::config::{
+    PREDATOR_BASE_SPEED, PREDATOR_BASE_VISION, PREDATORS_AT_START, VEGETARIANS_AT_START,
+};
+use life_core::space::{MAX_SCALE, MIN_SCALE};
+use life_core::{Rules, Space, WorldConfig};
+use serde_json::{Map, Value};
+
+pub const SEED_MAX: u64 = 99_999;
+/// Масштаб интерфейса; 0 — как в системе.
+pub const UI_SCALES: [f64; 6] = [0.0, 1.0, 1.25, 1.5, 1.75, 2.0];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tab {
+    /// «Мир»: с чего начинается партия.
+    World,
+    /// «Лаборатория»: правила мира. Их можно менять и на ходу.
+    Lab,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Key {
+    Vegetarians,
+    Predators,
+    PlantGrowth,
+    PredatorSpeed,
+    PredatorVision,
+    MutationSigma,
+    PlantEnergy,
+    CostScale,
+    SizePower,
+    SightPower,
+    PredatorDivideChance,
+    PredatorMaxEnergy,
+    PredatorMigration,
+}
+
+pub struct Field {
+    pub key: Key,
+    pub label: &'static str,
+    pub hint: &'static str,
+    pub lo: f64,
+    pub hi: f64,
+    pub step: f64,
+    pub format: fn(f64) -> String,
+    pub tab: Tab,
+    /// Имя правила в `Rules` (None — стартовое условие, а не правило).
+    pub rule: Option<&'static str>,
+}
+
+impl Field {
+    /// Значение в пределах и на сетке шага (так его ставит ползунок).
+    pub fn snap(&self, value: f64) -> f64 {
+        let v = value.clamp(self.lo, self.hi);
+        let v = self.lo + ((v - self.lo) / self.step).round() * self.step;
+        // без хвостов вроде 0.30000000000000004
+        (v.min(self.hi) * 1e6).round() / 1e6
+    }
+
+    /// Можно ли менять посреди партии: правила — да, стартовые условия — нет.
+    pub fn live(&self) -> bool {
+        self.rule.is_some()
+    }
+}
+
+fn int(v: f64) -> String {
+    format!("{v:.0}")
+}
+
+pub const FIELDS: [Field; 13] = [
+    // ── Мир ──────────────────────────────────────────────────────────────────
+    Field {
+        key: Key::Vegetarians,
+        label: "Травоядных на старте",
+        hint: "Сколько травоядных на каждом участке 6000×4000 в первый момент. \
+               В большом мире их во столько раз больше, во сколько он больше.",
+        lo: 1.0,
+        hi: 200.0,
+        step: 1.0,
+        format: int,
+        tab: Tab::World,
+        rule: None,
+    },
+    Field {
+        key: Key::Predators,
+        label: "Хищников на старте",
+        hint: "Сколько хищников на каждом участке 6000×4000. Ноль — мир без охоты.",
+        lo: 0.0,
+        hi: 40.0,
+        step: 1.0,
+        format: int,
+        tab: Tab::World,
+        rule: None,
+    },
+    // Множитель, а не само число: в конфиге темп — 2.50008 в тик, и на сетку
+    // ползунка он не ложится. Множитель 1.0 даёт ровно конфиг, бит в бит.
+    Field {
+        key: Key::PlantGrowth,
+        label: "Рост растений",
+        hint: "Сколько растений появляется за тик на участке 6000×4000. Больше еды — больше травоядных.",
+        lo: 0.2,
+        hi: 3.0,
+        step: 0.1,
+        format: |v| format!("{:.1} в тик", v * Rules::default().plant_rate),
+        tab: Tab::World,
+        rule: Some("plant_rate"),
+    },
+    Field {
+        key: Key::PredatorSpeed,
+        label: "Скорость хищников",
+        hint: "Скорость хищников на старте. У потомков она мутирует.",
+        lo: 4.0,
+        hi: 30.0,
+        step: 1.0,
+        format: int,
+        tab: Tab::World,
+        rule: None,
+    },
+    Field {
+        key: Key::PredatorVision,
+        label: "Зрение хищников",
+        hint: "С какого расстояния хищник замечает добычу. Травоядное видит на 400.",
+        lo: 100.0,
+        hi: 1500.0,
+        step: 50.0,
+        format: int,
+        tab: Tab::World,
+        rule: None,
+    },
+    // ── Лаборатория ─────────────────────────────────────────────────────────
+    Field {
+        key: Key::MutationSigma,
+        label: "Сила мутаций",
+        hint: "Насколько гены потомка отличаются от родительских. Мало — эволюция стоит, много — хаос.",
+        lo: 0.05,
+        hi: 1.0,
+        step: 0.05,
+        format: |v| format!("{v:.2}"),
+        tab: Tab::Lab,
+        rule: Some("mutation_sigma"),
+    },
+    Field {
+        key: Key::PlantEnergy,
+        label: "Энергия растения",
+        hint: "Сколько энергии даёт одно растение. Полный бак базового травоядного — 100.",
+        lo: 10.0,
+        hi: 150.0,
+        step: 5.0,
+        format: int,
+        tab: Tab::Lab,
+        rule: Some("plant_energy"),
+    },
+    Field {
+        key: Key::CostScale,
+        label: "Цена статов",
+        hint: "Множитель ко всей цене содержания: размера, скорости и зрения.",
+        lo: 0.25,
+        hi: 4.0,
+        step: 0.25,
+        format: |v| format!("×{v:.2}"),
+        tab: Tab::Lab,
+        rule: Some("cost_scale"),
+    },
+    Field {
+        key: Key::SizePower,
+        label: "Крутизна цены размера",
+        hint: "Как быстро дорожает размер. Ниже 2 крупное тело окупается, и размер раздувается без предела.",
+        lo: 1.0,
+        hi: 3.5,
+        step: 0.1,
+        format: |v| format!("{v:.1}"),
+        tab: Tab::Lab,
+        rule: Some("size_power"),
+    },
+    Field {
+        key: Key::SightPower,
+        label: "Крутизна цены зрения",
+        hint: "Как быстро дорожает зрение. Чем ниже, тем дешевле дальнозоркость и тем дальше видят потомки.",
+        lo: 1.0,
+        hi: 3.0,
+        step: 0.1,
+        format: |v| format!("{v:.1}"),
+        tab: Tab::Lab,
+        rule: Some("sight_power"),
+    },
+    Field {
+        key: Key::PredatorDivideChance,
+        label: "Плодовитость хищников",
+        hint: "Шанс, что сытый хищник поделится. Высокий — хищники выедают всех и гибнут следом.",
+        lo: 0.02,
+        hi: 1.0,
+        step: 0.01,
+        format: |v| format!("{:.0}%", v * 100.0),
+        tab: Tab::Lab,
+        rule: Some("predator_divide_chance"),
+    },
+    Field {
+        key: Key::PredatorMaxEnergy,
+        label: "Запас энергии хищника",
+        hint: "Сколько энергии вмещает хищник, то есть как долго он живёт без добычи.",
+        lo: 30.0,
+        hi: 300.0,
+        step: 5.0,
+        format: int,
+        tab: Tab::Lab,
+        rule: Some("predator_max_energy"),
+    },
+    Field {
+        key: Key::PredatorMigration,
+        label: "Миграция хищников",
+        hint: "Когда хищников почти не осталось, раз в столько тиков с края мира приходят новые. \
+               Ноль — хищники могут вымереть навсегда.",
+        lo: 0.0,
+        hi: 2000.0,
+        step: 100.0,
+        format: |v| if v > 0.0 { format!("раз в {v:.0}") } else { "выкл".into() },
+        tab: Tab::Lab,
+        rule: Some("predator_migration"),
+    },
+];
+
+pub fn field(key: Key) -> &'static Field {
+    FIELDS.iter().find(|f| f.key == key).expect("поле есть в FIELDS")
+}
+
+/// Масштабы-пресеты экрана «Новый мир».
+pub const PRESETS: [(&str, f64); 4] =
+    [("Как раньше", 1.0), ("Остров", 10.0), ("Материк", 100.0), ("Планета", 1000.0)];
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Settings {
+    // ── старт ──────────────────────────────────────────────────────────────
+    pub seed: u64,
+    /// Новый сид на каждый «Начать».
+    pub random_seed: bool,
+    pub scale: f64,
+    /// Значения ползунков, в порядке `FIELDS`.
+    pub values: [f64; FIELDS.len()],
+    // ── экран ────────────────────────────────────────────────────────────────
+    pub fullscreen: bool,
+    pub ui_scale: f64,
+    pub show_fps: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        let rules = Rules::default();
+        Settings {
+            seed: 1,
+            random_seed: true,
+            scale: 1.0,
+            values: FIELDS.map(|f| match f.key {
+                Key::Vegetarians => VEGETARIANS_AT_START as f64,
+                Key::Predators => PREDATORS_AT_START as f64,
+                Key::PlantGrowth => 1.0,
+                Key::PredatorSpeed => PREDATOR_BASE_SPEED,
+                Key::PredatorVision => PREDATOR_BASE_VISION,
+                _ => rules.get(f.rule.expect("правило")).expect("правило есть в Rules"),
+            }),
+            fullscreen: false,
+            ui_scale: 0.0,
+            show_fps: false,
+        }
+    }
+}
+
+fn index(key: Key) -> usize {
+    FIELDS.iter().position(|f| f.key == key).expect("поле есть в FIELDS")
+}
+
+impl Settings {
+    pub fn get(&self, key: Key) -> f64 {
+        self.values[index(key)]
+    }
+
+    pub fn set(&mut self, key: Key, value: f64) {
+        self.values[index(key)] = field(key).snap(value);
+    }
+
+    /// Правила мира из ползунков.
+    pub fn rules(&self) -> Rules {
+        let mut rules = Rules::default();
+        for f in FIELDS.iter().filter(|f| f.live()) {
+            let v = self.get(f.key);
+            let v = if f.key == Key::PlantGrowth { Rules::default().plant_rate * v } else { v };
+            // пределы FIELDS лежат внутри допустимого для Rules — проверено тестом
+            rules = rules.with(f.rule.expect("правило"), v).expect("значение ползунка допустимо");
+        }
+        rules
+    }
+
+    /// Ползунки правил — из действующих правил мира (для лаборатории на ходу).
+    pub fn take_rules(&mut self, rules: &Rules) {
+        for f in FIELDS.iter().filter(|f| f.live()) {
+            let v = rules.get(f.rule.expect("правило")).expect("правило есть в Rules");
+            let v = if f.key == Key::PlantGrowth { v / Rules::default().plant_rate } else { v };
+            self.values[index(f.key)] = f.snap(v);
+        }
+    }
+
+    /// Мир из настроек. Численности на старте заданы на базовый участок и
+    /// растут с площадью — плотность, а с ней и баланс, от масштаба не зависят.
+    pub fn world_config(&self, seed: u64) -> WorldConfig {
+        let space = Space::scaled(self.scale);
+        let per_area = |key| (self.get(key) * space.area_ratio()).round() as usize;
+        WorldConfig {
+            seed,
+            scale: self.scale,
+            rules: self.rules(),
+            n_vegetarians: Some(per_area(Key::Vegetarians)),
+            n_predators: Some(per_area(Key::Predators)),
+            predator_speed: self.get(Key::PredatorSpeed),
+            predator_vision: self.get(Key::PredatorVision),
+        }
+    }
+
+    /// Вернуть значения по умолчанию на одной вкладке.
+    pub fn reset(&mut self, tab: Tab) {
+        let default = Settings::default();
+        for (i, f) in FIELDS.iter().enumerate() {
+            if f.tab == tab {
+                self.values[i] = default.values[i];
+            }
+        }
+        if tab == Tab::World {
+            self.random_seed = default.random_seed;
+            self.scale = default.scale;
+        }
+    }
+
+    pub fn is_default(&self, key: Key) -> bool {
+        self.get(key) == Settings::default().get(key)
+    }
+
+    // ── файл ────────────────────────────────────────────────────────────────
+
+    fn to_json(&self) -> Value {
+        let mut m = Map::new();
+        m.insert("seed".into(), self.seed.into());
+        m.insert("random_seed".into(), self.random_seed.into());
+        m.insert("scale".into(), self.scale.into());
+        for (f, v) in FIELDS.iter().zip(self.values) {
+            m.insert(json_key(f.key).into(), v.into());
+        }
+        m.insert("fullscreen".into(), self.fullscreen.into());
+        m.insert("ui_scale".into(), self.ui_scale.into());
+        m.insert("show_fps".into(), self.show_fps.into());
+        Value::Object(m)
+    }
+
+    /// Настройки из JSON. Мусор, чужие ключи и значения вне пределов не
+    /// роняют игру: негодное остаётся по умолчанию, остальное зажимается.
+    fn from_json(data: &Value) -> Settings {
+        let mut s = Settings::default();
+        let Some(m) = data.as_object() else { return s };
+        let num = |k: &str| m.get(k).and_then(Value::as_f64).filter(|v| v.is_finite());
+        let flag = |k: &str| m.get(k).and_then(Value::as_bool);
+        if let Some(v) = num("seed") {
+            s.seed = (v.round() as u64).clamp(1, SEED_MAX);
+        }
+        if let Some(v) = flag("random_seed") {
+            s.random_seed = v;
+        }
+        if let Some(v) = num("scale") {
+            s.scale = v.clamp(MIN_SCALE, MAX_SCALE);
+        }
+        for (i, f) in FIELDS.iter().enumerate() {
+            if let Some(v) = num(json_key(f.key)) {
+                s.values[i] = f.snap(v);
+            }
+        }
+        if let Some(v) = flag("fullscreen") {
+            s.fullscreen = v;
+        }
+        if let Some(v) = num("ui_scale") {
+            s.ui_scale =
+                UI_SCALES.into_iter().min_by(|a, b| (a - v).abs().total_cmp(&(b - v).abs())).unwrap_or(0.0);
+        }
+        if let Some(v) = flag("show_fps") {
+            s.show_fps = v;
+        }
+        s
+    }
+
+    /// Настройки из файла; нет файла или он битый — значения по умолчанию.
+    pub fn load(path: &Path) -> Settings {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .map(|data| Settings::from_json(&data))
+            .unwrap_or_default()
+    }
+
+    /// Пишет атомарно: сначала во временный файл рядом, потом подменяет.
+    /// Оборванная запись не оставит полфайла. Ошибка записи игру не роняет —
+    /// настройки просто не запомнятся.
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        let dir = path.parent().ok_or("у файла настроек нет папки")?;
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        let text = serde_json::to_string_pretty(&self.to_json()).map_err(|e| e.to_string())?;
+        let tmp = dir.join(format!(".settings-{}.tmp", std::process::id()));
+        let result = std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, path));
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        result.map_err(|e| e.to_string())
+    }
+}
+
+fn json_key(key: Key) -> &'static str {
+    match key {
+        Key::Vegetarians => "n_vegetarians",
+        Key::Predators => "n_predators",
+        Key::PlantGrowth => "plant_growth",
+        Key::PredatorSpeed => "predator_speed",
+        Key::PredatorVision => "predator_vision",
+        Key::MutationSigma => "mutation_sigma",
+        Key::PlantEnergy => "plant_energy",
+        Key::CostScale => "cost_scale",
+        Key::SizePower => "size_power",
+        Key::SightPower => "sight_power",
+        Key::PredatorDivideChance => "predator_divide_chance",
+        Key::PredatorMaxEnergy => "predator_max_energy",
+        Key::PredatorMigration => "predator_migration",
+    }
+}
+
+/// Где лежит файл настроек: `%APPDATA%\TinyLife\settings.json` и аналоги.
+/// Новое имя, а не `user_settings.json` Python-версии: форматы разные.
+pub fn default_path() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", "TinyLife").map(|d| d.config_dir().join("settings.json"))
+}
+
+/// Что поменялось в правилах — строка для хроники: «энергия растения 50 → 80».
+pub fn describe_change(old: &Settings, new: &Settings) -> Option<String> {
+    let parts: Vec<String> = FIELDS
+        .iter()
+        .filter(|f| f.live() && old.get(f.key) != new.get(f.key))
+        .map(|f| {
+            format!(
+                "{} {} → {}",
+                f.label.to_lowercase(),
+                (f.format)(old.get(f.key)),
+                (f.format)(new.get(f.key))
+            )
+        })
+        .collect();
+    (!parts.is_empty()).then(|| format!("правила: {}", parts.join("; ")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn по_умолчанию_правила_как_в_конфиге_бит_в_бит() {
+        assert_eq!(Settings::default().rules(), Rules::default());
+    }
+
+    #[test]
+    fn пределы_ползунков_допустимы_для_правил() {
+        // оба края каждого ползунка собирают правила без ошибки
+        for f in &FIELDS {
+            for v in [f.lo, f.hi] {
+                let mut s = Settings::default();
+                s.set(f.key, v);
+                let _ = s.rules();
+                let _ = s.world_config(1);
+            }
+        }
+    }
+
+    #[test]
+    fn значение_ложится_на_сетку_шага_без_хвостов() {
+        let f = field(Key::MutationSigma);
+        assert_eq!(f.snap(0.3100001), 0.3);
+        assert_eq!(f.snap(99.0), 1.0);
+        assert_eq!(f.snap(-5.0), 0.05);
+    }
+
+    #[test]
+    fn файл_переживает_мусор_и_чужие_ключи() {
+        let data = serde_json::json!({
+            "seed": 1e12, "scale": 1e9, "plant_energy": 9999, "size_power": "много",
+            "mutation_sigma": f64::NAN.to_string(), "чужой": 1, "ui_scale": 1.3, "fullscreen": 1
+        });
+        let s = Settings::from_json(&data);
+        assert_eq!(s.seed, SEED_MAX);
+        assert_eq!(s.scale, MAX_SCALE);
+        assert_eq!(s.get(Key::PlantEnergy), 150.0);
+        assert_eq!(s.get(Key::SizePower), Settings::default().get(Key::SizePower));
+        assert_eq!(s.ui_scale, 1.25);
+        assert!(!s.fullscreen, "не bool — по умолчанию");
+        assert_eq!(Settings::from_json(&serde_json::json!([1, 2])), Settings::default());
+    }
+
+    #[test]
+    fn запись_атомарна_и_читается_обратно() {
+        let dir = std::env::temp_dir().join(format!("tinylife-test-{}", std::process::id()));
+        let path = dir.join("settings.json");
+        let mut s = Settings { seed: 777, scale: 100.0, ..Default::default() };
+        s.set(Key::PlantEnergy, 80.0);
+        s.save(&path).expect("запись");
+        assert_eq!(Settings::load(&path), s);
+        std::fs::write(&path, "{ битый").unwrap();
+        assert_eq!(Settings::load(&path), Settings::default());
+        let leftovers =
+            std::fs::read_dir(&dir).unwrap().filter(|e| e.as_ref().unwrap().file_name() != "settings.json");
+        assert_eq!(leftovers.count(), 0, "временных файлов не осталось");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn численности_растут_с_площадью() {
+        let s = Settings { scale: 100.0, ..Default::default() };
+        let cfg = s.world_config(1);
+        assert_eq!(cfg.vegetarians_at_start(), VEGETARIANS_AT_START * 100);
+        assert_eq!(cfg.predators_at_start(), PREDATORS_AT_START * 100);
+        let base = Settings::default().world_config(1);
+        assert_eq!((base.vegetarians_at_start(), base.predators_at_start()), (20, 6));
+    }
+
+    #[test]
+    fn изменение_правил_описывается_для_хроники() {
+        let old = Settings::default();
+        let mut new = old.clone();
+        new.set(Key::PlantEnergy, 80.0);
+        new.set(Key::Vegetarians, 50.0); // стартовое условие — не правило
+        assert_eq!(describe_change(&old, &new).as_deref(), Some("правила: энергия растения 50 → 80"));
+        assert_eq!(describe_change(&old, &old), None);
+    }
+
+    #[test]
+    fn ползунки_правил_берутся_из_мира() {
+        let mut s = Settings::default();
+        let mut rules_src = Settings::default();
+        rules_src.set(Key::PlantGrowth, 2.0);
+        rules_src.set(Key::CostScale, 3.0);
+        s.take_rules(&rules_src.rules());
+        assert_eq!(s.get(Key::PlantGrowth), 2.0);
+        assert_eq!(s.get(Key::CostScale), 3.0);
+    }
+}
