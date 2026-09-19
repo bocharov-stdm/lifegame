@@ -12,7 +12,7 @@ use life_core::rng::Rng;
 use life_core::senses::{Blind, predator_senses, vegetarian_senses};
 use life_core::vegetarian::Vegetarian;
 use life_core::{
-    Counters, Creature, Genome, PredatorGenome, Rules, Space, VegetarianGenome, World, WorldConfig,
+    Counters, Creature, Genome, PredatorGenome, Rules, Shape, Space, VegetarianGenome, World, WorldConfig,
 };
 
 const BASE: VegetarianGenome = VegetarianGenome::BASE;
@@ -783,16 +783,21 @@ fn счётчики_сходятся_с_численностью() {
     assert_eq!(c.since(&c), Counters::default());
 }
 
-/// Большой мир — тот же мир, только шире: стартовые популяции и потолки растут
-/// с площадью, высота прежняя.
+/// Большой мир — тот же мир, только больше: стартовые популяции и потолки
+/// растут с площадью. Полоса растёт вширь, остальные формы — в обе стороны.
 #[test]
 fn масштаб_растит_площадь() {
-    let w = World::new(&WorldConfig { scale: 10.0, ..Default::default() });
-    assert_eq!(w.space.height, WORLD_HEIGHT);
-    assert_eq!(w.space.width, WORLD_WIDTH * 10.0);
-    assert_eq!(w.vegetarians.len(), VEGETARIANS_AT_START * 10);
-    assert_eq!(w.predators.len(), PREDATORS_AT_START * 10);
-    assert!(w.vegetarians.iter().all(|v| v.x <= w.space.width));
+    let strip = World::new(&WorldConfig { scale: 10.0, shape: Shape::Strip, ..Default::default() });
+    assert_eq!(strip.space.height, WORLD_HEIGHT);
+    assert_eq!(strip.space.width, WORLD_WIDTH * 10.0);
+    for shape in Shape::ALL {
+        let w = World::new(&WorldConfig { scale: 10.0, shape, ..Default::default() });
+        assert_eq!(w.vegetarians.len(), VEGETARIANS_AT_START * 10, "{shape:?}");
+        assert_eq!(w.predators.len(), PREDATORS_AT_START * 10, "{shape:?}");
+        assert!(w.vegetarians.iter().all(|v| v.x <= w.space.width && v.y <= w.space.height), "{shape:?}");
+    }
+    let wide = World::new(&WorldConfig { scale: 10.0, ..Default::default() });
+    assert!(wide.space.height > WORLD_HEIGHT * 3.0, "3:2 растёт и вглубь: {:?}", wide.space);
 
     let mut e = World::new(&WorldConfig {
         scale: 2.0,
@@ -859,7 +864,8 @@ fn тик_укладывается_в_бюджет_на_фиксированно
     let started = std::time::Instant::now();
     for _ in 0..ticks {
         while w.plants.len() < 4000 {
-            w.plants.push(Plant::random(&w.space, &mut rng));
+            let p = w.flora().plant(&mut rng);
+            w.plants.push(p);
         }
         w.step();
     }
@@ -949,4 +955,31 @@ fn новые_правила_пересчитывают_живых_как_нов
         assert!(p.energy <= p.pheno.max_energy);
     }
     assert_eq!(w.rules, rules);
+}
+
+/// Профиль еды меняется на ходу: выросшее остаётся на местах, новое растёт
+/// по-новому. Мир пустой, поэтому растения не едят и порядок их сохраняется.
+#[test]
+fn профиль_еды_меняется_на_ходу() {
+    let mut w = empty_world(Rules::default());
+    for _ in 0..150 {
+        w.step();
+    }
+    let before = w.plants.len();
+    let third = w.space.width / 3.0;
+    // крутизна 30 по ширине: правее трети оси — e^-10 еды
+    let rules = w
+        .rules
+        .with_text("plant_width_profile", "exp")
+        .and_then(|r| r.with("plant_width_steepness", 30.0))
+        .unwrap();
+    w.set_rules(rules);
+    for _ in 0..300 {
+        w.step();
+    }
+    let (old, fresh) = w.plants.split_at(before);
+    assert!(fresh.len() > 500, "выросло {}", fresh.len());
+    let left = |ps: &[Plant]| ps.iter().filter(|p| p.x < third).count() as f64 / ps.len() as f64;
+    assert!(left(fresh) > 0.99, "новые — у левого края: {:.3}", left(fresh));
+    assert!(left(old) < 0.5, "старые остались равномерными: {:.3}", left(old));
 }

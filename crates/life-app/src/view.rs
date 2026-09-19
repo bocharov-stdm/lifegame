@@ -264,11 +264,13 @@ impl WorldView {
             return;
         }
         let aspect = (cam.world_h / cam.world_w) as f32;
-        // не больше 30% ширины и 90 точек высоты: карта не должна заслонять мир
+        // не больше 30% ширины и 90 точек высоты (130 — у мира, похожего на
+        // квадрат: иначе он сжимается в марку): карта не должна заслонять мир
+        let max_h = if aspect > 0.25 { 130.0 } else { 90.0 };
         let mut w = (rect.width() * 0.3).clamp(120.0, 320.0);
         let mut h = (w * aspect).max(14.0);
-        if h > 90.0 {
-            h = 90.0;
+        if h > max_h {
+            h = max_h;
             w = h / aspect;
         }
         let map = Rect::from_min_size(Pos2::new(rect.min.x + 10.0, rect.max.y - h - 10.0), Vec2::new(w, h));

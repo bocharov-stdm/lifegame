@@ -7,6 +7,7 @@
 //! и выметаются раз за тик.
 
 use crate::config::*;
+use crate::flora::Flora;
 use crate::genome::{PredatorGenome, VegetarianGenome, predator, variant_for, vegetarian};
 use crate::grid::Grid;
 use crate::plant::Plant;
@@ -15,7 +16,7 @@ use crate::predator::strategy as predator_strategy;
 use crate::rng::Rng;
 use crate::rules::Rules;
 use crate::senses::{GridPredatorSenses, GridVegetarianSenses, eat_plants, prey_in_contact};
-use crate::space::Space;
+use crate::space::{Shape, Space};
 use crate::vegetarian::Vegetarian;
 use crate::vegetarian::strategy as vegetarian_strategy;
 
@@ -25,6 +26,9 @@ use crate::vegetarian::strategy as vegetarian_strategy;
 pub struct WorldConfig {
     pub seed: u64,
     pub scale: f64,
+    /// Форма мира. По умолчанию 3:2: при x1 это базовый мир 6000x4000, тот же,
+    /// что у полосы, а большой мир растёт в обе стороны, а не в ленту.
+    pub shape: Shape,
     pub rules: Rules,
     pub n_vegetarians: Option<usize>,
     pub n_predators: Option<usize>,
@@ -41,6 +45,7 @@ impl Default for WorldConfig {
         WorldConfig {
             seed: 1,
             scale: 1.0,
+            shape: Shape::R3x2,
             rules: Rules::default(),
             n_vegetarians: None,
             n_predators: None,
@@ -53,13 +58,18 @@ impl Default for WorldConfig {
 }
 
 impl WorldConfig {
+    /// Размеры мира: масштаб задаёт площадь, форма — пропорции.
+    pub fn space(&self) -> Space {
+        Space::new(self.scale, self.shape)
+    }
+
     /// Сколько травоядных будет на старте: заданное или из конфига на площадь мира.
     pub fn vegetarians_at_start(&self) -> usize {
-        self.n_vegetarians.unwrap_or_else(|| Space::scaled(self.scale).per_area(VEGETARIANS_AT_START))
+        self.n_vegetarians.unwrap_or_else(|| self.space().per_area(VEGETARIANS_AT_START))
     }
 
     pub fn predators_at_start(&self) -> usize {
-        self.n_predators.unwrap_or_else(|| Space::scaled(self.scale).per_area(PREDATORS_AT_START))
+        self.n_predators.unwrap_or_else(|| self.space().per_area(PREDATORS_AT_START))
     }
 
     /// Геном стартовых хищников и мигрантов.
@@ -127,6 +137,9 @@ pub struct World {
     pub counters: Counters,
 
     next_id: u64,
+    /// Где растёт еда — выведено из правил и размеров мира, пересчитывается
+    /// вместе с правилами (`set_rules`).
+    flora: Flora,
     /// Поток мира: растения и мигранты. У каждого существа поток свой.
     rng: Rng,
     prey_grid: Grid,
@@ -136,12 +149,13 @@ pub struct World {
 
 impl World {
     pub fn new(cfg: &WorldConfig) -> Self {
-        let space = Space::scaled(cfg.scale);
+        let space = cfg.space();
         let rules = cfg.rules.clone();
         let mut rng = Rng::keyed(cfg.seed, 0);
         let (n_veg, n_pred) = (cfg.vegetarians_at_start(), cfg.predators_at_start());
 
         let mut w = World {
+            flora: Flora::new(&rules, &space),
             space,
             rules,
             tick: 0,
@@ -229,7 +243,7 @@ impl World {
         let count = count.min(cap.saturating_sub(self.plants.len()));
         self.counters.plants_grown += count as u64;
         for _ in 0..count {
-            let mut p = Plant::random(&self.space, &mut self.rng);
+            let mut p = self.flora.plant(&mut self.rng);
             p.born = self.tick.min(u32::MAX as u64) as u32;
             self.plants.push(p);
         }
@@ -371,7 +385,14 @@ impl World {
         for p in &mut self.predators {
             p.apply_rules(&rules);
         }
+        // уже выросшие растения остаются на местах, новые — по новому профилю
+        self.flora = Flora::new(&rules, &self.space);
         self.rules = rules;
+    }
+
+    /// Где растёт еда в этом мире.
+    pub fn flora(&self) -> &Flora {
+        &self.flora
     }
 
     // ── выбор существа (для игры) ───────────────────────────────────────────

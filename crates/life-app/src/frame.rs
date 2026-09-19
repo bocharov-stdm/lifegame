@@ -292,7 +292,6 @@ mod tests {
     #[test]
     fn кадр_огромного_мира_быстрый_и_лёгкий() {
         use crate::motion::Motion;
-        use life_core::plant::Plant;
         use life_core::rng::Rng;
 
         let mut world = World::new(&WorldConfig {
@@ -302,9 +301,9 @@ mod tests {
             ..Default::default()
         });
         let mut rng = Rng::new(9);
-        world.plants = (0..world.space.per_area(life_core::config::PLANT_MAX))
-            .map(|_| Plant::random(&world.space, &mut rng))
-            .collect();
+        let flora = world.flora().clone();
+        world.plants =
+            (0..world.space.per_area(life_core::config::PLANT_MAX)).map(|_| flora.plant(&mut rng)).collect();
         let (w, h) = (world.space.width, world.space.height);
 
         // вид на часть мира: ~200 тыс. растений в кадре; все родились на одном

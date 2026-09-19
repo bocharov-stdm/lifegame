@@ -10,15 +10,17 @@
 //!
 //! Намеренная смена поведения (новый ген, новая стратегия) ломает тест по
 //! определению: тогда константы переписываются отдельным коммитом, вместе с
-//! `--save-reference`. Тест печатает готовую таблицу для вставки.
+//! `--save-reference`. Тест печатает готовую таблицу для вставки. Новый случай
+//! без записанных отпечатков тоже роняет тест — чтобы не проходил молча.
 //!
 //! Математика (`ln`, `cos`, `powf`) — из системной библиотеки, и на Linux
 //! последний бит может отличаться: константы записаны на Windows и
 //! проверяются только там; на других системах тест печатает отпечатки.
 
+use life_core::flora::Profile;
 use life_core::genome::predator::Gene as PredGene;
 use life_core::genome::vegetarian::Gene as VegGene;
-use life_core::{Rules, World, WorldConfig};
+use life_core::{Rules, Shape, World, WorldConfig};
 
 const CHECKPOINTS: [u64; 10] = [1, 2, 10, 31, 100, 250, 500, 1000, 2000, 3000];
 
@@ -151,9 +153,10 @@ fn cases() -> Vec<Case> {
             ticks: 3000,
             before: |_| {},
         },
+        // Полоса — явно: записан до форм, а по умолчанию теперь 3:2.
         Case {
             name: "D: сид 2, масштаб 10",
-            cfg: WorldConfig { seed: 2, scale: 10.0, ..Default::default() },
+            cfg: WorldConfig { seed: 2, scale: 10.0, shape: Shape::Strip, ..Default::default() },
             ticks: 500,
             before: |_| {},
         },
@@ -184,6 +187,22 @@ fn cases() -> Vec<Case> {
                 ..Default::default()
             },
             ticks: 2000,
+            before: |_| {},
+        },
+        // Форма и табличные профили еды: другой путь выборки растений.
+        Case {
+            name: "G: сид 6, квадрат x10, еда линейно и волнами",
+            cfg: WorldConfig {
+                seed: 6,
+                scale: 10.0,
+                shape: Shape::Square,
+                rules: rules(&[
+                    ("plant_depth_profile", Profile::Linear.index()),
+                    ("plant_width_profile", Profile::Waves.index()),
+                ]),
+                ..Default::default()
+            },
+            ticks: 1000,
             before: |_| {},
         },
     ]
@@ -227,6 +246,8 @@ const GOLDEN: &[&[(u64, u64)]] = &[
     &[(1, 0x316ae041f66e9497), (2, 0xcde320a742b5ee26), (10, 0x2a34c6e3462bf435), (31, 0xb792326ea3542dfb), (100, 0x7afa623114d83a5c), (250, 0x0406007e3cc76bad), (500, 0x3186ce3e980c5116), (1000, 0xed20f5edc4897dd1), ],
     // F: сид 5, смесь стратегий
     &[(1, 0xad3cc43fe3d33d77), (2, 0xa5bb3b7ee9c55b33), (10, 0x13a980e8230df73f), (31, 0x9a2e321eabf395c6), (100, 0xf291a3c5567ea00b), (250, 0x3935fac9e2db78d9), (500, 0xc90a553d76af1598), (1000, 0xc8e704856647930e), (2000, 0x7a52686f9fa7da29), ],
+    // G: сид 6, квадрат x10, еда линейно и волнами
+    &[(1, 0x82f4dfbdcc7ae9e9), (2, 0xe2a1085dd9b13250), (10, 0x35250327912b46de), (31, 0x7db6b09749b88043), (100, 0x3151615edb9f73bb), (250, 0x7cf23452346a0165), (500, 0x2479cbb9173c7541), (1000, 0xca0da278866df1ad), ],
 ];
 
 #[cfg(not(windows))]
@@ -235,8 +256,11 @@ const GOLDEN: &[&[(u64, u64)]] = &[];
 #[test]
 fn мир_ведёт_себя_как_при_записи() {
     let mut table = String::new();
-    let mut first_mismatch = None;
-    for (i, case) in cases().iter().enumerate() {
+    let cases = cases();
+    // новый случай без записанных отпечатков не должен проходить молча
+    let mut first_mismatch = (!GOLDEN.is_empty() && GOLDEN.len() != cases.len())
+        .then(|| format!("отпечатков записано для {} случаев из {}", GOLDEN.len(), cases.len()));
+    for (i, case) in cases.iter().enumerate() {
         let (got, w, seen) = run(case);
 
         // Конфигурация должна задевать то, ради чего она есть.
@@ -260,6 +284,11 @@ fn мир_ведёт_себя_как_при_записи() {
                     case.name
                 );
             }
+            6 => assert!(
+                !w.vegetarians.is_empty() && !w.predators.is_empty() && c.vegetarians_eaten > 0,
+                "{}: жизнь идёт — травоядные едят, хищники охотятся",
+                case.name
+            ),
             _ => {}
         }
 

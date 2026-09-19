@@ -3,7 +3,8 @@
 //!
 //! - [`Snapshot`] — срез мира: численности, накопленные счётчики рождений и
 //!   смертей, разброс каждого гена (не только среднее: среднее прячет раскол
-//!   на два вида), где по глубине живут травоядные и растут растения, сытость.
+//!   на два вида), где по глубине и по ширине живут травоядные и растут
+//!   растения, сытость.
 //! - [`EventTracker`] / [`events`] — хроника по срезам: обвалы и подъёмы численности с причинами,
 //!   вымирание и возвращение хищников, растения у потолка, сдвиги генов,
 //!   сжатие травоядных в узкий слой.
@@ -15,6 +16,9 @@ use life_core::{Counters, World};
 
 /// На сколько полос делится глубина в срезе (0 — поверхность).
 pub const DEPTH_BANDS: usize = 10;
+/// На сколько полос делится ширина (0 — левый край): видно, куда стянулась
+/// жизнь, когда еда распределена по ширине неравномерно.
+pub const WIDTH_BANDS: usize = 10;
 
 /// Разброс величины по популяции.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -121,6 +125,8 @@ pub struct Snapshot {
     pub vegetarian_depth: Option<Spread>,
     pub vegetarians_by_depth: [usize; DEPTH_BANDS],
     pub plants_by_depth: [usize; DEPTH_BANDS],
+    pub vegetarians_by_width: [usize; WIDTH_BANDS],
+    pub plants_by_width: [usize; WIDTH_BANDS],
     /// Средняя заполненность бака травоядных, 0..1.
     pub vegetarian_fullness: Option<f64>,
     /// Доля голодных хищников — тех, кто сейчас охотится.
@@ -130,8 +136,8 @@ pub struct Snapshot {
     pub predator_genes: Option<[GeneStat; predator::N]>,
 }
 
-fn band(y: f64, height: f64) -> usize {
-    ((y / height * DEPTH_BANDS as f64) as usize).min(DEPTH_BANDS - 1)
+fn band(at: f64, len: f64, bands: usize) -> usize {
+    ((at / len * bands as f64) as usize).min(bands - 1)
 }
 
 fn average(values: impl Iterator<Item = f64>) -> Option<f64> {
@@ -141,20 +147,22 @@ fn average(values: impl Iterator<Item = f64>) -> Option<f64> {
 
 impl Snapshot {
     pub fn of(world: &World) -> Snapshot {
-        let h = world.space.height;
+        let (w, h) = (world.space.width, world.space.height);
         let vegs = &world.vegetarians;
         let preds = &world.predators;
 
         let genes = gene_stats(&vegetarian::GENES, vegs.iter().map(|v| &v.genome));
         let mut depth: Vec<f64> = vegs.iter().map(|v| v.y / h * 100.0).collect();
 
-        let mut vegetarians_by_depth = [0; DEPTH_BANDS];
+        let (mut vegetarians_by_depth, mut vegetarians_by_width) = ([0; DEPTH_BANDS], [0; WIDTH_BANDS]);
         for v in vegs {
-            vegetarians_by_depth[band(v.y, h)] += 1;
+            vegetarians_by_depth[band(v.y, h, DEPTH_BANDS)] += 1;
+            vegetarians_by_width[band(v.x, w, WIDTH_BANDS)] += 1;
         }
-        let mut plants_by_depth = [0; DEPTH_BANDS];
+        let (mut plants_by_depth, mut plants_by_width) = ([0; DEPTH_BANDS], [0; WIDTH_BANDS]);
         for p in &world.plants {
-            plants_by_depth[band(p.y, h)] += 1;
+            plants_by_depth[band(p.y, h, DEPTH_BANDS)] += 1;
+            plants_by_width[band(p.x, w, WIDTH_BANDS)] += 1;
         }
 
         Snapshot {
@@ -170,6 +178,8 @@ impl Snapshot {
             vegetarian_depth: Spread::of(&mut depth),
             vegetarians_by_depth,
             plants_by_depth,
+            vegetarians_by_width,
+            plants_by_width,
             vegetarian_fullness: average(vegs.iter().map(|v| v.energy / v.pheno.max_energy)),
             predators_hungry: average(preds.iter().map(|p| p.hungry() as u8 as f64)),
             predator_fullness: average(preds.iter().map(|p| p.energy / p.pheno.max_energy)),

@@ -1,12 +1,15 @@
 //! Меню, «Новый мир», настройки экрана и справка.
 
 use eframe::egui::{self, Align2, RichText, Vec2};
+use life_core::flora;
 use life_core::genome::{predator, vegetarian};
 use life_core::space::{MAX_SCALE, MIN_SCALE};
+use life_core::{Rules, Shape, Space};
 
 use crate::app::{LifeApp, Screen};
-use crate::settings::{FIELDS, PRESETS, SEED_MAX, Settings, Tab, UI_SCALES};
-use crate::theme::{self, ACCENT, DANGER, GOOD, MUTED, VEIL, spaced};
+use crate::frame::PLANT_COLOR;
+use crate::settings::{FIELDS, Field, PRESETS, SEED_MAX, Settings, Tab, UI_SCALES};
+use crate::theme::{self, ACCENT, BG, DANGER, GOOD, MUTED, VEIL, spaced};
 
 /// Оценка большого мира: сколько существ на старте и как быстро пойдёт тик.
 /// Цена тика берётся из замера мира, который идёт сейчас (фон меню или
@@ -81,6 +84,28 @@ impl LifeApp {
 
     pub fn setup_screen(&mut self, ui: &mut egui::Ui) {
         let measured = self.view.frame.as_ref().map(|f| (f.tick_ms, f.scale));
+        // Кнопки — внизу, вне прокрутки: вкладки разной высоты, а «Начать»
+        // должна быть видна всегда.
+        egui::Panel::bottom("кнопки нового мира").show(ui, |ui| {
+            ui.add_space(6.0);
+            ui.vertical_centered(|ui| {
+                ui.set_max_width(760.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Назад").clicked() {
+                        self.save_settings();
+                        self.screen = Screen::Menu;
+                    }
+                    if ui.button("По умолчанию").on_hover_text("Вернуть значения этой вкладки").clicked()
+                    {
+                        self.settings.reset(self.setup_tab);
+                    }
+                    if ui.add(theme::primary("Начать")).clicked() {
+                        self.start_game();
+                    }
+                });
+            });
+            ui.add_space(4.0);
+        });
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
@@ -88,38 +113,41 @@ impl LifeApp {
                     ui.label(RichText::new("Новый мир").size(26.0).strong());
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.setup_tab, Tab::World, RichText::new("Мир").size(16.0));
-                        ui.selectable_value(
-                            &mut self.setup_tab,
-                            Tab::Lab,
-                            RichText::new("Лаборатория").size(16.0),
-                        );
+                        for (tab, name) in
+                            [(Tab::World, "Мир"), (Tab::Food, "Еда"), (Tab::Lab, "Лаборатория")]
+                        {
+                            ui.selectable_value(&mut self.setup_tab, tab, RichText::new(name).size(16.0));
+                        }
                     });
                     ui.separator();
                     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                        if self.setup_tab == Tab::World {
-                            self.world_tab(ui, measured);
+                        match self.setup_tab {
+                            Tab::World => self.world_tab(ui, measured),
+                            Tab::Food => {
+                                ui.colored_label(
+                                    MUTED,
+                                    "Где растут растения. Это правила мира: их можно менять и посреди \
+                                     партии — панелью «Лаборатория».",
+                                );
+                                ui.add_space(4.0);
+                            }
+                            Tab::Lab => {
+                                ui.colored_label(
+                                    MUTED,
+                                    "Правила мира. Их можно менять и посреди партии — панелью «Лаборатория».",
+                                );
+                                ui.add_space(4.0);
+                            }
+                        }
+                        if self.setup_tab == Tab::Food {
+                            let space = Space::new(self.settings.scale, self.settings.shape);
+                            ui.horizontal_top(|ui| {
+                                ui.vertical(|ui| fields(ui, &mut self.settings, Tab::Food));
+                                ui.add_space(12.0);
+                                food_preview(ui, &self.settings.rules(), space);
+                            });
                         } else {
-                            ui.colored_label(
-                                MUTED,
-                                "Правила мира. Их можно менять и посреди партии — панелью «Лаборатория».",
-                            );
-                            ui.add_space(4.0);
-                        }
-                        fields(ui, &mut self.settings, self.setup_tab);
-                    });
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("Назад").clicked() {
-                            self.save_settings();
-                            self.screen = Screen::Menu;
-                        }
-                        if ui.button("По умолчанию").on_hover_text("Вернуть значения этой вкладки").clicked()
-                        {
-                            self.settings.reset(self.setup_tab);
-                        }
-                        if ui.add(theme::primary("Начать")).clicked() {
-                            self.start_game();
+                            fields(ui, &mut self.settings, self.setup_tab);
                         }
                     });
                 });
@@ -152,11 +180,32 @@ impl LifeApp {
                         t.trim().trim_start_matches('×').replace(['\u{202F}', ' '], "").parse().ok()
                     }),
             )
-            .on_hover_text("Во сколько раз мир больше базового 6000×4000. Растёт вширь: глубина та же.");
+            .on_hover_text("Во сколько раз мир больше базового 6000×4000 по площади.");
             s.scale = s.scale.round().clamp(MIN_SCALE, MAX_SCALE);
         });
         let (text, color) = estimate(s, measured);
         ui.colored_label(color, text);
+        ui.add_space(8.0);
+
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Форма").strong());
+            for shape in Shape::ALL {
+                let hint = match shape {
+                    Shape::Strip => "Высота всегда 4000, большой мир растёт только вширь — длинной лентой.",
+                    _ => "Большой мир растёт в обе стороны и держит пропорции.",
+                };
+                ui.selectable_value(&mut s.shape, shape, shape.label()).on_hover_text(hint);
+            }
+        });
+        let space = Space::new(s.scale, s.shape);
+        ui.colored_label(
+            MUTED,
+            format!(
+                "мир {} × {}; глубина и еда по ней — в процентах, так что баланс от формы не зависит",
+                spaced(space.width.round() as u64),
+                spaced(space.height.round() as u64)
+            ),
+        );
         ui.add_space(8.0);
 
         ui.label(RichText::new("Сид").strong());
@@ -211,9 +260,9 @@ impl LifeApp {
             egui::ScrollArea::vertical().max_height(520.0).show(ui, |ui| {
                 ui.label(RichText::new("Что происходит").strong());
                 ui.label(
-                    "Растения растут гуще у поверхности (вверху). Травоядные едят их, делятся и мутируют; хищники \
-                     охотятся на травоядных и тоже мутируют. Отбор никто не задаёт: выживают те, чей геном \
-                     окупается.",
+                    "Растения по умолчанию растут гуще у поверхности (вверху). Травоядные едят их, делятся и \
+                     мутируют; хищники охотятся на травоядных и тоже мутируют. Отбор никто не задаёт: выживают \
+                     те, чей геном окупается.",
                 );
                 ui.label(
                     "Светлое ядро травоядного — сколько у него энергии: у голодных оно маленькое. Глазок и нос \
@@ -261,10 +310,19 @@ impl LifeApp {
                     }
                 });
                 ui.add_space(6.0);
-                ui.label(RichText::new("Масштаб").strong());
+                ui.label(RichText::new("Масштаб и форма").strong());
                 ui.label(
-                    "Большой мир растёт вширь, глубина та же, а плотность жизни — прежняя. Если тик не успевает за \
+                    "Масштаб — во сколько раз мир больше по площади; плотность жизни та же. Форма — его \
+                     пропорции: квадрат, 3:2, 2:1 или полоса, которая растёт только вширь. Если тик не успевает за \
                      скоростью, вверху появляется «отстаёт»: мир идёт медленнее, но окно не тормозит.",
+                );
+                ui.add_space(6.0);
+                ui.label(RichText::new("Еда").strong());
+                ui.label(
+                    "Где растут растения, задаётся по глубине и по ширине отдельно: равномерно, линейно, \
+                     экспонентой, логарифмом или волнами-полосами. Гены слоя под еду не подстраиваются — \
+                     травоядные сами ищут, на какой глубине выгоднее. Профиль можно менять и посреди партии: \
+                     выросшее остаётся, новое растёт по-новому.",
                 );
             });
         });
@@ -276,15 +334,71 @@ fn ui_scale_label(v: f64) -> String {
     if v == 0.0 { "как в системе".into() } else { format!("{:.0}%", v * 100.0) }
 }
 
-/// Ползунки одной вкладки по таблице `FIELDS`.
+/// Поле из `FIELDS`: ползунок или, если у поля есть варианты, выпадающий
+/// список. true — значение изменилось.
+pub fn field_input(ui: &mut egui::Ui, f: &Field, value: &mut f64) -> bool {
+    if f.choices.is_empty() {
+        let slider =
+            egui::Slider::new(value, f.lo..=f.hi).step_by(f.step).custom_formatter(|v, _| (f.format)(v));
+        return ui.add(slider).on_hover_text(f.hint).changed();
+    }
+    let mut k = (*value as usize).min(f.choices.len() - 1);
+    let before = k;
+    egui::ComboBox::from_id_salt(f.label)
+        .selected_text(f.choices[k])
+        .width(150.0)
+        .show_ui(ui, |ui| {
+            for (i, name) in f.choices.iter().enumerate() {
+                ui.selectable_value(&mut k, i, *name);
+            }
+        })
+        .response
+        .on_hover_text(f.hint);
+    *value = k as f64;
+    k != before
+}
+
+/// Предпросмотр еды: мир в своих пропорциях, закрашенный плотностью растений
+/// по правилам — ярче там, где гуще. Верх — поверхность.
+pub fn food_preview(ui: &mut egui::Ui, rules: &Rules, space: Space) {
+    let aspect = (space.width / space.height) as f32;
+    let (max_w, max_h) = (ui.available_width().clamp(120.0, 280.0), 170.0);
+    // очень длинная полоса всё равно видна хотя бы полоской в 14 точек
+    let size = if max_w / aspect <= max_h {
+        Vec2::new(max_w, (max_w / aspect).max(14.0))
+    } else {
+        Vec2::new(max_h * aspect, max_h)
+    };
+    ui.vertical(|ui| {
+        let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        let (nx, ny) = (((size.x / 4.0) as usize).clamp(8, 70), ((size.y / 4.0) as usize).clamp(3, 42));
+        let cell = Vec2::new(size.x / nx as f32, size.y / ny as f32);
+        let plant = theme::rgb(PLANT_COLOR);
+        for j in 0..ny {
+            for i in 0..nx {
+                let d = flora::density(rules, (i as f64 + 0.5) / nx as f64, (j as f64 + 0.5) / ny as f64);
+                let min = rect.min + Vec2::new(i as f32 * cell.x, j as f32 * cell.y);
+                // клетки с запасом в полточки: иначе между ними видны швы
+                let r = egui::Rect::from_min_size(min, cell + Vec2::splat(0.5)).intersect(rect);
+                painter.rect_filled(r, 0.0, BG.lerp_to_gamma(plant, d.sqrt() as f32));
+            }
+        }
+        painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, MUTED), egui::StrokeKind::Outside);
+        ui.colored_label(MUTED, "вверху поверхность; ярче — гуще");
+    });
+}
+
+/// Поля одной вкладки по таблице `FIELDS` — те, что сейчас видны.
 fn fields(ui: &mut egui::Ui, s: &mut Settings, tab: Tab) {
-    egui::Grid::new(("поля", tab == Tab::World)).num_columns(3).spacing([12.0, 10.0]).show(ui, |ui| {
+    egui::Grid::new(("поля", tab as u8)).num_columns(3).spacing([12.0, 10.0]).show(ui, |ui| {
         for f in FIELDS.iter().filter(|f| f.tab == tab) {
+            if !(f.shown)(s) {
+                continue;
+            }
             ui.label(f.label).on_hover_text(f.hint);
             let mut v = s.get(f.key);
-            let slider =
-                egui::Slider::new(&mut v, f.lo..=f.hi).step_by(f.step).custom_formatter(|v, _| (f.format)(v));
-            if ui.add(slider).on_hover_text(f.hint).changed() {
+            if field_input(ui, f, &mut v) {
                 s.set(f.key, v);
             }
             if s.is_default(f.key) {

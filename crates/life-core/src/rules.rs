@@ -4,6 +4,7 @@
 //! игра). Значения по умолчанию — ровно константы из config.rs.
 
 use crate::config::*;
+use crate::flora::{self, Along, FoodAxis, Profile};
 use crate::genome::vegetarian::{GENES, Gene};
 
 const BASE_SIZE: f64 = GENES[Gene::Size as usize].base;
@@ -11,7 +12,8 @@ const BASE_SPEED: f64 = GENES[Gene::Speed as usize].base;
 const BASE_VISION: f64 = GENES[Gene::Vision as usize].base;
 
 /// Имена настраиваемых правил — для отчёта (`--rule имя=число`) и настроек.
-pub const RULE_KEYS: [&str; 10] = [
+/// Профили еды — по шесть на ось, по порядку `flora::AXIS_PARAMS`.
+pub const RULE_KEYS: [&str; 22] = [
     "plant_rate",
     "plant_energy",
     "mutation_sigma",
@@ -22,7 +24,29 @@ pub const RULE_KEYS: [&str; 10] = [
     "predator_divide_chance",
     "predator_max_energy",
     "predator_migration",
+    "plant_depth_profile",
+    "plant_depth_steepness",
+    "plant_depth_end",
+    "plant_depth_bend",
+    "plant_depth_waves",
+    "plant_depth_amplitude",
+    "plant_width_profile",
+    "plant_width_steepness",
+    "plant_width_end",
+    "plant_width_bend",
+    "plant_width_waves",
+    "plant_width_amplitude",
 ];
+
+/// Параметры профилей еды, пока их не выбрали (config.rs).
+const FOOD_AXIS: FoodAxis = FoodAxis {
+    profile: 0.0,
+    steepness: PLANT_WIDTH_DECAY,
+    end: PLANT_LINEAR_END,
+    bend: PLANT_LOG_BEND,
+    waves: PLANT_WAVES,
+    amplitude: PLANT_WAVE_AMPLITUDE,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Rules {
@@ -46,6 +70,9 @@ pub struct Rules {
     pub predator_max_energy: f64,
     /// Тиков между мигрантами; 0 — миграции нет.
     pub predator_migration: f64,
+    /// Где растёт еда: профиль по глубине и по ширине (`flora.rs`).
+    pub plant_depth: FoodAxis,
+    pub plant_width: FoodAxis,
     // производные коэффициенты — считает `renormalize`
     size_coef: f64,
     speed_coef: f64,
@@ -65,6 +92,12 @@ impl Default for Rules {
             predator_divide_chance: PREDATOR_DIVIDE_CHANCE,
             predator_max_energy: PREDATOR_MAX_ENERGY,
             predator_migration: PREDATOR_MIGRATION_PERIOD,
+            plant_depth: FoodAxis {
+                profile: Profile::Exp.index(),
+                steepness: PLANT_DEPTH_DECAY,
+                ..FOOD_AXIS
+            },
+            plant_width: FoodAxis { profile: Profile::Uniform.index(), ..FOOD_AXIS },
             size_coef: 0.0,
             speed_coef: 0.0,
             sight_coef: 0.0,
@@ -83,6 +116,12 @@ impl Rules {
             return Err(format!("правило {key}: нужно конечное число, а не {value}"));
         }
         let mut r = self.clone();
+        if let Some((along, param)) = flora::split_key(key) {
+            FoodAxis::check(param, value)
+                .map_err(|need| format!("правило {key}: нужно {need}, а не {value}"))?;
+            *r.food_axis_mut(along).slot(param).expect("параметр разобран split_key") = value;
+            return Ok(r);
+        }
         match key {
             "plant_rate" => r.plant_rate = value,
             "plant_energy" => r.plant_energy = value,
@@ -119,8 +158,31 @@ impl Rules {
         Ok(r)
     }
 
+    /// Как `with`, но значение — текстом: числом, а у профиля еды — и именем
+    /// (`plant_width_profile=waves`). Для флагов `--rule` отчёта и игры.
+    pub fn with_text(&self, key: &str, text: &str) -> Result<Rules, String> {
+        let text = text.trim();
+        if !RULE_KEYS.contains(&key) {
+            return Err(format!("нет такого правила: {key}; есть {}", RULE_KEYS.join(", ")));
+        }
+        if let Ok(value) = text.parse::<f64>() {
+            return self.with(key, value);
+        }
+        match (flora::split_key(key), Profile::parse(text)) {
+            (Some((_, "profile")), Some(p)) => self.with(key, p.index()),
+            (Some((_, "profile")), None) => Err(format!(
+                "правило {key}: нет профиля «{text}»; есть {}",
+                Profile::ALL.map(|p| p.key()).join(", ")
+            )),
+            _ => Err(format!("правило {key}: «{text}» — не число")),
+        }
+    }
+
     /// Значение правила по имени (для отчёта и настроек).
     pub fn get(&self, key: &str) -> Option<f64> {
+        if let Some((along, param)) = flora::split_key(key) {
+            return self.food_axis(along).get(param);
+        }
         Some(match key {
             "plant_rate" => self.plant_rate,
             "plant_energy" => self.plant_energy,
@@ -134,6 +196,20 @@ impl Rules {
             "predator_migration" => self.predator_migration,
             _ => return None,
         })
+    }
+
+    pub fn food_axis(&self, along: Along) -> &FoodAxis {
+        match along {
+            Along::Depth => &self.plant_depth,
+            Along::Width => &self.plant_width,
+        }
+    }
+
+    fn food_axis_mut(&mut self, along: Along) -> &mut FoodAxis {
+        match along {
+            Along::Depth => &mut self.plant_depth,
+            Along::Width => &mut self.plant_width,
+        }
     }
 
     /// Смена показателя меняет только КРУТИЗНУ: базовый стат стоит столько же,
@@ -156,5 +232,63 @@ impl Rules {
         self.size_coef * size.powf(self.size_power)
             + self.speed_coef * speed.powf(self.speed_power) * mass
             + self.sight_coef * vision.powf(self.sight_power)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn каждое_правило_читается_и_пишется_по_имени() {
+        let r = Rules::default();
+        for key in RULE_KEYS {
+            let v = r.get(key).unwrap_or_else(|| panic!("{key} читается"));
+            assert_eq!(r.with(key, v).expect(key), r, "{key}: записать то же — ничего не поменять");
+        }
+        assert_eq!(r.get("нет_такого"), None);
+    }
+
+    #[test]
+    fn профиль_еды_по_умолчанию_как_в_конфиге() {
+        let r = Rules::default();
+        assert_eq!(r.plant_depth.kind(), Profile::Exp);
+        assert_eq!(r.plant_depth.steepness, PLANT_DEPTH_DECAY);
+        assert_eq!(r.plant_width.kind(), Profile::Uniform);
+    }
+
+    /// Пределы — только за которыми правило теряет смысл.
+    #[test]
+    fn профиль_еды_отвергает_бессмыслицу() {
+        let r = Rules::default();
+        for (key, v) in [
+            ("plant_depth_profile", 1.5),
+            ("plant_depth_profile", Profile::ALL.len() as f64),
+            ("plant_width_profile", -1.0),
+            ("plant_width_waves", 0.0),
+            ("plant_width_waves", 2.5),
+            ("plant_depth_amplitude", 150.0),
+            ("plant_depth_end", -1.0),
+            ("plant_depth_steepness", flora::MAX_STEEPNESS + 1.0),
+            ("plant_width_bend", -0.1),
+            ("plant_width_bend", f64::NAN),
+        ] {
+            assert!(r.with(key, v).is_err(), "{key}={v} должно быть отвергнуто");
+        }
+        assert!(r.with("plant_width_amplitude", 100.0).is_ok());
+        assert!(r.with("plant_depth_steepness", 0.0).is_ok(), "ноль — равномерно, это осмысленно");
+    }
+
+    #[test]
+    fn профиль_можно_назвать_именем() {
+        let r = Rules::default();
+        let waves = r.with_text("plant_width_profile", "waves").expect("имя профиля");
+        assert_eq!(waves.plant_width.kind(), Profile::Waves);
+        assert_eq!(r.with_text("plant_width_profile", " волны ").unwrap(), waves);
+        assert_eq!(r.with_text("plant_width_profile", "4").unwrap(), waves);
+        assert_eq!(r.with_text("plant_energy", "80").unwrap().plant_energy, 80.0);
+        assert!(r.with_text("plant_width_profile", "круги").unwrap_err().contains("waves"));
+        assert!(r.with_text("plant_energy", "много").is_err());
+        assert!(r.with_text("нет_такого", "waves").unwrap_err().contains("нет такого правила"));
     }
 }

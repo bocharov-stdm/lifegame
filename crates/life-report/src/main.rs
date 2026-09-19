@@ -5,6 +5,7 @@
 //!     cargo run -p life-report --release -- --predators 20 --predator-speed 18
 //!     cargo run -p life-report --release -- --rule plant_energy=80 --rule size_power=1.5
 //!     cargo run -p life-report --release -- --scale 100 --ticks 2000   # мир в 100 раз больше
+//!     cargo run -p life-report --release -- --scale 100 --shape 1:1    # и квадратный
 //!     cargo run -p life-report --release -- --veg-mix 1 1 --pred-mix 1 1   # стратегии поровну
 //!     cargo run -p life-report --release -- --compare reference/fingerprint.json
 //!     cargo run -p life-report --release -- --save-reference reference/fingerprint.json
@@ -33,7 +34,7 @@ use life_core::genome::vegetarian::Gene;
 use life_core::predator::strategy as predator_strategy;
 use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::vegetarian::strategy as vegetarian_strategy;
-use life_core::{Rules, WorldConfig};
+use life_core::{Rules, Shape, WorldConfig};
 use life_sim::observe::{self, Event, ascii_map};
 use life_sim::{Limits, SimResult, simulate};
 use rayon::prelude::*;
@@ -60,6 +61,10 @@ struct Args {
     /// Масштаб мира по площади (1 — базовый 6000x4000; от 1 до 10 000).
     #[arg(long, default_value_t = 1.0, value_parser = parse_scale)]
     scale: f64,
+    /// Форма мира: 1:1, 3:2, 2:1 или strip (полоса высотой 4000, как до форм).
+    /// При масштабе 1 полоса и 3:2 — один и тот же мир 6000x4000.
+    #[arg(long, default_value = "3:2", value_parser = Shape::parse)]
+    shape: Shape,
     #[arg(long)]
     vegetarians: Option<usize>,
     #[arg(long)]
@@ -75,7 +80,8 @@ struct Args {
     /// Стартовая смесь стратегий хищников: (стандартный, засадник).
     #[arg(long, num_args = 1.., value_name = "ДОЛИ")]
     pred_mix: Vec<f64>,
-    /// Правило мира: имя=число (можно несколько раз).
+    /// Правило мира: имя=число (можно несколько раз). Профиль еды — и именем:
+    /// `--rule plant_width_profile=waves`.
     #[arg(long = "rule", value_name = "ИМЯ=ЧИСЛО")]
     rules: Vec<String>,
     /// Бюджет работы на весь прогон (по умолчанию растёт с --ticks).
@@ -127,8 +133,7 @@ fn parse_rules(pairs: &[String]) -> Result<Rules, String> {
     let mut rules = Rules::default();
     for pair in pairs {
         let (key, value) = pair.split_once('=').ok_or(format!("правило «{pair}»: нужно имя=число"))?;
-        let value: f64 = value.trim().parse().map_err(|_| format!("правило {key}: «{value}» — не число"))?;
-        rules = rules.with(key.trim(), value)?;
+        rules = rules.with_text(key.trim(), value)?;
     }
     Ok(rules)
 }
@@ -179,6 +184,7 @@ fn main() {
     let base_cfg = WorldConfig {
         seed: 0,
         scale: args.scale,
+        shape: args.shape,
         rules: rules.clone(),
         n_vegetarians: args.vegetarians,
         n_predators: args.predators,
@@ -219,11 +225,13 @@ fn main() {
     };
 
     if !quiet {
+        let space = base_cfg.space();
         println!(
-            "Мир x{}: {:.0}x{:.0}, {} тиков, сиды {:?}, потоков {}",
+            "Мир x{} ({}): {:.0}x{:.0}, {} тиков, сиды {:?}, потоков {}",
             args.scale,
-            WORLD_WIDTH * args.scale,
-            WORLD_HEIGHT,
+            args.shape.label(),
+            space.width,
+            space.height,
             ticks,
             seeds,
             rayon::current_num_threads()

@@ -95,6 +95,8 @@ fn snapshot(s: &Snapshot) -> Value {
         "vegetarian_depth_pct": s.vegetarian_depth.as_ref().map(spread),
         "vegetarians_by_depth": s.vegetarians_by_depth,
         "plants_by_depth": s.plants_by_depth,
+        "vegetarians_by_width": s.vegetarians_by_width,
+        "plants_by_width": s.plants_by_width,
         "vegetarian_fullness": s.vegetarian_fullness.map(r),
         "predators_hungry": s.predators_hungry.map(r),
         "predator_fullness": s.predator_fullness.map(r),
@@ -115,10 +117,10 @@ pub struct Run<'a> {
 
 pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, runs: &[Run]) -> Value {
     let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(rules.get(k)))).collect();
-    let space = life_core::Space::scaled(cfg.scale);
+    let space = cfg.space();
     json!({
         "format": "life-report/2",
-        "world": { "scale": cfg.scale, "width": space.width, "height": space.height },
+        "world": { "scale": cfg.scale, "shape": cfg.shape.key(), "width": space.width, "height": space.height },
         "ticks": ticks,
         "sample_every": sample_every,
         "rules": rules,

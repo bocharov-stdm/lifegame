@@ -63,6 +63,8 @@ pub struct LifeApp {
     pub lab_open: bool,
     /// Черновик правил лаборатории на ходу; применяется кнопкой.
     pub lab: Settings,
+    /// Вкладка лаборатории: правила (`Tab::Lab`) или еда (`Tab::Food`).
+    pub lab_tab: Tab,
     pub tool: Tool,
     pub setup_tab: Tab,
     pub prefs_open: bool,
@@ -112,6 +114,7 @@ impl LifeApp {
             side_tab: SideTab::Charts,
             whole: false,
             lab_open: false,
+            lab_tab: Tab::Lab,
             tool: Tool::Select,
             setup_tab: Tab::World,
             prefs_open: false,

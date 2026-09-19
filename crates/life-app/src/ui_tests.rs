@@ -12,11 +12,12 @@ use eframe::egui::accesskit::Role;
 use eframe::egui::{Pos2, Rect, Vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
-use life_core::{Creature, WorldConfig};
+use life_core::flora::Profile;
+use life_core::{Creature, Shape, WorldConfig};
 
 use crate::app::{LifeApp, Screen, SideTab};
 use crate::frame::Instance;
-use crate::settings::Tab;
+use crate::settings::{Key, Tab};
 use crate::sim::Command;
 
 /// Видеокарта одна: параллельные рендеры wgpu в одном процессе роняют
@@ -31,7 +32,10 @@ const SMALL: Vec2 = Vec2::new(960.0, 600.0);
 const NORMAL: Vec2 = Vec2::new(1600.0, 900.0);
 
 fn harness(size: Vec2) -> Harness<'static, LifeApp> {
-    let cfg = WorldConfig { seed: 7, ..Default::default() };
+    harness_with(size, WorldConfig { seed: 7, ..Default::default() })
+}
+
+fn harness_with(size: Vec2, cfg: WorldConfig) -> Harness<'static, LifeApp> {
     let mut h =
         Harness::builder().with_size(size).wgpu().build_eframe(|cc| LifeApp::new(cc, Some(cfg), None));
     h.state_mut().sim.send(Command::SetPaused(true));
@@ -188,20 +192,65 @@ fn крупный_план_рисуется() {
     shot(&mut h, "крупный-план-1600x900");
 }
 
+/// Квадратный мир с едой волнами по ширине: вблизи видна миникарта квадратом,
+/// и она не заслоняет инструменты.
+#[test]
+fn квадратный_мир_помещается_в_окно() {
+    let _gpu = gpu();
+    let rules = life_core::Rules::default().with_text("plant_width_profile", "waves").expect("профиль");
+    for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
+        let cfg = WorldConfig {
+            seed: 7,
+            scale: 10.0,
+            shape: Shape::Square,
+            rules: rules.clone(),
+            ..Default::default()
+        };
+        let mut h = harness_with(size, cfg);
+        h.state_mut().side_open = false;
+        settle(&mut h);
+        shot(&mut h, &format!("квадрат-весь-{tag}"));
+        {
+            let cam = h.state_mut().view.camera.as_mut().expect("камера");
+            cam.zoom = cam.min_zoom() * 3.0;
+        }
+        for _ in 0..60 {
+            h.step();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        check_layout(&h, size, &format!("квадратный мир, {tag}"), None);
+        shot(&mut h, &format!("квадрат-вблизи-{tag}"));
+    }
+}
+
 #[test]
 fn лаборатория_на_ходу_помещается_в_окно() {
     let _gpu = gpu();
     each_size(|h, size, tag| {
         h.state_mut().lab_open = true;
         h.state_mut().side_open = false;
-        settle(h);
-        let window = Rect::from_min_size(Pos2::ZERO, size).expand(0.5);
-        let apply = h.get_by_label("Применить").rect();
-        assert!(window.contains_rect(apply), "лаборатория, {tag}: «Применить» за окном: {apply:?}");
-        for node in h.query_all_by_role(Role::Slider) {
-            assert!(window.contains_rect(node.rect()), "лаборатория, {tag}: ползунок за окном");
+        for tab in [Tab::Lab, Tab::Food] {
+            h.state_mut().lab_tab = tab;
+            if tab == Tab::Food {
+                h.state_mut().lab.set(Key::PlantWidthProfile, Profile::Waves.index());
+            }
+            settle(h);
+            let window = Rect::from_min_size(Pos2::ZERO, size).expand(0.5);
+            let apply = h.get_by_label("Применить").rect();
+            assert!(
+                window.contains_rect(apply),
+                "лаборатория {tab:?}, {tag}: «Применить» за окном: {apply:?}"
+            );
+            for role in [Role::Slider, Role::ComboBox] {
+                for node in h.query_all_by_role(role) {
+                    assert!(
+                        window.contains_rect(node.rect()),
+                        "лаборатория {tab:?}, {tag}: {role:?} за окном"
+                    );
+                }
+            }
+            shot(h, &format!("лаборатория-{tab:?}-{tag}"));
         }
-        shot(h, &format!("лаборатория-{tag}"));
     });
 }
 
@@ -213,13 +262,22 @@ fn меню_и_новый_мир_помещаются_в_окно() {
         settle(h);
         check_layout(h, size, &format!("меню, {tag}"), None);
         shot(h, &format!("меню-{tag}"));
-        for tab in [Tab::World, Tab::Lab] {
+        for tab in [Tab::World, Tab::Food, Tab::Lab] {
             h.state_mut().screen = Screen::Setup;
             h.state_mut().setup_tab = tab;
             settle(h);
             check_layout(h, size, &format!("новый мир, {tab:?}, {tag}"), None);
             shot(h, &format!("новый-мир-{tab:?}-{tag}"));
         }
+        // волны по обеим осям: у каждой оси видны два параметра — самая длинная вкладка
+        h.state_mut().setup_tab = Tab::Food;
+        let s = &mut h.state_mut().settings;
+        s.set(Key::PlantDepthProfile, Profile::Waves.index());
+        s.set(Key::PlantWidthProfile, Profile::Waves.index());
+        s.shape = Shape::Square;
+        settle(h);
+        check_layout(h, size, &format!("новый мир, еда волнами, {tag}"), None);
+        shot(h, &format!("новый-мир-еда-волны-{tag}"));
     });
 }
 

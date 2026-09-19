@@ -22,6 +22,8 @@ fn срез_раскладывает_всех_по_глубине() {
     assert_eq!(s.vegetarians_by_depth.iter().sum::<usize>(), w.vegetarians.len());
     assert_eq!(s.plants_by_depth.iter().sum::<usize>(), w.plants.len());
     assert_eq!(s.vegetarians_by_depth.len(), DEPTH_BANDS);
+    assert_eq!(s.vegetarians_by_width.iter().sum::<usize>(), w.vegetarians.len());
+    assert_eq!(s.plants_by_width.iter().sum::<usize>(), w.plants.len());
     let g = s.genes.expect("травоядные есть");
     for (stat, base) in g.iter().zip(life_core::VegetarianGenome::BASE.to_values()) {
         match stat {
@@ -36,6 +38,30 @@ fn срез_раскладывает_всех_по_глубине() {
     empty.vegetarians.clear();
     let s = Snapshot::of(&empty);
     assert!(s.genes.is_none() && s.vegetarian_depth.is_none() && s.vegetarian_fullness.is_none());
+}
+
+/// Одна волна по ширине — богатая полоса посередине: полосы среза это видят.
+#[test]
+fn срез_видит_еду_по_ширине() {
+    let rules = life_core::Rules::default()
+        .with_text("plant_width_profile", "waves")
+        .and_then(|r| r.with("plant_width_waves", 1.0))
+        .and_then(|r| r.with("plant_width_amplitude", 100.0))
+        .unwrap();
+    let mut w = World::new(&WorldConfig {
+        rules,
+        n_vegetarians: Some(0),
+        n_predators: Some(0),
+        ..Default::default()
+    });
+    for _ in 0..500 {
+        w.step();
+    }
+    let s = Snapshot::of(&w);
+    assert_eq!(s.plants_by_width.iter().sum::<usize>(), w.plants.len());
+    let (edges, middle) =
+        (s.plants_by_width[0] + s.plants_by_width[9], s.plants_by_width[4] + s.plants_by_width[5]);
+    assert!(middle > 10 * edges, "середина {middle}, края {edges}: {:?}", s.plants_by_width);
 }
 
 #[test]

@@ -11,8 +11,9 @@ use std::path::{Path, PathBuf};
 use life_core::config::{
     PREDATOR_BASE_SPEED, PREDATOR_BASE_VISION, PREDATORS_AT_START, VEGETARIANS_AT_START,
 };
+use life_core::flora::{Along, Profile};
 use life_core::space::{MAX_SCALE, MIN_SCALE};
-use life_core::{Rules, Space, WorldConfig};
+use life_core::{Rules, Shape, Space, WorldConfig};
 use serde_json::{Map, Value};
 
 pub const SEED_MAX: u64 = 99_999;
@@ -23,6 +24,8 @@ pub const UI_SCALES: [f64; 6] = [0.0, 1.0, 1.25, 1.5, 1.75, 2.0];
 pub enum Tab {
     /// «Мир»: с чего начинается партия.
     World,
+    /// «Еда»: где растут растения. Это правила мира, их можно менять и на ходу.
+    Food,
     /// «Лаборатория»: правила мира. Их можно менять и на ходу.
     Lab,
 }
@@ -44,6 +47,18 @@ pub enum Key {
     PredatorMigration,
     Lurkers,
     Ambushers,
+    PlantDepthProfile,
+    PlantDepthSteepness,
+    PlantDepthEnd,
+    PlantDepthBend,
+    PlantDepthWaves,
+    PlantDepthAmplitude,
+    PlantWidthProfile,
+    PlantWidthSteepness,
+    PlantWidthEnd,
+    PlantWidthBend,
+    PlantWidthWaves,
+    PlantWidthAmplitude,
 }
 
 pub struct Field {
@@ -57,6 +72,33 @@ pub struct Field {
     pub tab: Tab,
     /// Имя правила в `Rules` (None — стартовое условие, а не правило).
     pub rule: Option<&'static str>,
+    /// Непустой — выбор из вариантов (значение — номер варианта), а не ползунок.
+    pub choices: &'static [&'static str],
+    /// Показывать ли поле сейчас: параметр профиля еды виден, только когда
+    /// выбран его профиль.
+    pub shown: fn(&Settings) -> bool,
+}
+
+/// Общее у полей-ползунков: всегда видны, вариантов нет.
+const SLIDER: Field = Field {
+    key: Key::Vegetarians,
+    label: "",
+    hint: "",
+    lo: 0.0,
+    hi: 1.0,
+    step: 1.0,
+    format: int,
+    tab: Tab::World,
+    rule: None,
+    choices: &[],
+    shown: |_| true,
+};
+
+/// Подписи профилей еды — по порядку `Profile::ALL` (сверено тестом).
+const PROFILES: [&str; 5] = ["равномерно", "линейно", "экспонента", "логарифм", "волны"];
+
+fn profile_label(v: f64) -> String {
+    Profile::of(v).label().into()
 }
 
 impl Field {
@@ -82,7 +124,7 @@ fn percent(v: f64) -> String {
     format!("{v:.0}%")
 }
 
-pub const FIELDS: [Field; 15] = [
+pub const FIELDS: [Field; 27] = [
     // ── Мир ──────────────────────────────────────────────────────────────────
     Field {
         key: Key::Vegetarians,
@@ -95,6 +137,7 @@ pub const FIELDS: [Field; 15] = [
         format: int,
         tab: Tab::World,
         rule: None,
+        ..SLIDER
     },
     Field {
         key: Key::Predators,
@@ -106,6 +149,7 @@ pub const FIELDS: [Field; 15] = [
         format: int,
         tab: Tab::World,
         rule: None,
+        ..SLIDER
     },
     // Множитель, а не само число: в конфиге темп — 2.50008 в тик, и на сетку
     // ползунка он не ложится. Множитель 1.0 даёт ровно конфиг, бит в бит.
@@ -119,6 +163,7 @@ pub const FIELDS: [Field; 15] = [
         format: |v| format!("{:.1} в тик", v * Rules::default().plant_rate),
         tab: Tab::World,
         rule: Some("plant_rate"),
+        ..SLIDER
     },
     Field {
         key: Key::PredatorSpeed,
@@ -130,6 +175,7 @@ pub const FIELDS: [Field; 15] = [
         format: int,
         tab: Tab::World,
         rule: None,
+        ..SLIDER
     },
     Field {
         key: Key::PredatorVision,
@@ -141,6 +187,7 @@ pub const FIELDS: [Field; 15] = [
         format: int,
         tab: Tab::World,
         rule: None,
+        ..SLIDER
     },
     // Доля второго варианта стратегии; остальные — стандартные. Дальше стратегии
     // наследуются и мутируют сами, и при нуле затаившиеся всё равно появятся.
@@ -155,6 +202,7 @@ pub const FIELDS: [Field; 15] = [
         format: percent,
         tab: Tab::World,
         rule: None,
+        ..SLIDER
     },
     Field {
         key: Key::Ambushers,
@@ -167,6 +215,7 @@ pub const FIELDS: [Field; 15] = [
         format: percent,
         tab: Tab::World,
         rule: None,
+        ..SLIDER
     },
     // ── Лаборатория ─────────────────────────────────────────────────────────
     Field {
@@ -179,6 +228,7 @@ pub const FIELDS: [Field; 15] = [
         format: |v| format!("{v:.2}"),
         tab: Tab::Lab,
         rule: Some("mutation_sigma"),
+        ..SLIDER
     },
     Field {
         key: Key::PlantEnergy,
@@ -190,6 +240,7 @@ pub const FIELDS: [Field; 15] = [
         format: int,
         tab: Tab::Lab,
         rule: Some("plant_energy"),
+        ..SLIDER
     },
     Field {
         key: Key::CostScale,
@@ -201,6 +252,7 @@ pub const FIELDS: [Field; 15] = [
         format: |v| format!("×{v:.2}"),
         tab: Tab::Lab,
         rule: Some("cost_scale"),
+        ..SLIDER
     },
     Field {
         key: Key::SizePower,
@@ -212,6 +264,7 @@ pub const FIELDS: [Field; 15] = [
         format: |v| format!("{v:.1}"),
         tab: Tab::Lab,
         rule: Some("size_power"),
+        ..SLIDER
     },
     Field {
         key: Key::SightPower,
@@ -223,6 +276,7 @@ pub const FIELDS: [Field; 15] = [
         format: |v| format!("{v:.1}"),
         tab: Tab::Lab,
         rule: Some("sight_power"),
+        ..SLIDER
     },
     Field {
         key: Key::PredatorDivideChance,
@@ -234,6 +288,7 @@ pub const FIELDS: [Field; 15] = [
         format: |v| format!("{:.0}%", v * 100.0),
         tab: Tab::Lab,
         rule: Some("predator_divide_chance"),
+        ..SLIDER
     },
     Field {
         key: Key::PredatorMaxEnergy,
@@ -245,6 +300,7 @@ pub const FIELDS: [Field; 15] = [
         format: int,
         tab: Tab::Lab,
         rule: Some("predator_max_energy"),
+        ..SLIDER
     },
     Field {
         key: Key::PredatorMigration,
@@ -257,6 +313,171 @@ pub const FIELDS: [Field; 15] = [
         format: |v| if v > 0.0 { format!("раз в {v:.0}") } else { "выкл".into() },
         tab: Tab::Lab,
         rule: Some("predator_migration"),
+        ..SLIDER
+    },
+    // ── Еда ─────────────────────────────────────────────────────────────────
+    // Профиль по глубине и по ширине независимо; параметр профиля виден, только
+    // когда выбран его профиль. Гены слоя под еду не подстраиваются.
+    Field {
+        key: Key::PlantDepthProfile,
+        label: "Еда по глубине",
+        hint: "Как густо растут растения от поверхности ко дну. Гены слоя от этого не меняются: \
+               травоядные сами найдут, на какой глубине выгоднее жить.",
+        lo: 0.0,
+        hi: 4.0,
+        step: 1.0,
+        format: profile_label,
+        tab: Tab::Food,
+        rule: Some("plant_depth_profile"),
+        choices: &PROFILES,
+        ..SLIDER
+    },
+    Field {
+        key: Key::PlantDepthSteepness,
+        label: "Крутизна по глубине",
+        hint: "Экспонента: чем больше, тем сильнее еда прижата к поверхности. \
+               При 8 у дна еды в 3000 раз меньше, чем наверху; при 0 — поровну.",
+        lo: 0.0,
+        hi: 30.0,
+        step: 0.5,
+        format: |v| format!("{v:.1}"),
+        tab: Tab::Food,
+        rule: Some("plant_depth_steepness"),
+        shown: |s| s.food(Along::Depth) == Profile::Exp,
+        ..SLIDER
+    },
+    Field {
+        key: Key::PlantDepthEnd,
+        label: "Еды у дна",
+        hint: "Линейно: сколько еды у дна, в процентах от поверхности. 100% — поровну.",
+        lo: 0.0,
+        hi: 100.0,
+        step: 5.0,
+        format: percent,
+        tab: Tab::Food,
+        rule: Some("plant_depth_end"),
+        shown: |s| s.food(Along::Depth) == Profile::Linear,
+        ..SLIDER
+    },
+    Field {
+        key: Key::PlantDepthBend,
+        label: "Изгиб по глубине",
+        hint: "Логарифм: чем больше, тем глубже еды почти столько же, сколько наверху, \
+               и тем резче она кончается у дна.",
+        lo: 0.0,
+        hi: 200.0,
+        step: 1.0,
+        format: int,
+        tab: Tab::Food,
+        rule: Some("plant_depth_bend"),
+        shown: |s| s.food(Along::Depth) == Profile::Log,
+        ..SLIDER
+    },
+    Field {
+        key: Key::PlantDepthWaves,
+        label: "Полос по глубине",
+        hint: "Волны: сколько богатых едой полос от поверхности до дна.",
+        lo: 1.0,
+        hi: 10.0,
+        step: 1.0,
+        format: int,
+        tab: Tab::Food,
+        rule: Some("plant_depth_waves"),
+        shown: |s| s.food(Along::Depth) == Profile::Waves,
+        ..SLIDER
+    },
+    Field {
+        key: Key::PlantDepthAmplitude,
+        label: "Размах полос по глубине",
+        hint: "Волны: насколько между полосами беднее, чем в них. 100% — между полосами пусто.",
+        lo: 0.0,
+        hi: 100.0,
+        step: 5.0,
+        format: percent,
+        tab: Tab::Food,
+        rule: Some("plant_depth_amplitude"),
+        shown: |s| s.food(Along::Depth) == Profile::Waves,
+        ..SLIDER
+    },
+    Field {
+        key: Key::PlantWidthProfile,
+        label: "Еда по ширине",
+        hint: "Как густо растут растения слева направо. Складывается с профилем по глубине: \
+               например, волны по ширине дают богатые столбы.",
+        lo: 0.0,
+        hi: 4.0,
+        step: 1.0,
+        format: profile_label,
+        tab: Tab::Food,
+        rule: Some("plant_width_profile"),
+        choices: &PROFILES,
+        ..SLIDER
+    },
+    Field {
+        key: Key::PlantWidthSteepness,
+        label: "Крутизна по ширине",
+        hint: "Экспонента: чем больше, тем сильнее еда прижата к левому краю. При 0 — поровну.",
+        lo: 0.0,
+        hi: 30.0,
+        step: 0.5,
+        format: |v| format!("{v:.1}"),
+        tab: Tab::Food,
+        rule: Some("plant_width_steepness"),
+        shown: |s| s.food(Along::Width) == Profile::Exp,
+        ..SLIDER
+    },
+    Field {
+        key: Key::PlantWidthEnd,
+        label: "Еды у правого края",
+        hint: "Линейно: сколько еды у правого края, в процентах от левого. 100% — поровну.",
+        lo: 0.0,
+        hi: 100.0,
+        step: 5.0,
+        format: percent,
+        tab: Tab::Food,
+        rule: Some("plant_width_end"),
+        shown: |s| s.food(Along::Width) == Profile::Linear,
+        ..SLIDER
+    },
+    Field {
+        key: Key::PlantWidthBend,
+        label: "Изгиб по ширине",
+        hint: "Логарифм: чем больше, тем дальше вправо еды почти столько же, сколько слева, \
+               и тем резче она кончается у правого края.",
+        lo: 0.0,
+        hi: 200.0,
+        step: 1.0,
+        format: int,
+        tab: Tab::Food,
+        rule: Some("plant_width_bend"),
+        shown: |s| s.food(Along::Width) == Profile::Log,
+        ..SLIDER
+    },
+    Field {
+        key: Key::PlantWidthWaves,
+        label: "Полос по ширине",
+        hint: "Волны: сколько богатых едой полос слева направо. Одна — остров посередине.",
+        lo: 1.0,
+        hi: 10.0,
+        step: 1.0,
+        format: int,
+        tab: Tab::Food,
+        rule: Some("plant_width_waves"),
+        shown: |s| s.food(Along::Width) == Profile::Waves,
+        ..SLIDER
+    },
+    Field {
+        key: Key::PlantWidthAmplitude,
+        label: "Размах полос по ширине",
+        hint: "Волны: насколько между полосами беднее, чем в них. 100% — между полосами пусто.",
+        lo: 0.0,
+        hi: 100.0,
+        step: 5.0,
+        format: percent,
+        tab: Tab::Food,
+        rule: Some("plant_width_amplitude"),
+        shown: |s| s.food(Along::Width) == Profile::Waves,
+        ..SLIDER
     },
 ];
 
@@ -275,6 +496,7 @@ pub struct Settings {
     /// Новый сид на каждый «Начать».
     pub random_seed: bool,
     pub scale: f64,
+    pub shape: Shape,
     /// Значения ползунков, в порядке `FIELDS`.
     pub values: [f64; FIELDS.len()],
     // ── экран ────────────────────────────────────────────────────────────────
@@ -290,6 +512,7 @@ impl Default for Settings {
             seed: 1,
             random_seed: true,
             scale: 1.0,
+            shape: WorldConfig::default().shape,
             values: FIELDS.map(|f| match f.key {
                 Key::Vegetarians => VEGETARIANS_AT_START as f64,
                 Key::Predators => PREDATORS_AT_START as f64,
@@ -319,6 +542,14 @@ impl Settings {
         self.values[index(key)] = field(key).snap(value);
     }
 
+    /// Выбранный профиль еды по оси.
+    pub fn food(&self, along: Along) -> Profile {
+        Profile::of(self.get(match along {
+            Along::Depth => Key::PlantDepthProfile,
+            Along::Width => Key::PlantWidthProfile,
+        }))
+    }
+
     /// Правила мира из ползунков.
     pub fn rules(&self) -> Rules {
         let mut rules = Rules::default();
@@ -343,7 +574,7 @@ impl Settings {
     /// Мир из настроек. Численности на старте заданы на базовый участок и
     /// растут с площадью — плотность, а с ней и баланс, от масштаба не зависят.
     pub fn world_config(&self, seed: u64) -> WorldConfig {
-        let space = Space::scaled(self.scale);
+        let space = Space::new(self.scale, self.shape);
         let per_area = |key| (self.get(key) * space.area_ratio()).round() as usize;
         // доли вариантов (стандартный, второй); ноль — пустая смесь, как у мира
         // по умолчанию
@@ -354,6 +585,7 @@ impl Settings {
         WorldConfig {
             seed,
             scale: self.scale,
+            shape: self.shape,
             rules: self.rules(),
             n_vegetarians: Some(per_area(Key::Vegetarians)),
             n_predators: Some(per_area(Key::Predators)),
@@ -375,6 +607,7 @@ impl Settings {
         if tab == Tab::World {
             self.random_seed = default.random_seed;
             self.scale = default.scale;
+            self.shape = default.shape;
         }
     }
 
@@ -389,6 +622,7 @@ impl Settings {
         m.insert("seed".into(), self.seed.into());
         m.insert("random_seed".into(), self.random_seed.into());
         m.insert("scale".into(), self.scale.into());
+        m.insert("shape".into(), self.shape.key().into());
         for (f, v) in FIELDS.iter().zip(self.values) {
             m.insert(json_key(f.key).into(), v.into());
         }
@@ -413,6 +647,9 @@ impl Settings {
         }
         if let Some(v) = num("scale") {
             s.scale = v.clamp(MIN_SCALE, MAX_SCALE);
+        }
+        if let Some(shape) = m.get("shape").and_then(Value::as_str).and_then(|k| Shape::parse(k).ok()) {
+            s.shape = shape;
         }
         for (i, f) in FIELDS.iter().enumerate() {
             if let Some(v) = num(json_key(f.key)) {
@@ -474,6 +711,8 @@ fn json_key(key: Key) -> &'static str {
         Key::PredatorMigration => "predator_migration",
         Key::Lurkers => "lurkers_percent",
         Key::Ambushers => "ambushers_percent",
+        // у профилей еды ключ файла — имя правила
+        _ => field(key).rule.expect("у поля еды есть правило"),
     }
 }
 
@@ -547,9 +786,11 @@ mod tests {
     fn файл_переживает_мусор_и_чужие_ключи() {
         let data = serde_json::json!({
             "seed": 1e12, "scale": 1e9, "plant_energy": 9999, "size_power": "много",
-            "mutation_sigma": f64::NAN.to_string(), "чужой": 1, "ui_scale": 1.3, "fullscreen": 1
+            "mutation_sigma": f64::NAN.to_string(), "чужой": 1, "ui_scale": 1.3, "fullscreen": 1,
+            "shape": "круг"
         });
         let s = Settings::from_json(&data);
+        assert_eq!(s.shape, Settings::default().shape);
         assert_eq!(s.seed, SEED_MAX);
         assert_eq!(s.scale, MAX_SCALE);
         assert_eq!(s.get(Key::PlantEnergy), 150.0);
@@ -563,7 +804,7 @@ mod tests {
     fn запись_атомарна_и_читается_обратно() {
         let dir = std::env::temp_dir().join(format!("tinylife-test-{}", std::process::id()));
         let path = dir.join("settings.json");
-        let mut s = Settings { seed: 777, scale: 100.0, ..Default::default() };
+        let mut s = Settings { seed: 777, scale: 100.0, shape: Shape::Square, ..Default::default() };
         s.set(Key::PlantEnergy, 80.0);
         s.save(&path).expect("запись");
         assert_eq!(Settings::load(&path), s);
@@ -596,6 +837,34 @@ mod tests {
         let cfg = s.world_config(1);
         assert_eq!(cfg.vegetarian_strategies, vec![70.0, 30.0]);
         assert_eq!(cfg.predator_strategies, vec![0.0, 100.0]);
+    }
+
+    /// Подписи вариантов — по порядку профилей движка, а у каждого правила
+    /// профиля еды есть поле.
+    #[test]
+    fn поля_еды_покрывают_профили() {
+        assert_eq!(PROFILES, Profile::ALL.map(Profile::label));
+        for key in life_core::rules::RULE_KEYS.iter().filter(|k| life_core::flora::split_key(k).is_some()) {
+            assert!(FIELDS.iter().any(|f| f.rule == Some(*key)), "{key}: нет поля");
+        }
+        for f in FIELDS.iter().filter(|f| !f.choices.is_empty()) {
+            assert_eq!((f.lo, f.hi, f.step), (0.0, (f.choices.len() - 1) as f64, 1.0), "{}", f.label);
+        }
+    }
+
+    #[test]
+    fn параметр_профиля_виден_при_своём_профиле() {
+        let mut s = Settings::default();
+        let shown = |s: &Settings, key| (field(key).shown)(s);
+        assert!(shown(&s, Key::PlantDepthSteepness), "по умолчанию — экспонента");
+        assert!(!shown(&s, Key::PlantDepthWaves));
+        assert!(!shown(&s, Key::PlantWidthSteepness), "по ширине — равномерно, параметров нет");
+        s.set(Key::PlantWidthProfile, Profile::Waves.index());
+        assert!(shown(&s, Key::PlantWidthWaves) && shown(&s, Key::PlantWidthAmplitude));
+        assert!(!shown(&s, Key::PlantWidthEnd));
+        assert_eq!(s.rules().plant_width.kind(), Profile::Waves);
+        let old = Settings::default();
+        assert_eq!(describe_change(&old, &s).as_deref(), Some("правила: еда по ширине равномерно → волны"));
     }
 
     #[test]

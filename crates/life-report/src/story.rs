@@ -2,12 +2,12 @@
 //! геном, глубина, хроника событий и карты. Написан так, чтобы по нему одному —
 //! без графиков и окна — можно было понять, что происходило в мире.
 
+use life_core::flora::{self, Profile};
 use life_core::genome::vegetarian::Gene;
 use life_core::genome::{GeneSpec, predator, vegetarian};
 use life_sim::SimResult;
 use life_sim::observe::{
-    DEPTH_BANDS, Event, GeneStat, MAP_LEGEND, MAX_VARIANTS, Snapshot, Spread, predator_flows,
-    vegetarian_flows,
+    Event, GeneStat, MAP_LEGEND, MAX_VARIANTS, Snapshot, Spread, predator_flows, vegetarian_flows,
 };
 
 /// Карта: тик и строки.
@@ -31,6 +31,8 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     let c = last.counters.since(&first.counters);
 
     println!("\n══ сид {seed}: {}, {} тиков, {:.3} мс/тик ══", res.stop, res.ticks_done, res.ms_per_tick());
+    let space = res.world.space;
+    println!("Мир {:.0}x{:.0}; еда {}.", space.width, space.height, flora::describe(&res.world.rules));
     println!(
         "Итог на тике {}: растений {} из {}, травоядных {}, хищников {}.",
         last.tick, last.plants, last.plant_cap, last.vegetarians, last.predators
@@ -46,6 +48,10 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     print_intervals(snaps, rows);
     print_genome(first, last);
     print_depth(last);
+    // по ширине смотреть есть на что, только если еда по ней неравномерна
+    if res.world.rules.plant_width.kind() != Profile::Uniform {
+        print_width(last);
+    }
 
     println!("\nХроника:");
     if events.is_empty() {
@@ -182,16 +188,26 @@ fn shares(spec: &GeneSpec, s: &[f64; MAX_VARIANTS]) -> String {
 
 /// Кто где по глубине: доли травоядных и растений в каждой десятой части.
 fn print_depth(last: &Snapshot) {
+    println!("\nГлубина в конце (0% — поверхность):");
+    print_bands(last, "глубина", &last.vegetarians_by_depth, &last.plants_by_depth);
+}
+
+/// То же по ширине, слева направо.
+fn print_width(last: &Snapshot) {
+    println!("\nШирина в конце (0% — левый край):");
+    print_bands(last, "ширина", &last.vegetarians_by_width, &last.plants_by_width);
+}
+
+fn print_bands(last: &Snapshot, axis: &str, vegetarians: &[usize], plants: &[usize]) {
     let (nv, np) = (last.vegetarians.max(1) as f64, last.plants.max(1) as f64);
-    println!("\nГлубина в конце (0% — поверхность, где растений больше всего):");
-    println!("  {:>9} {:>11} {:>9}", "глубина", "травоядные", "растения");
-    for b in 0..DEPTH_BANDS {
-        let step = 100 / DEPTH_BANDS;
+    println!("  {axis:>9} {:>11} {:>9}", "травоядные", "растения");
+    let step = 100 / vegetarians.len();
+    for (b, (v, p)) in vegetarians.iter().zip(plants).enumerate() {
         println!(
             "  {:>9} {:>10.0}% {:>8.0}%",
             format!("{}‒{}%", b * step, (b + 1) * step),
-            last.vegetarians_by_depth[b] as f64 * 100.0 / nv,
-            last.plants_by_depth[b] as f64 * 100.0 / np
+            *v as f64 * 100.0 / nv,
+            *p as f64 * 100.0 / np
         );
     }
 }

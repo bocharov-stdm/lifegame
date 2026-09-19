@@ -27,7 +27,7 @@ mod view;
 
 use clap::Parser;
 use life_core::space::{MAX_SCALE, MIN_SCALE};
-use life_core::{Rules, WorldConfig};
+use life_core::{Rules, Shape, WorldConfig};
 
 #[derive(Parser)]
 #[command(about = "Tiny Life — эволюция растений, травоядных и хищников")]
@@ -38,13 +38,17 @@ struct Args {
     /// Масштаб мира по площади (1 — базовый 6000x4000; от 1 до 10 000).
     #[arg(long, default_value_t = 1.0, value_parser = parse_scale)]
     scale: f64,
+    /// Форма мира: 1:1, 3:2 (по умолчанию), 2:1 или strip — полоса высотой 4000.
+    #[arg(long, value_parser = Shape::parse)]
+    shape: Option<Shape>,
     /// Травоядных на старте (по умолчанию — по площади мира).
     #[arg(long)]
     vegetarians: Option<usize>,
     /// Хищников на старте (по умолчанию — по площади мира).
     #[arg(long)]
     predators: Option<usize>,
-    /// Правило мира: имя=число (можно несколько раз), как в life-report.
+    /// Правило мира: имя=число (можно несколько раз), как в life-report. Профиль
+    /// еды — и именем: `--rule plant_width_profile=waves`.
     #[arg(long = "rule")]
     rules: Vec<String>,
 }
@@ -62,8 +66,7 @@ fn parse_rules(pairs: &[String]) -> Result<Rules, String> {
     let mut rules = Rules::default();
     for pair in pairs {
         let (key, value) = pair.split_once('=').ok_or(format!("правило «{pair}»: нужно имя=число"))?;
-        let value: f64 = value.trim().parse().map_err(|_| format!("правило {key}: «{value}» — не число"))?;
-        rules = rules.with(key.trim(), value)?;
+        rules = rules.with_text(key.trim(), value)?;
     }
     Ok(rules)
 }
@@ -123,12 +126,14 @@ fn main() -> eframe::Result {
     // Любой флаг мира — сразу в игру с этим миром; без флагов — меню.
     let direct = args.seed.is_some()
         || args.scale != 1.0
+        || args.shape.is_some()
         || args.vegetarians.is_some()
         || args.predators.is_some()
         || !args.rules.is_empty();
     let start = direct.then(|| WorldConfig {
         seed: args.seed.unwrap_or_else(app::random_seed),
         scale: args.scale,
+        shape: args.shape.unwrap_or(WorldConfig::default().shape),
         rules,
         n_vegetarians: args.vegetarians,
         n_predators: args.predators,

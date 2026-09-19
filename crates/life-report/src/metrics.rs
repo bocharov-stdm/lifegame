@@ -14,7 +14,8 @@ use std::path::Path;
 
 use life_core::genome::vegetarian::{GENES, Gene};
 use life_core::rules::RULE_KEYS;
-use life_core::{Rules, Stats, WorldConfig};
+use life_core::space::{MAX_SCALE, MIN_SCALE};
+use life_core::{Rules, Shape, Space, Stats, WorldConfig};
 use life_sim::{SimResult, StopReason};
 use serde_json::{Map, Value, json};
 
@@ -45,6 +46,9 @@ pub struct Reference {
     runs: Vec<Run>,
     /// Условия мира. У Python-эталона их нет — он снят на умолчаниях.
     scale: f64,
+    /// Размеры мира. Сравниваются они, а не имя формы: при x1 полоса и 3:2 —
+    /// один и тот же мир 6000x4000.
+    space: Space,
     rules: Rules,
     start: (usize, usize),
     predator: (f64, f64),
@@ -99,6 +103,15 @@ impl Reference {
         }
         let start = &data["start"];
         let num = |v: &Value, default: f64| v.as_f64().unwrap_or(default);
+        let scale = num(&data["scale"], 1.0);
+        // у эталонов до форм поля нет: они сняты на полосе
+        let shape = match data["shape"].as_str() {
+            Some(key) => Shape::parse(key)?,
+            None => Shape::Strip,
+        };
+        if !(MIN_SCALE..=MAX_SCALE).contains(&scale) {
+            return Err(format!("масштаб {scale} вне пределов {MIN_SCALE}‒{MAX_SCALE}"));
+        }
         Ok(Reference {
             source: match data["source"].as_str() {
                 Some("rust") => "Rust",
@@ -109,7 +122,8 @@ impl Reference {
             ticks,
             sample_every,
             runs,
-            scale: num(&data["scale"], 1.0),
+            scale,
+            space: Space::new(scale, shape),
             rules,
             start: (
                 num(&start["vegetarians"], world.vegetarians_at_start() as f64) as usize,
@@ -131,8 +145,12 @@ impl Reference {
     /// Совпадают ли условия мира с теми, на которых снят эталон.
     pub fn check_same_world(&self, cfg: &WorldConfig) -> Result<(), String> {
         let mut diff = Vec::new();
-        if cfg.scale != self.scale {
-            diff.push(format!("масштаб {} (в эталоне {})", cfg.scale, self.scale));
+        let space = cfg.space();
+        if space != self.space {
+            diff.push(format!(
+                "мир x{} {:.0}x{:.0} (в эталоне x{} {:.0}x{:.0})",
+                cfg.scale, space.width, space.height, self.scale, self.space.width, self.space.height
+            ));
         }
         for key in RULE_KEYS {
             let (ours, theirs) = (cfg.rules.get(key), self.rules.get(key));
@@ -234,6 +252,7 @@ pub fn save_reference(
         "ticks": ticks,
         "genes": GENES.iter().map(|g| g.key).collect::<Vec<_>>(),
         "scale": cfg.scale,
+        "shape": cfg.shape.key(),
         "rules": rules,
         "start": {
             "vegetarians": cfg.vegetarians_at_start(),

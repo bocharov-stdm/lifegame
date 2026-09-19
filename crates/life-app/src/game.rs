@@ -3,6 +3,7 @@
 //! конец игры.
 
 use eframe::egui::{self, Align2, Key, RichText, Vec2};
+use life_core::flora::Profile;
 use life_core::genome::vegetarian::N;
 use life_core::genome::{GeneSpec, predator, vegetarian};
 use life_core::{Creature, Rules, WorldConfig};
@@ -11,7 +12,7 @@ use life_sim::observe::EventKind;
 use crate::app::{LifeApp, SideTab, Tool};
 use crate::charts;
 use crate::frame::{Ending, PLANT_COLOR, PREDATOR_COLOR, Selected, VEGETARIAN_COLOR};
-use crate::settings::{self, FIELDS};
+use crate::settings::{self, FIELDS, Tab};
 use crate::sim::{Command, SPEEDS};
 use crate::theme::{self, ACCENT, DANGER, GOOD, MUTED, TEXT, rgb, spaced};
 use crate::view::{Click, creature_id};
@@ -30,22 +31,35 @@ fn speed_label(index: usize) -> String {
 pub fn report_command(cfg: &WorldConfig, ticks: u64) -> String {
     let mut cmd =
         format!("cargo run -p life-report --release -- --seed {} --ticks {}", cfg.seed, ticks.max(600));
+    let base = WorldConfig::default();
     if cfg.scale != 1.0 {
         cmd += &format!(" --scale {}", cfg.scale);
     }
+    if cfg.shape != base.shape {
+        cmd += &format!(" --shape {}", cfg.shape.key());
+    }
     cmd += &format!(" --vegetarians {} --predators {}", cfg.vegetarians_at_start(), cfg.predators_at_start());
-    let base = WorldConfig::default();
     if cfg.predator_speed != base.predator_speed {
         cmd += &format!(" --predator-speed {}", cfg.predator_speed);
     }
     if cfg.predator_vision != base.predator_vision {
         cmd += &format!(" --predator-vision {}", cfg.predator_vision);
     }
+    for (flag, mix) in [("--veg-mix", &cfg.vegetarian_strategies), ("--pred-mix", &cfg.predator_strategies)] {
+        if !mix.is_empty() {
+            let shares: Vec<String> = mix.iter().map(|s| s.to_string()).collect();
+            cmd += &format!(" {flag} {}", shares.join(" "));
+        }
+    }
     let default = Rules::default();
     for key in life_core::rules::RULE_KEYS {
         let (v, d) = (cfg.rules.get(key), default.get(key));
         if let Some(v) = v.filter(|v| Some(*v) != d) {
-            cmd += &format!(" --rule {key}={v}");
+            // профиль еды — именем: plant_width_profile=waves понятнее, чем =4
+            match life_core::flora::split_key(key) {
+                Some((_, "profile")) => cmd += &format!(" --rule {key}={}", Profile::of(v).key()),
+                _ => cmd += &format!(" --rule {key}={v}"),
+            }
         }
     }
     cmd
@@ -372,31 +386,53 @@ impl LifeApp {
     }
 
     fn lab_window(&mut self, ctx: &egui::Context) {
-        let Some(current) = self.view.frame.as_ref().map(|f| f.rules.clone()) else { return };
+        let Some((current, space)) = self
+            .view
+            .frame
+            .as_ref()
+            .map(|f| (f.rules.clone(), life_core::Space { width: f.world_w, height: f.world_h }))
+        else {
+            return;
+        };
         let mut open = true;
         egui::Window::new("Лаборатория")
             .open(&mut open)
             .resizable(false)
             .default_pos(ctx.content_rect().right_top() + Vec2::new(-460.0, 60.0))
             .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.lab_tab, Tab::Lab, "Правила");
+                    ui.selectable_value(&mut self.lab_tab, Tab::Food, "Еда");
+                });
+                let food = self.lab_tab == Tab::Food;
                 ui.colored_label(
                     MUTED,
-                    "Правила мира прямо в партии. Живые существа сразу платят по новым ценам.",
+                    if food {
+                        "Где растут растения. Выросшие остаются на местах, новые растут по-новому."
+                    } else {
+                        "Правила мира прямо в партии. Живые существа сразу платят по новым ценам."
+                    },
                 );
                 ui.add_space(4.0);
+                // «Рост растений» живёт на вкладке «Мир» нового мира, а здесь — среди правил
+                let here = |f: &&settings::Field| f.live() && (f.tab == Tab::Food) == food;
                 egui::Grid::new("лаборатория").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-                    for f in FIELDS.iter().filter(|f| f.live()) {
+                    for f in FIELDS.iter().filter(here) {
+                        if !(f.shown)(&self.lab) {
+                            continue;
+                        }
                         ui.label(f.label).on_hover_text(f.hint);
                         let mut v = self.lab.get(f.key);
-                        let slider = egui::Slider::new(&mut v, f.lo..=f.hi)
-                            .step_by(f.step)
-                            .custom_formatter(|v, _| (f.format)(v));
-                        if ui.add(slider).on_hover_text(f.hint).changed() {
+                        if crate::screens::field_input(ui, f, &mut v) {
                             self.lab.set(f.key, v);
                         }
                         ui.end_row();
                     }
                 });
+                if food {
+                    ui.add_space(6.0);
+                    crate::screens::food_preview(ui, &self.lab.rules(), space);
+                }
                 let mut now = self.lab.clone();
                 now.take_rules(&current);
                 let change = settings::describe_change(&now, &self.lab);
@@ -539,9 +575,24 @@ mod tests {
         assert!(cmd.contains("--seed 42"));
         assert!(cmd.contains("--ticks 5000"));
         assert!(cmd.contains("--scale 10"));
+        assert!(!cmd.contains("--shape"), "форма по умолчанию не пишется");
         assert!(cmd.contains("--vegetarians 200 --predators 60"));
         assert!(cmd.contains("--rule plant_energy=80"));
         assert!(!cmd.contains("mutation_sigma"), "правила по умолчанию не пишутся");
         assert!(!cmd.contains("--predator-speed"));
+        assert!(!cmd.contains("-mix"));
+
+        let cfg = WorldConfig {
+            shape: life_core::Shape::Square,
+            vegetarian_strategies: vec![70.0, 30.0],
+            rules: Rules::default().with("plant_width_profile", Profile::Waves.index()).unwrap(),
+            ..Default::default()
+        };
+        let cmd = report_command(&cfg, 600);
+        assert!(cmd.contains("--shape 1:1"));
+        assert!(cmd.contains("--rule plant_width_profile=waves"));
+        assert!(!cmd.contains("plant_depth"), "профиль по глубине не трогали");
+        assert!(cmd.contains("--veg-mix 70 30"));
+        assert!(!cmd.contains("--pred-mix"));
     }
 }

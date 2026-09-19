@@ -34,11 +34,13 @@ cargo run -p life-report --release                  # seed 1, 600 ticks: story +
 cargo run -p life-report --release -- --seeds 1 2 3 --ticks 3000
 cargo run -p life-report --release -- --rule plant_energy=80 --scale 10 --threads 4
 cargo run -p life-report --release -- --veg-mix 1 1 --pred-mix 1 1   # start with strategies 50/50
+cargo run -p life-report --release -- --scale 100 --shape 1:1 --rule plant_width_profile=waves
 cargo run -p life-report --release -- --compare reference/fingerprint.json   # balance vs the reference
 
 play.bat / sh play.sh                                    # launcher for humans: build + run the game
 cargo run -p life-app --release                          # the game: menu
 cargo run -p life-app --release -- --scale 100 --seed 7  # straight into a world (same flags as the report)
+cargo run -p life-app --release -- --scale 100 --shape 1:1 --rule plant_width_profile=waves
 TINYLIFE_SHOTS=some/dir cargo test -p life-app ui_tests  # screen tests + PNGs of every screen
 ```
 
@@ -64,12 +66,14 @@ cargo run -p life-report --release -- --ticks 5000 --json run.json   # JSON to a
 The story (always on for a single seed) prints: final state; herbivore and predator
 births/deaths **by cause** (eaten vs starved) — the counters in `World::counters`; a table by
 intervals with flows, gene medians, the depth layer holding 80% of herbivores and their
-fullness; genome start → end as median (10‒90%); herbivores vs plants by depth band; a
+fullness; genome start → end as median (10‒90%); herbivores vs plants by depth band (and by
+width band when the width food profile isn't uniform); a
 chronicle of events (crashes and rises with their causes, predators extinct/returning, plants
 hitting the cap, gene shifts, herbivores squeezing into a thin layer); ASCII maps (top =
 surface, `X` predator, `O`/`o` herbivores, `:`/`.` plants). The JSON has the same plus every
 snapshot (`life_sim::observe::Snapshot`: per-gene `GeneStat` of both species — a spread for
-numeric genes, variant shares for choice genes —, depth histograms, cumulative counters). Format
+numeric genes, variant shares for choice genes —, depth and width histograms, cumulative
+counters). Format
 `life-report/2`: top-level `genes` describes both gene tables (key, label, kind, variants);
 keys are English (event `kind`), texts Russian. Long runs may stop on the work budget
 ("перегрузка") — raise it with `--max-work`.
@@ -83,7 +87,8 @@ and the event chronicle for its in-game event feed.
 60 ticks). It started as the last Python version's (`python/fingerprint.py` at `python-final`)
 and is re-taken from Rust after each deliberate balance change. `--compare` reruns the same seeds in Rust and checks each metric's mean against the reference's
 per-seed range; any mismatch exits with code 1 (CI relies on it). It refuses (code 2) when the
-world differs from the one the reference was taken on (scale, rules, start counts, predator
+world differs from the one the reference was taken on (world size — compared as `Space`, not
+shape name, since at ×1 strip and 3:2 are the same 6000x4000 —, rules, start counts, predator
 speed/vision, start strategy mix) — a mismatch there would measure the conditions, not the
 balance. Gene tables are code, not conditions: if the reference's `genes` list differs from
 ours (ignoring inert one-variant choice genes) it prints a note and still compares. The size
@@ -109,7 +114,8 @@ even on threads or I/O), `life-sim` adds only the bounded runner and the observe
 - `config.rs` — every tunable constant, each with a comment explaining *why* it has that value.
 - `rules.rs` — `Rules`, the world rules the game's «Лаборатория» exposes, at setup and live via
   `World::set_rules` (plant rate and energy, mutation sigma, stat cost scale and exponents,
-  predator fertility, tank and migration). `World` owns one and every creature gets it at birth. Changing an exponent
+  predator fertility, tank and migration, the food profiles — see "Where food grows"). `World`
+  owns one and every creature gets it at birth. Changing an exponent
   renormalises its coefficient so the *base* genome still pays the same — only the steepness
   changes. `Rules::default()` is `config.rs` bit for bit (the factor is exactly
   `base ** 0.0`); tests guard that. `with()` rejects unknown keys, non-finite values (a NaN
@@ -123,11 +129,11 @@ even on threads or I/O), `life-sim` adds only the bounded runner and the observe
 - `vegetarian/`, `predator/` — the entities: `mod.rs` (the creature, its `act` and the world
   hooks: `feed`/`eat`, `maybe_divide`, `apply_rules`), `phenotype.rs`, `strategy.rs` + one file
   per strategy (`standard.rs` — the original behaviour; `lurker.rs`, `ambusher.rs` — see "Genes
-  and strategies"). `plant.rs` — plants.
+  and strategies"). `plant.rs` — plants; `flora.rs` — where they grow (`Flora`, profiles).
 - `senses.rs` — what a creature can learn about the world (traits + grid-backed views + the
   query functions and their brute-force test).
 - `grid.rs` — `Grid`: counting-sort spatial grid with a fixed cell, rebuilt each tick.
-- `rng.rs` — per-creature SplitMix64 streams; `space.rs` — world size and scale.
+- `rng.rs` — per-creature SplitMix64 streams; `space.rs` — world size, scale and shape.
 
 `crates/life-sim/src/lib.rs` — `simulate()` / `run()` under limits; `observe.rs` — snapshots,
 events, ASCII map. `crates/life-report/src/` — `main.rs` (CLI), `story.rs`, `json.rs`,
@@ -148,9 +154,9 @@ and migration draws only when it fires.
 
 `tests/golden.rs` pins behaviour bit for bit: an FNV digest of the world (positions, energy,
 ids, all genes of both species, an RNG probe of every creature and of the world) at checkpoints
-for six configs (defaults, giants, lab rules with migration, ×10, live rules + spawning, a
-50/50 strategy mix — it also asserts both strategies coexist). Any refactor must keep
-it; a deliberate behaviour change re-records it (the test prints the table) in its own commit,
+for seven configs (defaults, giants, lab rules with migration, ×10 strip, live rules + spawning,
+a 50/50 strategy mix — it also asserts both strategies coexist —, a ×10 square with tabulated
+food profiles). A case without recorded digests fails too. Any refactor must keep it; a deliberate behaviour change re-records it (the test prints the table) in its own commit,
 together with `--save-reference`. The constants are asserted on Windows only: `ln`/`cos`/`powf`
 come from the platform libm, so Linux may differ in the last bit (there the test prints its
 digests). `--ignored` prints digests of 50 seeds × 2 worlds for a wider before/after diff.
@@ -223,13 +229,53 @@ add moves that teleport.
 
 ### World scale
 
-`Space::scaled(scale)` grows the width only (height stays 4000, so the vertical ecology — plant
-depth profile, layer genes in % — is unchanged). Everything defined per world (plant rate and
-cap, start populations, migration thresholds and arrivals, report and runner limits) is
-multiplied by `area_ratio` via `per_area`, so densities — and the balance — stay the same.
-Scale is `MIN_SCALE` = 1 to `MAX_SCALE` = 10 000: narrower worlds break predator geometry,
-bigger ones run out of memory before they look any different (per-machine memory guards are
-phase 6).
+Scale is area; shape (`space::Shape`: 1:1, 3:2, 2:1, strip) is proportions —
+`Space::new(scale, shape)`, `WorldConfig::space()`. The default everywhere (`WorldConfig`,
+both CLIs' `--shape`, the game's «Новый мир») is **3:2**: at ×1 it is exactly the base
+6000x4000 (`sqrt(16e6)` is exact — tested), so the reference and every ×1 golden case are
+untouched; bigger worlds grow both ways. `Shape::Strip` is the pre-shape behaviour (height stays
+4000, width grows) — golden case D pins it explicitly. The vertical ecology — food profile,
+layer genes — is in % of depth, so it transfers to any height; absolute distances (walking back
+to the home band, vision) don't scale, which is what the shape balance check (story over 12
+seeds at ×10 per shape) watches. Everything defined per world (plant rate and cap, start
+populations, migration thresholds and arrivals, report and runner limits) is multiplied by
+`area_ratio` via `per_area`, so densities — and the balance — stay the same (in theory: see
+below). Scale is
+`MIN_SCALE` = 1 to `MAX_SCALE` = 10 000: narrower worlds break predator geometry, bigger ones
+run out of memory before they look any different (per-machine memory guards are phase 6).
+
+Measured (12 seeds × 20 000 ticks at ×10): no shape goes extinct, but tall worlds are harsher.
+Final herbivores, median: strip 4930, 3:2 1541, 1:1 1244, 2:1 1639; predators about 2× more;
+plants often sit at the cap (food is not what limits them); in 1:1 and 3:2 one seed each ends with 4
+herbivores. At ×100 3:2 holds ~15k herbivores vs ~60k in the strip. Why (story of 1:1 seed 3):
+the start layer is 5‒100% of depth, so in a 15 000-high world most newborns start far from
+the rich top and starve (starved 135k vs eaten 80k), the repro threshold collapses to ~7 and
+populations swing. Not tuned yet.
+
+### Where food grows
+
+`flora.rs`. A plant's x and y are drawn independently: x by the width profile, y by the depth
+profile (density = their product). A profile (`FoodAxis` in `Rules::plant_depth` /
+`plant_width`, six rules per axis `plant_{depth,width}_{profile,steepness,end,bend,waves,amplitude}`)
+is `f(t)` over the share of the axis from the near edge (surface / left): uniform, linear
+(`end` % at the far edge), exp (`steepness`), log (`bend`: plateau, then a cliff), waves
+(`waves` rich bands, peaks mid-band, `amplitude` %). Each parameter is read by its profile only;
+the UI shows it only then (`Field::shown`). `--rule plant_width_profile=waves` takes names
+(`Rules::with_text`). The dead zone at the surface (`PLANT_TOP_MARGIN_PCT` = 5% — 200 at height
+4000) belongs to the surface and applies to every profile. The distribution is a world property;
+layer genes don't adapt to it.
+
+`Flora` is derived from rules + space like a phenotype from a genome: built in `World::new` and
+in `set_rules` (plants already grown stay put). Exactly **two random numbers per plant** for any
+profile (x then y); uniform and exp keep the pre-profile expressions (`rng.uniform`, the
+analytic inverse CDF), so the default world is bit for bit the old one — a unit test compares
+10 000 plants against a copy of the old formula. Linear, log and waves sample a tabulated
+inverse CDF (4096 bins; empty bins never picked). `flora::density(rules, tx, ty)` is the
+preview the game paints; `flora::describe(rules)` is the story's line. Limits in `with`: profile
+an integer index, waves an integer 1‒100 (table resolution), steepness ≤ 100 (`e^-k` underflow),
+percents 0‒100. Profiles are not balanced: at ×1 with each non-default profile at its default
+parameters (6 seeds × 20 000 ticks), 6 of 48 runs died out (depth log 2, width linear 2, width
+exp 1, width log 1); the default profile — 0 of 12.
 
 ### Predators
 
@@ -380,11 +426,15 @@ Adding a strategy:
 - `app.rs` — `LifeApp`: screens and transitions, owns the settings and the `SimHandle`; `theme.rs` —
   palette (port of `app/theme.py`).
 - `view.rs` (world, selection, minimap), `camera.rs` (port of `camera.py`, f64), `game.rs`
-  (game screen, lab window, creature card, `report_command`), `screens.rs` (menu, «Новый мир»,
-  prefs, help), `charts.rs` (drawn with the painter — no plot crate), `history.rs`
-  (port of `history.py`), `settings.rs` (`FIELDS`, the single slider spec; start counts are
-  *per base area* and scale with the world; the strategy sliders are the share of the second
-  variant; file in `%APPDATA%\TinyLife`, atomic, clamped).
+  (game screen, lab window with «Правила»/«Еда» tabs, creature card, `report_command`),
+  `screens.rs` (menu, «Новый мир» with tabs «Мир»/«Еда»/«Лаборатория» and buttons pinned in a
+  bottom panel, prefs, help; `field_input` — a slider or, for a field with `choices`, a combo
+  box; `food_preview` — the world in its proportions shaded by `flora::density`),
+  `charts.rs` (drawn with the painter — no plot crate), `history.rs`
+  (port of `history.py`), `settings.rs` (`FIELDS`, the single field spec — label, hint,
+  range, `choices`, `shown`; start counts are *per base area* and scale with the world; the
+  strategy sliders are the share of the second variant; the shape is `Settings::shape`; file in
+  `%APPDATA%\TinyLife`, atomic, clamped).
 - Chronicle texts come from `life_sim::observe::EventTracker` — the same incremental tracker
   the report's `events()` wraps, so game and report print identical events.
 - Live rules: `World::set_rules` recomputes the whole phenotype (`apply_rules`); a test checks it

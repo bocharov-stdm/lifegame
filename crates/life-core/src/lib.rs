@@ -6,6 +6,7 @@
 //! на нём держатся тесты и подбор баланса без окна. Рисует `life-app`.
 
 pub mod config;
+pub mod flora;
 pub mod genome;
 pub mod grid;
 pub mod plant;
@@ -19,5 +20,5 @@ pub mod world;
 
 pub use genome::{Genome, PredatorGenome, VegetarianGenome};
 pub use rules::Rules;
-pub use space::Space;
+pub use space::{Shape, Space};
 pub use world::{Counters, Creature, Stats, World, WorldConfig};
