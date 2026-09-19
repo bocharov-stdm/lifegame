@@ -4,7 +4,8 @@
 //! счётчик тиков → миграция. Травоядные видят уже сдвинутых хищников. Съеденный
 //! в этом тике и умерший на своём ходу не действуют дальше. Дети копятся в
 //! отдельном буфере и не ходят в тик рождения. Съеденные растения помечаются
-//! и выметаются раз за тик.
+//! и выметаются раз за тик. Каннибализм (правило) — отдельный проход после
+//! хода всех травоядных, когда они уже стоят.
 
 use crate::config::*;
 use crate::flora::Flora;
@@ -15,13 +16,15 @@ use crate::predator::Predator;
 use crate::predator::strategy as predator_strategy;
 use crate::rng::Rng;
 use crate::rules::Rules;
-use crate::senses::{GridPredatorSenses, GridVegetarianSenses, eat_plants, prey_in_contact};
+use crate::senses::{
+    GridPredatorSenses, GridVegetarianSenses, eat_plants, prey_in_contact, smaller_prey_in_contact,
+};
 use crate::space::{Shape, Space};
 use crate::vegetarian::Vegetarian;
 use crate::vegetarian::strategy as vegetarian_strategy;
 
-/// С чего начинается мир. None у численностей — значение из конфига,
-/// пересчитанное на площадь мира.
+/// С чего начинается мир. None у травоядных — значение из конфига,
+/// пересчитанное на площадь мира; у хищников — ни одного.
 #[derive(Clone, Debug)]
 pub struct WorldConfig {
     pub seed: u64,
@@ -68,8 +71,17 @@ impl WorldConfig {
         self.n_vegetarians.unwrap_or_else(|| self.space().per_area(VEGETARIANS_AT_START))
     }
 
+    /// Сколько хищников будет на старте: заданное или ни одного — по
+    /// умолчанию мир без хищников.
     pub fn predators_at_start(&self) -> usize {
-        self.n_predators.unwrap_or_else(|| self.space().per_area(PREDATORS_AT_START))
+        self.n_predators.unwrap_or(0)
+    }
+
+    /// Тот же мир, но с хищниками: `PREDATORS_PER_AREA` на базовый участок.
+    /// Звать после масштаба и формы — число растёт с площадью.
+    pub fn with_predators(mut self) -> Self {
+        self.n_predators = Some(self.space().per_area(PREDATORS_PER_AREA));
+        self
     }
 
     /// Геном стартовых хищников и мигрантов.
@@ -101,6 +113,8 @@ pub struct Counters {
     pub vegetarians_born: u64,
     pub vegetarians_eaten: u64,
     pub vegetarians_starved: u64,
+    /// Съедены сородичами (каннибализм).
+    pub vegetarians_cannibalized: u64,
     pub predators_born: u64,
     pub predators_starved: u64,
 }
@@ -114,6 +128,7 @@ impl Counters {
             vegetarians_born: self.vegetarians_born - earlier.vegetarians_born,
             vegetarians_eaten: self.vegetarians_eaten - earlier.vegetarians_eaten,
             vegetarians_starved: self.vegetarians_starved - earlier.vegetarians_starved,
+            vegetarians_cannibalized: self.vegetarians_cannibalized - earlier.vegetarians_cannibalized,
             predators_born: self.predators_born - earlier.predators_born,
             predators_starved: self.predators_starved - earlier.predators_starved,
         }
@@ -315,8 +330,18 @@ impl World {
 
     fn update_vegetarians(&mut self) {
         let divide = self.tick.is_multiple_of(DIVIDE_PERIOD);
-        let World { space, rules, plants, vegetarians, predators, food_grid, hunter_grid, counters, .. } =
-            self;
+        let World {
+            space,
+            rules,
+            plants,
+            vegetarians,
+            predators,
+            prey_grid,
+            food_grid,
+            hunter_grid,
+            counters,
+            ..
+        } = self;
         food_grid.rebuild(space, plants.iter().map(|p| (p.x, p.y)));
         hunter_grid.rebuild(space, predators.iter().map(|p| (p.x, p.y)));
 
@@ -340,11 +365,49 @@ impl World {
                 offspring.push(child);
             }
         }
+        if rules.cannibals() {
+            // все уже сходили, дети ещё в буфере — они в тик рождения не едят и не съедаются
+            Self::cannibalism(space, rules, vegetarians, prey_grid, counters);
+        }
         vegetarians.retain(|v| v.alive);
         plants.retain(|p| p.alive); // выметаем съеденное
         counters.vegetarians_born += offspring.len() as u64;
         for child in offspring {
             self.add_vegetarian(child);
+        }
+    }
+
+    /// Каннибализм: травоядные по порядку номеров съедают по одному сородичу,
+    /// который мельче в `cannibal_ratio` раз и касается телом радиуса поедания
+    /// (радиус — размер, как у растений). Это физика, а не чувство: никто не
+    /// ищет сородичей, едят тех, кто уже рядом. Травоядные в этом проходе стоят,
+    /// поэтому копии координат в сетке верны. Случайных чисел нет.
+    fn cannibalism(
+        space: &Space,
+        rules: &Rules,
+        vegetarians: &mut [Vegetarian],
+        grid: &mut Grid,
+        counters: &mut Counters,
+    ) {
+        grid.rebuild(space, vegetarians.iter().map(|v| (v.x, v.y)));
+        let max_half = vegetarians.iter().fold(0.0_f64, |m, v| m.max(v.pheno.half));
+        for i in 0..vegetarians.len() {
+            let v = &vegetarians[i];
+            if !v.alive {
+                continue; // съеден раньше в этом проходе или умер от голода
+            }
+            let max_size = v.pheno.size / rules.cannibal_ratio;
+            let Some(j) =
+                smaller_prey_in_contact(grid, vegetarians, max_half, i, (v.x, v.y), v.pheno.size, max_size)
+            else {
+                continue;
+            };
+            let prey = &mut vegetarians[j];
+            let gain = prey.energy;
+            prey.alive = false;
+            prey.energy = 0.0;
+            counters.vegetarians_cannibalized += 1;
+            vegetarians[i].devour(gain);
         }
     }
 

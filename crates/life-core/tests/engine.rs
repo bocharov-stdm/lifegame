@@ -87,6 +87,86 @@ fn съеденный_не_действует() {
     assert!(w.vegetarians.is_empty(), "мёртвое травоядное оставило потомство");
 }
 
+// ── каннибализм ────────────────────────────────────────────────────────────
+
+/// Мир с большим травоядным и соседом заданного размера на заданном расстоянии.
+/// Тик 1 — не тик деления: считаем только поедание.
+fn cannibal_world(on: bool, small: f64, dx: f64) -> World {
+    let rules = Rules::default().with("cannibalism", if on { 1.0 } else { 0.0 }).unwrap();
+    let mut w = empty_world(rules);
+    w.tick = 1;
+    w.spawn_vegetarian(genom(100.0), 3000.0, 2000.0, Some(100.0));
+    w.spawn_vegetarian(genom(small), 3000.0 + dx, 2000.0, None);
+    w
+}
+
+#[test]
+fn каннибал_съедает_мелкого_рядом() {
+    let mut w = cannibal_world(true, 30.0, 10.0);
+    let prey_energy = w.vegetarians[1].energy;
+    w.step();
+    assert_eq!(w.vegetarians.len(), 1, "мелкий сородич в досягаемости съеден");
+    assert_eq!(w.counters.vegetarians_cannibalized, 1);
+    let big = &w.vegetarians[0];
+    assert!(big.energy > 100.0 + prey_energy - 5.0, "энергия жертвы досталась едоку: {}", big.energy);
+}
+
+#[test]
+fn каннибал_не_ест_крупного_дальнего_и_при_выключенном_правиле() {
+    for (on, small, dx, why) in [
+        (true, 50.0, 10.0, "всего вдвое мельче — при отношении 2.5 не еда"),
+        (true, 30.0, 400.0, "далеко — каннибал не ищет, а ест того, кто рядом"),
+        (false, 30.0, 10.0, "правило выключено"),
+    ] {
+        let mut w = cannibal_world(on, small, dx);
+        w.step();
+        assert_eq!(w.vegetarians.len(), 2, "{why}");
+        assert_eq!(w.counters.vegetarians_cannibalized, 0, "{why}");
+    }
+}
+
+/// Съеденный сородич в этом же тике сам никого не ест: тройка «крупный →
+/// средний → мелкий» по порядку номеров теряет только среднего.
+#[test]
+fn съеденный_сородич_не_ест() {
+    let rules = Rules::default().with("cannibalism", 1.0).unwrap();
+    let mut w = empty_world(rules);
+    w.tick = 1;
+    w.spawn_vegetarian(genom(250.0), 3000.0, 2000.0, Some(500.0));
+    w.spawn_vegetarian(genom(90.0), 3150.0, 2000.0, None);
+    w.spawn_vegetarian(genom(30.0), 3200.0, 2000.0, None);
+    let ids: Vec<u64> = w.vegetarians.iter().map(|v| v.id).collect();
+    w.step();
+    let left: Vec<u64> = w.vegetarians.iter().map(|v| v.id).collect();
+    assert_eq!(w.counters.vegetarians_cannibalized, 1, "одно поедание за тик на едока");
+    assert_eq!(left, vec![ids[0], ids[2]], "съеден средний, мелкий цел");
+}
+
+/// Выключенный каннибализм — тот же мир бит в бит, что и без правила вовсе:
+/// проход не тянет случайных чисел. Включённый — другой мир, и счётчики сходятся.
+#[test]
+fn каннибализм_выключен_бит_в_бит_и_счётчики_сходятся() {
+    let run = |rules: Rules| {
+        let mut w = World::new(&WorldConfig { seed: 3, rules, ..Default::default() });
+        for _ in 0..3000 {
+            w.step();
+        }
+        w
+    };
+    let off = Rules::default().with("cannibalism", 0.0).unwrap().with("cannibal_ratio", 1.5).unwrap();
+    assert_eq!(run(off).stats(), run(Rules::default()).stats());
+
+    let on = Rules::default().with("cannibalism", 1.0).unwrap().with("cannibal_ratio", 1.2).unwrap();
+    let w = run(on);
+    let c = w.counters;
+    assert!(c.vegetarians_cannibalized > 0, "за 3000 тиков при отношении 1.2 хоть кого-то съели: {c:?}");
+    let veg0 = VEGETARIANS_AT_START as u64;
+    assert_eq!(
+        w.vegetarians.len() as u64,
+        veg0 + c.vegetarians_born - c.vegetarians_eaten - c.vegetarians_starved - c.vegetarians_cannibalized
+    );
+}
+
 /// Бегство продолжается, когда хищник пропал из виду (было: стоял столбом).
 #[test]
 fn бегство_продолжается_без_хищника() {
@@ -387,7 +467,7 @@ fn рывок_не_проскакивает_добычу() {
 
 #[test]
 fn мигрант_приходит_когда_хищников_нет() {
-    let mut w = World::new(&WorldConfig { n_vegetarians: Some(40), ..Default::default() });
+    let mut w = World::new(&WorldConfig { n_vegetarians: Some(40), ..Default::default() }.with_predators());
     w.predators.clear();
     w.tick = PREDATOR_MIGRATION_PERIOD as u64;
     w.migrate_predators();
@@ -432,11 +512,10 @@ fn мигранта_нет_когда_не_положено() {
 /// Приток на единицу площади тот же, что в базовом мире: в мире x10 приходят десятеро.
 #[test]
 fn мигрантов_больше_в_большом_мире() {
-    let mut w = World::new(&WorldConfig {
-        scale: 10.0,
-        n_vegetarians: Some(PREDATOR_MIGRATION_PREY * 10),
-        ..Default::default()
-    });
+    let mut w = World::new(
+        &WorldConfig { scale: 10.0, n_vegetarians: Some(PREDATOR_MIGRATION_PREY * 10), ..Default::default() }
+            .with_predators(),
+    );
     w.predators.clear();
     w.tick = PREDATOR_MIGRATION_PERIOD as u64;
     w.migrate_predators();
@@ -445,7 +524,7 @@ fn мигрантов_больше_в_большом_мире() {
 
 #[test]
 fn мигранта_нет_пока_хищников_хватает() {
-    let mut w = World::new(&WorldConfig { n_vegetarians: Some(40), ..Default::default() });
+    let mut w = World::new(&WorldConfig { n_vegetarians: Some(40), ..Default::default() }.with_predators());
     w.predators.truncate(PREDATOR_MIGRATION_MIN);
     w.tick = PREDATOR_MIGRATION_PERIOD as u64;
     w.migrate_predators();
@@ -766,7 +845,7 @@ fn один_сид_один_мир() {
 /// отчёт стал бы объяснять численность неверными причинами.
 #[test]
 fn счётчики_сходятся_с_численностью() {
-    let mut w = World::new(&WorldConfig { seed: 3, ..Default::default() });
+    let mut w = World::new(&WorldConfig { seed: 3, ..Default::default() }.with_predators());
     let (veg0, pred0, plants0) =
         (w.vegetarians.len() as u64, w.predators.len() as u64, w.plants.len() as u64);
     for _ in 0..3000 {
@@ -776,7 +855,7 @@ fn счётчики_сходятся_с_численностью() {
     assert!(c.vegetarians_born > 0 && c.vegetarians_eaten > 0 && c.plants_eaten > 0, "{c:?}");
     assert_eq!(
         w.vegetarians.len() as u64,
-        veg0 + c.vegetarians_born - c.vegetarians_eaten - c.vegetarians_starved
+        veg0 + c.vegetarians_born - c.vegetarians_eaten - c.vegetarians_starved - c.vegetarians_cannibalized
     );
     assert_eq!(w.predators.len() as u64, pred0 + c.predators_born + w.migrants - c.predators_starved);
     assert_eq!(w.plants.len() as u64, plants0 + c.plants_grown - c.plants_eaten);
@@ -791,9 +870,9 @@ fn масштаб_растит_площадь() {
     assert_eq!(strip.space.height, WORLD_HEIGHT);
     assert_eq!(strip.space.width, WORLD_WIDTH * 10.0);
     for shape in Shape::ALL {
-        let w = World::new(&WorldConfig { scale: 10.0, shape, ..Default::default() });
+        let w = World::new(&WorldConfig { scale: 10.0, shape, ..Default::default() }.with_predators());
         assert_eq!(w.vegetarians.len(), VEGETARIANS_AT_START * 10, "{shape:?}");
-        assert_eq!(w.predators.len(), PREDATORS_AT_START * 10, "{shape:?}");
+        assert_eq!(w.predators.len(), PREDATORS_PER_AREA * 10, "{shape:?}");
         assert!(w.vegetarians.iter().all(|v| v.x <= w.space.width && v.y <= w.space.height), "{shape:?}");
     }
     let wide = World::new(&WorldConfig { scale: 10.0, ..Default::default() });

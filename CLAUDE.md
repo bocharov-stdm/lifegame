@@ -85,7 +85,10 @@ and the event chronicle for its in-game event feed.
 
 `reference/fingerprint.json` is the balance fingerprint (8 seeds x 20 000 ticks, series every
 60 ticks). It started as the last Python version's (`python/fingerprint.py` at `python-final`)
-and is re-taken from Rust after each deliberate balance change. `--compare` reruns the same seeds in Rust and checks each metric's mean against the reference's
+and is re-taken from Rust after each deliberate balance change. Since predators became
+opt-in it is a world of herbivores and plants only (0 of 8 seeds extinct, ~1800‒2700
+herbivores); predator balance is guarded by the golden cases, which set
+`WorldConfig::with_predators()` explicitly. `--compare` reruns the same seeds in Rust and checks each metric's mean against the reference's
 per-seed range; any mismatch exits with code 1 (CI relies on it). It refuses (code 2) when the
 world differs from the one the reference was taken on (world size — compared as `Space`, not
 shape name, since at ×1 strip and 3:2 are the same 6000x4000 —, rules, start counts, predator
@@ -154,17 +157,26 @@ and migration draws only when it fires.
 
 `tests/golden.rs` pins behaviour bit for bit: an FNV digest of the world (positions, energy,
 ids, all genes of both species, an RNG probe of every creature and of the world) at checkpoints
-for seven configs (defaults, giants, lab rules with migration, ×10 strip, live rules + spawning,
+for eight configs (defaults, giants, lab rules with migration, ×10 strip, live rules + spawning,
 a 50/50 strategy mix — it also asserts both strategies coexist —, a ×10 square with tabulated
-food profiles). A case without recorded digests fails too. Any refactor must keep it; a deliberate behaviour change re-records it (the test prints the table) in its own commit,
+food profiles, cannibalism without predators). Cases A‒G start with predators
+(`.with_predators()`): they were recorded when that was the default. A case without recorded digests fails too. Any refactor must keep it; a deliberate behaviour change re-records it (the test prints the table) in its own commit,
 together with `--save-reference`. The constants are asserted on Windows only: `ln`/`cos`/`powf`
 come from the platform libm, so Linux may differ in the last bit (there the test prints its
 digests). `--ignored` prints digests of 50 seeds × 2 worlds for a wider before/after diff.
 
 ### Tick ordering and the death flag
 
-`World::step()` runs: spawn plants → update predators → update herbivores → `tick += 1` →
-migrate predators. Herbivores see predators already moved this tick.
+`World::step()` runs: spawn plants → update predators → update herbivores (+ cannibalism) →
+`tick += 1` → migrate predators. Herbivores see predators already moved this tick.
+
+- Cannibalism (`rules.cannibalism`, off in the engine, on in the game) is a pass at the end of
+  the herbivore phase, after every herbivore has moved and before offspring are added (children
+  neither eat nor get eaten on their birth tick): by id order each live herbivore eats the first
+  live one no bigger than `size / cannibal_ratio` whose body touches its eating radius (`size`,
+  as for plants) and takes its energy. Physics, not a sense — nobody seeks kin — and no random
+  numbers: with the rule off the world is bit for bit the old one. Counted in
+  `Counters::vegetarians_cannibalized`.
 
 - A herbivore eaten earlier in the tick is skipped (`if !v.alive { continue }`); the same check
   runs right after each creature's own step, because starving there sets `alive = false` and a
@@ -207,7 +219,9 @@ migrate predators. Herbivores see predators already moved this tick.
   giant herbivores. A wrong radius does not crash anything — it silently changes the balance.
   Keep that test and `сетка_совпадает_с_перебором` passing when touching `grid.rs`, the
   queries or how creatures move; route any new neighbour query through such a function.
-- No senses on a creature's *own* species until the parallel tick: herbivores move during their
+- No senses on a creature's *own* species until the parallel tick (cannibalism is not a sense:
+  it runs as a separate pass when herbivores stand still, via `smaller_prey_in_contact`, which
+  the brute-force test checks too): herbivores move during their
   own phase, so the grid's copied coordinates of other herbivores would be stale.
 
 ### The soft layer
@@ -303,7 +317,12 @@ with them, 0 of 12 (one seed ends with 2 herbivores and no predators). The mutab
 seeds): selection pulls herbivore mutability from 1 to ~0.2 (a less mutated child is fitter on
 average), variation dries up and they lose to predators. With mutability pinned at 1 — 0 of
 12; without predators (the game's default) — 0 of 12, ~2000 herbivores, mutability settles
-near 0.4. The user chose deliberately: mutability has no energy cost. Use the story
+near 0.4. The user chose deliberately: mutability has no energy cost.
+
+Predators are opt-in since cannibalism (`WorldConfig::with_predators`, `--predators N`,
+`PREDATORS_PER_AREA` per base area; `n_predators: None` means none). Cannibalism, 8 seeds ×
+20 000 ticks, no predators: 0 of 8 extinct, but it is a size race — median size 24 → ~80 (up to
+230), 50‒180 herbivores instead of ~2000 (seed 1: 17% of deaths are «eaten by kin»). Not tuned. Use the story
 (`--ticks 20000 --maps 3`, `--max-work 1e15` for full-length runs) to work on balance.
 
 Behaviour genes without a cost run away. Tried and removed: «испуг» (flee distance, % of
@@ -410,7 +429,7 @@ Adding a strategy:
 - `sim.rs` — the simulation thread owns `World`. The UI sends `Command`s over a channel (pause,
   speed, step, view rect, pick/select, `SetRules`, spawn, restart, new world); they apply
   between ticks. Frames go through a one-slot mailbox: the thread publishes only when the UI
-  took the previous frame, so frames are never dropped — that is why history/log/gene points
+  took the previous frame, so frames are never dropped — that is why history/log/snapshots
   travel as *deltas* in `Frame` (a test checks none are lost). Tempo: ticks per second with a
   capped debt (lag is shown, never caught up in a burst), `SLICE` bounds a tick burst so
   commands stay responsive; frame building is throttled to ≤ 1/3 of the thread's time.
@@ -435,16 +454,25 @@ Adding a strategy:
   same interpolated position. The buffer is uploaded only when a new frame arrives.
 - `app.rs` — `LifeApp`: screens and transitions, owns the settings and the `SimHandle`; `theme.rs` —
   palette (port of `app/theme.py`).
+- `stats.rs` — the «Статистика» window (key I): «Энергия» (fullness, hunger, plants vs cap),
+  «Где живут» (herbivore depth over time as a heat map + p10/p50/p90, plants vs herbivores by
+  depth/width band), «Хищники» (predator genome; only when the game has predators) and
+  «Область»: `Tool::Area` drags a rectangle in `view.rs` (drag draws instead of panning),
+  `Command::SetRegion` makes the thread compute `frame::RegionStats` (who is inside, their gene
+  stats next to the whole world's) at once — works while paused — and on every snapshot.
+  Everything is fed by whole `Snapshot`s, sent to the UI as deltas (`Frame::snapshots`,
+  `History::snapshots`).
 - `view.rs` (world, selection, minimap), `camera.rs` (port of `camera.py`, f64), `game.rs`
   (game screen, lab window with «Правила»/«Еда» tabs, creature card, `report_command`),
   `screens.rs` (menu, «Новый мир» with tabs «Мир»/«Еда»/«Лаборатория» and buttons pinned in a
   bottom panel, prefs, help; `field_input` — a slider or, for a field with `choices`, a combo
   box; `food_preview` — the world in its proportions shaded by `flora::density`),
-  `charts.rs` (drawn with the painter — no plot crate), `history.rs`
+  `charts.rs` (drawn with the painter — no plot crate; `lines` for any series, `genome` for
+  either species' gene table), `history.rs`
   (port of `history.py`), `settings.rs` (`FIELDS`, the single field spec — label, hint,
   range, `choices`, `shown`; start counts are *per base area* and scale with the world; the
-  game starts **without predators** by default (engine, report and reference keep
-  `PREDATORS_AT_START`); the
+  game starts **without predators** and **with cannibalism** — the «Хищники» checkbox
+  (`Key::PredatorsEnabled`) hides every predator field (`Field::predator`) until ticked; the
   strategy sliders are the share of the second variant; the shape is `Settings::shape`; file in
   `%APPDATA%\TinyLife`, atomic, clamped).
 - Chronicle texts come from `life_sim::observe::EventTracker` — the same incremental tracker

@@ -193,6 +193,32 @@ pub(crate) fn prey_in_contact(
     caught
 }
 
+/// Каннибализм: первый живой сородич, кроме самого едока `me`, не крупнее
+/// `max_size`, чьё тело касается круга радиуса `reach` вокруг (x, y).
+pub(crate) fn smaller_prey_in_contact(
+    grid: &Grid,
+    vegetarians: &[Vegetarian],
+    max_half: f64,
+    me: usize,
+    (x, y): (f64, f64),
+    reach: f64,
+    max_size: f64,
+) -> Option<usize> {
+    let mut caught = None;
+    grid.for_each_near(x, y, reach + max_half, |j, vx, vy| {
+        let v = &vegetarians[j];
+        if caught.is_some() || j == me || !v.alive || v.pheno.size > max_size {
+            return;
+        }
+        let (dx, dy) = (x - vx, y - vy);
+        let r = reach + v.pheno.half;
+        if dx * dx + dy * dy < r * r {
+            caught = Some(j);
+        }
+    });
+    caught
+}
+
 /// Ближайший хищник строго ближе √r2: (x, y, квадрат расстояния).
 #[inline(always)]
 pub(crate) fn nearest_predator(grid: &Grid, x: f64, y: f64, r2: f64) -> Option<(f64, f64, f64)> {
@@ -263,7 +289,7 @@ mod tests {
     fn запросы_к_сеткам_совпадают_с_перебором_в_живом_мире() {
         let giants = Rules::default().with("size_power", 1.0).unwrap();
         for (seed, rules) in [(1, Rules::default()), (4, giants)] {
-            let mut w = World::new(&WorldConfig { seed, rules, ..Default::default() });
+            let mut w = World::new(&WorldConfig { seed, rules, ..Default::default() }.with_predators());
             let (mut prey, mut food, mut hunters) =
                 (Grid::new(GRID_CELL), Grid::new(GRID_CELL), Grid::new(GRID_CELL));
             let mut checked = 0;
@@ -334,6 +360,31 @@ mod tests {
                     assert_eq!(got, want, "сид {seed}, тик {tick}: съедено не то");
                     assert_eq!(n, want.iter().filter(|&&e| e).count());
                     checked += 1;
+                }
+                for (i, v) in vegs.iter().enumerate() {
+                    for ratio in [CANNIBAL_RATIO, 1.1] {
+                        let max_size = v.pheno.size / ratio;
+                        let fits = |j: usize, u: &Vegetarian| {
+                            j != i
+                                && u.alive
+                                && u.pheno.size <= max_size
+                                && dist2(v.x, v.y, u.x, u.y) < (v.pheno.size + u.pheno.half).powi(2)
+                        };
+                        let got = smaller_prey_in_contact(
+                            &prey,
+                            &vegs,
+                            max_half,
+                            i,
+                            (v.x, v.y),
+                            v.pheno.size,
+                            max_size,
+                        );
+                        let any = vegs.iter().enumerate().any(|(j, u)| fits(j, u));
+                        assert_eq!(got.is_some(), any, "сид {seed}, тик {tick}: каннибал");
+                        if let Some(j) = got {
+                            assert!(fits(j, &vegs[j]), "сид {seed}: съеден не тот сородич");
+                        }
+                    }
                 }
             }
             assert!(checked > 1000, "сид {seed}: проверено всего {checked} запросов — мир вымер?");

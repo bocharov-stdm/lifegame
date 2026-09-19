@@ -17,11 +17,11 @@ use crate::theme::{self, ACCENT, BG, DANGER, GOOD, MUTED, VEIL, spaced};
 /// с площадью. Это замер на этой машине, а не выдуманная формула.
 pub fn estimate(settings: &Settings, measured: Option<(f64, f64)>) -> (String, egui::Color32) {
     let cfg = settings.world_config(0);
-    let start = format!(
-        "на старте {} травоядных и {} хищников",
-        spaced(cfg.vegetarians_at_start() as u64),
-        spaced(cfg.predators_at_start() as u64)
-    );
+    let vegetarians = spaced(cfg.vegetarians_at_start() as u64);
+    let start = match cfg.predators_at_start() {
+        0 => format!("на старте {vegetarians} травоядных, без хищников"),
+        n => format!("на старте {vegetarians} травоядных и {} хищников", spaced(n as u64)),
+    };
     let Some((tick_ms, scale)) = measured.filter(|(ms, _)| *ms > 0.0) else {
         return (format!("{start}; скорость оценим, когда мир пойдёт"), MUTED);
     };
@@ -337,6 +337,12 @@ fn ui_scale_label(v: f64) -> String {
 /// Поле из `FIELDS`: ползунок или, если у поля есть варианты, выпадающий
 /// список. true — значение изменилось.
 pub fn field_input(ui: &mut egui::Ui, f: &Field, value: &mut f64) -> bool {
+    if f.toggle {
+        let mut on = *value != 0.0;
+        let changed = ui.checkbox(&mut on, "").on_hover_text(f.hint).changed();
+        *value = on as u8 as f64;
+        return changed;
+    }
     if f.choices.is_empty() {
         let slider =
             egui::Slider::new(value, f.lo..=f.hi).step_by(f.step).custom_formatter(|v, _| (f.format)(v));
@@ -393,7 +399,7 @@ pub fn food_preview(ui: &mut egui::Ui, rules: &Rules, space: Space) {
 fn fields(ui: &mut egui::Ui, s: &mut Settings, tab: Tab) {
     egui::Grid::new(("поля", tab as u8)).num_columns(3).spacing([12.0, 10.0]).show(ui, |ui| {
         for f in FIELDS.iter().filter(|f| f.tab == tab) {
-            if !(f.shown)(s) {
+            if !f.visible(s, s.predators_on()) {
                 continue;
             }
             ui.label(f.label).on_hover_text(f.hint);

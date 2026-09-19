@@ -6,10 +6,11 @@ use std::path::PathBuf;
 use eframe::egui;
 use life_core::WorldConfig;
 
-use crate::frame::LogEntry;
+use crate::frame::{LogEntry, RegionStats};
 use crate::history::History;
 use crate::settings::{self, Settings, Tab};
 use crate::sim::{Command, SimHandle};
+use crate::stats::StatsTab;
 use crate::theme;
 use crate::view::WorldView;
 
@@ -35,6 +36,8 @@ pub enum Tool {
     Select,
     SpawnVegetarian,
     SpawnPredator,
+    /// Протянуть область и посмотреть геном тех, кто внутри.
+    Area,
 }
 
 /// Идущая партия (не фоновый мир меню).
@@ -65,6 +68,11 @@ pub struct LifeApp {
     pub lab: Settings,
     /// Вкладка лаборатории: правила (`Tab::Lab`) или еда (`Tab::Food`).
     pub lab_tab: Tab,
+    /// Окно «Статистика» и его вкладка.
+    pub stats_open: bool,
+    pub stats_tab: StatsTab,
+    /// Последняя сводка по протянутой области; None — области нет.
+    pub region: Option<RegionStats>,
     pub tool: Tool,
     pub setup_tab: Tab,
     pub prefs_open: bool,
@@ -115,6 +123,9 @@ impl LifeApp {
             whole: false,
             lab_open: false,
             lab_tab: Tab::Lab,
+            stats_open: false,
+            stats_tab: StatsTab::Energy,
+            region: None,
             tool: Tool::Select,
             setup_tab: Tab::World,
             prefs_open: false,
@@ -133,12 +144,18 @@ impl LifeApp {
             self.history = History::default();
             self.log.clear();
             self.lab.take_rules(&f.rules);
+            // область — от прошлого мира; поток её уже забыл
+            self.region = None;
+            self.view.area = None;
+        }
+        if let Some(r) = f.region.take() {
+            self.region = Some(r);
         }
         for s in f.samples.drain(..) {
             self.history.add_sample(s);
         }
-        for g in f.gene_points.drain(..) {
-            self.history.add_genes(g);
+        for s in f.snapshots.drain(..) {
+            self.history.add_snapshot(s);
         }
         self.log.append(&mut f.log);
         if self.log.len() > LOG_LIMIT {
@@ -213,6 +230,13 @@ impl LifeApp {
 
     pub fn fps(&self) -> f64 {
         self.fps
+    }
+
+    /// Есть ли в партии хищники: начата с ними или они в мире сейчас. Без них
+    /// всё про хищников (подсадка, счётчик, графики, правила) спрятано.
+    pub fn predators_in_game(&self) -> bool {
+        self.game.as_ref().is_some_and(|g| g.start.predators_at_start() > 0)
+            || self.view.frame.as_ref().is_some_and(|f| f.predators > 0)
     }
 }
 

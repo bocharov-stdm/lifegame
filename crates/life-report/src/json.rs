@@ -28,6 +28,7 @@ fn counters(c: &Counters) -> Value {
         "vegetarians_born": c.vegetarians_born,
         "vegetarians_eaten": c.vegetarians_eaten,
         "vegetarians_starved": c.vegetarians_starved,
+        "vegetarians_cannibalized": c.vegetarians_cannibalized,
         "predators_born": c.predators_born,
         "predators_starved": c.predators_starved,
     })

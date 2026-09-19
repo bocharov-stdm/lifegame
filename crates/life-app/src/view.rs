@@ -12,7 +12,7 @@ use eframe::egui_wgpu;
 use life_core::Creature;
 
 use crate::camera::{Camera, Viewport};
-use crate::frame::{self, Frame, Instance, Raster, VEGETARIAN_COLOR, ViewRequest};
+use crate::frame::{self, Area, Frame, Instance, Raster, VEGETARIAN_COLOR, ViewRequest};
 use crate::render::Circles;
 use crate::sim::{Command, SimHandle};
 use crate::theme::{ACCENT, BG, LINE, MUTED, rgb};
@@ -24,11 +24,15 @@ const BANDS: usize = 32;
 const ANIMATION: f32 = 0.7;
 /// Насколько можно промахнуться кликом по существу, точек экрана.
 pub const PICK_RADIUS: f64 = 10.0;
+/// Меньше этого по стороне, точек экрана, — не область, а промах мышью.
+const MIN_AREA: f64 = 4.0;
 
 /// Что случилось в мире по мыши за кадр.
 pub enum Click {
     /// Клик по миру: точка мира и радиус промаха в единицах мира.
     World { x: f64, y: f64, radius: f64 },
+    /// Протянута область (инструмент «Область»), в координатах мира.
+    Area(Area),
 }
 
 #[derive(Default)]
@@ -47,10 +51,25 @@ pub struct WorldView {
     interval: f64,
     /// Выделенное в прошлом кадре: кольцо едет вместе с кружком.
     prev_selected: Option<(Creature, f64, f64)>,
+    /// Перетаскивание рисует область, а не двигает камеру (инструмент «Область»).
+    pub area_mode: bool,
+    /// Где началось перетаскивание области, в координатах мира.
+    drag_from: Option<(f64, f64)>,
+    /// Последняя протянутая область (не меньше `MIN_AREA`).
+    dragged_area: Option<Area>,
+    /// Заданная область — рисуется рамкой, пока её не сняли.
+    pub area: Option<Area>,
 }
 
 fn pos(x: f64, y: f64) -> Pos2 {
     Pos2::new(x as f32, y as f32)
+}
+
+/// Область по двум углам в любом порядке, обрезанная краями мира.
+fn clamp_area(a: (f64, f64), b: (f64, f64), w: f64, h: f64) -> Area {
+    let x = |v: f64| v.clamp(0.0, w);
+    let y = |v: f64| v.clamp(0.0, h);
+    (x(a.0.min(b.0)), y(a.1.min(b.1)), x(a.0.max(b.0)), y(a.1.max(b.1)))
 }
 
 fn image(r: &Raster) -> egui::ColorImage {
@@ -135,9 +154,30 @@ impl WorldView {
         cam.set_view(view);
 
         // ── мышь: перетаскивание, колесо, клик ──────────────────────────────
-        let mut click = None;
+        let mut click: Option<Click> = None;
+        let mut drawing = None;
         if interactive {
-            if response.dragged() {
+            let to_world = |p: Pos2| cam.to_world(p.x as f64, p.y as f64);
+            if self.area_mode {
+                if response.drag_started() {
+                    self.drag_from = response.interact_pointer_pos().map(to_world);
+                    self.dragged_area = None;
+                }
+                let now = response.interact_pointer_pos().or(response.hover_pos()).map(to_world);
+                if let (Some(a), Some(b)) = (self.drag_from, now) {
+                    let area = clamp_area(a, b, f.world_w, f.world_h);
+                    let big = (area.2 - area.0).min(area.3 - area.1) * cam.zoom >= MIN_AREA;
+                    self.dragged_area = big.then_some(area);
+                }
+                // на кадре отпускания указателя может уже не быть — берём
+                // последнюю протянутую область
+                if response.drag_stopped() {
+                    self.drag_from = None;
+                    click = self.dragged_area.take().map(Click::Area);
+                } else if self.drag_from.is_some() {
+                    drawing = self.dragged_area;
+                }
+            } else if response.dragged() {
                 let d = response.drag_delta();
                 cam.pan(d.x as f64, d.y as f64);
             }
@@ -221,6 +261,20 @@ impl WorldView {
             ));
         }
         painter.rect_stroke(world_rect, 0.0, Stroke::new(1.0, LINE), StrokeKind::Outside);
+
+        // ── область: заданная — рамкой, протягиваемая — рамкой с заливкой ─────
+        let screen = |a: Area| {
+            let (x0, y0) = cam.to_screen(a.0, a.1);
+            let (x1, y1) = cam.to_screen(a.2, a.3);
+            Rect::from_min_max(pos(x0, y0), pos(x1, y1))
+        };
+        if let Some(a) = self.area {
+            painter.rect_stroke(screen(a), 0.0, Stroke::new(1.5, ACCENT), StrokeKind::Outside);
+        }
+        if let Some(a) = drawing {
+            painter.rect_filled(screen(a), 0.0, ACCENT.gamma_multiply(0.08));
+            painter.rect_stroke(screen(a), 0.0, Stroke::new(1.0, ACCENT), StrokeKind::Outside);
+        }
 
         // ── выделенное: кольцо вокруг тела и круг зрения ─────────────────────
         if let Some(s) = f.selected {

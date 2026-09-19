@@ -10,9 +10,9 @@
 use life_core::genome::{predator, vegetarian};
 use life_core::predator::Predator;
 use life_core::{Creature, Rules, World};
-use life_sim::observe::EventKind;
+use life_sim::observe::{EventKind, GeneStat, Snapshot, gene_stats};
 
-use crate::history::{GenePoint, Sample};
+use crate::history::Sample;
 
 /// Больше кружков в кадре не шлём: дальше — карта плотности. 32 байта на
 /// существо — 8 МБ, это ещё легко заливается в видеокарту каждый кадр; а при
@@ -87,6 +87,57 @@ pub struct Status {
     /// Тик не успевает за выбранной скоростью.
     pub lagging: bool,
     pub ended: Option<Ending>,
+}
+
+/// Прямоугольник мира: x0, y0, x1, y1 (x0 < x1, y0 < y1).
+pub type Area = (f64, f64, f64, f64);
+
+/// Сводка генов обоих видов: (травоядные, хищники); None — вида нет.
+pub type GeneSummary = (Option<[GeneStat; vegetarian::N]>, Option<[GeneStat; predator::N]>);
+
+/// Сводка по области мира (инструмент «Область»): кто внутри (по центру тела)
+/// и какой у них геном — рядом со сводкой по всему миру на том же тике.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RegionStats {
+    pub area: Area,
+    pub tick: u64,
+    pub plants: usize,
+    pub vegetarians: usize,
+    pub predators: usize,
+    /// Средняя заполненность бака травоядных внутри, 0..1.
+    pub fullness: Option<f64>,
+    pub inside: GeneSummary,
+    pub world: GeneSummary,
+}
+
+impl RegionStats {
+    /// `world_genes` — сводка по всему миру, если она уже посчитана на этом
+    /// тике (срез); иначе считается здесь.
+    pub fn of(world: &World, area: Area, world_genes: Option<GeneSummary>) -> RegionStats {
+        let inside = |x: f64, y: f64| x >= area.0 && x <= area.2 && y >= area.1 && y <= area.3;
+        let vegs = world.vegetarians.iter().filter(|v| inside(v.x, v.y));
+        let preds = world.predators.iter().filter(|p| inside(p.x, p.y));
+        let (n, sum) = vegs.clone().fold((0, 0.0), |(n, s), v| (n + 1, s + v.energy / v.pheno.max_energy));
+        let world_genes = world_genes.unwrap_or_else(|| {
+            (
+                gene_stats(&vegetarian::GENES, world.vegetarians.iter().map(|v| &v.genome)),
+                gene_stats(&predator::GENES, world.predators.iter().map(|p| &p.genome)),
+            )
+        });
+        RegionStats {
+            area,
+            tick: world.tick,
+            plants: world.plants.iter().filter(|p| inside(p.x, p.y)).count(),
+            vegetarians: n,
+            predators: preds.clone().count(),
+            fullness: (n > 0).then(|| sum / n as f64),
+            inside: (
+                gene_stats(&vegetarian::GENES, vegs.map(|v| &v.genome)),
+                gene_stats(&predator::GENES, preds.map(|p| &p.genome)),
+            ),
+            world: world_genes,
+        }
+    }
 }
 
 /// Выбранное существо, как оно есть на тике кадра.
@@ -191,7 +242,11 @@ pub struct Frame {
     /// теряются (поток кладёт новый, только когда окно забрало прошлый),
     /// поэтому приращений достаточно.
     pub samples: Vec<Sample>,
-    pub gene_points: Vec<GenePoint>,
+    /// Срезы мира — раз в `SNAPSHOT_EVERY` тиков (реже на огромном мире).
+    pub snapshots: Vec<Snapshot>,
+    /// Сводка по заданной области — когда её пересчитали (при установке и на
+    /// каждом срезе).
+    pub region: Option<RegionStats>,
     pub log: Vec<LogEntry>,
     /// Когда кадр собран: от этого момента окно отсчитывает возраст кружков.
     pub built: Option<std::time::Instant>,

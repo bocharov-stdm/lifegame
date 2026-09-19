@@ -126,6 +126,11 @@ impl Vegetarian {
         strategy::after_eating(&me, &mut self.mind, &mut self.rng);
     }
 
+    /// Съеден сородич (каннибализм): его энергия — едоку, не выше полного бака.
+    pub fn devour(&mut self, energy: f64) {
+        self.energy = self.pheno.max_energy.min(self.energy + energy.max(0.0));
+    }
+
     /// Ребёнок, если после деления у родителя остаётся резерв. Номер ребёнку
     /// выдаёт мир.
     pub fn maybe_divide(&mut self, space: &Space, rules: &Rules) -> Option<Vegetarian> {

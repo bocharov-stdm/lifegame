@@ -13,7 +13,7 @@ const BASE_VISION: f64 = GENES[Gene::Vision as usize].base;
 
 /// Имена настраиваемых правил — для отчёта (`--rule имя=число`) и настроек.
 /// Профили еды — по шесть на ось, по порядку `flora::AXIS_PARAMS`.
-pub const RULE_KEYS: [&str; 22] = [
+pub const RULE_KEYS: [&str; 24] = [
     "plant_rate",
     "plant_energy",
     "mutation_sigma",
@@ -36,6 +36,8 @@ pub const RULE_KEYS: [&str; 22] = [
     "plant_width_bend",
     "plant_width_waves",
     "plant_width_amplitude",
+    "cannibalism",
+    "cannibal_ratio",
 ];
 
 /// Параметры профилей еды, пока их не выбрали (config.rs).
@@ -73,6 +75,10 @@ pub struct Rules {
     /// Где растёт еда: профиль по глубине и по ширине (`flora.rs`).
     pub plant_depth: FoodAxis,
     pub plant_width: FoodAxis,
+    /// Едят ли травоядные мелких сородичей: 0 — нет, 1 — да.
+    pub cannibalism: f64,
+    /// Во сколько раз жертва-сородич мельче едока (по размеру).
+    pub cannibal_ratio: f64,
     // производные коэффициенты — считает `renormalize`
     size_coef: f64,
     speed_coef: f64,
@@ -98,6 +104,8 @@ impl Default for Rules {
                 ..FOOD_AXIS
             },
             plant_width: FoodAxis { profile: Profile::Uniform.index(), ..FOOD_AXIS },
+            cannibalism: CANNIBALISM,
+            cannibal_ratio: CANNIBAL_RATIO,
             size_coef: 0.0,
             speed_coef: 0.0,
             sight_coef: 0.0,
@@ -133,6 +141,8 @@ impl Rules {
             "predator_divide_chance" => r.predator_divide_chance = value,
             "predator_max_energy" => r.predator_max_energy = value,
             "predator_migration" => r.predator_migration = value,
+            "cannibalism" => r.cannibalism = value,
+            "cannibal_ratio" => r.cannibal_ratio = value,
             _ => return Err(format!("нет такого правила: {key}; есть {}", RULE_KEYS.join(", "))),
         }
         // Пределы — только те, за которыми правило теряет смысл, а не «разумные»:
@@ -143,6 +153,9 @@ impl Rules {
             "predator_divide_chance" => (0.0..=1.0).contains(&value),
             "predator_max_energy" => value > 0.0,
             "predator_migration" => value >= 0.0 && value.fract() == 0.0,
+            "cannibalism" => value == 0.0 || value == 1.0,
+            // при отношении 1 и меньше едят равных и даже крупных
+            "cannibal_ratio" => value > 1.0,
             _ => value >= 0.0,
         };
         if !allowed {
@@ -150,6 +163,8 @@ impl Rules {
                 "predator_divide_chance" => "число от 0 до 1",
                 "predator_max_energy" => "число больше 0",
                 "predator_migration" => "целое число тиков, 0 — без миграции",
+                "cannibalism" => "0 (нет) или 1 (да)",
+                "cannibal_ratio" => "число больше 1",
                 _ => "число не меньше 0",
             };
             return Err(format!("правило {key}: нужно {need}, а не {value}"));
@@ -194,8 +209,15 @@ impl Rules {
             "predator_divide_chance" => self.predator_divide_chance,
             "predator_max_energy" => self.predator_max_energy,
             "predator_migration" => self.predator_migration,
+            "cannibalism" => self.cannibalism,
+            "cannibal_ratio" => self.cannibal_ratio,
             _ => return None,
         })
+    }
+
+    /// Едят ли травоядные мелких сородичей.
+    pub fn cannibals(&self) -> bool {
+        self.cannibalism != 0.0
     }
 
     pub fn food_axis(&self, along: Along) -> &FoodAxis {
@@ -277,6 +299,19 @@ mod tests {
         }
         assert!(r.with("plant_width_amplitude", 100.0).is_ok());
         assert!(r.with("plant_depth_steepness", 0.0).is_ok(), "ноль — равномерно, это осмысленно");
+    }
+
+    #[test]
+    fn каннибализм_выключен_по_умолчанию_и_отвергает_бессмыслицу() {
+        let r = Rules::default();
+        assert!(!r.cannibals());
+        assert!(r.with("cannibalism", 1.0).unwrap().cannibals());
+        for (key, v) in
+            [("cannibalism", 0.5), ("cannibalism", 2.0), ("cannibal_ratio", 1.0), ("cannibal_ratio", 0.5)]
+        {
+            assert!(r.with(key, v).is_err(), "{key}={v} должно быть отвергнуто");
+        }
+        assert_eq!(r.with("cannibal_ratio", 1.5).unwrap().cannibal_ratio, 1.5);
     }
 
     #[test]

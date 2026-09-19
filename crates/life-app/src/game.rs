@@ -80,21 +80,35 @@ impl LifeApp {
         }
         egui::CentralPanel::no_frame().show(ui, |ui| {
             let rect = ui.max_rect();
-            if let Some(Click::World { x, y, radius }) = self.view.show(ui, rect, &self.sim, true) {
-                match self.tool {
+            self.view.area_mode = self.tool == Tool::Area;
+            match self.view.show(ui, rect, &self.sim, true) {
+                Some(Click::World { x, y, radius }) => match self.tool {
                     Tool::Select => {
                         self.sim.send(Command::Pick { x, y, radius });
                         self.side_tab = SideTab::Creature;
                     }
                     Tool::SpawnVegetarian => self.sim.send(Command::Spawn { predator: false, x, y }),
                     Tool::SpawnPredator => self.sim.send(Command::Spawn { predator: true, x, y }),
-                }
+                    Tool::Area => {}
+                },
+                Some(Click::Area(area)) => self.set_region(area),
+                None => {}
             }
-            if self.tool != Tool::Select {
+            let hint = match self.tool {
+                Tool::Select => None,
+                Tool::SpawnVegetarian | Tool::SpawnPredator => {
+                    Some("клик по миру — подсадить; Esc — обычный выбор")
+                }
+                Tool::Area => Some(
+                    "протяните мышью прямоугольник — геном тех, кто внутри; двигать мир — WASD и \
+                     миникарта; Esc — обычный выбор",
+                ),
+            };
+            if let Some(hint) = hint {
                 ui.painter().text(
                     rect.center_top() + Vec2::new(0.0, 14.0),
                     Align2::CENTER_TOP,
-                    "клик по миру — подсадить; Esc — обычный выбор",
+                    hint,
                     egui::FontId::proportional(14.0),
                     ACCENT,
                 );
@@ -102,6 +116,9 @@ impl LifeApp {
         });
         if self.lab_open {
             self.lab_window(&ctx);
+        }
+        if self.stats_open {
+            self.stats_window(&ctx);
         }
         self.ending_window(&ctx);
     }
@@ -123,13 +140,14 @@ impl LifeApp {
                     p(Key::F),
                     p(Key::Tab),
                     p(Key::L),
+                    p(Key::I),
                     p(Key::Escape),
                 ],
                 [i.key_down(Key::W), i.key_down(Key::S), i.key_down(Key::A), i.key_down(Key::D)],
                 i.stable_dt.min(0.1) as f64,
             )
         });
-        let [space, step, faster, slower, home, follow, tab, lab, escape] = keys;
+        let [space, step, faster, slower, home, follow, tab, lab, stats, escape] = keys;
         if space {
             self.sim.send(Command::TogglePause);
         }
@@ -151,11 +169,16 @@ impl LifeApp {
         if lab {
             self.lab_open = !self.lab_open;
         }
+        if stats {
+            self.stats_open = !self.stats_open;
+        }
         if escape {
             if self.tool != Tool::Select {
                 self.tool = Tool::Select;
             } else if self.lab_open {
                 self.lab_open = false;
+            } else if self.stats_open {
+                self.stats_open = false;
             } else {
                 self.open_menu();
             }
@@ -181,6 +204,7 @@ impl LifeApp {
         };
         let (st, tick, counts) = (f.status, f.tick, [f.plants, f.vegetarians, f.predators]);
         let (tick_ms, build_ms) = (f.tick_ms, f.build_ms);
+        let predators = self.predators_in_game();
         ui.horizontal(|ui| {
             let (icon, hint) = if st.paused {
                 ("▶", "Пуск (Пробел)")
@@ -213,7 +237,9 @@ impl LifeApp {
             ui.label(format!("тик {}", spaced(tick)));
             ui.colored_label(rgb(PLANT_COLOR), format!("растения {}", spaced(counts[0] as u64)));
             ui.colored_label(rgb(VEGETARIAN_COLOR), format!("травоядные {}", spaced(counts[1] as u64)));
-            ui.colored_label(rgb(PREDATOR_COLOR), format!("хищники {}", spaced(counts[2] as u64)));
+            if predators {
+                ui.colored_label(rgb(PREDATOR_COLOR), format!("хищники {}", spaced(counts[2] as u64)));
+            }
             ui.separator();
             if st.lagging {
                 let target = SPEEDS[st.speed_index].unwrap_or(0.0);
@@ -242,13 +268,19 @@ impl LifeApp {
     }
 
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
+        let predators = self.predators_in_game();
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.tool, Tool::Select, "Выбор")
                 .on_hover_text("Клик по существу — выбрать");
             ui.selectable_value(&mut self.tool, Tool::SpawnVegetarian, "+ травоядное")
                 .on_hover_text("Подсадить базовое травоядное кликом по миру");
-            ui.selectable_value(&mut self.tool, Tool::SpawnPredator, "+ хищник")
-                .on_hover_text("Подсадить хищника кликом по миру");
+            // хищники в этой партии выключены — и подсаживать их нечем
+            if predators {
+                ui.selectable_value(&mut self.tool, Tool::SpawnPredator, "+ хищник")
+                    .on_hover_text("Подсадить хищника кликом по миру");
+            }
+            ui.selectable_value(&mut self.tool, Tool::Area, "Область")
+                .on_hover_text("Протянуть прямоугольник по миру и увидеть геном тех, кто внутри");
             ui.separator();
             if ui.button("Весь мир").on_hover_text("Показать весь мир (Home)").clicked()
                 && let Some(cam) = &mut self.view.camera
@@ -256,6 +288,8 @@ impl LifeApp {
                 cam.fit();
             }
             ui.toggle_value(&mut self.lab_open, "Лаборатория").on_hover_text("Правила мира на ходу (L)");
+            ui.toggle_value(&mut self.stats_open, "Статистика")
+                .on_hover_text("Сытость, где живут, геном хищников, область (I)");
             ui.toggle_value(&mut self.side_open, "Панель").on_hover_text("Графики, хроника, существо (Tab)");
             if ui
                 .button("Заново")
@@ -293,10 +327,18 @@ impl LifeApp {
                 ui.selectable_value(&mut self.whole, true, "Вся партия");
             });
             ui.label(RichText::new("Численность").strong());
-            charts::populations(ui, &self.history, self.whole, 150.0);
+            charts::populations(ui, &self.history, self.whole, 150.0, self.predators_in_game());
             ui.add_space(8.0);
             ui.label(RichText::new("Геном травоядных").strong());
-            charts::genome(ui, &self.history, self.whole, 30.0);
+            let snaps = self.history.snapshots.points(self.whole);
+            let points: Vec<charts::GenePoint> =
+                snaps.iter().filter_map(|s| Some((s.tick, &s.genes.as_ref()?[..]))).collect();
+            if points.is_empty() {
+                ui.colored_label(MUTED, "травоядных нет — нет и генома");
+            } else {
+                let origin = self.history.vegetarian_origin.as_ref().map(|o| &o[..]);
+                charts::genome(ui, &vegetarian::GENES, &points, origin, rgb(VEGETARIAN_COLOR), 30.0);
+            }
             ui.add_space(8.0);
             self.research(ui);
         });
@@ -394,6 +436,7 @@ impl LifeApp {
         else {
             return;
         };
+        let predators = self.predators_in_game();
         let mut open = true;
         egui::Window::new("Лаборатория")
             .open(&mut open)
@@ -418,7 +461,7 @@ impl LifeApp {
                 let here = |f: &&settings::Field| f.live() && (f.tab == Tab::Food) == food;
                 egui::Grid::new("лаборатория").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                     for f in FIELDS.iter().filter(here) {
-                        if !(f.shown)(&self.lab) {
+                        if !f.visible(&self.lab, predators) {
                             continue;
                         }
                         ui.label(f.label).on_hover_text(f.hint);
@@ -449,8 +492,9 @@ impl LifeApp {
                     if ui.add_enabled(change.is_some(), egui::Button::new("Отменить")).clicked() {
                         self.lab.take_rules(&current);
                     }
+                    // умолчания игры, а не движка: в игре каннибализм включён
                     if ui.button("По умолчанию").clicked() {
-                        self.lab.take_rules(&Rules::default());
+                        self.lab.take_rules(&settings::Settings::default().rules());
                     }
                 });
             });
@@ -569,7 +613,7 @@ mod tests {
 
     #[test]
     fn команда_отчёта_повторяет_мир() {
-        let mut cfg = WorldConfig { seed: 42, scale: 10.0, ..Default::default() };
+        let mut cfg = WorldConfig { seed: 42, scale: 10.0, ..Default::default() }.with_predators();
         cfg.rules = cfg.rules.with("plant_energy", 80.0).unwrap();
         let cmd = report_command(&cfg, 5000);
         assert!(cmd.contains("--seed 42"));

@@ -20,6 +20,7 @@ mod render;
 mod screens;
 mod settings;
 mod sim;
+mod stats;
 mod theme;
 #[cfg(test)]
 mod ui_tests;

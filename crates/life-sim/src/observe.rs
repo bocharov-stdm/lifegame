@@ -261,10 +261,15 @@ const CAP_LOW: f64 = 0.8;
 
 /// Причины перемены численности травоядных за промежуток.
 pub fn vegetarian_flows(c: &Counters) -> String {
-    format!(
+    let mut text = format!(
         "родилось {}, съедено хищниками {}, умерло с голоду {}",
         c.vegetarians_born, c.vegetarians_eaten, c.vegetarians_starved
-    )
+    );
+    // без каннибализма строка прежняя
+    if c.vegetarians_cannibalized > 0 {
+        text += &format!(", съедено своими {}", c.vegetarians_cannibalized);
+    }
+    text
 }
 
 pub fn predator_flows(c: &Counters, migrants: u64) -> String {

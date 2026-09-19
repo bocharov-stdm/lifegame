@@ -40,7 +40,10 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     println!(
         "Травоядные за прогон: {} (из умерших съедено {}).",
         vegetarian_flows(&c),
-        percent(c.vegetarians_eaten, c.vegetarians_eaten + c.vegetarians_starved)
+        percent(
+            c.vegetarians_eaten + c.vegetarians_cannibalized,
+            c.vegetarians_eaten + c.vegetarians_cannibalized + c.vegetarians_starved
+        )
     );
     println!("Хищники за прогон: {}.", predator_flows(&c, last.migrants));
     println!("Растения за прогон: выросло {}, съедено {}.", c.plants_grown, c.plants_eaten);

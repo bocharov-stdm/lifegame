@@ -127,13 +127,14 @@ fn cases() -> Vec<Case> {
     vec![
         Case {
             name: "A: сид 1, по умолчанию",
-            cfg: WorldConfig { seed: 1, ..Default::default() },
+            cfg: WorldConfig { seed: 1, ..Default::default() }.with_predators(),
             ticks: 3000,
             before: |_| {},
         },
         Case {
             name: "B: сид 4, гиганты",
-            cfg: WorldConfig { seed: 4, rules: rules(&[("size_power", 1.0)]), ..Default::default() },
+            cfg: WorldConfig { seed: 4, rules: rules(&[("size_power", 1.0)]), ..Default::default() }
+                .with_predators(),
             ticks: 2000,
             before: |_| {},
         },
@@ -149,20 +150,22 @@ fn cases() -> Vec<Case> {
                     ("predator_migration", 100.0),
                 ]),
                 ..Default::default()
-            },
+            }
+            .with_predators(),
             ticks: 3000,
             before: |_| {},
         },
         // Полоса — явно: записан до форм, а по умолчанию теперь 3:2.
         Case {
             name: "D: сид 2, масштаб 10",
-            cfg: WorldConfig { seed: 2, scale: 10.0, shape: Shape::Strip, ..Default::default() },
+            cfg: WorldConfig { seed: 2, scale: 10.0, shape: Shape::Strip, ..Default::default() }
+                .with_predators(),
             ticks: 500,
             before: |_| {},
         },
         Case {
             name: "E: сид 3, правила на ходу и подсадка",
-            cfg: WorldConfig { seed: 3, ..Default::default() },
+            cfg: WorldConfig { seed: 3, ..Default::default() }.with_predators(),
             ticks: 1000,
             before: |w| match w.tick {
                 400 => w.set_rules(rules(&[
@@ -185,7 +188,8 @@ fn cases() -> Vec<Case> {
                 vegetarian_strategies: vec![1.0, 1.0],
                 predator_strategies: vec![1.0, 1.0],
                 ..Default::default()
-            },
+            }
+            .with_predators(),
             ticks: 2000,
             before: |_| {},
         },
@@ -201,8 +205,22 @@ fn cases() -> Vec<Case> {
                     ("plant_width_profile", Profile::Waves.index()),
                 ]),
                 ..Default::default()
-            },
+            }
+            .with_predators(),
             ticks: 1000,
+            before: |_| {},
+        },
+        // Каннибализм, мир без хищников — как игра по умолчанию. Отношение
+        // ниже стандартного, чтобы поедание случалось и в коротком прогоне.
+        Case {
+            name: "H: сид 8, каннибализм без хищников",
+            cfg: WorldConfig {
+                seed: 8,
+                n_predators: Some(0),
+                rules: rules(&[("cannibalism", 1.0), ("cannibal_ratio", 1.5)]),
+                ..Default::default()
+            },
+            ticks: 2000,
             before: |_| {},
         },
     ]
@@ -248,6 +266,8 @@ const GOLDEN: &[&[(u64, u64)]] = &[
     &[(1, 0xde0bb929593aa08a), (2, 0x64e67ad2587c4e7e), (10, 0xa5349d20ed7e2462), (31, 0x269c0eb7fc8832c0), (100, 0x63d04781559c558b), (250, 0x7910678ec4141c30), (500, 0x36613cd815b48e5c), (1000, 0xf9ef06d8dfee56c4), (2000, 0x0cbb0d77662594e7), ],
     // G: сид 6, квадрат x10, еда линейно и волнами
     &[(1, 0x21556637b8421fd1), (2, 0x55f42659e998a364), (10, 0x2e91b3ea94f27e27), (31, 0x47bc58e251f6113c), (100, 0x135d88b7b35de4f1), (250, 0xd27f6d9e5f94f649), (500, 0x893b96d102bf7f3d), (1000, 0xd0fc8974c86fe1a4), ],
+    // H: сид 8, каннибализм без хищников
+    &[(1, 0xc522f75fbc93d232), (2, 0x77bb18bdfe3bfebe), (10, 0x2131cab0cd8b2a54), (31, 0x473872dc34dcc155), (100, 0x06ff47b8b91216cc), (250, 0x7b56e6b58a47177b), (500, 0x64d55292374a004f), (1000, 0xbeea63932aecbe01), (2000, 0xcbd91e8a02f4b774), ],
 ];
 
 #[cfg(not(windows))]
@@ -289,6 +309,7 @@ fn мир_ведёт_себя_как_при_записи() {
                 "{}: жизнь идёт — травоядные едят, хищники охотятся",
                 case.name
             ),
+            7 => assert!(c.vegetarians_cannibalized > 0, "{}: сородичей едят", case.name),
             _ => {}
         }
 

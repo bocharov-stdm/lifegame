@@ -16,8 +16,10 @@ use life_core::config::DIVIDE_PERIOD;
 use life_core::{Creature, Rules, VegetarianGenome, World, WorldConfig};
 use life_sim::observe::{EventTracker, Snapshot};
 
-use crate::frame::{self, Ending, Frame, Instance, LogEntry, Raster, Selected, Status, ViewRequest};
-use crate::history::{GenePoint, Sample};
+use crate::frame::{
+    self, Area, Ending, Frame, Instance, LogEntry, Raster, RegionStats, Selected, Status, ViewRequest,
+};
+use crate::history::Sample;
 use crate::motion::Motion;
 
 /// Скорости, тиков в секунду; None — «максимум», сколько успеет процессор.
@@ -73,6 +75,8 @@ pub enum Command {
         radius: f64,
     },
     Select(Option<Creature>),
+    /// Область для сводки генов (инструмент «Область»); None — снять.
+    SetRegion(Option<Area>),
     /// Новые правила посреди партии; `note` — что поменялось, для хроники.
     SetRules {
         rules: Rules,
@@ -148,7 +152,8 @@ impl Drop for SimHandle {
 #[derive(Default)]
 struct Pending {
     samples: Vec<Sample>,
-    gene_points: Vec<GenePoint>,
+    snapshots: Vec<Snapshot>,
+    region: Option<RegionStats>,
     log: Vec<LogEntry>,
 }
 
@@ -167,6 +172,7 @@ struct Sim {
     watch_explosion: bool,
     view: Option<ViewRequest>,
     selected: Option<Creature>,
+    region: Option<Area>,
 
     // ── наблюдение ──────────────────────────────────────────────────────────
     /// Численности последних `DIVIDE_PERIOD` тиков — для сглаженной точки графика.
@@ -223,6 +229,7 @@ impl Sim {
             watch_explosion: true,
             view: None,
             selected: None,
+            region: None,
             window: VecDeque::new(),
             tracker: EventTracker::new(),
             snapshot_every: SNAPSHOT_EVERY,
@@ -333,6 +340,12 @@ impl Sim {
                 self.selected = c;
                 self.dirty = true;
             }
+            Command::SetRegion(area) => {
+                self.region = area;
+                // сразу, а не на следующем срезе: на паузе срезов нет
+                self.pending.region = area.map(|a| RegionStats::of(&self.world, a, None));
+                self.dirty = true;
+            }
             Command::SetRules { rules, note } => {
                 self.world.set_rules(rules);
                 self.log(None, note);
@@ -392,6 +405,7 @@ impl Sim {
         self.ended = None;
         self.watch_explosion = true;
         self.selected = None;
+        self.region = None;
         self.due = 0.0;
         self.last_time = Instant::now();
         self.last_minimap = None;
@@ -486,9 +500,11 @@ impl Sim {
         for e in events {
             self.log(Some(e.kind), e.text);
         }
-        if let Some(genes) = snap.genes {
-            self.pending.gene_points.push(GenePoint { tick: snap.tick, genes });
+        if let Some(area) = self.region {
+            let world = (snap.genes, snap.predator_genes);
+            self.pending.region = Some(RegionStats::of(&self.world, area, Some(world)));
         }
+        self.pending.snapshots.push(snap);
     }
 
     /// Тики по расписанию: не больше, чем задолжали скорости, и не дольше `SLICE`.
@@ -599,7 +615,8 @@ impl Sim {
             minimap,
             selected: self.selected.and_then(|c| Selected::of(w, c)),
             samples: pending.samples,
-            gene_points: pending.gene_points,
+            snapshots: pending.snapshots,
+            region: pending.region,
             log: pending.log,
             built: Some(Instant::now()),
             build_ms: start.elapsed().as_secs_f64() * 1000.0,
@@ -633,7 +650,7 @@ mod tests {
     }
 
     fn cfg() -> WorldConfig {
-        WorldConfig { seed: 3, ..Default::default() }
+        WorldConfig { seed: 3, ..Default::default() }.with_predators()
     }
 
     fn paused(cfg: WorldConfig) -> SimHandle {
@@ -698,7 +715,7 @@ mod tests {
         let samples: Vec<u64> = fresh.iter().flat_map(|f| f.samples.iter().map(|s| s.tick)).collect();
         let expected: Vec<u64> = (0..=ticks).step_by(GRAPH_EVERY as usize).collect();
         assert_eq!(samples, expected, "точка графика на каждый GRAPH_EVERY-й тик, без пропусков");
-        let genes: Vec<u64> = fresh.iter().flat_map(|f| f.gene_points.iter().map(|g| g.tick)).collect();
+        let genes: Vec<u64> = fresh.iter().flat_map(|f| f.snapshots.iter().map(|s| s.tick)).collect();
         assert_eq!(genes.first(), Some(&0));
         assert!(genes.windows(2).all(|w| w[1] > w[0] && (w[1] - w[0]).is_multiple_of(SNAPSHOT_EVERY)));
 

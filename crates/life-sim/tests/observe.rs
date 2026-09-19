@@ -8,7 +8,7 @@ use life_sim::observe::{DEPTH_BANDS, EventKind, GeneStat, MAX_VARIANTS, Snapshot
 use life_sim::{Limits, simulate};
 
 fn world() -> World {
-    World::new(&WorldConfig { seed: 2, n_vegetarians: Some(400), ..Default::default() })
+    World::new(&WorldConfig { seed: 2, n_vegetarians: Some(400), ..Default::default() }.with_predators())
 }
 
 fn kinds(snaps: &[Snapshot]) -> Vec<EventKind> {
@@ -126,7 +126,7 @@ fn карта_ставит_хищника_на_место() {
 #[test]
 fn прогон_снимает_срезы_вместе_с_историей() {
     let limits = Limits { ticks: 3000, sample_every: 100, ..Default::default() };
-    let res = simulate(&WorldConfig { seed: 1, ..Default::default() }, &limits, |_| {});
+    let res = simulate(&WorldConfig { seed: 1, ..Default::default() }.with_predators(), &limits, |_| {});
     assert_eq!(res.snapshots.len(), res.history.len());
     for (s, h) in res.snapshots.iter().zip(&res.history) {
         assert_eq!(

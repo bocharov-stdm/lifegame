@@ -11,9 +11,9 @@
 
 use std::collections::VecDeque;
 
-use life_core::genome::vegetarian;
+use life_core::genome::{predator, vegetarian};
 
-use life_sim::observe::GeneStat;
+use life_sim::observe::{GeneStat, Snapshot};
 
 pub const RECENT: usize = 300;
 pub const FULL: usize = 600;
@@ -29,13 +29,6 @@ pub struct Sample {
     pub predators: f64,
     /// Средний геном травоядных; None — травоядных нет.
     pub genom: Option<[f64; vegetarian::N]>,
-}
-
-/// Точка графика генома: сводка каждого гена (разброс или доли вариантов).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GenePoint {
-    pub tick: u64,
-    pub genes: [GeneStat; vegetarian::N],
 }
 
 /// Ряд с окном недавнего и прореженной всей партией.
@@ -73,16 +66,17 @@ impl<T: Clone> Series<T> {
     }
 
     /// Точки для графика: вся партия или последнее окно. Последняя точка есть
-    /// всегда: при прореживании она могла не попасть в «всю партию».
-    pub fn points(&self, whole: bool) -> Vec<T> {
+    /// всегда: при прореживании она могла не попасть в «всю партию». Ссылками:
+    /// срезы мира крупные, и копировать сотни их на каждый кадр окна незачем.
+    pub fn points(&self, whole: bool) -> Vec<&T> {
         if !whole {
-            return self.recent.iter().cloned().collect();
+            return self.recent.iter().collect();
         }
-        let mut points = self.full.clone();
+        let mut points: Vec<&T> = self.full.iter().collect();
         if !self.count.saturating_sub(1).is_multiple_of(self.stride)
             && let Some(last) = self.recent.back()
         {
-            points.push(last.clone());
+            points.push(last);
         }
         points
     }
@@ -96,11 +90,14 @@ impl<T: Clone> Series<T> {
 #[derive(Clone, Debug, Default)]
 pub struct History {
     pub counts: Series<Sample>,
-    pub genes: Series<GenePoint>,
+    /// Срезы мира (`Snapshot`): геном обоих видов, сытость, где живут и где еда.
+    pub snapshots: Series<Snapshot>,
     /// Первый средний геном партии — база «изменения от начала»: в окне
     /// недавнего первая точка уже не начало партии.
     pub origin: Option<[f64; vegetarian::N]>,
-    pub gene_origin: Option<[GeneStat; vegetarian::N]>,
+    /// Первая сводка генов каждого вида — тоже база «изменения от начала».
+    pub vegetarian_origin: Option<[GeneStat; vegetarian::N]>,
+    pub predator_origin: Option<[GeneStat; predator::N]>,
 }
 
 impl History {
@@ -111,11 +108,10 @@ impl History {
         self.counts.push(s);
     }
 
-    pub fn add_genes(&mut self, g: GenePoint) {
-        if self.gene_origin.is_none() {
-            self.gene_origin = Some(g.genes);
-        }
-        self.genes.push(g);
+    pub fn add_snapshot(&mut self, s: Snapshot) {
+        self.vegetarian_origin = self.vegetarian_origin.or(s.genes);
+        self.predator_origin = self.predator_origin.or(s.predator_genes);
+        self.snapshots.push(s);
     }
 }
 
@@ -129,7 +125,7 @@ mod tests {
         for i in 0..(RECENT + 50) {
             s.push(i);
         }
-        let recent = s.points(false);
+        let recent: Vec<usize> = s.points(false).into_iter().copied().collect();
         assert_eq!(recent.len(), RECENT);
         assert_eq!(recent[0], 50);
         assert_eq!(*recent.last().unwrap(), RECENT + 49);
@@ -141,14 +137,14 @@ mod tests {
         let n = FULL * 7 + 3;
         for i in 0..n {
             s.push(i);
-            let all = s.points(true);
+            let all: Vec<usize> = s.points(true).into_iter().copied().collect();
             assert!(all.len() <= FULL + 1, "память ограничена");
             assert_eq!(all[0], 0, "начало партии не теряется");
             assert_eq!(*all.last().unwrap(), i, "последняя точка есть всегда");
             assert!(all.windows(2).all(|w| w[0] < w[1]), "по возрастанию, без повторов");
         }
         // шаг равномерный: все точки, кроме последней, кратны шагу
-        let all = s.points(true);
+        let all: Vec<usize> = s.points(true).into_iter().copied().collect();
         let step = all[1] - all[0];
         assert!(all[..all.len() - 1].iter().all(|x| x % step == 0));
     }

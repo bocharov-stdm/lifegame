@@ -19,6 +19,7 @@ use crate::app::{LifeApp, Screen, SideTab};
 use crate::frame::Instance;
 use crate::settings::{Key, Tab};
 use crate::sim::Command;
+use crate::stats::StatsTab;
 
 /// Видеокарта одна: параллельные рендеры wgpu в одном процессе роняют
 /// драйвер на Windows, поэтому тесты экранов идут по очереди.
@@ -32,7 +33,8 @@ const SMALL: Vec2 = Vec2::new(960.0, 600.0);
 const NORMAL: Vec2 = Vec2::new(1600.0, 900.0);
 
 fn harness(size: Vec2) -> Harness<'static, LifeApp> {
-    harness_with(size, WorldConfig { seed: 7, ..Default::default() })
+    // мир отчёта с хищниками: экраны проверяются со всеми их элементами
+    harness_with(size, WorldConfig { seed: 7, ..Default::default() }.with_predators())
 }
 
 fn harness_with(size: Vec2, cfg: WorldConfig) -> Harness<'static, LifeApp> {
@@ -325,4 +327,66 @@ fn новый_мир_из_экрана_настроек_запускает_па�
     let f = h.state().view.frame.as_ref().expect("кадр");
     assert_eq!((f.seed, f.scale), (4242, 10.0));
     assert_eq!(h.state().screen, Screen::Game);
+}
+
+/// Окно «Статистика» на всех вкладках, с заданной областью: элементы окна
+/// в окне программы и не налезают друг на друга.
+#[test]
+fn статистика_помещается_в_окно() {
+    let _gpu = gpu();
+    each_size(|h, size, tag| {
+        h.state_mut().side_open = false;
+        let (w, hh) = {
+            let f = h.state().view.frame.as_ref().expect("кадр");
+            (f.world_w, f.world_h)
+        };
+        h.state_mut().set_region((0.0, 0.0, w / 2.0, hh / 3.0));
+        for _ in 0..100 {
+            h.step();
+            if h.state().region.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(h.state().region.is_some(), "сводка по области пришла и на паузе");
+        assert!(h.state().predators_in_game(), "мир отчёта — с хищниками");
+        for tab in [StatsTab::Energy, StatsTab::Where, StatsTab::Predators, StatsTab::Region] {
+            h.state_mut().stats_tab = tab;
+            settle(h);
+            check_layout(h, size, &format!("статистика, {tab:?}, {tag}"), None);
+            shot(h, &format!("статистика-{tab:?}-{tag}"));
+        }
+        h.state_mut().clear_region();
+        settle(h);
+        assert!(h.state().region.is_none() && h.state().view.area.is_none());
+    });
+}
+
+/// Игра по умолчанию — без хищников и с каннибализмом: всего про хищников
+/// не видно, а галочка каннибализма есть в лаборатории.
+#[test]
+fn без_хищников_их_не_видно() {
+    let _gpu = gpu();
+    let settings = crate::settings::Settings::default();
+    for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
+        let cfg = settings.world_config(7);
+        assert_eq!(cfg.predators_at_start(), 0);
+        assert!(cfg.rules.cannibals());
+        let mut h = harness_with(size, cfg);
+        settle(&mut h);
+        assert!(!h.state().predators_in_game());
+        assert!(h.query_by_label("+ хищник").is_none(), "{tag}: подсадки хищника нет");
+        h.state_mut().stats_open = true;
+        h.state_mut().stats_tab = StatsTab::Where;
+        settle(&mut h);
+        assert!(h.query_by_label("Хищники").is_none(), "{tag}: вкладки хищников нет");
+        shot(&mut h, &format!("без-хищников-{tag}"));
+        h.state_mut().stats_open = false;
+        h.state_mut().lab_open = true;
+        h.state_mut().lab_tab = Tab::Lab;
+        settle(&mut h);
+        assert!(h.query_by_label("Каннибализм").is_some(), "{tag}: галочка каннибализма в лаборатории");
+        assert!(h.query_by_label("Плодовитость хищников").is_none(), "{tag}: правил хищников не видно");
+        shot(&mut h, &format!("лаборатория-каннибализм-{tag}"));
+    }
 }
