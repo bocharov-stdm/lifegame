@@ -1,16 +1,15 @@
-//! Окно «Статистика»: то, чего не видно на боковой панели. Сытость и голод,
-//! где живут травоядные и где растёт еда, геном хищников и сводка по
-//! области, протянутой по миру. Данные — срезы мира (`Snapshot`), которые поток
+//! Окно «Статистика»: то, чего не видно на боковой панели. Сытость, где живут
+//! травоядные и где растёт еда, и сводка по области, протянутой по миру. Данные — срезы мира (`Snapshot`), которые поток
 //! симуляции и так снимает для хроники.
 
 use eframe::egui::{self, RichText, Vec2};
 use life_core::flora::Profile;
-use life_core::genome::{GeneSpec, predator, vegetarian};
+use life_core::genome::{GeneSpec, vegetarian};
 use life_sim::observe::GeneStat;
 
 use crate::app::{LifeApp, Tool};
-use crate::charts::{self, GenePoint};
-use crate::frame::{PREDATOR_COLOR, VEGETARIAN_COLOR};
+use crate::charts;
+use crate::frame::VEGETARIAN_COLOR;
 use crate::sim::Command;
 use crate::theme::{DANGER, GOOD, MUTED, TEXT, rgb, spaced};
 
@@ -18,16 +17,11 @@ use crate::theme::{DANGER, GOOD, MUTED, TEXT, rgb, spaced};
 pub enum StatsTab {
     Energy,
     Where,
-    Predators,
     Region,
 }
 
 impl LifeApp {
     pub fn stats_window(&mut self, ctx: &egui::Context) {
-        let predators = self.predators_in_game();
-        if self.stats_tab == StatsTab::Predators && !predators {
-            self.stats_tab = StatsTab::Energy;
-        }
         let mut open = true;
         egui::Window::new("Статистика")
             .open(&mut open)
@@ -39,9 +33,6 @@ impl LifeApp {
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Energy, "Энергия");
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Where, "Где живут");
-                    if predators {
-                        ui.selectable_value(&mut self.stats_tab, StatsTab::Predators, "Хищники");
-                    }
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Region, "Область");
                     if self.stats_tab != StatsTab::Region {
                         ui.separator();
@@ -51,19 +42,18 @@ impl LifeApp {
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| match self.stats_tab {
-                    StatsTab::Energy => self.energy_tab(ui, predators),
+                    StatsTab::Energy => self.energy_tab(ui),
                     StatsTab::Where => self.where_tab(ui),
-                    StatsTab::Predators => self.predators_tab(ui),
-                    StatsTab::Region => self.region_tab(ui, predators),
+                    StatsTab::Region => self.region_tab(ui),
                 });
             });
         self.stats_open &= open;
     }
 
-    fn energy_tab(&mut self, ui: &mut egui::Ui, predators: bool) {
+    fn energy_tab(&mut self, ui: &mut egui::Ui) {
         let snaps = self.history.snapshots.points(self.whole);
-        ui.label(RichText::new("Сытость и голод").strong());
-        charts::energy(ui, &snaps, predators, 190.0);
+        ui.label(RichText::new("Сытость").strong());
+        charts::energy(ui, &snaps, 190.0);
         ui.add_space(4.0);
         ui.colored_label(
             MUTED,
@@ -94,20 +84,7 @@ impl LifeApp {
         }
     }
 
-    fn predators_tab(&mut self, ui: &mut egui::Ui) {
-        let snaps = self.history.snapshots.points(self.whole);
-        let points: Vec<GenePoint> =
-            snaps.iter().filter_map(|s| Some((s.tick, &s.predator_genes.as_ref()?[..]))).collect();
-        ui.label(RichText::new("Геном хищников").strong());
-        if points.is_empty() {
-            ui.colored_label(MUTED, "хищников нет — нет и генома");
-            return;
-        }
-        let origin = self.history.predator_origin.as_ref().map(|o| &o[..]);
-        charts::genome(ui, &predator::GENES, &points, origin, rgb(PREDATOR_COLOR), 30.0);
-    }
-
-    fn region_tab(&mut self, ui: &mut egui::Ui, predators: bool) {
+    fn region_tab(&mut self, ui: &mut egui::Ui) {
         let Some(r) = self.region.clone() else {
             ui.colored_label(
                 MUTED,
@@ -136,21 +113,13 @@ impl LifeApp {
         ui.horizontal_wrapped(|ui| {
             ui.label(format!("растений {}", spaced(r.plants as u64)));
             ui.colored_label(rgb(VEGETARIAN_COLOR), format!("травоядных {}", spaced(r.vegetarians as u64)));
-            if predators {
-                ui.colored_label(rgb(PREDATOR_COLOR), format!("хищников {}", spaced(r.predators as u64)));
-            }
             if let Some(f) = r.fullness {
                 ui.colored_label(MUTED, format!("сытость {:.0}%", f * 100.0));
             }
         });
         ui.add_space(6.0);
         ui.label(RichText::new("Геном травоядных").strong());
-        compare(ui, "область-травоядные", &vegetarian::GENES, r.inside.0.as_ref(), r.world.0.as_ref());
-        if predators {
-            ui.add_space(6.0);
-            ui.label(RichText::new("Геном хищников").strong());
-            compare(ui, "область-хищники", &predator::GENES, r.inside.1.as_ref(), r.world.1.as_ref());
-        }
+        compare(ui, "область-травоядные", &vegetarian::GENES, r.inside.as_ref(), r.world.as_ref());
         ui.add_space(6.0);
         ui.colored_label(MUTED, "Сводка обновляется на каждом срезе мира и сразу, когда область задана.");
     }
@@ -256,7 +225,7 @@ mod tests {
     /// Сводка по области — ровно по тем, кто внутри, а по всему миру — по всем.
     #[test]
     fn область_считает_только_тех_кто_внутри() {
-        let mut w = World::new(&WorldConfig { seed: 2, n_predators: Some(0), ..Default::default() });
+        let mut w = World::new(&WorldConfig { seed: 2, ..Default::default() });
         for _ in 0..300 {
             w.step();
         }
@@ -266,17 +235,16 @@ mod tests {
         let inside: Vec<_> = w.vegetarians.iter().filter(|v| v.x <= x && v.y <= y).collect();
         assert_eq!(r.vegetarians, inside.len());
         assert_eq!(r.plants, w.plants.iter().filter(|p| p.x <= x && p.y <= y).count());
-        assert_eq!(r.predators, 0);
         let size = |s: &Option<[GeneStat; vegetarian::N]>| {
             s.as_ref().and_then(|g| g[Gene::Size as usize].spread().map(|s| s.mean))
         };
         let mean = inside.iter().map(|v| v.genome[Gene::Size]).sum::<f64>() / inside.len().max(1) as f64;
         if !inside.is_empty() {
-            assert!((size(&r.inside.0).unwrap() - mean).abs() < 1e-9);
+            assert!((size(&r.inside).unwrap() - mean).abs() < 1e-9);
         }
         let all =
             w.vegetarians.iter().map(|v| v.genome[Gene::Size]).sum::<f64>() / w.vegetarians.len() as f64;
-        assert!((size(&r.world.0).unwrap() - all).abs() < 1e-9);
+        assert!((size(&r.world).unwrap() - all).abs() < 1e-9);
         // весь мир — та же сводка внутри и снаружи
         let whole = RegionStats::of(&w, (0.0, 0.0, w.space.width, w.space.height), None);
         assert_eq!(whole.inside, whole.world);
@@ -306,10 +274,9 @@ mod tests {
     fn снимок_без_травоядных_не_роняет_окно() {
         // пустой мир — срез без генов; вкладки должны это пережить (проверяется
         // в ui_tests), а сводка по области — пустая
-        let w =
-            World::new(&WorldConfig { n_vegetarians: Some(0), n_predators: Some(0), ..Default::default() });
+        let w = World::new(&WorldConfig { n_vegetarians: Some(0), ..Default::default() });
         let r = RegionStats::of(&w, (0.0, 0.0, 100.0, 100.0), None);
-        assert!(r.inside.0.is_none() && r.world.0.is_none() && r.fullness.is_none());
+        assert!(r.inside.is_none() && r.world.is_none() && r.fullness.is_none());
         let s = Snapshot::of(&w);
         assert!(s.genes.is_none());
     }

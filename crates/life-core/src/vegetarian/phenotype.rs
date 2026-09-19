@@ -44,10 +44,8 @@ pub struct Phenotype {
     pub slow_upkeep: f64,
     pub vision2: f64,
     pub size2: f64,
-    /// Радиус тела: по нему ловят и видят хищники.
+    /// Радиус тела: по нему съедают сородичи (каннибализм).
     pub half: f64,
-    /// Квадрат расстояния до хищника, с которого травоядное пугается.
-    pub flee2: f64,
 
     /// Стратегия поведения (`strategy.rs`).
     pub strategy: Strategy,
@@ -103,7 +101,6 @@ impl Phenotype {
             vision2: vision * vision,
             size2: size * size,
             half: size / 2.0,
-            flee2: (vision / 3.0) * (vision / 3.0),
             strategy: Strategy::from_gene(genome[Gene::Strategy]),
         }
     }

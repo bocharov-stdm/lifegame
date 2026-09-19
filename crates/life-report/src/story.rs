@@ -4,11 +4,9 @@
 
 use life_core::flora::{self, Profile};
 use life_core::genome::vegetarian::Gene;
-use life_core::genome::{GeneSpec, predator, vegetarian};
+use life_core::genome::{GeneSpec, vegetarian};
 use life_sim::SimResult;
-use life_sim::observe::{
-    Event, GeneStat, MAP_LEGEND, MAX_VARIANTS, Snapshot, Spread, predator_flows, vegetarian_flows,
-};
+use life_sim::observe::{Event, GeneStat, MAP_LEGEND, MAX_VARIANTS, Snapshot, Spread, vegetarian_flows};
 
 /// Карта: тик и строки.
 pub type Map = (u64, Vec<String>);
@@ -34,18 +32,14 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     let space = res.world.space;
     println!("Мир {:.0}x{:.0}; еда {}.", space.width, space.height, flora::describe(&res.world.rules));
     println!(
-        "Итог на тике {}: растений {} из {}, травоядных {}, хищников {}.",
-        last.tick, last.plants, last.plant_cap, last.vegetarians, last.predators
+        "Итог на тике {}: растений {} из {}, травоядных {}.",
+        last.tick, last.plants, last.plant_cap, last.vegetarians
     );
     println!(
         "Травоядные за прогон: {} (из умерших съедено {}).",
         vegetarian_flows(&c),
-        percent(
-            c.vegetarians_eaten + c.vegetarians_cannibalized,
-            c.vegetarians_eaten + c.vegetarians_cannibalized + c.vegetarians_starved
-        )
+        percent(c.vegetarians_cannibalized, c.vegetarians_cannibalized + c.vegetarians_starved)
     );
-    println!("Хищники за прогон: {}.", predator_flows(&c, last.migrants));
     println!("Растения за прогон: выросло {}, съедено {}.", c.plants_grown, c.plants_eaten);
 
     print_intervals(snaps, rows);
@@ -87,18 +81,8 @@ fn print_intervals(snaps: &[Snapshot], rows: usize) {
     let rows = rows.min(steps);
     println!("\nПо промежуткам (численность и геном — на конец, рождения и смерти — за промежуток):");
     println!(
-        "{:>13} {:>6} {:>5} {:>4} │ {:>21} │ {:>13} │ {:>6} {:>5} {:>6} │ {:>9} {:>5}",
-        "тики",
-        "растен",
-        "трав",
-        "хищ",
-        "трав: +род −съед −гол",
-        "хищ: +род −гол",
-        "размер",
-        "скор",
-        "зрение",
-        "слой, %",
-        "сыт"
+        "{:>13} {:>6} {:>5} │ {:>21} │ {:>6} {:>5} {:>6} │ {:>9} {:>5}",
+        "тики", "растен", "трав", "трав: +род −съед −гол", "размер", "скор", "зрение", "слой, %", "сыт"
     );
     let mut from = 0;
     for r in 1..=rows {
@@ -108,16 +92,13 @@ fn print_intervals(snaps: &[Snapshot], rows: usize) {
         let gene = |g: Gene| opt(b.genes.and_then(|s| s[g as usize].spread().map(|x| x.p50)), 1);
         let layer = b.vegetarian_depth.map_or("—".into(), |d| format!("{:.0}‒{:.0}", d.p10, d.p90));
         println!(
-            "{:>13} {:>6} {:>5} {:>4} │ {:>7} {:>6} {:>6} │ {:>6} {:>6} │ {:>6} {:>5} {:>6} │ {:>9} {:>5}",
+            "{:>13} {:>6} {:>5} │ {:>7} {:>6} {:>6} │ {:>6} {:>5} {:>6} │ {:>9} {:>5}",
             format!("{}‒{}", a.tick, b.tick),
             b.plants,
             b.vegetarians,
-            b.predators,
             format!("+{}", c.vegetarians_born),
-            format!("−{}", c.vegetarians_eaten),
+            format!("−{}", c.vegetarians_cannibalized),
             format!("−{}", c.vegetarians_starved),
-            format!("+{}", c.predators_born + (b.migrants - a.migrants)),
-            format!("−{}", c.predators_starved),
             gene(Gene::Size),
             gene(Gene::Speed),
             gene(Gene::Vision),
@@ -126,7 +107,7 @@ fn print_intervals(snaps: &[Snapshot], rows: usize) {
         );
         from = to;
     }
-    println!("  (у хищников «+род» включает мигрантов; «сыт» — средняя заполненность бака травоядных, %)");
+    println!("  («−съед» — съедены сородичами; «сыт» — средняя заполненность бака, %)");
 }
 
 fn print_genome(first: &Snapshot, last: &Snapshot) {
@@ -136,29 +117,6 @@ fn print_genome(first: &Snapshot, last: &Snapshot) {
         (Some(_), None) => println!("  к концу травоядных не осталось"),
         _ => println!("  травоядных не было"),
     }
-    // Средние генов хищников: крупные (зрение) — без дробной части; у гена-выбора
-    // — доли вариантов (инертный, с одним вариантом, не печатается).
-    let genes = last.predator_genes.map_or(String::new(), |g| {
-        predator::GENES
-            .iter()
-            .zip(&g)
-            .filter_map(|(spec, stat)| match stat {
-                GeneStat::Number(s) => {
-                    let digits = if s.mean >= 100.0 { 0 } else { 1 };
-                    Some(format!("{} {}, ", spec.label, opt(Some(s.mean), digits)))
-                }
-                GeneStat::Shares(s) if spec.variants().is_some_and(|v| v.len() > 1) => {
-                    Some(format!("{}: {}, ", spec.label, shares(spec, s)))
-                }
-                GeneStat::Shares(_) => None,
-            })
-            .collect()
-    });
-    println!(
-        "Хищники в конце: {genes}голодных {}, заполненность бака {}.",
-        opt(last.predators_hungry.map(|h| h * 100.0), 0) + "%",
-        opt(last.predator_fullness.map(|f| f * 100.0), 0) + "%"
-    );
 }
 
 /// Гены вида от начала к концу: у числовых — медиана и разброс, у генов-выборов

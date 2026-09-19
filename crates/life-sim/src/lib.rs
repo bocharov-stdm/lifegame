@@ -130,7 +130,7 @@ pub fn run(mut world: World, limits: &Limits, on_tick: &mut dyn FnMut(&World)) -
         world.step();
         on_tick(&world);
 
-        let creatures = world.vegetarians.len() + world.predators.len();
+        let creatures = world.vegetarians.len();
         total_work += (world.vegetarians.len() * world.plants.len()) as f64;
 
         if creatures > max_creatures {

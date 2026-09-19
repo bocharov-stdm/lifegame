@@ -2,11 +2,10 @@
 //!
 //!     cargo run -p life-report --release                              # сид 1, 600 тиков
 //!     cargo run -p life-report --release -- --seeds 1 2 3 --ticks 3000
-//!     cargo run -p life-report --release -- --predators 20 --predator-speed 18
 //!     cargo run -p life-report --release -- --rule plant_energy=80 --rule size_power=1.5
 //!     cargo run -p life-report --release -- --scale 100 --ticks 2000   # мир в 100 раз больше
 //!     cargo run -p life-report --release -- --scale 100 --shape 1:1    # и квадратный
-//!     cargo run -p life-report --release -- --veg-mix 1 1 --pred-mix 1 1   # стратегии поровну
+//!     cargo run -p life-report --release -- --veg-mix 1 1                # стратегии поровну
 //!     cargo run -p life-report --release -- --compare reference/fingerprint.json
 //!     cargo run -p life-report --release -- --save-reference reference/fingerprint.json
 //!
@@ -28,10 +27,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use life_core::config::*;
 use life_core::genome::Variant;
 use life_core::genome::vegetarian::Gene;
-use life_core::predator::strategy as predator_strategy;
 use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::vegetarian::strategy as vegetarian_strategy;
 use life_core::{Rules, Shape, WorldConfig};
@@ -67,19 +64,10 @@ struct Args {
     shape: Shape,
     #[arg(long)]
     vegetarians: Option<usize>,
-    #[arg(long)]
-    predators: Option<usize>,
-    #[arg(long, default_value_t = PREDATOR_BASE_SPEED)]
-    predator_speed: f64,
-    #[arg(long, default_value_t = PREDATOR_BASE_VISION)]
-    predator_vision: f64,
     /// Стартовая смесь стратегий травоядных: доли вариантов по порядку
     /// (стандартный, затаившийся). Например, `--veg-mix 1 1` — поровну.
     #[arg(long, num_args = 1.., value_name = "ДОЛИ")]
     veg_mix: Vec<f64>,
-    /// Стартовая смесь стратегий хищников: (стандартный, засадник).
-    #[arg(long, num_args = 1.., value_name = "ДОЛИ")]
-    pred_mix: Vec<f64>,
     /// Правило мира: имя=число (можно несколько раз). Профиль еды — и именем:
     /// `--rule plant_width_profile=waves`.
     #[arg(long = "rule", value_name = "ИМЯ=ЧИСЛО")]
@@ -139,7 +127,7 @@ fn parse_rules(pairs: &[String]) -> Result<Rules, String> {
 }
 
 /// Смесь стратегий: доли не отрицательные, в сумме больше нуля, не больше
-/// вариантов, чем есть у вида.
+/// вариантов, чем есть.
 fn check_mix(flag: &str, shares: &[f64], variants: &[Variant]) -> Result<(), String> {
     if shares.len() > variants.len() {
         let names: Vec<&str> = variants.iter().map(|v| v.label).collect();
@@ -164,7 +152,6 @@ fn main() {
     };
     let rules = parse_rules(&args.rules).unwrap_or_else(|e| fail(e));
     check_mix("--veg-mix", &args.veg_mix, &vegetarian_strategy::VARIANTS).unwrap_or_else(|e| fail(e));
-    check_mix("--pred-mix", &args.pred_mix, &predator_strategy::VARIANTS).unwrap_or_else(|e| fail(e));
     // JSON в stdout — и больше ничего: текст сломал бы разбор
     let quiet = args.json.as_deref().is_some_and(|p| p.as_os_str() == "-");
     if quiet && (args.compare.is_some() || args.save_reference.is_some()) {
@@ -187,11 +174,7 @@ fn main() {
         shape: args.shape,
         rules: rules.clone(),
         n_vegetarians: args.vegetarians,
-        n_predators: args.predators,
-        predator_speed: args.predator_speed,
-        predator_vision: args.predator_vision,
         vegetarian_strategies: args.veg_mix.clone(),
-        predator_strategies: args.pred_mix.clone(),
     };
 
     let reference = args.compare.as_ref().map(|path| {
@@ -300,25 +283,26 @@ fn main() {
 
 fn print_summary(results: &[(u64, SimResult)]) {
     println!(
-        "\n{:>6} {:<18} {:>7} {:>6} {:>5} {:>6} {:>5} {:>5} {:>8} {:>8} {:>8}",
-        "сид", "итог", "тиков", "трав", "хищн", "растен", "хищн%", "мигр", "разм.макс", "разм.фин", "мс/тик"
+        "\n{:>6} {:<18} {:>7} {:>6} {:>6} {:>7} {:>8} {:>8} {:>8}",
+        "сид", "итог", "тиков", "трав", "растен", "съедено", "разм.макс", "разм.фин", "мс/тик"
     );
     for (seed, r) in results {
         let last = r.last();
-        let with_pred = r.history.iter().filter(|s| s.predators > 0).count() as f64 / r.history.len() as f64;
+        // доля съеденных сородичами среди всех умерших
+        let c = r.world.counters;
+        let deaths = c.vegetarians_starved + c.vegetarians_cannibalized;
+        let eaten = c.vegetarians_cannibalized as f64 / deaths.max(1) as f64;
         let sizes: Vec<f64> =
             r.history.iter().filter_map(|s| s.avg_genom.map(|g| g[Gene::Size as usize])).collect();
         let smax = sizes.iter().copied().fold(f64::NAN, f64::max);
         let sfin = sizes.last().copied().unwrap_or(f64::NAN);
         println!(
-            "{seed:>6} {:<18} {:>7} {:>6} {:>5} {:>6} {:>4.0}% {:>5} {:>8.1} {:>8.1} {:>8.3}",
+            "{seed:>6} {:<18} {:>7} {:>6} {:>6} {:>6.0}% {:>8.1} {:>8.1} {:>8.3}",
             r.stop.to_string(),
             r.ticks_done,
             last.vegetarians,
-            last.predators,
             last.plants,
-            with_pred * 100.0,
-            r.world.migrants,
+            eaten * 100.0,
             smax,
             sfin,
             r.ms_per_tick()

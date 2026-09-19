@@ -31,7 +31,7 @@ use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::{Rules, Shape, WorldConfig};
 
 #[derive(Parser)]
-#[command(about = "Tiny Life — эволюция растений, травоядных и хищников")]
+#[command(about = "Tiny Life — эволюция растений и травоядных")]
 struct Args {
     /// Сид мира; без него — случайный.
     #[arg(long)]
@@ -45,9 +45,6 @@ struct Args {
     /// Травоядных на старте (по умолчанию — по площади мира).
     #[arg(long)]
     vegetarians: Option<usize>,
-    /// Хищников на старте (по умолчанию — по площади мира).
-    #[arg(long)]
-    predators: Option<usize>,
     /// Правило мира: имя=число (можно несколько раз), как в life-report. Профиль
     /// еды — и именем: `--rule plant_width_profile=waves`.
     #[arg(long = "rule")]
@@ -88,13 +85,13 @@ fn attach_parent_console() {
     }
 }
 
-/// Значок окна: три кружка — растение, травоядное, хищник (как в Python-версии).
+/// Значок окна: три кружка — растение, крупное и мелкое травоядное.
 fn icon() -> eframe::egui::IconData {
     const N: usize = 64;
     let circles = [
         (18.0, 44.0, 10.0, frame::PLANT_COLOR),
         (40.0, 22.0, 16.0, frame::VEGETARIAN_COLOR),
-        (48.0, 48.0, 12.0, frame::PREDATOR_COLOR),
+        (48.0, 48.0, 11.0, frame::lerp(frame::WORLD_BOTTOM, frame::VEGETARIAN_COLOR, 0.65)),
     ];
     let mut rgba = vec![0u8; N * N * 4];
     for y in 0..N {
@@ -129,7 +126,6 @@ fn main() -> eframe::Result {
         || args.scale != 1.0
         || args.shape.is_some()
         || args.vegetarians.is_some()
-        || args.predators.is_some()
         || !args.rules.is_empty();
     let start = direct.then(|| WorldConfig {
         seed: args.seed.unwrap_or_else(app::random_seed),
@@ -137,7 +133,6 @@ fn main() -> eframe::Result {
         shape: args.shape.unwrap_or(WorldConfig::default().shape),
         rules,
         n_vegetarians: args.vegetarians,
-        n_predators: args.predators,
         ..Default::default()
     });
 

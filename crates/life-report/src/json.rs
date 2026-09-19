@@ -2,7 +2,7 @@
 //! каждый срез целиком. Ключи — машинные (английские, как в эталоне Python),
 //! тексты событий — по-русски.
 
-use life_core::genome::{GeneKind, GeneSpec, predator, vegetarian};
+use life_core::genome::{GeneKind, GeneSpec, vegetarian};
 use life_core::rules::RULE_KEYS;
 use life_core::{Counters, Rules, WorldConfig};
 use life_sim::SimResult;
@@ -26,11 +26,8 @@ fn counters(c: &Counters) -> Value {
         "plants_grown": c.plants_grown,
         "plants_eaten": c.plants_eaten,
         "vegetarians_born": c.vegetarians_born,
-        "vegetarians_eaten": c.vegetarians_eaten,
         "vegetarians_starved": c.vegetarians_starved,
         "vegetarians_cannibalized": c.vegetarians_cannibalized,
-        "predators_born": c.predators_born,
-        "predators_starved": c.predators_starved,
     })
 }
 
@@ -59,7 +56,7 @@ fn gene_stats(genes: &[GeneSpec], stats: &[GeneStat]) -> Value {
     Value::Object(map)
 }
 
-/// Таблица генов вида: чтобы JSON описывал сам себя.
+/// Таблица генов: чтобы JSON описывал сам себя.
 fn gene_table(genes: &[GeneSpec]) -> Value {
     genes
         .iter()
@@ -83,14 +80,11 @@ fn gene_table(genes: &[GeneSpec]) -> Value {
 
 fn snapshot(s: &Snapshot) -> Value {
     let genes = s.genes.map(|g| gene_stats(&vegetarian::GENES, &g));
-    let predator_genes = s.predator_genes.map(|g| gene_stats(&predator::GENES, &g));
     json!({
         "tick": s.tick,
         "plants": s.plants,
         "plant_cap": s.plant_cap,
         "vegetarians": s.vegetarians,
-        "predators": s.predators,
-        "migrants": s.migrants,
         "counters": counters(&s.counters),
         "genes": genes,
         "vegetarian_depth_pct": s.vegetarian_depth.as_ref().map(spread),
@@ -99,9 +93,6 @@ fn snapshot(s: &Snapshot) -> Value {
         "vegetarians_by_width": s.vegetarians_by_width,
         "plants_by_width": s.plants_by_width,
         "vegetarian_fullness": s.vegetarian_fullness.map(r),
-        "predators_hungry": s.predators_hungry.map(r),
-        "predator_fullness": s.predator_fullness.map(r),
-        "predator_genes": predator_genes,
     })
 }
 
@@ -120,7 +111,7 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
     let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(rules.get(k)))).collect();
     let space = cfg.space();
     json!({
-        "format": "life-report/2",
+        "format": "life-report/3",
         "world": { "scale": cfg.scale, "shape": cfg.shape.key(), "width": space.width, "height": space.height },
         "ticks": ticks,
         "sample_every": sample_every,
@@ -128,13 +119,9 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
         "start": {
             // настоящие числа, даже если заданы «по умолчанию»: null читателю ничего не говорит
             "vegetarians": cfg.vegetarians_at_start(),
-            "predators": cfg.predators_at_start(),
-            "predator_speed": cfg.predator_speed,
-            "predator_vision": cfg.predator_vision,
             "vegetarian_strategies": cfg.vegetarian_strategies,
-            "predator_strategies": cfg.predator_strategies,
         },
-        "genes": { "vegetarian": gene_table(&vegetarian::GENES), "predator": gene_table(&predator::GENES) },
+        "genes": { "vegetarian": gene_table(&vegetarian::GENES) },
         "map_legend": MAP_LEGEND,
         "runs": runs.iter().map(|run| {
             let snaps = &run.res.snapshots;
@@ -146,7 +133,6 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
                 "ticks_done": run.res.ticks_done,
                 "ms_per_tick": r(run.res.ms_per_tick()),
                 "totals": counters(&last.counters.since(&first.counters)),
-                "migrants": last.migrants,
                 "events": run.events.iter().map(event).collect::<Vec<_>>(),
                 "maps": run.maps.iter().map(|(t, rows)| json!({ "tick": t, "rows": rows })).collect::<Vec<_>>(),
                 "snapshots": snaps.iter().map(snapshot).collect::<Vec<_>>(),

@@ -13,7 +13,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use life_core::config::DIVIDE_PERIOD;
-use life_core::{Creature, Rules, VegetarianGenome, World, WorldConfig};
+use life_core::{Rules, VegetarianGenome, World, WorldConfig};
 use life_sim::observe::{EventTracker, Snapshot};
 
 use crate::frame::{
@@ -74,7 +74,8 @@ pub enum Command {
         y: f64,
         radius: f64,
     },
-    Select(Option<Creature>),
+    /// Выбрать травоядное по номеру.
+    Select(Option<u64>),
     /// Область для сводки генов (инструмент «Область»); None — снять.
     SetRegion(Option<Area>),
     /// Новые правила посреди партии; `note` — что поменялось, для хроники.
@@ -82,9 +83,8 @@ pub enum Command {
         rules: Rules,
         note: String,
     },
-    /// Подсадить базовое травоядное или хищника в точку мира.
+    /// Подсадить базовое травоядное в точку мира.
     Spawn {
-        predator: bool,
         x: f64,
         y: f64,
     },
@@ -171,16 +171,15 @@ struct Sim {
     ended: Option<Ending>,
     watch_explosion: bool,
     view: Option<ViewRequest>,
-    selected: Option<Creature>,
+    selected: Option<u64>,
     region: Option<Area>,
 
     // ── наблюдение ──────────────────────────────────────────────────────────
     /// Численности последних `DIVIDE_PERIOD` тиков — для сглаженной точки графика.
-    window: VecDeque<[usize; 3]>,
+    window: VecDeque<[usize; 2]>,
     tracker: EventTracker,
     snapshot_every: u64,
     next_snapshot: u64,
-    migrants: u64,
     pending: Pending,
 
     // ── темп ────────────────────────────────────────────────────────────────
@@ -234,7 +233,6 @@ impl Sim {
             tracker: EventTracker::new(),
             snapshot_every: SNAPSHOT_EVERY,
             next_snapshot: 0,
-            migrants: 0,
             pending: Pending::default(),
             due: 0.0,
             last_time: now,
@@ -350,15 +348,9 @@ impl Sim {
                 self.world.set_rules(rules);
                 self.log(None, note);
             }
-            Command::Spawn { predator, x, y } => {
-                let text = if predator {
-                    self.world.spawn_predator(x, y, None);
-                    "подсажен хищник"
-                } else {
-                    self.world.spawn_vegetarian(VegetarianGenome::BASE, x, y, None);
-                    "подсажено травоядное"
-                };
-                self.log(None, text.into());
+            Command::Spawn { x, y } => {
+                self.world.spawn_vegetarian(VegetarianGenome::BASE, x, y, None);
+                self.log(None, "подсажено травоядное".into());
                 // Подсадка в вымерший мир его оживляет.
                 if self.ended == Some(Ending::Extinct) {
                     self.ended = None;
@@ -422,7 +414,6 @@ impl Sim {
         self.window.clear();
         self.tracker = EventTracker::new();
         self.snapshot_every = SNAPSHOT_EVERY;
-        self.migrants = self.world.migrants;
         self.record();
         self.snapshot();
     }
@@ -439,24 +430,17 @@ impl Sim {
         if self.world.tick >= self.next_snapshot {
             self.snapshot();
         }
-        if self.world.migrants != self.migrants {
-            let n = self.world.migrants - self.migrants;
-            self.migrants = self.world.migrants;
-            self.log(None, format!("с края мира пришли хищники-мигранты: {n}"));
-        }
-        if let Some(c) = self.selected
-            && Selected::of(&self.world, c).is_none()
+        if let Some(id) = self.selected
+            && Selected::of(&self.world, id).is_none()
         {
             self.selected = None;
-            let who =
-                if matches!(c, Creature::Vegetarian(_)) { "травоядное" } else { "хищник" };
-            self.log(None, format!("выбранное {who} погибло"));
+            self.log(None, "выбранное травоядное погибло".into());
         }
 
-        let (veg, pred) = (self.world.vegetarians.len(), self.world.predators.len());
-        if veg == 0 && pred == 0 {
+        let veg = self.world.vegetarians.len();
+        if veg == 0 {
             self.ended = Some(Ending::Extinct);
-        } else if self.watch_explosion && veg + pred > self.world.space.per_area(EXPLOSION_LIMIT) {
+        } else if self.watch_explosion && veg > self.world.space.per_area(EXPLOSION_LIMIT) {
             self.ended = Some(Ending::Explosion);
         }
     }
@@ -467,7 +451,7 @@ impl Sim {
         if self.window.len() == DIVIDE_PERIOD as usize {
             self.window.pop_front();
         }
-        self.window.push_back([w.plants.len(), w.vegetarians.len(), w.predators.len()]);
+        self.window.push_back([w.plants.len(), w.vegetarians.len()]);
         if !w.tick.is_multiple_of(GRAPH_EVERY) {
             return;
         }
@@ -478,7 +462,6 @@ impl Sim {
             tick: w.tick,
             plants: avg(0),
             vegetarians: avg(1),
-            predators: avg(2),
             genom: stats.avg_genom,
         });
     }
@@ -501,8 +484,7 @@ impl Sim {
             self.log(Some(e.kind), e.text);
         }
         if let Some(area) = self.region {
-            let world = (snap.genes, snap.predator_genes);
-            self.pending.region = Some(RegionStats::of(&self.world, area, Some(world)));
+            self.pending.region = Some(RegionStats::of(&self.world, area, Some(snap.genes)));
         }
         self.pending.snapshots.push(snap);
     }
@@ -599,7 +581,6 @@ impl Sim {
             tick: w.tick,
             plants: w.plants.len(),
             vegetarians: w.vegetarians.len(),
-            predators: w.predators.len(),
             world_w: w.space.width,
             world_h: w.space.height,
             status: Status {
@@ -613,7 +594,7 @@ impl Sim {
             instances,
             density,
             minimap,
-            selected: self.selected.and_then(|c| Selected::of(w, c)),
+            selected: self.selected.and_then(|id| Selected::of(w, id)),
             samples: pending.samples,
             snapshots: pending.snapshots,
             region: pending.region,
@@ -650,7 +631,7 @@ mod tests {
     }
 
     fn cfg() -> WorldConfig {
-        WorldConfig { seed: 3, ..Default::default() }.with_predators()
+        WorldConfig { seed: 3, ..Default::default() }
     }
 
     fn paused(cfg: WorldConfig) -> SimHandle {
@@ -681,7 +662,7 @@ mod tests {
             runs.push(wait_frame(&h, |f| f.world_gen == world_gen && f.tick == 50));
         }
         let (a, b) = (&runs[0], &runs[1]);
-        assert_eq!((a.plants, a.vegetarians, a.predators), (b.plants, b.vegetarians, b.predators));
+        assert_eq!((a.plants, a.vegetarians), (b.plants, b.vegetarians));
         // и с тем же движком без окна
         let mut w = World::new(&cfg());
         (0..50).for_each(|_| w.step());
@@ -690,7 +671,7 @@ mod tests {
 
     #[test]
     fn мир_без_жизни_заканчивает_партию() {
-        let empty = WorldConfig { n_vegetarians: Some(0), n_predators: Some(0), ..cfg() };
+        let empty = WorldConfig { n_vegetarians: Some(0), ..cfg() };
         let h = SimHandle::spawn(empty, Box::new(|| {}));
         let f = wait_frame(&h, |f| f.status.ended.is_some());
         assert_eq!(f.status.ended, Some(Ending::Extinct));
@@ -701,7 +682,7 @@ mod tests {
         let h = SimHandle::spawn(cfg(), Box::new(|| {}));
         h.send(Command::View(ViewRequest { x0: 0.0, y0: 0.0, x1: 6000.0, y1: 4000.0, px_w: 900, px_h: 600 }));
         let f = wait_frame(&h, |f| !f.instances.is_empty());
-        assert!(f.instances.len() >= 26, "20 травоядных и 6 хищников на старте");
+        assert!(f.instances.len() >= 20, "20 травоядных на старте");
         assert!(f.density.is_none());
     }
 
@@ -742,18 +723,17 @@ mod tests {
         let h = paused(cfg());
         wait_frame(&h, |f| f.world_gen == 1);
         // первое травоядное мира — id 1; его координаты узнаем из кадра выбора
-        h.send(Command::Select(Some(Creature::Vegetarian(1))));
+        h.send(Command::Select(Some(1)));
         let f = wait_frame(&h, |f| f.selected.is_some());
         let s = f.selected.unwrap();
-        assert_eq!(s.creature, Creature::Vegetarian(1));
-        assert!(s.genome.is_some() && s.layer.is_some());
+        assert_eq!(s.id, 1);
         // клик в пустоту снимает выбор
         h.send(Command::Pick { x: -1e6, y: -1e6, radius: 1.0 });
         wait_frame(&h, |f| f.selected.is_none());
         // клик точно в центр — выбирает
         h.send(Command::Pick { x: s.x, y: s.y, radius: 1.0 });
         let f = wait_frame(&h, |f| f.selected.is_some());
-        assert_eq!(f.selected.unwrap().creature, Creature::Vegetarian(1));
+        assert_eq!(f.selected.unwrap().id, 1);
     }
 
     #[test]
@@ -764,11 +744,14 @@ mod tests {
         h.send(Command::SetRules {
             rules: rules.clone(), note: "энергия растения 50 → 80".into()
         });
-        h.send(Command::Spawn { predator: true, x: 3000.0, y: 2000.0 });
-        let frames = frames_until(&h, |f| f.predators == 7);
+        h.send(Command::Spawn { x: 3000.0, y: 2000.0 });
+        let frames = frames_until(&h, |f| f.vegetarians == 21);
         let f = frames.last().unwrap();
         assert_eq!(f.rules, rules);
         let log: Vec<&str> = frames.iter().flat_map(|f| f.log.iter().map(|e| e.text.as_str())).collect();
-        assert!(log.contains(&"энергия растения 50 → 80") && log.contains(&"подсажен хищник"), "{log:?}");
+        assert!(
+            log.contains(&"энергия растения 50 → 80") && log.contains(&"подсажено травоядное"),
+            "{log:?}"
+        );
     }
 }

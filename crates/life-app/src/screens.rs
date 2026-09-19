@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Align2, RichText, Vec2};
 use life_core::flora;
-use life_core::genome::{predator, vegetarian};
+use life_core::genome::vegetarian;
 use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::{Rules, Shape, Space};
 
@@ -17,11 +17,7 @@ use crate::theme::{self, ACCENT, BG, DANGER, GOOD, MUTED, VEIL, spaced};
 /// с площадью. Это замер на этой машине, а не выдуманная формула.
 pub fn estimate(settings: &Settings, measured: Option<(f64, f64)>) -> (String, egui::Color32) {
     let cfg = settings.world_config(0);
-    let vegetarians = spaced(cfg.vegetarians_at_start() as u64);
-    let start = match cfg.predators_at_start() {
-        0 => format!("на старте {vegetarians} травоядных, без хищников"),
-        n => format!("на старте {vegetarians} травоядных и {} хищников", spaced(n as u64)),
-    };
+    let start = format!("на старте {} травоядных", spaced(cfg.vegetarians_at_start() as u64));
     let Some((tick_ms, scale)) = measured.filter(|(ms, _)| *ms > 0.0) else {
         return (format!("{start}; скорость оценим, когда мир пойдёт"), MUTED);
     };
@@ -51,7 +47,7 @@ impl LifeApp {
                 ui.set_width(300.0);
                 ui.vertical_centered_justified(|ui| {
                     ui.label(RichText::new("Tiny Life").size(34.0).strong());
-                    ui.colored_label(MUTED, "эволюция растений, травоядных и хищников");
+                    ui.colored_label(MUTED, "эволюция растений и травоядных");
                     ui.add_space(18.0);
                     let big = |t: &str| RichText::new(t).size(17.0);
                     if started && ui.add(theme::primary_rich(big("Продолжить"))).clicked() {
@@ -261,30 +257,25 @@ impl LifeApp {
                 ui.label(RichText::new("Что происходит").strong());
                 ui.label(
                     "Растения по умолчанию растут гуще у поверхности (вверху). Травоядные едят их, делятся и \
-                     мутируют; хищники охотятся на травоядных и тоже мутируют. Отбор никто не задаёт: выживают \
-                     те, чей геном окупается.",
+                     мутируют; крупные при каннибализме едят мелких сородичей. Отбор никто не задаёт: \
+                     выживают те, чей геном окупается.",
                 );
                 ui.label(
-                    "Светлое ядро травоядного — сколько у него энергии: у голодных оно маленькое. Глазок и нос \
-                     хищника смотрят туда, куда существо идёт. Рамка на миникарте — то, что сейчас на экране.",
+                    "Светлое ядро травоядного — сколько у него энергии: у голодных оно маленькое. Глазок \
+                     смотрит туда, куда существо идёт. Рамка на миникарте — то, что сейчас на экране.",
                 );
                 ui.add_space(6.0);
                 ui.label(RichText::new("Гены").strong());
                 egui::Grid::new("гены").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
-                    for (who, genes) in [("травоядные", &vegetarian::GENES[..]), ("хищники", &predator::GENES[..])] {
-                        ui.colored_label(MUTED, who);
-                        ui.label("");
+                    for spec in vegetarian::GENES.iter().filter(|s| crate::charts::shown(s)) {
+                        ui.label(spec.label);
+                        ui.label(spec.about);
                         ui.end_row();
-                        for spec in genes.iter().filter(|s| crate::charts::shown(s)) {
-                            ui.label(spec.label);
-                            ui.label(spec.about);
+                        // у гена-выбора — что значит каждый вариант
+                        for v in spec.variants().unwrap_or_default() {
+                            ui.colored_label(MUTED, format!("  {}", v.label));
+                            ui.label(v.about);
                             ui.end_row();
-                            // у гена-выбора — что значит каждый вариант
-                            for v in spec.variants().unwrap_or_default() {
-                                ui.colored_label(MUTED, format!("  {}", v.label));
-                                ui.label(v.about);
-                                ui.end_row();
-                            }
                         }
                     }
                 });
@@ -399,7 +390,7 @@ pub fn food_preview(ui: &mut egui::Ui, rules: &Rules, space: Space) {
 fn fields(ui: &mut egui::Ui, s: &mut Settings, tab: Tab) {
     egui::Grid::new(("поля", tab as u8)).num_columns(3).spacing([12.0, 10.0]).show(ui, |ui| {
         for f in FIELDS.iter().filter(|f| f.tab == tab) {
-            if !f.visible(s, s.predators_on()) {
+            if !(f.shown)(s) {
                 continue;
             }
             ui.label(f.label).on_hover_text(f.hint);
@@ -418,7 +409,7 @@ fn fields(ui: &mut egui::Ui, s: &mut Settings, tab: Tab) {
     if tab == Tab::World {
         ui.colored_label(
             MUTED,
-            "Численности и рост растений — на участок 6000×4000: в большом мире всё в той же плотности.",
+            "Численность и рост растений — на участок 6000×4000: в большом мире всё в той же плотности.",
         );
     }
 }

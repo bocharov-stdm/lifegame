@@ -1,6 +1,5 @@
-//! Движок Tiny Life: эволюционная песочница — растения, травоядные и хищники
-//! с геномом (таблица генов у каждого вида, `genome/`). Отбор возникает сам,
-//! он не прописан.
+//! Движок Tiny Life: эволюционная песочница — растения и травоядные с геномом
+//! (таблица генов, `genome/`). Отбор возникает сам, он не прописан.
 //!
 //! Этот crate ничего не знает об экране и не зависит ни от чего графического:
 //! на нём держатся тесты и подбор баланса без окна. Рисует `life-app`.
@@ -10,7 +9,6 @@ pub mod flora;
 pub mod genome;
 pub mod grid;
 pub mod plant;
-pub mod predator;
 pub mod rng;
 pub mod rules;
 pub mod senses;
@@ -18,7 +16,7 @@ pub mod space;
 pub mod vegetarian;
 pub mod world;
 
-pub use genome::{Genome, PredatorGenome, VegetarianGenome};
+pub use genome::{Genome, VegetarianGenome};
 pub use rules::Rules;
 pub use space::{Shape, Space};
-pub use world::{Counters, Creature, Stats, World, WorldConfig};
+pub use world::{Counters, Stats, World, WorldConfig};

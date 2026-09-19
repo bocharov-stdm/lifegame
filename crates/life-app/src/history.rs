@@ -1,8 +1,7 @@
 //! История партии для графиков. Порт `app/history.py` (тег python-final).
 //!
 //! Рядов у каждой величины два:
-//! - «недавнее» — последние `RECENT` точек: крупно видно колебания
-//!   «хищник — жертва»;
+//! - «недавнее» — последние `RECENT` точек: крупно видно колебания численности;
 //! - «вся партия» — когда точек больше `FULL`, ряд прореживается вдвое (каждая
 //!   вторая точка), а шаг записи удваивается. Память ограничена при любой
 //!   длине партии.
@@ -11,7 +10,7 @@
 
 use std::collections::VecDeque;
 
-use life_core::genome::{predator, vegetarian};
+use life_core::genome::vegetarian;
 
 use life_sim::observe::{GeneStat, Snapshot};
 
@@ -26,7 +25,6 @@ pub struct Sample {
     pub tick: u64,
     pub plants: f64,
     pub vegetarians: f64,
-    pub predators: f64,
     /// Средний геном травоядных; None — травоядных нет.
     pub genom: Option<[f64; vegetarian::N]>,
 }
@@ -90,14 +88,13 @@ impl<T: Clone> Series<T> {
 #[derive(Clone, Debug, Default)]
 pub struct History {
     pub counts: Series<Sample>,
-    /// Срезы мира (`Snapshot`): геном обоих видов, сытость, где живут и где еда.
+    /// Срезы мира (`Snapshot`): геном, сытость, где живут и где еда.
     pub snapshots: Series<Snapshot>,
     /// Первый средний геном партии — база «изменения от начала»: в окне
     /// недавнего первая точка уже не начало партии.
     pub origin: Option<[f64; vegetarian::N]>,
     /// Первая сводка генов каждого вида — тоже база «изменения от начала».
     pub vegetarian_origin: Option<[GeneStat; vegetarian::N]>,
-    pub predator_origin: Option<[GeneStat; predator::N]>,
 }
 
 impl History {
@@ -110,7 +107,6 @@ impl History {
 
     pub fn add_snapshot(&mut self, s: Snapshot) {
         self.vegetarian_origin = self.vegetarian_origin.or(s.genes);
-        self.predator_origin = self.predator_origin.or(s.predator_genes);
         self.snapshots.push(s);
     }
 }
@@ -152,7 +148,7 @@ mod tests {
     #[test]
     fn начало_генома_запоминается_с_первого_травоядного() {
         let mut h = History::default();
-        let at = |tick, genom| Sample { tick, plants: 0.0, vegetarians: 0.0, predators: 0.0, genom };
+        let at = |tick, genom| Sample { tick, plants: 0.0, vegetarians: 0.0, genom };
         h.add_sample(at(0, None));
         h.add_sample(at(10, Some([1.0; vegetarian::N])));
         h.add_sample(at(20, Some([2.0; vegetarian::N])));

@@ -7,9 +7,8 @@
 //! крупное торчит в кадр, даже когда центр далеко). Если видимых слишком много,
 //! вместо кружков идёт карта плотности — одна картинка размером с экран.
 
-use life_core::genome::{predator, vegetarian};
-use life_core::predator::Predator;
-use life_core::{Creature, Rules, World};
+use life_core::genome::vegetarian;
+use life_core::{Rules, World};
 use life_sim::observe::{EventKind, GeneStat, Snapshot, gene_stats};
 
 use crate::history::Sample;
@@ -92,8 +91,8 @@ pub struct Status {
 /// Прямоугольник мира: x0, y0, x1, y1 (x0 < x1, y0 < y1).
 pub type Area = (f64, f64, f64, f64);
 
-/// Сводка генов обоих видов: (травоядные, хищники); None — вида нет.
-pub type GeneSummary = (Option<[GeneStat; vegetarian::N]>, Option<[GeneStat; predator::N]>);
+/// Сводка генов травоядных; None — никого нет.
+pub type GeneSummary = Option<[GeneStat; vegetarian::N]>;
 
 /// Сводка по области мира (инструмент «Область»): кто внутри (по центру тела)
 /// и какой у них геном — рядом со сводкой по всему миру на том же тике.
@@ -103,7 +102,6 @@ pub struct RegionStats {
     pub tick: u64,
     pub plants: usize,
     pub vegetarians: usize,
-    pub predators: usize,
     /// Средняя заполненность бака травоядных внутри, 0..1.
     pub fullness: Option<f64>,
     pub inside: GeneSummary,
@@ -116,25 +114,16 @@ impl RegionStats {
     pub fn of(world: &World, area: Area, world_genes: Option<GeneSummary>) -> RegionStats {
         let inside = |x: f64, y: f64| x >= area.0 && x <= area.2 && y >= area.1 && y <= area.3;
         let vegs = world.vegetarians.iter().filter(|v| inside(v.x, v.y));
-        let preds = world.predators.iter().filter(|p| inside(p.x, p.y));
         let (n, sum) = vegs.clone().fold((0, 0.0), |(n, s), v| (n + 1, s + v.energy / v.pheno.max_energy));
-        let world_genes = world_genes.unwrap_or_else(|| {
-            (
-                gene_stats(&vegetarian::GENES, world.vegetarians.iter().map(|v| &v.genome)),
-                gene_stats(&predator::GENES, world.predators.iter().map(|p| &p.genome)),
-            )
-        });
+        let world_genes = world_genes
+            .unwrap_or_else(|| gene_stats(&vegetarian::GENES, world.vegetarians.iter().map(|v| &v.genome)));
         RegionStats {
             area,
             tick: world.tick,
             plants: world.plants.iter().filter(|p| inside(p.x, p.y)).count(),
             vegetarians: n,
-            predators: preds.clone().count(),
             fullness: (n > 0).then(|| sum / n as f64),
-            inside: (
-                gene_stats(&vegetarian::GENES, vegs.map(|v| &v.genome)),
-                gene_stats(&predator::GENES, preds.map(|p| &p.genome)),
-            ),
+            inside: gene_stats(&vegetarian::GENES, vegs.map(|v| &v.genome)),
             world: world_genes,
         }
     }
@@ -143,7 +132,7 @@ impl RegionStats {
 /// Выбранное существо, как оно есть на тике кадра.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Selected {
-    pub creature: Creature,
+    pub id: u64,
     pub x: f64,
     pub y: f64,
     /// Радиус тела.
@@ -154,57 +143,31 @@ pub struct Selected {
     pub max_energy: f64,
     /// Расход энергии за тик.
     pub upkeep: f64,
-    /// Геном травоядного (у хищника — None).
-    pub genome: Option<[f64; vegetarian::N]>,
-    /// Геном хищника (у травоядного — None).
-    pub predator_genome: Option<[f64; predator::N]>,
-    /// Слой травоядного по глубине (y от и до): где ему можно жить и есть.
-    pub layer: Option<(f64, f64)>,
-    pub fleeing: bool,
-    pub hungry: bool,
+    pub genome: [f64; vegetarian::N],
+    /// Слой по глубине (y от и до): где ему можно жить и есть.
+    pub layer: (f64, f64),
 }
 
 impl Selected {
-    pub fn of(world: &World, c: Creature) -> Option<Selected> {
-        match c {
-            Creature::Vegetarian(id) => world.vegetarian(id).map(|v| Selected {
-                creature: c,
-                x: v.x,
-                y: v.y,
-                half: v.pheno.half,
-                vision: v.pheno.vision,
-                speed: v.pheno.speed,
-                energy: v.energy,
-                max_energy: v.pheno.max_energy,
-                upkeep: v.pheno.upkeep,
-                genome: Some(v.genome.to_values()),
-                predator_genome: None,
-                layer: Some((v.pheno.layer_lo, v.pheno.layer_hi)),
-                fleeing: v.mind.flee_ticks > 0,
-                hungry: false,
-            }),
-            Creature::Predator(id) => world.predator(id).map(|p| Selected {
-                creature: c,
-                x: p.x,
-                y: p.y,
-                half: Predator::DIAM / 2.0,
-                vision: p.pheno.vision,
-                speed: p.pheno.speed,
-                energy: p.energy,
-                max_energy: p.pheno.max_energy,
-                upkeep: p.pheno.upkeep,
-                genome: None,
-                predator_genome: Some(p.genome.to_values()),
-                layer: None,
-                fleeing: false,
-                hungry: p.hungry(),
-            }),
-        }
+    pub fn of(world: &World, id: u64) -> Option<Selected> {
+        world.vegetarian(id).map(|v| Selected {
+            id,
+            x: v.x,
+            y: v.y,
+            half: v.pheno.half,
+            vision: v.pheno.vision,
+            speed: v.pheno.speed,
+            energy: v.energy,
+            max_energy: v.pheno.max_energy,
+            upkeep: v.pheno.upkeep,
+            genome: v.genome.to_values(),
+            layer: (v.pheno.layer_lo, v.pheno.layer_hi),
+        })
     }
 }
 
 /// Запись хроники. `kind` — у событий наблюдателя (те же, что в отчёте);
-/// у событий самой игры (мигранты, правила, подсадка) его нет.
+/// у событий самой игры (правила, подсадка) его нет.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LogEntry {
     pub tick: u64,
@@ -224,14 +187,13 @@ pub struct Frame {
     pub tick: u64,
     pub plants: usize,
     pub vegetarians: usize,
-    pub predators: usize,
     pub world_w: f64,
     pub world_h: f64,
     pub status: Status,
     /// Начало координат кружков в мире (f64): при ×10 000 мир шириной 6·10⁷,
     /// и в f32 абсолютные координаты теряли бы единицы пикселей.
     pub origin: (f64, f64),
-    /// Растения, потом травоядные, потом хищники — в таком порядке и рисуются.
+    /// Растения, потом травоядные — в таком порядке и рисуются.
     pub instances: Vec<Instance>,
     /// Вместо кружков, когда видимых больше `MAX_INSTANCES`.
     pub density: Option<Raster>,
@@ -262,7 +224,6 @@ pub const WORLD_TOP: [u8; 3] = [31, 38, 47];
 pub const WORLD_BOTTOM: [u8; 3] = [15, 18, 23];
 pub const PLANT_COLOR: [u8; 3] = [93, 211, 158];
 pub const VEGETARIAN_COLOR: [u8; 3] = [205, 134, 255];
-pub const PREDATOR_COLOR: [u8; 3] = [255, 110, 94];
 
 pub fn lerp(a: [u8; 3], b: [u8; 3], t: f64) -> [u8; 3] {
     std::array::from_fn(|i| (a[i] as f64 + (b[i] as f64 - a[i] as f64) * t).round() as u8)
@@ -278,18 +239,13 @@ pub fn plant_color() -> [u8; 3] {
     lerp(WORLD_BOTTOM, PLANT_COLOR, 0.6)
 }
 
-/// Голодный хищник (охотится) ярче сытого (бродит и не ест).
-pub fn predator_color(hungry: bool) -> [u8; 3] {
-    if hungry { PREDATOR_COLOR } else { lerp(WORLD_BOTTOM, PREDATOR_COLOR, 0.8) }
-}
-
-/// Карта плотности: сколько растений, травоядных и хищников в каждой клетке
+/// Карта плотности: сколько растений и травоядных в каждой клетке
 /// прямоугольника мира, в цвете. Считается за один проход по миру, поэтому
 /// её цена не зависит от того, сколько существ видно.
 pub fn density(world: &World, rect: (f64, f64, f64, f64), w: usize, h: usize, out: Raster) -> Raster {
     let (x0, y0, x1, y1) = rect;
     let (sx, sy) = (w as f64 / (x1 - x0), h as f64 / (y1 - y0));
-    let mut counts = vec![[0u32; 3]; w * h];
+    let mut counts = vec![[0u32; 2]; w * h];
     let mut add = |x: f64, y: f64, kind: usize| {
         let (cx, cy) = ((x - x0) * sx, (y - y0) * sy);
         if cx >= 0.0 && cy >= 0.0 && (cx as usize) < w && (cy as usize) < h {
@@ -298,16 +254,15 @@ pub fn density(world: &World, rect: (f64, f64, f64, f64), w: usize, h: usize, ou
     };
     world.plants.iter().for_each(|p| add(p.x, p.y, 0));
     world.vegetarians.iter().for_each(|v| add(v.x, v.y, 1));
-    world.predators.iter().for_each(|p| add(p.x, p.y, 2));
 
-    let colors = [PLANT_COLOR, VEGETARIAN_COLOR, PREDATOR_COLOR];
+    let colors = [PLANT_COLOR, VEGETARIAN_COLOR];
     let mut rgba = out.rgba;
     rgba.clear();
     rgba.reserve(w * h * 4);
     for c in &counts {
         // Яркость по логарифму: одинокое существо видно, а скопление не слепит.
         let k = c.map(|n| if n == 0 { 0.0 } else { (0.6 + (n as f64).log2() / 10.0).min(1.0) });
-        // Хищники поверх травоядных, травоядные поверх растений.
+        // Травоядные поверх растений.
         let mut px = [0.0f64; 3];
         let mut alpha = 0.0f64;
         for (kind, &a) in k.iter().enumerate() {
@@ -349,12 +304,8 @@ mod tests {
         use crate::motion::Motion;
         use life_core::rng::Rng;
 
-        let mut world = World::new(&WorldConfig {
-            scale: 400.0,
-            n_vegetarians: Some(0),
-            n_predators: Some(0),
-            ..Default::default()
-        });
+        let mut world =
+            World::new(&WorldConfig { scale: 400.0, n_vegetarians: Some(0), ..Default::default() });
         let mut rng = Rng::new(9);
         let flora = world.flora().clone();
         world.plants =

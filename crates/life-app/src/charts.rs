@@ -9,7 +9,7 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stro
 use life_core::genome::GeneSpec;
 use life_sim::observe::{GeneStat, MAX_VARIANTS, Snapshot, Spread};
 
-use crate::frame::{PLANT_COLOR, PREDATOR_COLOR, VEGETARIAN_COLOR};
+use crate::frame::{PLANT_COLOR, VEGETARIAN_COLOR};
 use crate::history::{History, Sample};
 use crate::theme::{LINE, MUTED, TEXT, rgb, spaced};
 
@@ -28,7 +28,7 @@ fn x_at(rect: Rect, i: usize, n: usize) -> f32 {
 }
 
 /// Линия графика: подпись, цвет и значение в точке (None — величины нет,
-/// например сытости хищников, когда хищников нет: линия прерывается).
+/// например сытости, когда травоядных нет: линия прерывается).
 pub struct Line<T> {
     pub label: &'static str,
     pub color: Color32,
@@ -38,8 +38,8 @@ pub struct Line<T> {
 /// Шкала графика линиями.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Scale {
-    /// У каждой линии своя, от нуля до её максимума на участке: иначе хищники
-    /// лежали бы на нуле рядом с тысячами растений. Подписи — числами.
+    /// У каждой линии своя, от нуля до её максимума на участке: иначе десятки
+    /// травоядных лежали бы на нуле рядом с тысячами растений. Подписи — числами.
     Own,
     /// Общая 0‒100%: доли сравнимы между собой. Подписи — процентами.
     Share,
@@ -124,46 +124,34 @@ fn draw_run(painter: &egui::Painter, run: &mut Vec<Pos2>, color: Color32) {
     run.clear();
 }
 
-/// Численности: растения, травоядные, хищники — каждая в своей шкале.
-/// `predators` — рисовать ли хищников: без них в партии линия лежала бы на нуле.
-pub fn populations(ui: &mut egui::Ui, history: &History, whole: bool, height: f32, predators: bool) {
+/// Численности: растения и травоядные — каждая в своей шкале.
+pub fn populations(ui: &mut egui::Ui, history: &History, whole: bool, height: f32) {
     let points = history.counts.points(whole);
     let all = [
         Line { label: "растения", color: rgb(PLANT_COLOR), value: |s: &Sample| Some(s.plants) },
         Line {
             label: "травоядные", color: rgb(VEGETARIAN_COLOR), value: |s: &Sample| Some(s.vegetarians)
         },
-        Line { label: "хищники", color: rgb(PREDATOR_COLOR), value: |s: &Sample| Some(s.predators) },
     ];
-    let shown = if predators { &all[..] } else { &all[..2] };
-    lines(ui, &points, |s| s.tick, shown, Scale::Own, height);
+    lines(ui, &points, |s| s.tick, &all, Scale::Own, height);
 }
 
-/// Сытость и голод: средняя заполненность бака травоядных и хищников, доля
-/// голодных (охотящихся) хищников и насколько растения упёрлись в потолок.
-pub fn energy(ui: &mut egui::Ui, snaps: &[&Snapshot], predators: bool, height: f32) {
-    let vegetarians = rgb(VEGETARIAN_COLOR);
-    let hunters = rgb(PREDATOR_COLOR);
+/// Сытость: средняя заполненность бака травоядных и насколько растения
+/// упёрлись в потолок.
+pub fn energy(ui: &mut egui::Ui, snaps: &[&Snapshot], height: f32) {
     let all = [
         Line {
-            label: "сытость травоядных", color: vegetarians, value: |s: &Snapshot| s.vegetarian_fullness
+            label: "сытость травоядных",
+            color: rgb(VEGETARIAN_COLOR),
+            value: |s: &Snapshot| s.vegetarian_fullness,
         },
         Line {
             label: "растений от потолка",
             color: rgb(PLANT_COLOR),
             value: |s: &Snapshot| (s.plant_cap > 0).then(|| s.plants as f64 / s.plant_cap as f64),
         },
-        Line {
-            label: "сытость хищников", color: hunters, value: |s: &Snapshot| s.predator_fullness
-        },
-        Line {
-            label: "голодных хищников",
-            color: hunters.gamma_multiply(0.55),
-            value: |s: &Snapshot| s.predators_hungry,
-        },
     ];
-    let shown = if predators { &all[..] } else { &all[..2] };
-    lines(ui, snaps, |s| s.tick, shown, Scale::Share, height);
+    lines(ui, snaps, |s| s.tick, &all, Scale::Share, height);
 }
 
 /// Точка графика генома: тик и сводка каждого гена вида.

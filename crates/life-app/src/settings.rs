@@ -8,9 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use life_core::config::{
-    PREDATOR_BASE_SPEED, PREDATOR_BASE_VISION, PREDATORS_PER_AREA, VEGETARIANS_AT_START,
-};
+use life_core::config::VEGETARIANS_AT_START;
 use life_core::flora::{Along, Profile};
 use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::{Rules, Shape, Space, WorldConfig};
@@ -33,21 +31,13 @@ pub enum Tab {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
     Vegetarians,
-    PredatorsEnabled,
-    Predators,
     PlantGrowth,
-    PredatorSpeed,
-    PredatorVision,
     MutationSigma,
     PlantEnergy,
     CostScale,
     SizePower,
     SightPower,
-    PredatorDivideChance,
-    PredatorMaxEnergy,
-    PredatorMigration,
     Lurkers,
-    Ambushers,
     PlantDepthProfile,
     PlantDepthSteepness,
     PlantDepthEnd,
@@ -82,8 +72,6 @@ pub struct Field {
     pub shown: fn(&Settings) -> bool,
     /// Галочка (значение 0 или 1), а не ползунок.
     pub toggle: bool,
-    /// Поле про хищников: видно, только когда хищники в игре.
-    pub predator: bool,
 }
 
 /// Общее у полей-ползунков: всегда видны, вариантов нет.
@@ -100,7 +88,6 @@ const SLIDER: Field = Field {
     choices: &[],
     shown: |_| true,
     toggle: false,
-    predator: false,
 };
 
 /// Общее у галочек: 0 — нет, 1 — да.
@@ -130,12 +117,6 @@ impl Field {
     pub fn live(&self) -> bool {
         self.rule.is_some()
     }
-
-    /// Показывать ли поле: по своему условию и, если оно про хищников, только
-    /// когда хищники в игре.
-    pub fn visible(&self, s: &Settings, predators: bool) -> bool {
-        (self.shown)(s) && (!self.predator || predators)
-    }
 }
 
 fn int(v: f64) -> String {
@@ -146,7 +127,7 @@ fn percent(v: f64) -> String {
     format!("{v:.0}%")
 }
 
-pub const FIELDS: [Field; 30] = [
+pub const FIELDS: [Field; 22] = [
     // ── Мир ──────────────────────────────────────────────────────────────────
     Field {
         key: Key::Vegetarians,
@@ -159,28 +140,6 @@ pub const FIELDS: [Field; 30] = [
         format: int,
         tab: Tab::World,
         rule: None,
-        ..SLIDER
-    },
-    // Хищники временно в стороне: упор — на каннибализм. Мир с ними —
-    // по желанию; движок, отчёт и эталон их по-прежнему проверяют.
-    Field {
-        key: Key::PredatorsEnabled,
-        label: "Хищники",
-        hint: "Выпустить в мир хищников. Без них травоядных держат в узде голод и каннибализм.",
-        tab: Tab::World,
-        ..TOGGLE
-    },
-    Field {
-        key: Key::Predators,
-        label: "Хищников на старте",
-        hint: "Сколько хищников на каждом участке 6000×4000. Ноль — мир без охоты.",
-        lo: 0.0,
-        hi: 40.0,
-        step: 1.0,
-        format: int,
-        tab: Tab::World,
-        rule: None,
-        predator: true,
         ..SLIDER
     },
     // Множитель, а не само число: в конфиге темп — 2.50008 в тик, и на сетку
@@ -197,32 +156,6 @@ pub const FIELDS: [Field; 30] = [
         rule: Some("plant_rate"),
         ..SLIDER
     },
-    Field {
-        key: Key::PredatorSpeed,
-        label: "Скорость хищников",
-        hint: "Скорость хищников на старте. У потомков она мутирует.",
-        lo: 4.0,
-        hi: 30.0,
-        step: 1.0,
-        format: int,
-        tab: Tab::World,
-        rule: None,
-        predator: true,
-        ..SLIDER
-    },
-    Field {
-        key: Key::PredatorVision,
-        label: "Зрение хищников",
-        hint: "С какого расстояния хищник замечает добычу. Травоядное видит на 400.",
-        lo: 100.0,
-        hi: 1500.0,
-        step: 50.0,
-        format: int,
-        tab: Tab::World,
-        rule: None,
-        predator: true,
-        ..SLIDER
-    },
     // Доля второго варианта стратегии; остальные — стандартные. Дальше стратегии
     // наследуются и мутируют сами, и при нуле затаившиеся всё равно появятся.
     Field {
@@ -236,20 +169,6 @@ pub const FIELDS: [Field; 30] = [
         format: percent,
         tab: Tab::World,
         rule: None,
-        ..SLIDER
-    },
-    Field {
-        key: Key::Ambushers,
-        label: "Засадников на старте",
-        hint: "Доля хищников, которые бродят втрое медленнее и тратят меньше, а бросаются только \
-               на близкую добычу. Остальные — стандартные, гонятся за любой видимой.",
-        lo: 0.0,
-        hi: 100.0,
-        step: 5.0,
-        format: percent,
-        tab: Tab::World,
-        rule: None,
-        predator: true,
         ..SLIDER
     },
     // ── Лаборатория ─────────────────────────────────────────────────────────
@@ -311,46 +230,6 @@ pub const FIELDS: [Field; 30] = [
         format: |v| format!("{v:.1}"),
         tab: Tab::Lab,
         rule: Some("sight_power"),
-        ..SLIDER
-    },
-    Field {
-        key: Key::PredatorDivideChance,
-        label: "Плодовитость хищников",
-        hint: "Шанс, что сытый хищник поделится. Высокий — хищники выедают всех и гибнут следом.",
-        lo: 0.02,
-        hi: 1.0,
-        step: 0.01,
-        format: |v| format!("{:.0}%", v * 100.0),
-        tab: Tab::Lab,
-        rule: Some("predator_divide_chance"),
-        predator: true,
-        ..SLIDER
-    },
-    Field {
-        key: Key::PredatorMaxEnergy,
-        label: "Запас энергии хищника",
-        hint: "Сколько энергии вмещает хищник, то есть как долго он живёт без добычи.",
-        lo: 30.0,
-        hi: 300.0,
-        step: 5.0,
-        format: int,
-        tab: Tab::Lab,
-        rule: Some("predator_max_energy"),
-        predator: true,
-        ..SLIDER
-    },
-    Field {
-        key: Key::PredatorMigration,
-        label: "Миграция хищников",
-        hint: "Когда хищников почти не осталось, раз в столько тиков с края мира приходят новые. \
-               Ноль — хищники могут вымереть навсегда.",
-        lo: 0.0,
-        hi: 2000.0,
-        step: 100.0,
-        format: |v| if v > 0.0 { format!("раз в {v:.0}") } else { "выкл".into() },
-        tab: Tab::Lab,
-        rule: Some("predator_migration"),
-        predator: true,
         ..SLIDER
     },
     // ── Еда ─────────────────────────────────────────────────────────────────
@@ -577,16 +456,10 @@ impl Default for Settings {
             shape: WorldConfig::default().shape,
             values: FIELDS.map(|f| match f.key {
                 Key::Vegetarians => VEGETARIANS_AT_START as f64,
-                // Галочка «Хищники» выключена: по умолчанию мир травоядных и
-                // растений, как и у движка. Включили — `PREDATORS_PER_AREA`.
-                Key::PredatorsEnabled => 0.0,
-                Key::Predators => PREDATORS_PER_AREA as f64,
                 // Упор игры — на каннибализм; у движка он по умолчанию выключен.
                 Key::Cannibalism => 1.0,
                 Key::PlantGrowth => 1.0,
-                Key::PredatorSpeed => PREDATOR_BASE_SPEED,
-                Key::PredatorVision => PREDATOR_BASE_VISION,
-                Key::Lurkers | Key::Ambushers => 0.0,
+                Key::Lurkers => 0.0,
                 _ => rules.get(f.rule.expect("правило")).expect("правило есть в Rules"),
             }),
             fullscreen: false,
@@ -607,11 +480,6 @@ impl Settings {
 
     pub fn set(&mut self, key: Key, value: f64) {
         self.values[index(key)] = field(key).snap(value);
-    }
-
-    /// Выпущены ли в мир хищники.
-    pub fn predators_on(&self) -> bool {
-        self.get(Key::PredatorsEnabled) != 0.0
     }
 
     /// Выбранный профиль еды по оси.
@@ -660,11 +528,7 @@ impl Settings {
             shape: self.shape,
             rules: self.rules(),
             n_vegetarians: Some(per_area(Key::Vegetarians)),
-            n_predators: Some(if self.predators_on() { per_area(Key::Predators) } else { 0 }),
-            predator_speed: self.get(Key::PredatorSpeed),
-            predator_vision: self.get(Key::PredatorVision),
             vegetarian_strategies: mix(Key::Lurkers),
-            predator_strategies: if self.predators_on() { mix(Key::Ambushers) } else { Vec::new() },
         }
     }
 
@@ -769,21 +633,13 @@ impl Settings {
 fn json_key(key: Key) -> &'static str {
     match key {
         Key::Vegetarians => "n_vegetarians",
-        Key::PredatorsEnabled => "predators_enabled",
-        Key::Predators => "n_predators",
         Key::PlantGrowth => "plant_growth",
-        Key::PredatorSpeed => "predator_speed",
-        Key::PredatorVision => "predator_vision",
         Key::MutationSigma => "mutation_sigma",
         Key::PlantEnergy => "plant_energy",
         Key::CostScale => "cost_scale",
         Key::SizePower => "size_power",
         Key::SightPower => "sight_power",
-        Key::PredatorDivideChance => "predator_divide_chance",
-        Key::PredatorMaxEnergy => "predator_max_energy",
-        Key::PredatorMigration => "predator_migration",
         Key::Lurkers => "lurkers_percent",
-        Key::Ambushers => "ambushers_percent",
         // у профилей еды и каннибализма ключ файла — имя правила
         _ => field(key).rule.expect("у поля есть правило"),
     }
@@ -815,7 +671,6 @@ pub fn describe_change(old: &Settings, new: &Settings) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use life_core::config::PREDATORS_PER_AREA;
 
     /// Подсказки называют числа из таблицы генов словами: поменяли базу —
     /// подсказка не должна врать.
@@ -824,8 +679,6 @@ mod tests {
         use life_core::config::VEGETARIAN_ENERGY_PER_SIZE;
         use life_core::genome::vegetarian::{GENES, Gene};
         let hint = |key| FIELDS.iter().find(|f| f.key == key).expect("поле есть").hint;
-        let vision = GENES[Gene::Vision as usize].base;
-        assert!(hint(Key::PredatorVision).contains(&format!("видит на {vision:.0}")));
         let tank = GENES[Gene::Size as usize].base * VEGETARIAN_ENERGY_PER_SIZE;
         assert!(hint(Key::PlantEnergy).contains(&format!("травоядного — {tank:.0}")));
     }
@@ -898,33 +751,18 @@ mod tests {
 
     #[test]
     fn численности_растут_с_площадью() {
-        let mut s = Settings { scale: 100.0, ..Default::default() };
-        assert_eq!(s.world_config(1).predators_at_start(), 0, "хищники выключены — их нет");
-        s.set(Key::PredatorsEnabled, 1.0);
-        let cfg = s.world_config(1);
-        assert_eq!(cfg.vegetarians_at_start(), VEGETARIANS_AT_START * 100);
-        assert_eq!(cfg.predators_at_start(), PREDATORS_PER_AREA * 100);
-        let base = Settings::default().world_config(1);
-        assert_eq!(
-            (base.vegetarians_at_start(), base.predators_at_start()),
-            (20, 0),
-            "по умолчанию хищников нет"
-        );
+        let s = Settings { scale: 100.0, ..Default::default() };
+        assert_eq!(s.world_config(1).vegetarians_at_start(), VEGETARIANS_AT_START * 100);
+        assert_eq!(Settings::default().world_config(1).vegetarians_at_start(), 20);
     }
 
     /// Доля второй стратегии — смесь мира; ноль — пустая смесь, как по умолчанию.
     #[test]
     fn доли_стратегий_становятся_смесью_мира() {
-        let base = Settings::default().world_config(1);
-        assert!(base.vegetarian_strategies.is_empty() && base.predator_strategies.is_empty());
+        assert!(Settings::default().world_config(1).vegetarian_strategies.is_empty());
         let mut s = Settings::default();
         s.set(Key::Lurkers, 30.0);
-        s.set(Key::Ambushers, 100.0);
-        assert!(s.world_config(1).predator_strategies.is_empty(), "хищников нет — нет и их смеси");
-        s.set(Key::PredatorsEnabled, 1.0);
-        let cfg = s.world_config(1);
-        assert_eq!(cfg.vegetarian_strategies, vec![70.0, 30.0]);
-        assert_eq!(cfg.predator_strategies, vec![0.0, 100.0]);
+        assert_eq!(s.world_config(1).vegetarian_strategies, vec![70.0, 30.0]);
     }
 
     /// Подписи вариантов — по порядку профилей движка, а у каждого правила
@@ -965,23 +803,19 @@ mod tests {
         assert_eq!(describe_change(&old, &old), None);
     }
 
-    /// Поля хищников видны только с хищниками; отношение — только при
-    /// включённом каннибализме. Старый файл без новых ключей — хищники
-    /// выключены, каннибализм включён.
+    /// Отношение видно только при включённом каннибализме. Старый файл с
+    /// ключами хищников читается, каннибализм в нём включён.
     #[test]
-    fn галочки_хищников_и_каннибализма() {
+    fn галочка_каннибализма() {
         let mut s = Settings::default();
-        assert!(!s.predators_on());
-        let f = field(Key::PredatorSpeed);
-        assert!(!f.visible(&s, s.predators_on()) && f.visible(&s, true));
-        assert!(field(Key::CannibalRatio).visible(&s, false));
+        let shown = |s: &Settings| (field(Key::CannibalRatio).shown)(s);
+        assert!(shown(&s));
         s.set(Key::Cannibalism, 0.0);
-        assert!(!field(Key::CannibalRatio).visible(&s, false));
-        assert!(field(Key::Cannibalism).toggle && field(Key::PredatorsEnabled).toggle);
+        assert!(!shown(&s));
+        assert!(field(Key::Cannibalism).toggle);
 
         let old = Settings::from_json(&serde_json::json!({ "n_predators": 10, "plant_energy": 80 }));
-        assert!(!old.predators_on() && old.get(Key::Cannibalism) == 1.0);
-        assert_eq!(old.world_config(1).predators_at_start(), 0);
+        assert!(old.get(Key::Cannibalism) == 1.0 && old.get(Key::PlantEnergy) == 80.0);
         let mut new = Settings::default();
         new.set(Key::Cannibalism, 0.0);
         assert_eq!(

@@ -3,17 +3,13 @@
 //! Циклов без границы нет: все прогоны ограничены числом тиков.
 
 use life_core::config::*;
-use life_core::genome::predator::Gene as PredatorGene;
 use life_core::genome::vegetarian::{GENES, Gene};
 use life_core::grid::Grid;
 use life_core::plant::Plant;
-use life_core::predator::{Predator, Prey};
 use life_core::rng::Rng;
-use life_core::senses::{Blind, predator_senses, vegetarian_senses};
+use life_core::senses::{Blind, vegetarian_senses};
 use life_core::vegetarian::Vegetarian;
-use life_core::{
-    Counters, Creature, Genome, PredatorGenome, Rules, Shape, Space, VegetarianGenome, World, WorldConfig,
-};
+use life_core::{Counters, Genome, Rules, Shape, Space, VegetarianGenome, World, WorldConfig};
 
 const BASE: VegetarianGenome = VegetarianGenome::BASE;
 
@@ -23,31 +19,13 @@ fn genom(size: f64) -> VegetarianGenome {
 
 /// Пустой мир: ни существ, ни растений.
 fn empty_world(rules: Rules) -> World {
-    let mut w = World::new(&WorldConfig {
-        seed: 3,
-        rules,
-        n_vegetarians: Some(0),
-        n_predators: Some(0),
-        ..Default::default()
-    });
+    let mut w = World::new(&WorldConfig { seed: 3, rules, n_vegetarians: Some(0), ..Default::default() });
     w.plants.clear();
     w
 }
 
 fn veg(x: f64, y: f64, g: VegetarianGenome) -> Vegetarian {
     Vegetarian::new(&Space::default(), &Rules::default(), g, Some(x), Some(y), None, Rng::new(0))
-}
-
-fn predator(x: f64, y: f64, energy: Option<f64>) -> Predator {
-    Predator::new(
-        &Space::default(),
-        &Rules::default(),
-        PredatorGenome::BASE,
-        Some(x),
-        Some(y),
-        energy,
-        Rng::new(0),
-    )
 }
 
 // ── регрессии ───────────────────────────────────────────────────────────────
@@ -72,19 +50,6 @@ fn растения_упираются_в_потолок() {
         w.step();
     }
     assert_eq!(w.plants.len(), PLANT_MAX);
-}
-
-/// Съеденный хищником в этом же тике не ест и не размножается.
-#[test]
-fn съеденный_не_действует() {
-    let mut w = empty_world(Rules::default());
-    w.spawn_vegetarian(genom(40.0), 1000.0, 1000.0, Some(1000.0));
-    let (x, y) = (w.vegetarians[0].x, w.vegetarians[0].y);
-    w.vegetarians[0].alive = false; // «съеден» на этом тике
-    w.plants.push(Plant::at(x, y)); // прямо под ним
-    w.step(); // tick 0 → ветка размножения
-    assert!(w.plants.iter().any(|p| p.x == x && p.y == y), "мёртвое травоядное съело растение");
-    assert!(w.vegetarians.is_empty(), "мёртвое травоядное оставило потомство");
 }
 
 // ── каннибализм ────────────────────────────────────────────────────────────
@@ -163,42 +128,7 @@ fn каннибализм_выключен_бит_в_бит_и_счётчики_
     let veg0 = VEGETARIANS_AT_START as u64;
     assert_eq!(
         w.vegetarians.len() as u64,
-        veg0 + c.vegetarians_born - c.vegetarians_eaten - c.vegetarians_starved - c.vegetarians_cannibalized
-    );
-}
-
-/// Бегство продолжается, когда хищник пропал из виду (было: стоял столбом).
-#[test]
-fn бегство_продолжается_без_хищника() {
-    let mut v = veg(1000.0, 1000.0, genom(40.0));
-    let px = 1000.0 + v.pheno.vision / 4.0;
-    let d2 = (px - 1000.0) * (px - 1000.0);
-    v.step(&vegetarian_senses(|_, _, _| Some((px, 1000.0, d2)), |_, _, _| None));
-    assert!(v.mind.flee_ticks > 0, "испуг не сработал — тест бессмыслен");
-
-    let (x0, y0) = (v.x, v.y);
-    for _ in 0..10 {
-        v.energy = v.pheno.max_energy;
-        v.step(&Blind);
-    }
-    let travelled = (v.x - x0).hypot(v.y - y0);
-    assert!(travelled > 9.0 * v.pheno.speed, "убежал всего на {travelled:.1} px за 10 тиков");
-    assert!(v.x < x0, "убегает не в ту сторону");
-}
-
-/// Новорождённый хищник не ходит в тике рождения: энергия у него нетронутая.
-#[test]
-fn новорождённый_хищник_не_ходит() {
-    let rules = Rules::default().with("predator_divide_chance", 1.0).unwrap();
-    let mut w = empty_world(rules);
-    w.spawn_predator(3000.0, 2000.0, Some(PREDATOR_MAX_ENERGY));
-    w.step();
-    assert_eq!(w.predators.len(), 2, "хищник не поделился — тест бессмыслен");
-    let child = &w.predators[1];
-    assert_eq!(
-        child.energy,
-        child.pheno.max_energy * PREDATOR_CHILD_ENERGY,
-        "ребёнок потратил энергию — его обработали в тике рождения"
+        veg0 + c.vegetarians_born - c.vegetarians_starved - c.vegetarians_cannibalized
     );
 }
 
@@ -215,59 +145,6 @@ fn умерший_от_голода_не_ест() {
     w.step();
     assert!(w.vegetarians.is_empty());
     assert!(w.plants.iter().filter(|p| p.y == y).count() == 2, "труп съел растение");
-}
-
-/// Умерший от голода хищник никого не съедает.
-#[test]
-fn умерший_от_голода_хищник_не_охотится() {
-    let mut w = empty_world(Rules::default());
-    w.spawn_vegetarian(genom(40.0), 1000.0, 1000.0, None);
-    w.spawn_predator(1010.0, 1000.0, None);
-    w.predators[0].energy = w.predators[0].pheno.upkeep / 2.0;
-    w.step();
-    assert!(w.predators.is_empty(), "умерший хищник остался в мире");
-    assert_eq!(w.vegetarians.len(), 1, "умерший от голода хищник съел добычу");
-}
-
-/// Цель блуждания хищника достижима (было: у стены, хищник стоял и умирал).
-#[test]
-fn цель_хищника_достижима() {
-    let s = Space::default();
-    let d = PREDATOR_DIAM;
-    for (x, y) in [(d, d), (s.width - d, d), (d, s.height - d), (s.width - d, s.height - d), (3000.0, 2000.0)]
-    {
-        let mut p = predator(x, y, None);
-        for _ in 0..200 {
-            p.choose_new_target(&s);
-            let (tx, ty) = (p.mind.tx, p.mind.ty);
-            assert!(d <= tx && tx <= s.width - d, "цель x={tx} от ({x}, {y})");
-            assert!(d <= ty && ty <= s.height - d, "цель y={ty} от ({x}, {y})");
-        }
-    }
-    let mut p = predator(d, d, None);
-    p.energy = 1e9; // голод ни при чём
-    p.pheno.max_energy = 1e9;
-    let mut stood = 0;
-    for _ in 0..2000 {
-        let before = (p.x, p.y);
-        p.step(&s, &Blind);
-        stood += ((p.x, p.y) == before) as u32;
-    }
-    assert_eq!(stood, 0, "хищник без добычи стоял {stood} тиков");
-}
-
-/// Хищник не гонится за травоядным, которого в этом тике уже съели.
-#[test]
-fn хищник_не_гонится_за_трупом() {
-    let mut w = empty_world(Rules::default());
-    w.spawn_predator(1000.0, 1000.0, None);
-    w.spawn_vegetarian(genom(40.0), 1100.0, 1000.0, None);
-    w.spawn_vegetarian(genom(40.0), 1000.0, 1300.0, None);
-    w.vegetarians[0].alive = false;
-    w.step();
-    let p = &w.predators[0];
-    assert_eq!(p.x, 1000.0, "хищник свернул к трупу");
-    assert!(p.y > 1000.0, "хищник не пошёл к живой добыче");
 }
 
 /// После деления у родителя остаётся резерв (было: отдавал всё и умирал).
@@ -406,142 +283,9 @@ fn схлопнутый_слой_проходим() {
     assert!(v.x != x0, "существо на схлопнутом слое стоит столбом");
 }
 
-// ── охота ──────────────────────────────────────────────────────────────────
-
-/// Центр далеко, но тела соприкасаются — крупного ловят, мелкого нет.
-#[test]
-fn крупного_ловят_при_касании() {
-    for (size, pos, caught) in [(40.0, (1070.0, 2000.0), false), (120.0, (1000.0, 2070.0), true)] {
-        let mut w = World::new(&WorldConfig {
-            n_vegetarians: Some(0),
-            n_predators: Some(0),
-            predator_speed: 0.0,
-            ..Default::default()
-        });
-        w.plants.clear();
-        w.spawn_predator(1000.0, 2000.0, None);
-        w.spawn_vegetarian(genom(size), pos.0, pos.1, None);
-        w.step();
-        assert_eq!(w.vegetarians.is_empty(), caught, "размер {size}");
-    }
-}
-
-/// Крупное тело видно издалека: хищник идёт прямо к нему.
-#[test]
-fn крупного_видно_дальше() {
-    for (size, seen) in [(40.0, false), (120.0, true)] {
-        let mut w = World::new(&WorldConfig {
-            n_vegetarians: Some(0),
-            n_predators: Some(0),
-            predator_speed: 1.0,
-            ..Default::default()
-        });
-        w.plants.clear();
-        w.spawn_predator(1000.0, 2000.0, None);
-        w.spawn_vegetarian(genom(size), 1540.0, 2000.0, None);
-        w.step();
-        let p = &w.predators[0];
-        assert_eq!((p.x, p.y) == (1001.0, 2000.0), seen, "размер {size}: хищник в ({}, {})", p.x, p.y);
-    }
-}
-
-#[test]
-fn рывок_вблизи_стоит_энергии() {
-    let s = Space::default();
-    let mut far = predator(1000.0, 2000.0, Some(50.0));
-    let mut near = predator(1000.0, 2000.0, Some(50.0));
-    far.step(&s, &predator_senses(|_, _, _| Some(Prey { x: 1400.0, y: 2000.0, half: 20.0 })));
-    near.step(&s, &predator_senses(|_, _, _| Some(Prey { x: 1150.0, y: 2000.0, half: 20.0 })));
-    assert!((far.x - 1000.0 - far.pheno.speed).abs() < 1e-9);
-    assert!((near.x - 1000.0 - near.pheno.speed * PREDATOR_SPRINT_MULT).abs() < 1e-9);
-    assert!((far.energy - (50.0 - far.pheno.upkeep)).abs() < 1e-12);
-    assert!((near.energy - (50.0 - near.pheno.upkeep - PREDATOR_SPRINT_COST)).abs() < 1e-12);
-}
-
-#[test]
-fn рывок_не_проскакивает_добычу() {
-    let mut p = predator(1000.0, 2000.0, None);
-    p.step(&Space::default(), &predator_senses(|_, _, _| Some(Prey { x: 1010.0, y: 2000.0, half: 20.0 })));
-    assert!((p.x - 1010.0).abs() < 1e-9);
-}
-
-#[test]
-fn мигрант_приходит_когда_хищников_нет() {
-    let mut w = World::new(&WorldConfig { n_vegetarians: Some(40), ..Default::default() }.with_predators());
-    w.predators.clear();
-    w.tick = PREDATOR_MIGRATION_PERIOD as u64;
-    w.migrate_predators();
-    assert_eq!((w.predators.len(), w.migrants), (1, 1));
-    let p = &w.predators[0];
-    assert_eq!((p.pheno.speed, p.pheno.vision), (PREDATOR_BASE_SPEED, PREDATOR_BASE_VISION));
-    let d = PREDATOR_DIAM;
-    let edge = p.x == d || p.y == d || p.x == WORLD_WIDTH - d || p.y == WORLD_HEIGHT - d;
-    assert!(edge, "мигрант не у края: ({}, {})", p.x, p.y);
-}
-
-#[test]
-fn мигранта_нет_когда_не_положено() {
-    let period = PREDATOR_MIGRATION_PERIOD as u64;
-    let world = |n_pred, n_veg, migration: f64| {
-        World::new(&WorldConfig {
-            n_predators: Some(n_pred),
-            n_vegetarians: Some(n_veg),
-            rules: Rules::default().with("predator_migration", migration).unwrap(),
-            ..Default::default()
-        })
-    };
-    let cases = [
-        ("не тот тик", world(6, 40, PREDATOR_MIGRATION_PERIOD), period + 1),
-        ("миграция выключена", world(6, 40, 0.0), period),
-        ("мир без охоты", world(0, 40, PREDATOR_MIGRATION_PERIOD), period),
-        ("нечего есть", world(6, PREDATOR_MIGRATION_PREY - 1, PREDATOR_MIGRATION_PERIOD), period),
-    ];
-    for (name, mut w, tick) in cases {
-        w.predators.clear();
-        w.tick = tick;
-        // Жребий не тянется без мигранта: следующий спаун одинаков в копиях.
-        let mut twin = w.clone();
-        w.migrate_predators();
-        assert!(w.predators.is_empty(), "{name}");
-        w.spawn_predator(100.0, 100.0, None);
-        twin.spawn_predator(100.0, 100.0, None);
-        assert_eq!(w.predators[0].mind, twin.predators[0].mind, "{name}: жребий тянется без мигранта");
-    }
-}
-
-/// Приток на единицу площади тот же, что в базовом мире: в мире x10 приходят десятеро.
-#[test]
-fn мигрантов_больше_в_большом_мире() {
-    let mut w = World::new(
-        &WorldConfig { scale: 10.0, n_vegetarians: Some(PREDATOR_MIGRATION_PREY * 10), ..Default::default() }
-            .with_predators(),
-    );
-    w.predators.clear();
-    w.tick = PREDATOR_MIGRATION_PERIOD as u64;
-    w.migrate_predators();
-    assert_eq!((w.predators.len(), w.migrants), (10, 10));
-}
-
-#[test]
-fn мигранта_нет_пока_хищников_хватает() {
-    let mut w = World::new(&WorldConfig { n_vegetarians: Some(40), ..Default::default() }.with_predators());
-    w.predators.truncate(PREDATOR_MIGRATION_MIN);
-    w.tick = PREDATOR_MIGRATION_PERIOD as u64;
-    w.migrate_predators();
-    assert_eq!(w.predators.len(), PREDATOR_MIGRATION_MIN);
-}
-
 // ── стратегии и гены поведения ─────────────────────────────────────────────
 
-/// Хищник с заданным геномом.
-fn predator_with(genome: PredatorGenome, energy: f64) -> Predator {
-    let (s, r) = (Space::default(), Rules::default());
-    Predator::new(&s, &r, genome, Some(1000.0), Some(2000.0), Some(energy), Rng::new(0))
-}
-
 const LURKER: VegetarianGenome = BASE.with(Gene::Strategy, 1.0);
-const AMBUSHER: PredatorGenome = PredatorGenome::BASE.with(PredatorGene::Strategy, 1.0);
-
 /// Расход, восстановленный из разницы энергий, совпадает с точностью до округления.
 fn close(a: f64, b: f64) -> bool {
     (a - b).abs() < 1e-12
@@ -554,21 +298,12 @@ fn veg_move(v: &mut Vegetarian, senses: &impl life_core::senses::VegetarianSense
     ((v.x - x).hypot(v.y - y), e - v.energy)
 }
 
-/// Ход хищника: (сдвиг по x, сдвиг по y, потрачено).
-fn pred_move(p: &mut Predator, senses: &impl life_core::senses::PredatorSenses) -> (f64, f64, f64) {
-    let (x, y, e) = (p.x, p.y, p.energy);
-    p.step(&Space::default(), senses);
-    (p.x - x, p.y - y, e - p.energy)
-}
-
 #[test]
 fn медленный_ход_дешевле() {
     let v = veg(1000.0, 1000.0, BASE);
     assert!((v.pheno.slow_speed - v.pheno.speed * SLOW_PACE).abs() < 1e-12);
     assert!(v.pheno.slow_upkeep < v.pheno.upkeep);
     assert_eq!(v.pheno.slow_upkeep, Rules::default().upkeep(40.0, v.pheno.slow_speed, v.pheno.vision));
-    let p = predator(1000.0, 2000.0, None);
-    assert!(p.pheno.slow_upkeep < p.pheno.upkeep);
 }
 
 /// Затаившийся без еды бродит медленно и дёшево; стандартный — на полной.
@@ -586,61 +321,12 @@ fn затаившийся_без_еды_бродит_медленно() {
     }
 }
 
-/// К еде и от хищника затаившийся идёт на полной скорости.
+/// К еде затаившийся идёт на полной скорости.
 #[test]
-fn затаившийся_к_еде_и_от_хищника_на_полной() {
+fn затаившийся_к_еде_на_полной() {
     let mut v = veg(1000.0, 1000.0, LURKER);
-    let (d, cost) = veg_move(&mut v, &vegetarian_senses(|_, _, _| None, |_, _, _| Some((1300.0, 1000.0))));
+    let (d, cost) = veg_move(&mut v, &vegetarian_senses(|_, _, _| Some((1300.0, 1000.0))));
     assert!((d - v.pheno.speed).abs() < 1e-9 && close(cost, v.pheno.upkeep), "к еде: {d}, {cost}");
-
-    let mut v = veg(1000.0, 1000.0, LURKER);
-    let near = |_: f64, _: f64, _: f64| Some((1050.0, 1000.0, 2500.0));
-    let (d, cost) = veg_move(&mut v, &vegetarian_senses(near, |_, _, _| None));
-    assert!((d - v.pheno.speed).abs() < 1e-9 && close(cost, v.pheno.upkeep), "от хищника: {d}, {cost}");
-    assert!(v.x < 1000.0, "бежит не от хищника");
-}
-
-/// Засадник бродит медленно и дёшево.
-#[test]
-fn засадник_бродит_медленно() {
-    let mut p = predator_with(AMBUSHER, 30.0);
-    for _ in 0..20 {
-        let (dx, dy, cost) = pred_move(&mut p, &Blind);
-        assert!((dx.hypot(dy) - p.pheno.slow_speed).abs() < 1e-9, "прошёл {}", dx.hypot(dy));
-        assert!(close(cost, p.pheno.slow_upkeep), "потратил {cost}");
-    }
-}
-
-/// Дальнюю добычу засадник не преследует, на близкую бросается рывком; сытый
-/// не бросается вовсе.
-#[test]
-fn засадник_бросается_только_на_близкую() {
-    let far = predator_senses(|_, _, _| Some(Prey { x: 1300.0, y: 2000.0, half: 20.0 }));
-    let near = predator_senses(|_, _, _| Some(Prey { x: 1150.0, y: 2000.0, half: 20.0 }));
-
-    let mut p = predator_with(AMBUSHER, 30.0);
-    let (dx, dy, cost) = pred_move(&mut p, &far);
-    assert!(
-        (dx.hypot(dy) - p.pheno.slow_speed).abs() < 1e-9 && close(cost, p.pheno.slow_upkeep),
-        "за дальней погнался"
-    );
-
-    let mut p = predator_with(AMBUSHER, 30.0);
-    let (dx, dy, cost) = pred_move(&mut p, &near);
-    assert!((dx - p.pheno.speed * PREDATOR_SPRINT_MULT).abs() < 1e-9 && dy.abs() < 1e-9, "рывка нет: {dx}");
-    assert!(close(cost, p.pheno.upkeep + PREDATOR_SPRINT_COST), "потратил {cost}");
-
-    let mut p = predator_with(AMBUSHER, PREDATOR_MAX_ENERGY);
-    let (dx, dy, cost) = pred_move(&mut p, &near);
-    assert!(
-        (dx.hypot(dy) - p.pheno.slow_speed).abs() < 1e-9 && close(cost, p.pheno.slow_upkeep),
-        "сытый бросился"
-    );
-
-    // стандартный за дальней гонится на обычной скорости
-    let mut p = predator_with(PredatorGenome::BASE, 30.0);
-    let (dx, _, _) = pred_move(&mut p, &far);
-    assert!((dx - p.pheno.speed).abs() < 1e-9);
 }
 
 /// Стратегия наследуется и изредка мутирует в другую.
@@ -663,17 +349,10 @@ fn стратегия_мутирует_изредка() {
 /// Смешанный мир: стартовая смесь раздаётся без жребия, и тот же сид — тот же мир.
 #[test]
 fn смешанный_мир_детерминирован() {
-    let cfg = WorldConfig {
-        seed: 5,
-        vegetarian_strategies: vec![1.0, 1.0],
-        predator_strategies: vec![1.0, 1.0],
-        ..Default::default()
-    };
+    let cfg = WorldConfig { seed: 5, vegetarian_strategies: vec![1.0, 1.0], ..Default::default() };
     let w = World::new(&cfg);
     let lurkers = w.vegetarians.iter().filter(|v| v.genome[Gene::Strategy] == 1.0).count();
     assert_eq!(lurkers, w.vegetarians.len() / 2, "смесь 50/50 раздана неровно");
-    let ambushers = w.predators.iter().filter(|p| p.genome[PredatorGene::Strategy] == 1.0).count();
-    assert_eq!(ambushers, w.predators.len() / 2);
     let run = || {
         let mut w = World::new(&cfg);
         for _ in 0..1000 {
@@ -740,20 +419,14 @@ fn бессмысленные_правила_отвергаются() {
         ("cost_scale", -1.0),
         ("plant_energy", -5.0),
         ("mutation_sigma", -0.1),
-        ("predator_divide_chance", 1.5),
-        ("predator_max_energy", 0.0),
-        ("predator_migration", 0.5),
-        ("predator_migration", -500.0),
+        ("cannibalism", 0.5),
+        ("cannibal_ratio", 1.0),
     ] {
         assert!(r.with(key, bad).is_err(), "{key}={bad} принято");
     }
-    for (key, ok) in [
-        ("cost_scale", 0.0),
-        ("plant_rate", 0.0),
-        ("predator_divide_chance", 1.0),
-        ("predator_migration", 0.0),
-        ("predator_migration", 250.0),
-    ] {
+    for (key, ok) in
+        [("cost_scale", 0.0), ("plant_rate", 0.0), ("cannibalism", 1.0), ("cannibal_ratio", 1.01)]
+    {
         assert!(r.with(key, ok).is_ok(), "{key}={ok} отвергнуто");
     }
 }
@@ -797,7 +470,6 @@ fn инварианты_держатся_со_временем() {
     let mut w = World::new(&WorldConfig { seed: 1, ..Default::default() });
     for _ in 0..600 {
         w.step();
-        let s = w.space;
         for v in &w.vegetarians {
             assert!(v.alive && v.energy > 0.0 && v.energy <= v.pheno.max_energy + 1e-9);
             assert!(v.pheno.x_lo <= v.x && v.x <= v.pheno.x_hi && v.pheno.y_lo <= v.y && v.y <= v.pheno.y_hi);
@@ -813,17 +485,11 @@ fn инварианты_держатся_со_временем() {
                 assert!(!spec.is_percent() || (0.0..=100.0).contains(x), "ген-процент вне 0‒100: {g:?}");
             }
         }
-        for p in &w.predators {
-            assert!(p.alive && p.energy > 0.0 && p.energy <= p.pheno.max_energy + 1e-9);
-            assert!(PREDATOR_DIAM <= p.x && p.x <= s.width - PREDATOR_DIAM);
-            assert!(PREDATOR_DIAM <= p.y && p.y <= s.height - PREDATOR_DIAM);
-        }
         assert!(w.plants.iter().all(|p| p.alive), "съеденное растение не выметено");
-        let mut ids: Vec<u64> =
-            w.vegetarians.iter().map(|v| v.id).chain(w.predators.iter().map(|p| p.id)).collect();
+        let mut ids: Vec<u64> = w.vegetarians.iter().map(|v| v.id).collect();
         ids.sort_unstable();
         ids.dedup();
-        assert_eq!(ids.len(), w.vegetarians.len() + w.predators.len(), "номера существ повторяются");
+        assert_eq!(ids.len(), w.vegetarians.len(), "номера существ повторяются");
     }
 }
 
@@ -840,24 +506,23 @@ fn один_сид_один_мир() {
     assert_ne!(run(5), run(6));
 }
 
-/// Счётчики — бухгалтерия без потерь: сколько было, плюс родилось и пришло,
-/// минус съедено и умерло, равно тому, сколько есть. Пропусти мир одну смерть —
+/// Счётчики — бухгалтерия без потерь: сколько было, плюс родилось, минус
+/// съедено и умерло, равно тому, сколько есть. Пропусти мир одну смерть —
 /// отчёт стал бы объяснять численность неверными причинами.
 #[test]
 fn счётчики_сходятся_с_численностью() {
-    let mut w = World::new(&WorldConfig { seed: 3, ..Default::default() }.with_predators());
-    let (veg0, pred0, plants0) =
-        (w.vegetarians.len() as u64, w.predators.len() as u64, w.plants.len() as u64);
+    let rules = Rules::default().with("cannibalism", 1.0).unwrap().with("cannibal_ratio", 1.5).unwrap();
+    let mut w = World::new(&WorldConfig { seed: 3, rules, ..Default::default() });
+    let (veg0, plants0) = (w.vegetarians.len() as u64, w.plants.len() as u64);
     for _ in 0..3000 {
         w.step();
     }
     let c = w.counters;
-    assert!(c.vegetarians_born > 0 && c.vegetarians_eaten > 0 && c.plants_eaten > 0, "{c:?}");
+    assert!(c.vegetarians_born > 0 && c.vegetarians_cannibalized > 0 && c.vegetarians_starved > 0, "{c:?}");
     assert_eq!(
         w.vegetarians.len() as u64,
-        veg0 + c.vegetarians_born - c.vegetarians_eaten - c.vegetarians_starved - c.vegetarians_cannibalized
+        veg0 + c.vegetarians_born - c.vegetarians_starved - c.vegetarians_cannibalized
     );
-    assert_eq!(w.predators.len() as u64, pred0 + c.predators_born + w.migrants - c.predators_starved);
     assert_eq!(w.plants.len() as u64, plants0 + c.plants_grown - c.plants_eaten);
     assert_eq!(c.since(&c), Counters::default());
 }
@@ -870,27 +535,21 @@ fn масштаб_растит_площадь() {
     assert_eq!(strip.space.height, WORLD_HEIGHT);
     assert_eq!(strip.space.width, WORLD_WIDTH * 10.0);
     for shape in Shape::ALL {
-        let w = World::new(&WorldConfig { scale: 10.0, shape, ..Default::default() }.with_predators());
+        let w = World::new(&WorldConfig { scale: 10.0, shape, ..Default::default() });
         assert_eq!(w.vegetarians.len(), VEGETARIANS_AT_START * 10, "{shape:?}");
-        assert_eq!(w.predators.len(), PREDATORS_PER_AREA * 10, "{shape:?}");
         assert!(w.vegetarians.iter().all(|v| v.x <= w.space.width && v.y <= w.space.height), "{shape:?}");
     }
     let wide = World::new(&WorldConfig { scale: 10.0, ..Default::default() });
     assert!(wide.space.height > WORLD_HEIGHT * 3.0, "3:2 растёт и вглубь: {:?}", wide.space);
 
-    let mut e = World::new(&WorldConfig {
-        scale: 2.0,
-        n_vegetarians: Some(0),
-        n_predators: Some(0),
-        ..Default::default()
-    });
+    let mut e = World::new(&WorldConfig { scale: 2.0, n_vegetarians: Some(0), ..Default::default() });
     for _ in 0..2000 {
         e.step();
     }
     assert_eq!(e.plants.len(), PLANT_MAX * 2);
 }
 
-/// Мир уже базового не строится: при ширине 60 полоса хищника переворачивалась,
+/// Мир уже базового не строится: в узком мире полоса блуждания переворачивалась,
 /// и мир падал на первом же тике вместо внятной ошибки.
 #[test]
 #[should_panic(expected = "масштаб мира")]
@@ -910,20 +569,17 @@ fn стартовые_численности_известны_до_постро�
     for cfg in [
         WorldConfig::default(),
         WorldConfig { scale: 3.0, ..Default::default() },
-        WorldConfig { n_vegetarians: Some(7), n_predators: Some(0), ..Default::default() },
+        WorldConfig { n_vegetarians: Some(7), ..Default::default() },
     ] {
         let w = World::new(&cfg);
-        assert_eq!(
-            (w.vegetarians.len(), w.predators.len()),
-            (cfg.vegetarians_at_start(), cfg.predators_at_start())
-        );
+        assert_eq!(w.vegetarians.len(), cfg.vegetarians_at_start());
     }
 }
 
 // ── производительность ─────────────────────────────────────────────────────
 
-/// Страж от обвала скорости: мир x10 на фиксированной нагрузке 4000 травоядных,
-/// 4000 растений, 100 хищников. На 400 существах (как было в Python-версии) Rust
+/// Страж от обвала скорости: мир x10 на фиксированной нагрузке 4000 травоядных
+/// и 4000 растений. На 400 существах (как было в Python-версии) Rust
 /// и полным перебором успевал бы, а здесь перебор — десятки миллионов пар за тик.
 /// Порог с большим запасом: тест ловит поломку вроде «сетка перестала работать
 /// и всё стало O(n²)», а не шум машины CI: с сеткой ~2 мс, без неё ~80 мс,
@@ -931,13 +587,8 @@ fn стартовые_численности_известны_до_постро�
 /// чтобы нагрузка не таяла.
 #[test]
 fn тик_укладывается_в_бюджет_на_фиксированной_нагрузке() {
-    let mut w = World::new(&WorldConfig {
-        seed: 9,
-        scale: 10.0,
-        n_vegetarians: Some(4000),
-        n_predators: Some(100),
-        ..Default::default()
-    });
+    let mut w =
+        World::new(&WorldConfig { seed: 9, scale: 10.0, n_vegetarians: Some(4000), ..Default::default() });
     let mut rng = Rng::new(9);
     let ticks = 100;
     let started = std::time::Instant::now();
@@ -949,9 +600,9 @@ fn тик_укладывается_в_бюджет_на_фиксированно
         w.step();
     }
     let ms = started.elapsed().as_secs_f64() * 1000.0 / ticks as f64;
-    eprintln!("  [скорость] {ms:.3} мс/тик при 4000/4000/100");
+    eprintln!("  [скорость] {ms:.3} мс/тик при 4000/4000");
     assert!(w.vegetarians.len() > 1000, "нагрузка растаяла — замер бессмыслен");
-    assert!(ms < 20.0, "тик {ms:.2} мс при 4000/4000/100: где-то перебор вместо сетки?");
+    assert!(ms < 20.0, "тик {ms:.2} мс при 4000/4000: где-то перебор вместо сетки?");
 }
 
 // ── игра: выбор, слежение, правила на ходу ──────────────────────────────────
@@ -969,25 +620,14 @@ fn выбор_кликом_совпадает_с_перебором_в_живо�
     for i in 0..60 {
         for j in 0..40 {
             let (x, y) = (i as f64 * 100.0 + 13.0, j as f64 * 100.0 + 7.0);
-            let mut best: Option<(f64, Creature)> = None;
-            let mut consider = |d: f64, c: Creature| {
-                if d <= radius && best.is_none_or(|(bd, _)| d < bd) {
-                    best = Some((d, c));
-                }
-            };
+            let mut best: Option<(f64, u64)> = None;
             for v in &w.vegetarians {
-                consider(
-                    ((v.x - x).powi(2) + (v.y - y).powi(2)).sqrt() - v.pheno.size / 2.0,
-                    Creature::Vegetarian(v.id),
-                );
+                let d = ((v.x - x).powi(2) + (v.y - y).powi(2)).sqrt() - v.pheno.size / 2.0;
+                if d <= radius && best.is_none_or(|(bd, _)| d < bd) {
+                    best = Some((d, v.id));
+                }
             }
-            for p in &w.predators {
-                consider(
-                    ((p.x - x).powi(2) + (p.y - y).powi(2)).sqrt() - Predator::DIAM / 2.0,
-                    Creature::Predator(p.id),
-                );
-            }
-            assert_eq!(w.pick(x, y, radius), best.map(|(_, c)| c));
+            assert_eq!(w.pick(x, y, radius), best.map(|(_, id)| id));
             hits += best.is_some() as usize;
         }
     }
@@ -1000,13 +640,9 @@ fn существо_находится_по_номеру_после_смерте
     for _ in 0..600 {
         w.step();
         assert!(w.vegetarians.windows(2).all(|p| p[0].id < p[1].id), "травоядные по возрастанию id");
-        assert!(w.predators.windows(2).all(|p| p[0].id < p[1].id), "хищники по возрастанию id");
     }
     for v in &w.vegetarians {
         assert_eq!(w.vegetarian(v.id).map(|f| f.id), Some(v.id));
-    }
-    for p in &w.predators {
-        assert_eq!(w.predator(p.id).map(|f| f.id), Some(p.id));
     }
     assert!(w.vegetarian(u64::MAX).is_none());
 }
@@ -1017,21 +653,12 @@ fn новые_правила_пересчитывают_живых_как_нов
     for _ in 0..200 {
         w.step();
     }
-    let rules = Rules::default()
-        .with("cost_scale", 3.0)
-        .and_then(|r| r.with("size_power", 2.0))
-        .and_then(|r| r.with("predator_max_energy", 40.0))
-        .unwrap();
+    let rules = Rules::default().with("cost_scale", 3.0).and_then(|r| r.with("size_power", 2.0)).unwrap();
     w.set_rules(rules.clone());
     let space = w.space;
     for v in &w.vegetarians {
         let fresh = Vegetarian::new(&space, &rules, v.genome, Some(v.x), Some(v.y), None, Rng::new(0));
         assert_eq!(v.pheno, fresh.pheno, "фенотип живого — как у новорождённого с тем же геномом");
-    }
-    for p in &w.predators {
-        let fresh = Predator::new(&space, &rules, p.genome, Some(p.x), Some(p.y), None, Rng::new(0));
-        assert_eq!(p.pheno, fresh.pheno, "фенотип живого — как у новорождённого с тем же геномом");
-        assert!(p.energy <= p.pheno.max_energy);
     }
     assert_eq!(w.rules, rules);
 }

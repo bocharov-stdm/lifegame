@@ -13,7 +13,7 @@ const BASE_VISION: f64 = GENES[Gene::Vision as usize].base;
 
 /// Имена настраиваемых правил — для отчёта (`--rule имя=число`) и настроек.
 /// Профили еды — по шесть на ось, по порядку `flora::AXIS_PARAMS`.
-pub const RULE_KEYS: [&str; 24] = [
+pub const RULE_KEYS: [&str; 21] = [
     "plant_rate",
     "plant_energy",
     "mutation_sigma",
@@ -21,9 +21,6 @@ pub const RULE_KEYS: [&str; 24] = [
     "size_power",
     "speed_power",
     "sight_power",
-    "predator_divide_chance",
-    "predator_max_energy",
-    "predator_migration",
     "plant_depth_profile",
     "plant_depth_steepness",
     "plant_depth_end",
@@ -66,12 +63,6 @@ pub struct Rules {
     pub speed_power: f64,
     /// Крутизна цены зрения.
     pub sight_power: f64,
-    /// Шанс деления хищника.
-    pub predator_divide_chance: f64,
-    /// Запас энергии хищника.
-    pub predator_max_energy: f64,
-    /// Тиков между мигрантами; 0 — миграции нет.
-    pub predator_migration: f64,
     /// Где растёт еда: профиль по глубине и по ширине (`flora.rs`).
     pub plant_depth: FoodAxis,
     pub plant_width: FoodAxis,
@@ -95,9 +86,6 @@ impl Default for Rules {
             size_power: SIZE_ENERGY_POWER,
             speed_power: SPEED_ENERGY_POWER,
             sight_power: SIGHT_ENERGY_POWER,
-            predator_divide_chance: PREDATOR_DIVIDE_CHANCE,
-            predator_max_energy: PREDATOR_MAX_ENERGY,
-            predator_migration: PREDATOR_MIGRATION_PERIOD,
             plant_depth: FoodAxis {
                 profile: Profile::Exp.index(),
                 steepness: PLANT_DEPTH_DECAY,
@@ -138,21 +126,14 @@ impl Rules {
             "size_power" => r.size_power = value,
             "speed_power" => r.speed_power = value,
             "sight_power" => r.sight_power = value,
-            "predator_divide_chance" => r.predator_divide_chance = value,
-            "predator_max_energy" => r.predator_max_energy = value,
-            "predator_migration" => r.predator_migration = value,
             "cannibalism" => r.cannibalism = value,
             "cannibal_ratio" => r.cannibal_ratio = value,
             _ => return Err(format!("нет такого правила: {key}; есть {}", RULE_KEYS.join(", "))),
         }
         // Пределы — только те, за которыми правило теряет смысл, а не «разумные»:
         // лаборатория для того и нужна, чтобы ломать баланс. Отрицательная цена
-        // статов кормила бы существ за то, что они живут; дробный период миграции
-        // молча становился бы нулём, то есть выключал её.
+        // статов кормила бы существ за то, что они живут.
         let allowed = match key {
-            "predator_divide_chance" => (0.0..=1.0).contains(&value),
-            "predator_max_energy" => value > 0.0,
-            "predator_migration" => value >= 0.0 && value.fract() == 0.0,
             "cannibalism" => value == 0.0 || value == 1.0,
             // при отношении 1 и меньше едят равных и даже крупных
             "cannibal_ratio" => value > 1.0,
@@ -160,9 +141,6 @@ impl Rules {
         };
         if !allowed {
             let need = match key {
-                "predator_divide_chance" => "число от 0 до 1",
-                "predator_max_energy" => "число больше 0",
-                "predator_migration" => "целое число тиков, 0 — без миграции",
                 "cannibalism" => "0 (нет) или 1 (да)",
                 "cannibal_ratio" => "число больше 1",
                 _ => "число не меньше 0",
@@ -206,9 +184,6 @@ impl Rules {
             "size_power" => self.size_power,
             "speed_power" => self.speed_power,
             "sight_power" => self.sight_power,
-            "predator_divide_chance" => self.predator_divide_chance,
-            "predator_max_energy" => self.predator_max_energy,
-            "predator_migration" => self.predator_migration,
             "cannibalism" => self.cannibalism,
             "cannibal_ratio" => self.cannibal_ratio,
             _ => return None,

@@ -28,7 +28,6 @@ struct Point {
     tick: u64,
     plants: f64,
     vegetarians: f64,
-    predators: f64,
     size: Option<f64>,
 }
 
@@ -50,9 +49,8 @@ pub struct Reference {
     /// один и тот же мир 6000x4000.
     space: Space,
     rules: Rules,
-    start: (usize, usize),
-    predator: (f64, f64),
-    strategies: (Vec<f64>, Vec<f64>),
+    start: usize,
+    strategies: Vec<f64>,
     /// Гены травоядных, на которых снят эталон (у старого — семь).
     pub genes: Vec<String>,
 }
@@ -85,7 +83,6 @@ impl Reference {
                     tick: s["tick"].as_u64().unwrap_or(0),
                     plants: s["plants"].as_f64().unwrap_or(0.0),
                     vegetarians: s["vegetarians"].as_f64().unwrap_or(0.0),
-                    predators: s["predators"].as_f64().unwrap_or(0.0),
                     size: s["genom"].get(size_at).and_then(Value::as_f64),
                 })
                 .collect();
@@ -97,12 +94,23 @@ impl Reference {
         let mut rules = Rules::default();
         if let Some(saved) = data.get("rules").and_then(Value::as_object) {
             for (key, value) in saved {
+                // правила хищников остались в эталонах до тега predators-final:
+                // вида больше нет, и правила о нём ничего не значат
+                if key.starts_with("predator_") {
+                    continue;
+                }
                 let value = value.as_f64().ok_or(format!("правило {key} — не число"))?;
                 rules = rules.with(key, value)?;
             }
         }
         let start = &data["start"];
         let num = |v: &Value, default: f64| v.as_f64().unwrap_or(default);
+        // старые эталоны сняты с хищниками: с ними сравнивать нечего
+        if num(&start["predators"], 0.0) > 0.0 {
+            return Err(
+                "эталон снят с хищниками, а их больше нет — переснимите его (--save-reference)".into()
+            );
+        }
         let scale = num(&data["scale"], 1.0);
         // у эталонов до форм поля нет: они сняты на полосе
         let shape = match data["shape"].as_str() {
@@ -125,15 +133,8 @@ impl Reference {
             scale,
             space: Space::new(scale, shape),
             rules,
-            start: (
-                num(&start["vegetarians"], world.vegetarians_at_start() as f64) as usize,
-                num(&start["predators"], world.predators_at_start() as f64) as usize,
-            ),
-            predator: (
-                num(&start["predator_speed"], world.predator_speed),
-                num(&start["predator_vision"], world.predator_vision),
-            ),
-            strategies: (mix(&start["vegetarian_strategies"])?, mix(&start["predator_strategies"])?),
+            start: num(&start["vegetarians"], world.vegetarians_at_start() as f64) as usize,
+            strategies: mix(&start["vegetarian_strategies"])?,
             genes: data
                 .get("genes")
                 .and_then(Value::as_array)
@@ -162,21 +163,14 @@ impl Reference {
                 ));
             }
         }
-        let start = (cfg.vegetarians_at_start(), cfg.predators_at_start());
+        let start = cfg.vegetarians_at_start();
         if start != self.start {
-            diff.push(format!("старт {}/{} (в эталоне {}/{})", start.0, start.1, self.start.0, self.start.1));
+            diff.push(format!("старт {start} (в эталоне {})", self.start));
         }
-        if (cfg.predator_speed, cfg.predator_vision) != self.predator {
+        if cfg.vegetarian_strategies != self.strategies {
             diff.push(format!(
-                "хищники {}/{} (в эталоне {}/{})",
-                cfg.predator_speed, cfg.predator_vision, self.predator.0, self.predator.1
-            ));
-        }
-        if (&cfg.vegetarian_strategies, &cfg.predator_strategies) != (&self.strategies.0, &self.strategies.1)
-        {
-            diff.push(format!(
-                "смесь стратегий {:?}/{:?} (в эталоне {:?}/{:?})",
-                cfg.vegetarian_strategies, cfg.predator_strategies, self.strategies.0, self.strategies.1
+                "смесь стратегий {:?} (в эталоне {:?})",
+                cfg.vegetarian_strategies, self.strategies
             ));
         }
         if diff.is_empty() { Ok(()) } else { Err(diff.join(", ")) }
@@ -231,7 +225,6 @@ pub fn save_reference(
                         "tick": s.tick,
                         "plants": s.plants,
                         "vegetarians": s.vegetarians,
-                        "predators": s.predators,
                         "genom": s.avg_genom,
                     })
                 })
@@ -240,7 +233,6 @@ pub fn save_reference(
                 "seed": seed,
                 "stop": r.stop.to_string(),
                 "ticks_done": r.ticks_done,
-                "migrants": r.world.migrants,
                 "ms_per_tick": r.ms_per_tick(),
                 "series": series,
             })
@@ -256,11 +248,7 @@ pub fn save_reference(
         "rules": rules,
         "start": {
             "vegetarians": cfg.vegetarians_at_start(),
-            "predators": cfg.predators_at_start(),
-            "predator_speed": cfg.predator_speed,
-            "predator_vision": cfg.predator_vision,
             "vegetarian_strategies": cfg.vegetarian_strategies,
-            "predator_strategies": cfg.predator_strategies,
         },
         "runs": runs,
     });
@@ -277,7 +265,6 @@ fn from_stats(history: &[Stats]) -> Vec<Point> {
             tick: s.tick,
             plants: s.plants as f64,
             vegetarians: s.vegetarians as f64,
-            predators: s.predators as f64,
             size: s.avg_genom.map(|g| g[Gene::Size as usize]),
         })
         .collect()
@@ -290,13 +277,9 @@ fn mean(v: impl Iterator<Item = f64>) -> f64 {
     if n == 0 { f64::NAN } else { s / n as f64 }
 }
 
-const METRICS: [Metric; 6] = [
+const METRICS: [Metric; 4] = [
     ("травоядные, среднее", |s| mean(s.iter().map(|p| p.vegetarians))),
-    ("хищники, среднее", |s| mean(s.iter().map(|p| p.predators))),
     ("растения, среднее", |s| mean(s.iter().map(|p| p.plants))),
-    ("доля времени с хищниками", |s| {
-        mean(s.iter().map(|p| (p.predators > 0.0) as u8 as f64))
-    }),
     ("средний размер, максимум", |s| {
         s.iter().filter_map(|p| p.size).fold(f64::NAN, f64::max)
     }),

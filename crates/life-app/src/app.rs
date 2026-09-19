@@ -35,7 +35,6 @@ pub enum SideTab {
 pub enum Tool {
     Select,
     SpawnVegetarian,
-    SpawnPredator,
     /// Протянуть область и посмотреть геном тех, кто внутри.
     Area,
 }
@@ -230,13 +229,6 @@ impl LifeApp {
 
     pub fn fps(&self) -> f64 {
         self.fps
-    }
-
-    /// Есть ли в партии хищники: начата с ними или они в мире сейчас. Без них
-    /// всё про хищников (подсадка, счётчик, графики, правила) спрятано.
-    pub fn predators_in_game(&self) -> bool {
-        self.game.as_ref().is_some_and(|g| g.start.predators_at_start() > 0)
-            || self.view.frame.as_ref().is_some_and(|f| f.predators > 0)
     }
 }
 

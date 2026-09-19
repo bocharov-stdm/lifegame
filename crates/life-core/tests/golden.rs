@@ -18,7 +18,7 @@
 //! проверяются только там; на других системах тест печатает отпечатки.
 
 use life_core::flora::Profile;
-use life_core::genome::predator::Gene as PredGene;
+use life_core::genome::VegetarianGenome;
 use life_core::genome::vegetarian::Gene as VegGene;
 use life_core::{Rules, Shape, World, WorldConfig};
 
@@ -48,17 +48,13 @@ impl Fnv {
 fn digest(w: &World) -> u64 {
     let mut h = Fnv::new();
     h.u64(w.tick);
-    h.u64(w.migrants);
-    h.u64(w.hunting as u64);
     let c = w.counters;
     for v in [
         c.plants_grown,
         c.plants_eaten,
         c.vegetarians_born,
-        c.vegetarians_eaten,
         c.vegetarians_starved,
-        c.predators_born,
-        c.predators_starved,
+        c.vegetarians_cannibalized,
     ] {
         h.u64(v);
     }
@@ -83,22 +79,11 @@ fn digest(w: &World) -> u64 {
         }
         h.u64(v.rng.clone().next_u64());
     }
-    h.u64(w.predators.len() as u64);
-    for p in &w.predators {
-        h.u64(p.id);
-        h.f64(p.x);
-        h.f64(p.y);
-        h.f64(p.energy);
-        for g in p.genome.to_values() {
-            h.f64(g);
-        }
-        h.u64(p.rng.clone().next_u64());
-    }
     // поток мира и счётчик номеров: подсадка в копии мира
     let mut probe = w.clone();
-    let id = probe.spawn_predator(100.0, 100.0, None);
+    let id = probe.spawn_vegetarian(VegetarianGenome::BASE, 100.0, 100.0, None);
     h.u64(id);
-    h.u64(probe.predator(id).expect("подсаженный хищник").rng.clone().next_u64());
+    h.u64(probe.vegetarian(id).expect("подсаженное травоядное").rng.clone().next_u64());
     h.0
 }
 
@@ -109,10 +94,9 @@ fn rules(pairs: &[(&str, f64)]) -> Rules {
 /// Что проверяется в конфигурации: без этого отпечаток мог бы не задеть ветку.
 #[derive(Default)]
 struct Seen {
-    predator_mutated: bool,
     giant: f64,
-    /// Тиков, на которых жили оба варианта стратегии: (травоядные, хищники).
-    both_strategies: (u64, u64),
+    /// Тиков, на которых жили оба варианта стратегии травоядных.
+    both_strategies: u64,
 }
 
 struct Case {
@@ -127,14 +111,13 @@ fn cases() -> Vec<Case> {
     vec![
         Case {
             name: "A: сид 1, по умолчанию",
-            cfg: WorldConfig { seed: 1, ..Default::default() }.with_predators(),
+            cfg: WorldConfig { seed: 1, ..Default::default() },
             ticks: 3000,
             before: |_| {},
         },
         Case {
             name: "B: сид 4, гиганты",
-            cfg: WorldConfig { seed: 4, rules: rules(&[("size_power", 1.0)]), ..Default::default() }
-                .with_predators(),
+            cfg: WorldConfig { seed: 4, rules: rules(&[("size_power", 1.0)]), ..Default::default() },
             ticks: 2000,
             before: |_| {},
         },
@@ -142,54 +125,35 @@ fn cases() -> Vec<Case> {
             name: "C: сид 7, лаборатория",
             cfg: WorldConfig {
                 seed: 7,
-                rules: rules(&[
-                    ("mutation_sigma", 1.0),
-                    ("plant_energy", 80.0),
-                    ("predator_divide_chance", 0.5),
-                    ("predator_max_energy", 30.0),
-                    ("predator_migration", 100.0),
-                ]),
+                rules: rules(&[("mutation_sigma", 1.0), ("plant_energy", 80.0)]),
                 ..Default::default()
-            }
-            .with_predators(),
+            },
             ticks: 3000,
             before: |_| {},
         },
         // Полоса — явно: записан до форм, а по умолчанию теперь 3:2.
         Case {
             name: "D: сид 2, масштаб 10",
-            cfg: WorldConfig { seed: 2, scale: 10.0, shape: Shape::Strip, ..Default::default() }
-                .with_predators(),
+            cfg: WorldConfig { seed: 2, scale: 10.0, shape: Shape::Strip, ..Default::default() },
             ticks: 500,
             before: |_| {},
         },
         Case {
             name: "E: сид 3, правила на ходу и подсадка",
-            cfg: WorldConfig { seed: 3, ..Default::default() }.with_predators(),
+            cfg: WorldConfig { seed: 3, ..Default::default() },
             ticks: 1000,
             before: |w| match w.tick {
-                400 => w.set_rules(rules(&[
-                    ("cost_scale", 2.0),
-                    ("size_power", 2.0),
-                    ("predator_max_energy", 40.0),
-                ])),
+                400 => w.set_rules(rules(&[("cost_scale", 2.0), ("size_power", 2.0)])),
                 600 => {
                     let g = w.vegetarians.first().map(|v| v.genome).expect("травоядные живы");
                     w.spawn_vegetarian(g, 3000.0, 500.0, None);
-                    w.spawn_predator(3000.0, 1500.0, Some(50.0));
                 }
                 _ => {}
             },
         },
         Case {
             name: "F: сид 5, смесь стратегий",
-            cfg: WorldConfig {
-                seed: 5,
-                vegetarian_strategies: vec![1.0, 1.0],
-                predator_strategies: vec![1.0, 1.0],
-                ..Default::default()
-            }
-            .with_predators(),
+            cfg: WorldConfig { seed: 5, vegetarian_strategies: vec![1.0, 1.0], ..Default::default() },
             ticks: 2000,
             before: |_| {},
         },
@@ -205,18 +169,16 @@ fn cases() -> Vec<Case> {
                     ("plant_width_profile", Profile::Waves.index()),
                 ]),
                 ..Default::default()
-            }
-            .with_predators(),
+            },
             ticks: 1000,
             before: |_| {},
         },
-        // Каннибализм, мир без хищников — как игра по умолчанию. Отношение
-        // ниже стандартного, чтобы поедание случалось и в коротком прогоне.
+        // Каннибализм, как в игре по умолчанию. Отношение ниже стандартного,
+        // чтобы поедание случалось и в коротком прогоне.
         Case {
-            name: "H: сид 8, каннибализм без хищников",
+            name: "H: сид 8, каннибализм",
             cfg: WorldConfig {
                 seed: 8,
-                n_predators: Some(0),
                 rules: rules(&[("cannibalism", 1.0), ("cannibal_ratio", 1.5)]),
                 ..Default::default()
             },
@@ -233,15 +195,13 @@ fn run(case: &Case) -> (Vec<(u64, u64)>, World, Seen) {
     for _ in 0..case.ticks {
         (case.before)(&mut w);
         w.step();
-        seen.predator_mutated |= w.predators.iter().any(|p| p.pheno.speed != case.cfg.predator_speed);
         seen.giant = w.vegetarians.iter().map(|v| v.pheno.size).fold(seen.giant, f64::max);
         let both = |kinds: &mut dyn Iterator<Item = f64>| {
             let mut seen = [false; 2];
             kinds.for_each(|k| seen[(k != 0.0) as usize] = true);
             (seen[0] && seen[1]) as u64
         };
-        seen.both_strategies.0 += both(&mut w.vegetarians.iter().map(|v| v.genome[VegGene::Strategy]));
-        seen.both_strategies.1 += both(&mut w.predators.iter().map(|p| p.genome[PredGene::Strategy]));
+        seen.both_strategies += both(&mut w.vegetarians.iter().map(|v| v.genome[VegGene::Strategy]));
         if CHECKPOINTS.contains(&w.tick) {
             out.push((w.tick, digest(&w)));
         }
@@ -253,21 +213,21 @@ fn run(case: &Case) -> (Vec<(u64, u64)>, World, Seen) {
 #[rustfmt::skip]
 const GOLDEN: &[&[(u64, u64)]] = &[
     // A: сид 1, по умолчанию
-    &[(1, 0x207ec6e8b64c0b5f), (2, 0xb0dad16047f72dcd), (10, 0x9bd2bc3cf961554f), (31, 0xf20fefed4f4bf38f), (100, 0x744922ef1948e828), (250, 0xea3bbfb8ec0419ea), (500, 0x1392ba2b76a2ae73), (1000, 0x9726f62b4bb5a46a), (2000, 0x381a990faed3f578), (3000, 0x50e7b7511907d667), ],
+    &[(1, 0x3b44c17be97da83c), (2, 0x379472af7567f72a), (10, 0x0443743d6da10915), (31, 0xdb9734875812dd71), (100, 0x9a4a567a352e2083), (250, 0xe1b7eb0520828760), (500, 0xb3f2294caab14a7f), (1000, 0x647cf10b5724d920), (2000, 0x51947d2b25b9c6a1), (3000, 0x556d79f2484d6ad4), ],
     // B: сид 4, гиганты
-    &[(1, 0xb6b61eb038789e1c), (2, 0xb52b07d2f3738e29), (10, 0x38799d9324ec5c1c), (31, 0xd6811b6236033dff), (100, 0x0aea77ec812274fb), (250, 0x26e64fd3e43fb3e2), (500, 0x0f57209a5b7faf30), (1000, 0xeaa37f099b875324), (2000, 0x1f33f8056c743cab), ],
+    &[(1, 0xa913efd85ccdd5c4), (2, 0x0b397a7d656c41d1), (10, 0xfd91c35f6e7500be), (31, 0xc35b9810dce9753d), (100, 0x03182f8397d10693), (250, 0xe004caca8c189a44), (500, 0x3a19407c5307e695), (1000, 0xf88ce0feceac6f9f), (2000, 0x52c86f72797fd549), ],
     // C: сид 7, лаборатория
-    &[(1, 0xb42190921b6f9b03), (2, 0x21ceb984efe41f8d), (10, 0xcef5176dd9c9a4ba), (31, 0x6109ff6398993b8c), (100, 0x29ce2cc9e3686b47), (250, 0x84acd31793184161), (500, 0x1e8a8ad005a0992b), (1000, 0xd96045d727b487a1), (2000, 0xafd462c773c8ccf6), (3000, 0x5a214bb69d97a793), ],
+    &[(1, 0x4d6dd5cb1b810180), (2, 0x29ce9c9c3f306d93), (10, 0xe2b2697801db84d6), (31, 0x08e60df497e6d33a), (100, 0x1178090fd5a1ecbd), (250, 0x3de1341425e28bd0), (500, 0x2d355d53eaf29f23), (1000, 0x9dde273052316417), (2000, 0x04c10546352eddfe), (3000, 0xe0a50fa2f5b909f1), ],
     // D: сид 2, масштаб 10
-    &[(1, 0x2e0244fd56c469e3), (2, 0xe449e7a4c049179c), (10, 0x8adaeaf913554ec9), (31, 0xb6c119fbe6b6eeff), (100, 0xe3b50af0fe5c2595), (250, 0xcd8c8057cdb23ca6), (500, 0x4a848524719b8f82), ],
+    &[(1, 0xce8336c8cd08e944), (2, 0xf8fd6698caa0e348), (10, 0x4f1b3bf9a8ce891b), (31, 0x9e5d35c05155965a), (100, 0xd9857fe66564ba0b), (250, 0xde6e1e43b886825e), (500, 0xad781c1b90952c92), ],
     // E: сид 3, правила на ходу и подсадка
-    &[(1, 0xd23ba569ff2d042f), (2, 0x35bb6c7c7332e2c2), (10, 0xb5e43bd792e50381), (31, 0xb5a41475b6bfc7ce), (100, 0x6c3ca7d6f89d0f33), (250, 0xcf98ecc26510109b), (500, 0xef3637f135abe7b7), (1000, 0x141882a01c8970d3), ],
+    &[(1, 0x92e3997a0550a9a3), (2, 0x493e0592c02fc42e), (10, 0xf0b8b9b1b9873bb4), (31, 0x73cbcfd46ff26bf5), (100, 0xa4f075b3a2373a56), (250, 0xf5a912eed6c459fa), (500, 0xfbad887a17f8edf8), (1000, 0xa5248d0fc4dbb7d4), ],
     // F: сид 5, смесь стратегий
-    &[(1, 0xde0bb929593aa08a), (2, 0x64e67ad2587c4e7e), (10, 0xa5349d20ed7e2462), (31, 0x269c0eb7fc8832c0), (100, 0x63d04781559c558b), (250, 0x7910678ec4141c30), (500, 0x36613cd815b48e5c), (1000, 0xf9ef06d8dfee56c4), (2000, 0x0cbb0d77662594e7), ],
+    &[(1, 0x89b8030aee40f225), (2, 0x4dc081f9d6c203e6), (10, 0x99e93cb6da032a1b), (31, 0x89c78924c39ee5f0), (100, 0x1dc5d8cf3bcf3c5a), (250, 0x641fcba4bfbe4339), (500, 0x63f69d4ce75dce6f), (1000, 0x7e222e329e2d9f64), (2000, 0xfd4282be274dd1bc), ],
     // G: сид 6, квадрат x10, еда линейно и волнами
-    &[(1, 0x21556637b8421fd1), (2, 0x55f42659e998a364), (10, 0x2e91b3ea94f27e27), (31, 0x47bc58e251f6113c), (100, 0x135d88b7b35de4f1), (250, 0xd27f6d9e5f94f649), (500, 0x893b96d102bf7f3d), (1000, 0xd0fc8974c86fe1a4), ],
-    // H: сид 8, каннибализм без хищников
-    &[(1, 0xc522f75fbc93d232), (2, 0x77bb18bdfe3bfebe), (10, 0x2131cab0cd8b2a54), (31, 0x473872dc34dcc155), (100, 0x06ff47b8b91216cc), (250, 0x7b56e6b58a47177b), (500, 0x64d55292374a004f), (1000, 0xbeea63932aecbe01), (2000, 0xcbd91e8a02f4b774), ],
+    &[(1, 0xe5516ae536fc6e82), (2, 0x42dbcccd5fee28b0), (10, 0x0bb8f8ba4f4a5bcc), (31, 0x0cae41c19514fa53), (100, 0x304ebc38a4cbe31f), (250, 0x659b2110f9a53671), (500, 0x4711667a866dc148), (1000, 0x54237efd759e01e6), ],
+    // H: сид 8, каннибализм
+    &[(1, 0x8004cef2da5711f9), (2, 0x804072b0cc049f3a), (10, 0x88f073899c3c6482), (31, 0x8cea17195bcc4d8e), (100, 0xd7868680f3f34215), (250, 0x85319629685cf1c6), (500, 0x5c31700e34588653), (1000, 0x93b23247896784ad), (2000, 0x09ceed3ea083a658), ],
 ];
 
 #[cfg(not(windows))]
@@ -286,27 +246,16 @@ fn мир_ведёт_себя_как_при_записи() {
         // Конфигурация должна задевать то, ради чего она есть.
         let c = w.counters;
         match i {
-            0 => {
-                assert!(
-                    c.vegetarians_eaten > 0 && c.predators_born > 0,
-                    "{}: охота и деление хищников",
-                    case.name
-                );
-                assert!(seen.predator_mutated, "{}: скорость хищников мутировала", case.name);
-            }
             1 => assert!(seen.giant > 100.0, "{}: гиганты выросли ({:.0})", case.name, seen.giant),
-            2 => assert!(w.migrants > 0, "{}: мигранты пришли", case.name),
-            5 => {
-                let (veg, pred) = seen.both_strategies;
-                assert!(
-                    veg >= case.ticks / 2 && pred >= case.ticks / 2,
-                    "{}: обе стратегии живут вместе хотя бы полпрогона (травоядные {veg}, хищники {pred} тиков)",
-                    case.name
-                );
-            }
-            6 => assert!(
-                !w.vegetarians.is_empty() && !w.predators.is_empty() && c.vegetarians_eaten > 0,
-                "{}: жизнь идёт — травоядные едят, хищники охотятся",
+            5 => assert!(
+                seen.both_strategies >= case.ticks / 2,
+                "{}: обе стратегии живут вместе хотя бы полпрогона ({} тиков)",
+                case.name,
+                seen.both_strategies
+            ),
+            0 | 2 | 3 | 4 | 6 => assert!(
+                !w.vegetarians.is_empty() && c.plants_eaten > 0 && c.vegetarians_born > 0,
+                "{}: жизнь идёт — травоядные едят и делятся",
                 case.name
             ),
             7 => assert!(c.vegetarians_cannibalized > 0, "{}: сородичей едят", case.name),

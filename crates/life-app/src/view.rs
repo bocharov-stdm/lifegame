@@ -9,7 +9,6 @@ use eframe::egui::{
     self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, TextureOptions, Vec2,
 };
 use eframe::egui_wgpu;
-use life_core::Creature;
 
 use crate::camera::{Camera, Viewport};
 use crate::frame::{self, Area, Frame, Instance, Raster, VEGETARIAN_COLOR, ViewRequest};
@@ -50,7 +49,7 @@ pub struct WorldView {
     arrived: Option<Instant>,
     interval: f64,
     /// Выделенное в прошлом кадре: кольцо едет вместе с кружком.
-    prev_selected: Option<(Creature, f64, f64)>,
+    prev_selected: Option<(u64, f64, f64)>,
     /// Перетаскивание рисует область, а не двигает камеру (инструмент «Область»).
     pub area_mode: bool,
     /// Где началось перетаскивание области, в координатах мира.
@@ -93,7 +92,7 @@ impl WorldView {
             self.interval = if self.interval > 0.0 { self.interval * 0.8 + gap * 0.2 } else { gap };
         }
         self.arrived = Some(now);
-        self.prev_selected = self.frame.as_ref().and_then(|old| old.selected).map(|s| (s.creature, s.x, s.y));
+        self.prev_selected = self.frame.as_ref().and_then(|old| old.selected).map(|s| (s.id, s.x, s.y));
 
         self.density = f.density.take().map(|r| {
             let tex = match self.density.take() {
@@ -218,9 +217,8 @@ impl WorldView {
         }
 
         // полоса слоя выбранного травоядного — где ему можно жить и есть
-        if let Some(s) = f.selected
-            && let Some((lo, hi)) = s.layer
-        {
+        if let Some(s) = f.selected {
+            let (lo, hi) = s.layer;
             let (_, y0) = cam.to_screen(0.0, lo);
             let (_, y1) = cam.to_screen(0.0, hi);
             let band = Rect::from_min_max(pos(left, y0), pos(right, y1.max(y0 + 1.0))).intersect(rect);
@@ -372,10 +370,7 @@ impl WorldView {
         let k = self.progress();
         let (Some(cam), Some(f)) = (&mut self.camera, &self.frame) else { return };
         let Some(target) = cam.target else { return };
-        let at = f
-            .selected
-            .filter(|s| creature_id(s.creature) == target)
-            .map(|s| between(self.prev_selected, &s, k));
+        let at = f.selected.filter(|s| s.id == target).map(|s| between(self.prev_selected, &s, k));
         cam.update(dt, at);
     }
 
@@ -383,7 +378,7 @@ impl WorldView {
         let (Some(cam), Some(f)) = (&mut self.camera, &self.frame) else { return };
         match (cam.target, f.selected) {
             (Some(_), _) => cam.follow(None, None),
-            (None, Some(s)) => cam.follow(Some(creature_id(s.creature)), Some((s.x, s.y))),
+            (None, Some(s)) => cam.follow(Some(s.id), Some((s.x, s.y))),
             (None, None) => {}
         }
     }
@@ -399,15 +394,9 @@ impl WorldView {
 }
 
 /// Где выделенное сейчас на экране: между прошлым кадром и новым.
-fn between(prev: Option<(Creature, f64, f64)>, s: &frame::Selected, k: f32) -> (f64, f64) {
+fn between(prev: Option<(u64, f64, f64)>, s: &frame::Selected, k: f32) -> (f64, f64) {
     match prev {
-        Some((c, px, py)) if c == s.creature => (px + (s.x - px) * k as f64, py + (s.y - py) * k as f64),
+        Some((id, px, py)) if id == s.id => (px + (s.x - px) * k as f64, py + (s.y - py) * k as f64),
         _ => (s.x, s.y),
-    }
-}
-
-pub fn creature_id(c: Creature) -> u64 {
-    match c {
-        Creature::Vegetarian(id) | Creature::Predator(id) => id,
     }
 }

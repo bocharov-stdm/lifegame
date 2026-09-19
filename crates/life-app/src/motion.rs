@@ -21,7 +21,6 @@ use std::time::{Duration, Instant};
 
 use life_core::World;
 use life_core::config::PLANT_RADIUS;
-use life_core::predator::Predator;
 
 use crate::frame::{self, Instance, MAX_INSTANCES};
 
@@ -38,7 +37,6 @@ const TURN: f32 = 0.5;
 
 pub const KIND_PLANT: u32 = 0;
 pub const KIND_VEGETARIAN: u32 = 1;
-pub const KIND_PREDATOR: u32 = 2;
 /// Бит `meta`: призрак — существо уже умерло, `age` — время с его смерти.
 pub const GHOST: u32 = 1 << 18;
 /// Бит `meta`: призрак умер с голоду (сереет), а не съеден (сжимается).
@@ -111,7 +109,6 @@ impl Ring {
 pub struct Motion {
     started: bool,
     vegetarians: Vec<Seen>,
-    predators: Vec<Seen>,
     /// Отсортированы по (born, xbits).
     plants: Vec<SeenPlant>,
     ids: Ring,
@@ -142,18 +139,12 @@ fn turn(from: f32, to: f32, k: f32) -> f32 {
 }
 
 impl Motion {
-    /// Кружки видимой части мира в `out` (растения, травоядные, хищники — в
-    /// таком порядке и рисуются; призраки — в конце своего вида). false —
+    /// Кружки видимой части мира в `out` (растения, потом травоядные — в таком
+    /// порядке и рисуются; призраки — в конце своего вида). false —
     /// видимых больше `MAX_INSTANCES`: нужна карта плотности, память кадра сброшена.
     pub fn collect(&mut self, world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) -> bool {
         let now = Instant::now();
-        let max_id = world
-            .vegetarians
-            .last()
-            .map(|v| v.id)
-            .max(world.predators.last().map(|p| p.id))
-            .unwrap_or(0)
-            .max(self.max_id);
+        let max_id = world.vegetarians.last().map_or(0, |v| v.id).max(self.max_id);
         self.max_id = max_id;
         if !self.started {
             // Первый кадр мира: всё, что есть, было всегда.
@@ -166,13 +157,11 @@ impl Motion {
         self.ghosts.retain(|g| now.duration_since(g.died) < GHOST_LIFE);
 
         out.clear();
-        let full = self.collect_plants(world, rect, now, out)
-            && self.collect_creatures(world, rect, now, out, KIND_VEGETARIAN)
-            && self.collect_creatures(world, rect, now, out, KIND_PREDATOR);
+        let full =
+            self.collect_plants(world, rect, now, out) && self.collect_vegetarians(world, rect, now, out);
         if !full {
             // Кадр недособран: сопоставлять следующий не с чем.
             self.vegetarians.clear();
-            self.predators.clear();
             self.plants.clear();
             self.ghosts.clear();
         }
@@ -241,27 +230,20 @@ impl Motion {
         self.push_ghosts(KIND_PLANT, rect, now, out)
     }
 
-    fn collect_creatures(
+    fn collect_vegetarians(
         &mut self,
         world: &World,
         rect: (f64, f64, f64, f64),
         now: Instant,
         out: &mut Vec<Instance>,
-        kind: u32,
     ) -> bool {
+        let kind = KIND_VEGETARIAN;
         let (x0, y0, x1, y1) = rect;
         let visible =
             |x: f64, y: f64, half: f64| x + half >= x0 && x - half <= x1 && y + half >= y0 && y - half <= y1;
-        let prev =
-            std::mem::take(if kind == KIND_VEGETARIAN { &mut self.vegetarians } else { &mut self.predators });
+        let prev = std::mem::take(&mut self.vegetarians);
         let mut seen = Vec::with_capacity(prev.len() + 16);
-        let alive = |id: u64| {
-            if kind == KIND_VEGETARIAN {
-                world.vegetarian(id).is_some()
-            } else {
-                world.predator(id).is_some()
-            }
-        };
+        let alive = |id: u64| world.vegetarian(id).is_some();
         let mut ghosts = Vec::new();
         let mut j = 0;
         // Прошлое существо без пары: если его нет в мире — умерло.
@@ -313,39 +295,18 @@ impl Motion {
             out.len() <= MAX_INSTANCES
         };
 
-        let mut full = true;
-        if kind == KIND_VEGETARIAN {
-            for v in &world.vegetarians {
-                let fullness = (v.energy / v.pheno.max_energy).clamp(0.0, 1.0) as f32;
-                let color = frame::rgba(frame::VEGETARIAN_COLOR, (fullness * 255.0) as u8);
-                if !body(v.id, v.x, v.y, v.pheno.half, color, fullness) {
-                    full = false;
-                    break;
-                }
+        for v in &world.vegetarians {
+            let fullness = (v.energy / v.pheno.max_energy).clamp(0.0, 1.0) as f32;
+            let color = frame::rgba(frame::VEGETARIAN_COLOR, (fullness * 255.0) as u8);
+            if !body(v.id, v.x, v.y, v.pheno.half, color, fullness) {
+                return false;
             }
-        } else {
-            let half = Predator::DIAM / 2.0;
-            for p in &world.predators {
-                let fullness = (p.energy / p.pheno.max_energy).clamp(0.0, 1.0) as f32;
-                let color = frame::rgba(frame::predator_color(p.hungry()), (fullness * 255.0) as u8);
-                if !body(p.id, p.x, p.y, half, color, fullness) {
-                    full = false;
-                    break;
-                }
-            }
-        }
-        if !full {
-            return false;
         }
         for s in &prev[j..] {
             gone(s);
         }
         self.ghosts.extend(ghosts);
-        if kind == KIND_VEGETARIAN {
-            self.vegetarians = seen;
-        } else {
-            self.predators = seen;
-        }
+        self.vegetarians = seen;
         self.push_ghosts(kind, rect, now, out)
     }
 
@@ -385,8 +346,7 @@ mod tests {
     use life_core::{VegetarianGenome, WorldConfig};
 
     fn empty_world() -> World {
-        let mut w =
-            World::new(&WorldConfig { n_vegetarians: Some(0), n_predators: Some(0), ..Default::default() });
+        let mut w = World::new(&WorldConfig { n_vegetarians: Some(0), ..Default::default() });
         w.plants.clear();
         w
     }
@@ -405,10 +365,10 @@ mod tests {
         let big = BASE.with(Gene::Size, 400.0).with(Gene::MinY, 0.0);
         world.spawn_vegetarian(big, 1000.0 - 150.0, 2000.0, None);
         world.spawn_vegetarian(big, 100.0, 2000.0, None); // далеко слева
-        world.spawn_predator(1500.0, 2000.0, None);
+        world.spawn_vegetarian(BASE, 1500.0, 2000.0, None);
         let mut out = Vec::new();
         assert!(Motion::default().collect(&world, (1000.0, 0.0, 2000.0, 4000.0), &mut out));
-        assert_eq!(out.len(), 2, "крупное травоядное у края и хищник");
+        assert_eq!(out.len(), 2, "крупное травоядное у края и мелкое в середине");
         assert!(out[0].x < 0.0, "координаты — от начала видимой области");
     }
 
@@ -459,7 +419,7 @@ mod tests {
         let mut world = empty_world();
         let fed = world.spawn_vegetarian(BASE, 1000.0, 2000.0, None);
         let hungry = world.spawn_vegetarian(BASE, 2000.0, 2000.0, Some(0.1));
-        world.spawn_predator(4000.0, 2000.0, None);
+        world.plants.push(life_core::plant::Plant::at(4000.0, 2000.0));
         let mut m = Motion::default();
         let mut out = Vec::new();
         m.collect(&world, ALL, &mut out);
@@ -472,8 +432,8 @@ mod tests {
         assert_eq!(ghosts.len(), 2);
         assert!(ghosts.iter().all(|g| kind(g) == KIND_VEGETARIAN));
         assert_eq!(ghosts.iter().filter(|g| g.meta & STARVED_BIT != 0).count(), 1, "с голоду — один");
-        // призраки травоядных — до хищника: порядок рисования не нарушен
-        assert_eq!(kind(out.last().unwrap()), KIND_PREDATOR);
+        // растение — до травоядных: порядок рисования не нарушен
+        assert_eq!(kind(&out[0]), KIND_PLANT);
 
         std::thread::sleep(GHOST_LIFE + Duration::from_millis(20));
         m.collect(&world, ALL, &mut out);

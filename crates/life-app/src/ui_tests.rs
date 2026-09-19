@@ -13,7 +13,7 @@ use eframe::egui::{Pos2, Rect, Vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use life_core::flora::Profile;
-use life_core::{Creature, Shape, WorldConfig};
+use life_core::{Shape, WorldConfig};
 
 use crate::app::{LifeApp, Screen, SideTab};
 use crate::frame::Instance;
@@ -33,8 +33,7 @@ const SMALL: Vec2 = Vec2::new(960.0, 600.0);
 const NORMAL: Vec2 = Vec2::new(1600.0, 900.0);
 
 fn harness(size: Vec2) -> Harness<'static, LifeApp> {
-    // мир отчёта с хищниками: экраны проверяются со всеми их элементами
-    harness_with(size, WorldConfig { seed: 7, ..Default::default() }.with_predators())
+    harness_with(size, WorldConfig { seed: 7, ..Default::default() })
 }
 
 fn harness_with(size: Vec2, cfg: WorldConfig) -> Harness<'static, LifeApp> {
@@ -127,7 +126,7 @@ fn игра_помещается_в_окно() {
         for tab in [SideTab::Charts, SideTab::Log, SideTab::Creature] {
             h.state_mut().side_tab = tab;
             if tab == SideTab::Creature {
-                // самый крупный кружок в кадре — травоядное (растения мелкие, хищники 20)
+                // самый крупный кружок в кадре — травоядное (растения мелкие)
                 let f = h.state().view.frame.as_ref().expect("кадр");
                 let (x, y) = {
                     let i =
@@ -142,8 +141,7 @@ fn игра_помещается_в_окно() {
                     }
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
-                let s = h.state().view.frame.as_ref().and_then(|f| f.selected).expect("существо выбрано");
-                assert!(matches!(s.creature, Creature::Vegetarian(_)));
+                h.state().view.frame.as_ref().and_then(|f| f.selected).expect("существо выбрано");
             }
             settle(h);
             // боковая панель прокручивается: от её вкладок до нижней панели
@@ -157,7 +155,7 @@ fn игра_помещается_в_окно() {
     });
 }
 
-/// Крупный план: вблизи у существ кайма, ядро сытости, глазок и нос хищника
+/// Крупный план: вблизи у существ кайма, ядро сытости и глазок
 /// (`creatures.wgsl`). Шейдер компилируется и рисует — остальное видно на
 /// картинке с TINYLIFE_SHOTS.
 #[test]
@@ -349,8 +347,7 @@ fn статистика_помещается_в_окно() {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(h.state().region.is_some(), "сводка по области пришла и на паузе");
-        assert!(h.state().predators_in_game(), "мир отчёта — с хищниками");
-        for tab in [StatsTab::Energy, StatsTab::Where, StatsTab::Predators, StatsTab::Region] {
+        for tab in [StatsTab::Energy, StatsTab::Where, StatsTab::Region] {
             h.state_mut().stats_tab = tab;
             settle(h);
             check_layout(h, size, &format!("статистика, {tab:?}, {tag}"), None);
@@ -362,31 +359,19 @@ fn статистика_помещается_в_окно() {
     });
 }
 
-/// Игра по умолчанию — без хищников и с каннибализмом: всего про хищников
-/// не видно, а галочка каннибализма есть в лаборатории.
+/// Игра по умолчанию — с каннибализмом: галочка есть в лаборатории.
 #[test]
-fn без_хищников_их_не_видно() {
+fn каннибализм_в_лаборатории() {
     let _gpu = gpu();
     let settings = crate::settings::Settings::default();
     for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
         let cfg = settings.world_config(7);
-        assert_eq!(cfg.predators_at_start(), 0);
         assert!(cfg.rules.cannibals());
         let mut h = harness_with(size, cfg);
-        settle(&mut h);
-        assert!(!h.state().predators_in_game());
-        assert!(h.query_by_label("+ хищник").is_none(), "{tag}: подсадки хищника нет");
-        h.state_mut().stats_open = true;
-        h.state_mut().stats_tab = StatsTab::Where;
-        settle(&mut h);
-        assert!(h.query_by_label("Хищники").is_none(), "{tag}: вкладки хищников нет");
-        shot(&mut h, &format!("без-хищников-{tag}"));
-        h.state_mut().stats_open = false;
         h.state_mut().lab_open = true;
         h.state_mut().lab_tab = Tab::Lab;
         settle(&mut h);
         assert!(h.query_by_label("Каннибализм").is_some(), "{tag}: галочка каннибализма в лаборатории");
-        assert!(h.query_by_label("Плодовитость хищников").is_none(), "{tag}: правил хищников не видно");
         shot(&mut h, &format!("лаборатория-каннибализм-{tag}"));
     }
 }

@@ -65,7 +65,7 @@ pub const GENES: [GeneSpec; N] = [
     GeneSpec {
         key: "vision",
         label: "зрение",
-        about: "Радиус поиска еды и хищников.",
+        about: "Радиус поиска еды.",
         kind: GeneKind::Absolute,
         base: 400.0,
         mutation: SCALE,

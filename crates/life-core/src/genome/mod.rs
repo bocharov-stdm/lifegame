@@ -9,13 +9,11 @@
 //!
 //! Значение гена всегда f64: у гена-выбора это номер варианта (0, 1, 2…).
 
-pub mod predator;
 pub mod vegetarian;
 
 use crate::config::MAX_MUTABILITY;
 use crate::rng::Rng;
 
-pub use predator::PredatorGenome;
 pub use vegetarian::VegetarianGenome;
 
 /// Вариант гена-выбора: например, стратегия поведения.
@@ -98,12 +96,13 @@ pub fn index_of(genes: &[GeneSpec], key: &str) -> Option<usize> {
 }
 
 /// Мутация значений по таблице, ген за геном в её порядке. `sigma` — разброс
-/// законов `Scale`: у травоядных из правил мира, у хищника — из конфига.
+/// законов `Scale` — из правил мира.
 /// `mutability` — ген мутагенности родителя (`mutability_of`): умножает и
 /// разброс, и шанс смены варианта, у всех генов сразу, включая себя самого.
 ///
 /// Порядок и число случайных чисел — часть поведения мира: у травоядных цикл
-/// gauss до множителя не ниже 0.1, у хищника жребий «оставить» и один gauss.
+/// gauss до множителя не ниже 0.1 (`reject_below`), с `keep_above` — ещё жребий
+/// «оставить» перед ним.
 pub(crate) fn mutate_values(
     values: &mut [f64],
     genes: &[GeneSpec],
