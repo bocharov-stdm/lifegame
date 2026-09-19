@@ -18,8 +18,8 @@
 //! проверяются только там; на других системах тест печатает отпечатки.
 
 use life_core::flora::Profile;
-use life_core::genome::VegetarianGenome;
-use life_core::genome::vegetarian::Gene as VegGene;
+use life_core::genome::CreatureGenome;
+use life_core::genome::creature::Gene;
 use life_core::{Rules, Shape, World, WorldConfig};
 
 const CHECKPOINTS: [u64; 10] = [1, 2, 10, 31, 100, 250, 500, 1000, 2000, 3000];
@@ -49,13 +49,7 @@ fn digest(w: &World) -> u64 {
     let mut h = Fnv::new();
     h.u64(w.tick);
     let c = w.counters;
-    for v in [
-        c.plants_grown,
-        c.plants_eaten,
-        c.vegetarians_born,
-        c.vegetarians_starved,
-        c.vegetarians_cannibalized,
-    ] {
+    for v in [c.plants_grown, c.plants_eaten, c.born, c.starved, c.cannibalized] {
         h.u64(v);
     }
     h.u64(w.plants.len() as u64);
@@ -65,8 +59,8 @@ fn digest(w: &World) -> u64 {
         h.u64(p.alive as u64);
         h.u64(p.born as u64);
     }
-    h.u64(w.vegetarians.len() as u64);
-    for v in &w.vegetarians {
+    h.u64(w.creatures.len() as u64);
+    for v in &w.creatures {
         h.u64(v.id);
         h.f64(v.x);
         h.f64(v.y);
@@ -81,9 +75,9 @@ fn digest(w: &World) -> u64 {
     }
     // поток мира и счётчик номеров: подсадка в копии мира
     let mut probe = w.clone();
-    let id = probe.spawn_vegetarian(VegetarianGenome::BASE, 100.0, 100.0, None);
+    let id = probe.spawn(CreatureGenome::BASE, 100.0, 100.0, None);
     h.u64(id);
-    h.u64(probe.vegetarian(id).expect("подсаженное травоядное").rng.clone().next_u64());
+    h.u64(probe.creature(id).expect("подсаженное существо").rng.clone().next_u64());
     h.0
 }
 
@@ -95,7 +89,7 @@ fn rules(pairs: &[(&str, f64)]) -> Rules {
 #[derive(Default)]
 struct Seen {
     giant: f64,
-    /// Тиков, на которых жили оба варианта стратегии травоядных.
+    /// Тиков, на которых жили оба варианта стратегии существ.
     both_strategies: u64,
 }
 
@@ -145,15 +139,15 @@ fn cases() -> Vec<Case> {
             before: |w| match w.tick {
                 400 => w.set_rules(rules(&[("cost_scale", 2.0), ("size_power", 2.0)])),
                 600 => {
-                    let g = w.vegetarians.first().map(|v| v.genome).expect("травоядные живы");
-                    w.spawn_vegetarian(g, 3000.0, 500.0, None);
+                    let g = w.creatures.first().map(|v| v.genome).expect("существа живы");
+                    w.spawn(g, 3000.0, 500.0, None);
                 }
                 _ => {}
             },
         },
         Case {
             name: "F: сид 5, смесь стратегий",
-            cfg: WorldConfig { seed: 5, vegetarian_strategies: vec![1.0, 1.0], ..Default::default() },
+            cfg: WorldConfig { seed: 5, strategies: vec![1.0, 1.0], ..Default::default() },
             ticks: 2000,
             before: |_| {},
         },
@@ -195,13 +189,13 @@ fn run(case: &Case) -> (Vec<(u64, u64)>, World, Seen) {
     for _ in 0..case.ticks {
         (case.before)(&mut w);
         w.step();
-        seen.giant = w.vegetarians.iter().map(|v| v.pheno.size).fold(seen.giant, f64::max);
+        seen.giant = w.creatures.iter().map(|v| v.pheno.size).fold(seen.giant, f64::max);
         let both = |kinds: &mut dyn Iterator<Item = f64>| {
             let mut seen = [false; 2];
             kinds.for_each(|k| seen[(k != 0.0) as usize] = true);
             (seen[0] && seen[1]) as u64
         };
-        seen.both_strategies += both(&mut w.vegetarians.iter().map(|v| v.genome[VegGene::Strategy]));
+        seen.both_strategies += both(&mut w.creatures.iter().map(|v| v.genome[Gene::Strategy]));
         if CHECKPOINTS.contains(&w.tick) {
             out.push((w.tick, digest(&w)));
         }
@@ -254,11 +248,11 @@ fn мир_ведёт_себя_как_при_записи() {
                 seen.both_strategies
             ),
             0 | 2 | 3 | 4 | 6 => assert!(
-                !w.vegetarians.is_empty() && c.plants_eaten > 0 && c.vegetarians_born > 0,
-                "{}: жизнь идёт — травоядные едят и делятся",
+                !w.creatures.is_empty() && c.plants_eaten > 0 && c.born > 0,
+                "{}: жизнь идёт — существа едят и делятся",
                 case.name
             ),
-            7 => assert!(c.vegetarians_cannibalized > 0, "{}: сородичей едят", case.name),
+            7 => assert!(c.cannibalized > 0, "{}: сородичей едят", case.name),
             _ => {}
         }
 

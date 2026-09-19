@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Align2, RichText, Vec2};
 use life_core::flora;
-use life_core::genome::vegetarian;
+use life_core::genome::creature;
 use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::{Rules, Shape, Space};
 
@@ -17,7 +17,7 @@ use crate::theme::{self, ACCENT, BG, DANGER, GOOD, MUTED, VEIL, spaced};
 /// с площадью. Это замер на этой машине, а не выдуманная формула.
 pub fn estimate(settings: &Settings, measured: Option<(f64, f64)>) -> (String, egui::Color32) {
     let cfg = settings.world_config(0);
-    let start = format!("на старте {} травоядных", spaced(cfg.vegetarians_at_start() as u64));
+    let start = format!("на старте {} существ", spaced(cfg.creatures_at_start() as u64));
     let Some((tick_ms, scale)) = measured.filter(|(ms, _)| *ms > 0.0) else {
         return (format!("{start}; скорость оценим, когда мир пойдёт"), MUTED);
     };
@@ -47,7 +47,7 @@ impl LifeApp {
                 ui.set_width(300.0);
                 ui.vertical_centered_justified(|ui| {
                     ui.label(RichText::new("Tiny Life").size(34.0).strong());
-                    ui.colored_label(MUTED, "эволюция растений и травоядных");
+                    ui.colored_label(MUTED, "эволюция растений и существ");
                     ui.add_space(18.0);
                     let big = |t: &str| RichText::new(t).size(17.0);
                     if started && ui.add(theme::primary_rich(big("Продолжить"))).clicked() {
@@ -256,18 +256,18 @@ impl LifeApp {
             egui::ScrollArea::vertical().max_height(520.0).show(ui, |ui| {
                 ui.label(RichText::new("Что происходит").strong());
                 ui.label(
-                    "Растения по умолчанию растут гуще у поверхности (вверху). Травоядные едят их, делятся и \
+                    "Растения по умолчанию растут гуще у поверхности (вверху). Существа едят их, делятся и \
                      мутируют; крупные при каннибализме едят мелких сородичей. Отбор никто не задаёт: \
                      выживают те, чей геном окупается.",
                 );
                 ui.label(
-                    "Светлое ядро травоядного — сколько у него энергии: у голодных оно маленькое. Глазок \
+                    "Светлое ядро существа — сколько у него энергии: у голодных оно маленькое. Глазок \
                      смотрит туда, куда существо идёт. Рамка на миникарте — то, что сейчас на экране.",
                 );
                 ui.add_space(6.0);
                 ui.label(RichText::new("Гены").strong());
                 egui::Grid::new("гены").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
-                    for spec in vegetarian::GENES.iter().filter(|s| crate::charts::shown(s)) {
+                    for spec in creature::GENES.iter().filter(|s| crate::charts::shown(s)) {
                         ui.label(spec.label);
                         ui.label(spec.about);
                         ui.end_row();
@@ -312,7 +312,7 @@ impl LifeApp {
                 ui.label(
                     "Где растут растения, задаётся по глубине и по ширине отдельно: равномерно, линейно, \
                      экспонентой, логарифмом или волнами-полосами. Гены слоя под еду не подстраиваются — \
-                     травоядные сами ищут, на какой глубине выгоднее. Профиль можно менять и посреди партии: \
+                     существа сами ищут, на какой глубине выгоднее. Профиль можно менять и посреди партии: \
                      выросшее остаётся, новое растёт по-новому.",
                 );
             });
@@ -424,8 +424,8 @@ mod tests {
         let big = Settings { scale: 1000.0, ..Default::default() };
         let (a, ca) = estimate(&small, Some((0.5, 1.0)));
         let (b, cb) = estimate(&big, Some((0.5, 1.0)));
-        assert!(a.contains("20 травоядных") && a.contains("плавно"), "{a}");
-        assert!(b.contains("20\u{202F}000 травоядных") && b.contains("очень медленно"), "{b}");
+        assert!(a.contains("20 существ") && a.contains("плавно"), "{a}");
+        assert!(b.contains("20\u{202F}000 существ") && b.contains("очень медленно"), "{b}");
         assert_ne!(ca, cb);
         let (c, _) = estimate(&small, None);
         assert!(c.contains("оценим"));

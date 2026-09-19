@@ -2,7 +2,7 @@
 //! каждый срез целиком. Ключи — машинные (английские, как в эталоне Python),
 //! тексты событий — по-русски.
 
-use life_core::genome::{GeneKind, GeneSpec, vegetarian};
+use life_core::genome::{GeneKind, GeneSpec, creature};
 use life_core::rules::RULE_KEYS;
 use life_core::{Counters, Rules, WorldConfig};
 use life_sim::SimResult;
@@ -25,9 +25,9 @@ fn counters(c: &Counters) -> Value {
     json!({
         "plants_grown": c.plants_grown,
         "plants_eaten": c.plants_eaten,
-        "vegetarians_born": c.vegetarians_born,
-        "vegetarians_starved": c.vegetarians_starved,
-        "vegetarians_cannibalized": c.vegetarians_cannibalized,
+        "born": c.born,
+        "starved": c.starved,
+        "cannibalized": c.cannibalized,
     })
 }
 
@@ -79,20 +79,20 @@ fn gene_table(genes: &[GeneSpec]) -> Value {
 }
 
 fn snapshot(s: &Snapshot) -> Value {
-    let genes = s.genes.map(|g| gene_stats(&vegetarian::GENES, &g));
+    let genes = s.genes.map(|g| gene_stats(&creature::GENES, &g));
     json!({
         "tick": s.tick,
         "plants": s.plants,
         "plant_cap": s.plant_cap,
-        "vegetarians": s.vegetarians,
+        "creatures": s.creatures,
         "counters": counters(&s.counters),
         "genes": genes,
-        "vegetarian_depth_pct": s.vegetarian_depth.as_ref().map(spread),
-        "vegetarians_by_depth": s.vegetarians_by_depth,
+        "depth_pct": s.depth.as_ref().map(spread),
+        "creatures_by_depth": s.creatures_by_depth,
         "plants_by_depth": s.plants_by_depth,
-        "vegetarians_by_width": s.vegetarians_by_width,
+        "creatures_by_width": s.creatures_by_width,
         "plants_by_width": s.plants_by_width,
-        "vegetarian_fullness": s.vegetarian_fullness.map(r),
+        "fullness": s.fullness.map(r),
     })
 }
 
@@ -118,10 +118,10 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
         "rules": rules,
         "start": {
             // настоящие числа, даже если заданы «по умолчанию»: null читателю ничего не говорит
-            "vegetarians": cfg.vegetarians_at_start(),
-            "vegetarian_strategies": cfg.vegetarian_strategies,
+            "creatures": cfg.creatures_at_start(),
+            "strategies": cfg.strategies,
         },
-        "genes": { "vegetarian": gene_table(&vegetarian::GENES) },
+        "genes": { "creature": gene_table(&creature::GENES) },
         "map_legend": MAP_LEGEND,
         "runs": runs.iter().map(|run| {
             let snaps = &run.res.snapshots;

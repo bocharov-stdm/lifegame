@@ -1,13 +1,13 @@
-//! Стратегии поведения травоядного.
+//! Стратегии поведения существа.
 //!
 //! Ход делится на две части: стратегия **решает**, куда идти (`decide`), а
-//! существо **делает** шаг (`Vegetarian::act`: движение ровно на speed, зажим в
+//! существо **делает** шаг (`Creature::act`: движение ровно на speed, зажим в
 //! свою полосу, расход, смерть). Стратегия видит только себя (`Me`), свою
 //! память (`Mind`), свой генератор и чувства — двигать, кормить или делить
 //! существо она не может. Это свойство понадобится параллельному тику: решения
 //! можно будет принимать одновременно.
 //!
-//! Стратегия — ген (`genome/vegetarian.rs`): наследуется, мутирует, отбор
+//! Стратегия — ген (`genome/creature.rs`): наследуется, мутирует, отбор
 //! решает, какая выживет. Новая стратегия — вариант `Strategy` и `VARIANTS` в
 //! конец, свой файл с `decide`, новое состояние — в `Mind`.
 
@@ -15,7 +15,7 @@ use super::Phenotype;
 use super::{lurker, standard};
 use crate::genome::Variant;
 use crate::rng::Rng;
-use crate::senses::VegetarianSenses;
+use crate::senses::Senses;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -56,7 +56,7 @@ pub const VARIANTS: [Variant; 2] = [
     },
 ];
 
-/// Память травоядного между ходами. Общая для всех стратегий: новое состояние
+/// Память существа между ходами. Общая для всех стратегий: новое состояние
 /// дописывается сюда (структура остаётся `Copy`).
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Mind {
@@ -85,7 +85,7 @@ pub struct Intent {
 
 /// Куда идти на этом ходу.
 #[inline(always)]
-pub(crate) fn decide(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl VegetarianSenses) -> Intent {
+pub(crate) fn decide(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses) -> Intent {
     match me.pheno.strategy {
         Strategy::Standard => standard::decide(me, mind, rng, senses),
         Strategy::Lurker => lurker::decide(me, mind, rng, senses),

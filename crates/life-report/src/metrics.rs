@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use life_core::genome::vegetarian::{GENES, Gene};
+use life_core::genome::creature::{GENES, Gene};
 use life_core::rules::RULE_KEYS;
 use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::{Rules, Shape, Space, Stats, WorldConfig};
@@ -27,7 +27,7 @@ pub const REFERENCE_SAMPLE: u64 = 60;
 struct Point {
     tick: u64,
     plants: f64,
-    vegetarians: f64,
+    creatures: f64,
     size: Option<f64>,
 }
 
@@ -51,7 +51,7 @@ pub struct Reference {
     rules: Rules,
     start: usize,
     strategies: Vec<f64>,
-    /// Гены травоядных, на которых снят эталон (у старого — семь).
+    /// Гены существ, на которых снят эталон (у старого — семь).
     pub genes: Vec<String>,
 }
 
@@ -82,7 +82,8 @@ impl Reference {
                 .map(|s| Point {
                     tick: s["tick"].as_u64().unwrap_or(0),
                     plants: s["plants"].as_f64().unwrap_or(0.0),
-                    vegetarians: s["vegetarians"].as_f64().unwrap_or(0.0),
+                    // до переименования в «существ» — «vegetarians»
+                    creatures: s["creatures"].as_f64().or(s["vegetarians"].as_f64()).unwrap_or(0.0),
                     size: s["genom"].get(size_at).and_then(Value::as_f64),
                 })
                 .collect();
@@ -133,8 +134,12 @@ impl Reference {
             scale,
             space: Space::new(scale, shape),
             rules,
-            start: num(&start["vegetarians"], world.vegetarians_at_start() as f64) as usize,
-            strategies: mix(&start["vegetarian_strategies"])?,
+            start: num(&start["creatures"], num(&start["vegetarians"], world.creatures_at_start() as f64))
+                as usize,
+            strategies: match &start["strategies"] {
+                Value::Null => mix(&start["vegetarian_strategies"])?,
+                new => mix(new)?,
+            },
             genes: data
                 .get("genes")
                 .and_then(Value::as_array)
@@ -163,15 +168,12 @@ impl Reference {
                 ));
             }
         }
-        let start = cfg.vegetarians_at_start();
+        let start = cfg.creatures_at_start();
         if start != self.start {
             diff.push(format!("старт {start} (в эталоне {})", self.start));
         }
-        if cfg.vegetarian_strategies != self.strategies {
-            diff.push(format!(
-                "смесь стратегий {:?} (в эталоне {:?})",
-                cfg.vegetarian_strategies, self.strategies
-            ));
+        if cfg.strategies != self.strategies {
+            diff.push(format!("смесь стратегий {:?} (в эталоне {:?})", cfg.strategies, self.strategies));
         }
         if diff.is_empty() { Ok(()) } else { Err(diff.join(", ")) }
     }
@@ -187,7 +189,7 @@ impl Reference {
         let theirs: Vec<&str> = self.genes.iter().map(String::as_str).filter(|k| !inert(k)).collect();
         (!theirs.is_empty() && theirs != ours).then(|| {
             format!(
-                "эталон снят на генах травоядных {theirs:?}, сейчас {ours:?} — после намеренной смены \
+                "эталон снят на генах существ {theirs:?}, сейчас {ours:?} — после намеренной смены \
                  поведения эталон переснимают (--save-reference)"
             )
         })
@@ -224,7 +226,7 @@ pub fn save_reference(
                     json!({
                         "tick": s.tick,
                         "plants": s.plants,
-                        "vegetarians": s.vegetarians,
+                        "creatures": s.creatures,
                         "genom": s.avg_genom,
                     })
                 })
@@ -247,8 +249,8 @@ pub fn save_reference(
         "shape": cfg.shape.key(),
         "rules": rules,
         "start": {
-            "vegetarians": cfg.vegetarians_at_start(),
-            "vegetarian_strategies": cfg.vegetarian_strategies,
+            "creatures": cfg.creatures_at_start(),
+            "strategies": cfg.strategies,
         },
         "runs": runs,
     });
@@ -264,7 +266,7 @@ fn from_stats(history: &[Stats]) -> Vec<Point> {
         .map(|s| Point {
             tick: s.tick,
             plants: s.plants as f64,
-            vegetarians: s.vegetarians as f64,
+            creatures: s.creatures as f64,
             size: s.avg_genom.map(|g| g[Gene::Size as usize]),
         })
         .collect()
@@ -278,7 +280,7 @@ fn mean(v: impl Iterator<Item = f64>) -> f64 {
 }
 
 const METRICS: [Metric; 4] = [
-    ("травоядные, среднее", |s| mean(s.iter().map(|p| p.vegetarians))),
+    ("существа, среднее", |s| mean(s.iter().map(|p| p.creatures))),
     ("растения, среднее", |s| mean(s.iter().map(|p| p.plants))),
     ("средний размер, максимум", |s| {
         s.iter().filter_map(|p| p.size).fold(f64::NAN, f64::max)

@@ -3,10 +3,10 @@
 //! без графиков и окна — можно было понять, что происходило в мире.
 
 use life_core::flora::{self, Profile};
-use life_core::genome::vegetarian::Gene;
-use life_core::genome::{GeneSpec, vegetarian};
+use life_core::genome::creature::Gene;
+use life_core::genome::{GeneSpec, creature};
 use life_sim::SimResult;
-use life_sim::observe::{Event, GeneStat, MAP_LEGEND, MAX_VARIANTS, Snapshot, Spread, vegetarian_flows};
+use life_sim::observe::{Event, GeneStat, MAP_LEGEND, MAX_VARIANTS, Snapshot, Spread, describe_flows};
 
 /// Карта: тик и строки.
 pub type Map = (u64, Vec<String>);
@@ -32,13 +32,13 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     let space = res.world.space;
     println!("Мир {:.0}x{:.0}; еда {}.", space.width, space.height, flora::describe(&res.world.rules));
     println!(
-        "Итог на тике {}: растений {} из {}, травоядных {}.",
-        last.tick, last.plants, last.plant_cap, last.vegetarians
+        "Итог на тике {}: растений {} из {}, существ {}.",
+        last.tick, last.plants, last.plant_cap, last.creatures
     );
     println!(
-        "Травоядные за прогон: {} (из умерших съедено {}).",
-        vegetarian_flows(&c),
-        percent(c.vegetarians_cannibalized, c.vegetarians_cannibalized + c.vegetarians_starved)
+        "Существа за прогон: {} (из умерших съедено {}).",
+        describe_flows(&c),
+        percent(c.cannibalized, c.cannibalized + c.starved)
     );
     println!("Растения за прогон: выросло {}, съедено {}.", c.plants_grown, c.plants_eaten);
 
@@ -82,7 +82,7 @@ fn print_intervals(snaps: &[Snapshot], rows: usize) {
     println!("\nПо промежуткам (численность и геном — на конец, рождения и смерти — за промежуток):");
     println!(
         "{:>13} {:>6} {:>5} │ {:>21} │ {:>6} {:>5} {:>6} │ {:>9} {:>5}",
-        "тики", "растен", "трав", "трав: +род −съед −гол", "размер", "скор", "зрение", "слой, %", "сыт"
+        "тики", "растен", "сущ", "сущ: +род −съед −гол", "размер", "скор", "зрение", "слой, %", "сыт"
     );
     let mut from = 0;
     for r in 1..=rows {
@@ -90,20 +90,20 @@ fn print_intervals(snaps: &[Snapshot], rows: usize) {
         let (a, b) = (&snaps[from], &snaps[to]);
         let c = b.counters.since(&a.counters);
         let gene = |g: Gene| opt(b.genes.and_then(|s| s[g as usize].spread().map(|x| x.p50)), 1);
-        let layer = b.vegetarian_depth.map_or("—".into(), |d| format!("{:.0}‒{:.0}", d.p10, d.p90));
+        let layer = b.depth.map_or("—".into(), |d| format!("{:.0}‒{:.0}", d.p10, d.p90));
         println!(
             "{:>13} {:>6} {:>5} │ {:>7} {:>6} {:>6} │ {:>6} {:>5} {:>6} │ {:>9} {:>5}",
             format!("{}‒{}", a.tick, b.tick),
             b.plants,
-            b.vegetarians,
-            format!("+{}", c.vegetarians_born),
-            format!("−{}", c.vegetarians_cannibalized),
-            format!("−{}", c.vegetarians_starved),
+            b.creatures,
+            format!("+{}", c.born),
+            format!("−{}", c.cannibalized),
+            format!("−{}", c.starved),
             gene(Gene::Size),
             gene(Gene::Speed),
             gene(Gene::Vision),
             layer,
-            opt(b.vegetarian_fullness.map(|f| f * 100.0), 0),
+            opt(b.fullness.map(|f| f * 100.0), 0),
         );
         from = to;
     }
@@ -111,11 +111,11 @@ fn print_intervals(snaps: &[Snapshot], rows: usize) {
 }
 
 fn print_genome(first: &Snapshot, last: &Snapshot) {
-    println!("\nГеном травоядных, медиана (10‒90% популяции): начало → конец");
+    println!("\nГеном существ, медиана (10‒90% популяции): начало → конец");
     match (first.genes, last.genes) {
-        (Some(a), Some(b)) => print_genes(&vegetarian::GENES, &a, &b),
-        (Some(_), None) => println!("  к концу травоядных не осталось"),
-        _ => println!("  травоядных не было"),
+        (Some(a), Some(b)) => print_genes(&creature::GENES, &a, &b),
+        (Some(_), None) => println!("  к концу существ не осталось"),
+        _ => println!("  существ не было"),
     }
 }
 
@@ -147,23 +147,23 @@ fn shares(spec: &GeneSpec, s: &[f64; MAX_VARIANTS]) -> String {
     parts.join(", ")
 }
 
-/// Кто где по глубине: доли травоядных и растений в каждой десятой части.
+/// Кто где по глубине: доли существ и растений в каждой десятой части.
 fn print_depth(last: &Snapshot) {
     println!("\nГлубина в конце (0% — поверхность):");
-    print_bands(last, "глубина", &last.vegetarians_by_depth, &last.plants_by_depth);
+    print_bands(last, "глубина", &last.creatures_by_depth, &last.plants_by_depth);
 }
 
 /// То же по ширине, слева направо.
 fn print_width(last: &Snapshot) {
     println!("\nШирина в конце (0% — левый край):");
-    print_bands(last, "ширина", &last.vegetarians_by_width, &last.plants_by_width);
+    print_bands(last, "ширина", &last.creatures_by_width, &last.plants_by_width);
 }
 
-fn print_bands(last: &Snapshot, axis: &str, vegetarians: &[usize], plants: &[usize]) {
-    let (nv, np) = (last.vegetarians.max(1) as f64, last.plants.max(1) as f64);
-    println!("  {axis:>9} {:>11} {:>9}", "травоядные", "растения");
-    let step = 100 / vegetarians.len();
-    for (b, (v, p)) in vegetarians.iter().zip(plants).enumerate() {
+fn print_bands(last: &Snapshot, axis: &str, creatures: &[usize], plants: &[usize]) {
+    let (nv, np) = (last.creatures.max(1) as f64, last.plants.max(1) as f64);
+    println!("  {axis:>9} {:>11} {:>9}", "существа", "растения");
+    let step = 100 / creatures.len();
+    for (b, (v, p)) in creatures.iter().zip(plants).enumerate() {
         println!(
             "  {:>9} {:>10.0}% {:>8.0}%",
             format!("{}‒{}%", b * step, (b + 1) * step),

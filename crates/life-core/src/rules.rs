@@ -5,7 +5,7 @@
 
 use crate::config::*;
 use crate::flora::{self, Along, FoodAxis, Profile};
-use crate::genome::vegetarian::{GENES, Gene};
+use crate::genome::creature::{GENES, Gene};
 
 const BASE_SIZE: f64 = GENES[Gene::Size as usize].base;
 const BASE_SPEED: f64 = GENES[Gene::Speed as usize].base;
@@ -53,7 +53,7 @@ pub struct Rules {
     pub plant_rate: f64,
     /// Энергии за одно растение.
     pub plant_energy: f64,
-    /// Разброс мутаций травоядных.
+    /// Разброс мутаций существ.
     pub mutation_sigma: f64,
     /// Множитель ко всей цене статов.
     pub cost_scale: f64,
@@ -66,7 +66,7 @@ pub struct Rules {
     /// Где растёт еда: профиль по глубине и по ширине (`flora.rs`).
     pub plant_depth: FoodAxis,
     pub plant_width: FoodAxis,
-    /// Едят ли травоядные мелких сородичей: 0 — нет, 1 — да.
+    /// Едят ли существа мелких сородичей: 0 — нет, 1 — да.
     pub cannibalism: f64,
     /// Во сколько раз жертва-сородич мельче едока (по размеру).
     pub cannibal_ratio: f64,
@@ -81,7 +81,7 @@ impl Default for Rules {
         let mut r = Rules {
             plant_rate: PLANT_SPAWN_CHANCE,
             plant_energy: ENERGY_FROM_PLANT,
-            mutation_sigma: VEGETARIAN_SIGMA,
+            mutation_sigma: MUTATION_SIGMA,
             cost_scale: 1.0,
             size_power: SIZE_ENERGY_POWER,
             speed_power: SPEED_ENERGY_POWER,
@@ -190,7 +190,7 @@ impl Rules {
         })
     }
 
-    /// Едят ли травоядные мелких сородичей.
+    /// Едят ли существа мелких сородичей.
     pub fn cannibals(&self) -> bool {
         self.cannibalism != 0.0
     }

@@ -9,7 +9,7 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stro
 use life_core::genome::GeneSpec;
 use life_sim::observe::{GeneStat, MAX_VARIANTS, Snapshot, Spread};
 
-use crate::frame::{PLANT_COLOR, VEGETARIAN_COLOR};
+use crate::frame::{CREATURE_COLOR, PLANT_COLOR};
 use crate::history::{History, Sample};
 use crate::theme::{LINE, MUTED, TEXT, rgb, spaced};
 
@@ -28,7 +28,7 @@ fn x_at(rect: Rect, i: usize, n: usize) -> f32 {
 }
 
 /// Линия графика: подпись, цвет и значение в точке (None — величины нет,
-/// например сытости, когда травоядных нет: линия прерывается).
+/// например сытости, когда существ нет: линия прерывается).
 pub struct Line<T> {
     pub label: &'static str,
     pub color: Color32,
@@ -39,7 +39,7 @@ pub struct Line<T> {
 #[derive(Clone, Copy, PartialEq)]
 pub enum Scale {
     /// У каждой линии своя, от нуля до её максимума на участке: иначе десятки
-    /// травоядных лежали бы на нуле рядом с тысячами растений. Подписи — числами.
+    /// существ лежали бы на нуле рядом с тысячами растений. Подписи — числами.
     Own,
     /// Общая 0‒100%: доли сравнимы между собой. Подписи — процентами.
     Share,
@@ -124,26 +124,22 @@ fn draw_run(painter: &egui::Painter, run: &mut Vec<Pos2>, color: Color32) {
     run.clear();
 }
 
-/// Численности: растения и травоядные — каждая в своей шкале.
+/// Численности: растения и существа — каждая в своей шкале.
 pub fn populations(ui: &mut egui::Ui, history: &History, whole: bool, height: f32) {
     let points = history.counts.points(whole);
     let all = [
         Line { label: "растения", color: rgb(PLANT_COLOR), value: |s: &Sample| Some(s.plants) },
-        Line {
-            label: "травоядные", color: rgb(VEGETARIAN_COLOR), value: |s: &Sample| Some(s.vegetarians)
-        },
+        Line { label: "существа", color: rgb(CREATURE_COLOR), value: |s: &Sample| Some(s.creatures) },
     ];
     lines(ui, &points, |s| s.tick, &all, Scale::Own, height);
 }
 
-/// Сытость: средняя заполненность бака травоядных и насколько растения
+/// Сытость: средняя заполненность бака существ и насколько растения
 /// упёрлись в потолок.
 pub fn energy(ui: &mut egui::Ui, snaps: &[&Snapshot], height: f32) {
     let all = [
         Line {
-            label: "сытость травоядных",
-            color: rgb(VEGETARIAN_COLOR),
-            value: |s: &Snapshot| s.vegetarian_fullness,
+            label: "сытость существ", color: rgb(CREATURE_COLOR), value: |s: &Snapshot| s.fullness
         },
         Line {
             label: "растений от потолка",
@@ -354,8 +350,8 @@ pub fn energy_color(frac: f64, base: Color32) -> Color32 {
     if frac < 0.25 { crate::theme::DANGER } else { base }
 }
 
-/// Где живут травоядные во времени: по x — срезы, по y — полосы глубины
-/// (верх — поверхность), яркость — доля травоядных в полосе. Поверх — медиана
+/// Где живут существа во времени: по x — срезы, по y — полосы глубины
+/// (верх — поверхность), яркость — доля существ в полосе. Поверх — медиана
 /// глубины и границы слоя, где живут 80% (10‒90%). Возвращает срез под
 /// курсором, чтобы гистограмма рядом показала именно его.
 pub fn depth_map(ui: &mut egui::Ui, snaps: &[&Snapshot], height: f32) -> Option<usize> {
@@ -374,16 +370,16 @@ pub fn depth_map(ui: &mut egui::Ui, snaps: &[&Snapshot], height: f32) -> Option<
         return None;
     }
     let inner = rect.shrink(2.0);
-    let color = rgb(VEGETARIAN_COLOR);
-    let bands = snaps[0].vegetarians_by_depth.len();
+    let color = rgb(CREATURE_COLOR);
+    let bands = snaps[0].creatures_by_depth.len();
     let (col_w, band_h) = (inner.width() / (n - 1) as f32, inner.height() / bands as f32);
     for (i, s) in snaps.iter().enumerate() {
-        let total: usize = s.vegetarians_by_depth.iter().sum();
+        let total: usize = s.creatures_by_depth.iter().sum();
         if total == 0 {
             continue;
         }
         let x = x_at(inner, i, n);
-        for (b, &count) in s.vegetarians_by_depth.iter().enumerate() {
+        for (b, &count) in s.creatures_by_depth.iter().enumerate() {
             if count == 0 {
                 continue;
             }
@@ -403,7 +399,7 @@ pub fn depth_map(ui: &mut egui::Ui, snaps: &[&Snapshot], height: f32) -> Option<
     for (pick, width) in marks {
         let mut run = Vec::new();
         for (i, s) in snaps.iter().enumerate() {
-            match &s.vegetarian_depth {
+            match &s.depth {
                 Some(d) => run.push(Pos2::new(x_at(inner, i, n), y(pick(d)))),
                 None => draw_line(&painter, &mut run, width),
             }
@@ -426,11 +422,11 @@ fn draw_line(painter: &egui::Painter, run: &mut Vec<Pos2>, width: f32) {
     run.clear();
 }
 
-/// Растения и травоядные по полосам — глубины (сверху вниз) или ширины (слева
+/// Растения и существа по полосам — глубины (сверху вниз) или ширины (слева
 /// направо, тоже строками сверху вниз). Слева от середины — доля растений,
-/// справа — доля травоядных, каждая от своего вида: видно, живут ли там, где
+/// справа — доля существ, каждая от своего вида: видно, живут ли там, где
 /// еда. `edges` — подписи первой и последней полосы.
-pub fn bands(ui: &mut egui::Ui, plants: &[usize], vegetarians: &[usize], edges: (&str, &str)) {
+pub fn bands(ui: &mut egui::Ui, plants: &[usize], creatures: &[usize], edges: (&str, &str)) {
     let row_h = 17.0;
     let n = plants.len();
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), row_h * n as f32), Sense::hover());
@@ -442,7 +438,7 @@ pub fn bands(ui: &mut egui::Ui, plants: &[usize], vegetarians: &[usize], edges: 
         let total: usize = xs.iter().sum();
         xs.iter().map(|&x| if total > 0 { x as f32 / total as f32 } else { 0.0 }).collect::<Vec<f32>>()
     };
-    let (ps, vs) = (share(plants), share(vegetarians));
+    let (ps, vs) = (share(plants), share(creatures));
     // шкала — по самой густой полосе обоих видов, чтобы полосы были сравнимы
     let max = ps.iter().chain(&vs).fold(0.01f32, |m, &v| m.max(v));
     let font = FontId::proportional(11.5);
@@ -463,7 +459,7 @@ pub fn bands(ui: &mut egui::Ui, plants: &[usize], vegetarians: &[usize], edges: 
             painter.rect_filled(r, 2.0, color);
         };
         bar(mid, mid - ps[i] / max * half, rgb(PLANT_COLOR).gamma_multiply(0.8));
-        bar(mid, mid + vs[i] / max * half, rgb(VEGETARIAN_COLOR).gamma_multiply(0.8));
+        bar(mid, mid + vs[i] / max * half, rgb(CREATURE_COLOR).gamma_multiply(0.8));
         for (v, x, align) in
             [(ps[i], mid - 4.0, Align2::RIGHT_CENTER), (vs[i], mid + 4.0, Align2::LEFT_CENTER)]
         {

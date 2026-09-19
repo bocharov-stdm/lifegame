@@ -36,7 +36,7 @@ const STARVED: f32 = 0.05;
 const TURN: f32 = 0.5;
 
 pub const KIND_PLANT: u32 = 0;
-pub const KIND_VEGETARIAN: u32 = 1;
+pub const KIND_CREATURE: u32 = 1;
 /// Бит `meta`: призрак — существо уже умерло, `age` — время с его смерти.
 pub const GHOST: u32 = 1 << 18;
 /// Бит `meta`: призрак умер с голоду (сереет), а не съеден (сжимается).
@@ -108,7 +108,7 @@ impl Ring {
 #[derive(Default, Debug)]
 pub struct Motion {
     started: bool,
-    vegetarians: Vec<Seen>,
+    creatures: Vec<Seen>,
     /// Отсортированы по (born, xbits).
     plants: Vec<SeenPlant>,
     ids: Ring,
@@ -139,12 +139,12 @@ fn turn(from: f32, to: f32, k: f32) -> f32 {
 }
 
 impl Motion {
-    /// Кружки видимой части мира в `out` (растения, потом травоядные — в таком
+    /// Кружки видимой части мира в `out` (растения, потом существа — в таком
     /// порядке и рисуются; призраки — в конце своего вида). false —
     /// видимых больше `MAX_INSTANCES`: нужна карта плотности, память кадра сброшена.
     pub fn collect(&mut self, world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) -> bool {
         let now = Instant::now();
-        let max_id = world.vegetarians.last().map_or(0, |v| v.id).max(self.max_id);
+        let max_id = world.creatures.last().map_or(0, |v| v.id).max(self.max_id);
         self.max_id = max_id;
         if !self.started {
             // Первый кадр мира: всё, что есть, было всегда.
@@ -161,7 +161,7 @@ impl Motion {
             self.collect_plants(world, rect, now, out) && self.collect_vegetarians(world, rect, now, out);
         if !full {
             // Кадр недособран: сопоставлять следующий не с чем.
-            self.vegetarians.clear();
+            self.creatures.clear();
             self.plants.clear();
             self.ghosts.clear();
         }
@@ -237,13 +237,13 @@ impl Motion {
         now: Instant,
         out: &mut Vec<Instance>,
     ) -> bool {
-        let kind = KIND_VEGETARIAN;
+        let kind = KIND_CREATURE;
         let (x0, y0, x1, y1) = rect;
         let visible =
             |x: f64, y: f64, half: f64| x + half >= x0 && x - half <= x1 && y + half >= y0 && y - half <= y1;
-        let prev = std::mem::take(&mut self.vegetarians);
+        let prev = std::mem::take(&mut self.creatures);
         let mut seen = Vec::with_capacity(prev.len() + 16);
-        let alive = |id: u64| world.vegetarian(id).is_some();
+        let alive = |id: u64| world.creature(id).is_some();
         let mut ghosts = Vec::new();
         let mut j = 0;
         // Прошлое существо без пары: если его нет в мире — умерло.
@@ -295,9 +295,9 @@ impl Motion {
             out.len() <= MAX_INSTANCES
         };
 
-        for v in &world.vegetarians {
+        for v in &world.creatures {
             let fullness = (v.energy / v.pheno.max_energy).clamp(0.0, 1.0) as f32;
-            let color = frame::rgba(frame::VEGETARIAN_COLOR, (fullness * 255.0) as u8);
+            let color = frame::rgba(frame::CREATURE_COLOR, (fullness * 255.0) as u8);
             if !body(v.id, v.x, v.y, v.pheno.half, color, fullness) {
                 return false;
             }
@@ -306,7 +306,7 @@ impl Motion {
             gone(s);
         }
         self.ghosts.extend(ghosts);
-        self.vegetarians = seen;
+        self.creatures = seen;
         self.push_ghosts(kind, rect, now, out)
     }
 
@@ -342,17 +342,17 @@ impl Motion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use life_core::genome::vegetarian::Gene;
-    use life_core::{VegetarianGenome, WorldConfig};
+    use life_core::genome::creature::Gene;
+    use life_core::{CreatureGenome, WorldConfig};
 
     fn empty_world() -> World {
-        let mut w = World::new(&WorldConfig { n_vegetarians: Some(0), ..Default::default() });
+        let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
         w.plants.clear();
         w
     }
 
     const ALL: (f64, f64, f64, f64) = (0.0, 0.0, 6000.0, 4000.0);
-    const BASE: VegetarianGenome = VegetarianGenome::BASE;
+    const BASE: CreatureGenome = CreatureGenome::BASE;
 
     fn kind(i: &Instance) -> u32 {
         (i.meta >> 16) & 3
@@ -363,19 +363,19 @@ mod tests {
         let mut world = empty_world();
         // Центр за левым краем, но тело крупное — торчит в кадр.
         let big = BASE.with(Gene::Size, 400.0).with(Gene::MinY, 0.0);
-        world.spawn_vegetarian(big, 1000.0 - 150.0, 2000.0, None);
-        world.spawn_vegetarian(big, 100.0, 2000.0, None); // далеко слева
-        world.spawn_vegetarian(BASE, 1500.0, 2000.0, None);
+        world.spawn(big, 1000.0 - 150.0, 2000.0, None);
+        world.spawn(big, 100.0, 2000.0, None); // далеко слева
+        world.spawn(BASE, 1500.0, 2000.0, None);
         let mut out = Vec::new();
         assert!(Motion::default().collect(&world, (1000.0, 0.0, 2000.0, 4000.0), &mut out));
-        assert_eq!(out.len(), 2, "крупное травоядное у края и мелкое в середине");
+        assert_eq!(out.len(), 2, "крупное существо у края и мелкое в середине");
         assert!(out[0].x < 0.0, "координаты — от начала видимой области");
     }
 
     #[test]
     fn кружок_помнит_прошлую_позицию_и_курс() {
         let mut world = empty_world();
-        let id = world.spawn_vegetarian(BASE, 3000.0, 2000.0, None);
+        let id = world.spawn(BASE, 3000.0, 2000.0, None);
         let mut m = Motion::default();
         let mut out = Vec::new();
         m.collect(&world, ALL, &mut out);
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!((before.px, before.py), (before.x, before.y), "в первом кадре идти неоткуда");
         assert_eq!(before.age, OLD, "существа первого кадра были всегда");
 
-        world.vegetarians[0].x += 10.0;
+        world.creatures[0].x += 10.0;
         m.collect(&world, ALL, &mut out);
         let after = out[0];
         assert_eq!((after.px, after.py), (before.x, before.y), "прошлая позиция — из прошлого кадра");
@@ -397,16 +397,16 @@ mod tests {
     #[test]
     fn новорождённый_растёт_а_въехавший_в_кадр_нет() {
         let mut world = empty_world();
-        world.spawn_vegetarian(BASE, 500.0, 2000.0, None);
+        world.spawn(BASE, 500.0, 2000.0, None);
         let mut m = Motion::default();
         let mut out = Vec::new();
         // первый кадр видит только левую половину; старое существо справа за краем
-        world.spawn_vegetarian(BASE, 5000.0, 2000.0, None);
+        world.spawn(BASE, 5000.0, 2000.0, None);
         m.collect(&world, (0.0, 0.0, 3000.0, 4000.0), &mut out);
         assert_eq!(out.len(), 1);
 
         // новое существо и сдвиг вида на весь мир
-        world.spawn_vegetarian(BASE, 1000.0, 2000.0, None);
+        world.spawn(BASE, 1000.0, 2000.0, None);
         m.collect(&world, ALL, &mut out);
         assert_eq!(out.len(), 3);
         assert_eq!(out[0].age, OLD);
@@ -417,22 +417,22 @@ mod tests {
     #[test]
     fn умершие_становятся_призраками_и_догорают() {
         let mut world = empty_world();
-        let fed = world.spawn_vegetarian(BASE, 1000.0, 2000.0, None);
-        let hungry = world.spawn_vegetarian(BASE, 2000.0, 2000.0, Some(0.1));
+        let fed = world.spawn(BASE, 1000.0, 2000.0, None);
+        let hungry = world.spawn(BASE, 2000.0, 2000.0, Some(0.1));
         world.plants.push(life_core::plant::Plant::at(4000.0, 2000.0));
         let mut m = Motion::default();
         let mut out = Vec::new();
         m.collect(&world, ALL, &mut out);
         assert_eq!(out.len(), 3);
 
-        // оба травоядных пропали из мира: одного съели, другой умер с голоду
-        world.vegetarians.retain(|v| v.id != fed && v.id != hungry);
+        // оба существ пропали из мира: одного съели, другой умер с голоду
+        world.creatures.retain(|v| v.id != fed && v.id != hungry);
         m.collect(&world, ALL, &mut out);
         let ghosts: Vec<&Instance> = out.iter().filter(|i| i.meta & GHOST != 0).collect();
         assert_eq!(ghosts.len(), 2);
-        assert!(ghosts.iter().all(|g| kind(g) == KIND_VEGETARIAN));
+        assert!(ghosts.iter().all(|g| kind(g) == KIND_CREATURE));
         assert_eq!(ghosts.iter().filter(|g| g.meta & STARVED_BIT != 0).count(), 1, "с голоду — один");
-        // растение — до травоядных: порядок рисования не нарушен
+        // растение — до существ: порядок рисования не нарушен
         assert_eq!(kind(&out[0]), KIND_PLANT);
 
         std::thread::sleep(GHOST_LIFE + Duration::from_millis(20));

@@ -3,11 +3,11 @@
 //! готовый кадр, поэтому медленный тик не может заморозить интерфейс.
 //!
 //! Размер кадра ограничен экраном, а не миром: в кадр попадают только видимые
-//! существа (отбор по телу, а не по центру — размер травоядного это ген, и
+//! существа (отбор по телу, а не по центру — размер существа это ген, и
 //! крупное торчит в кадр, даже когда центр далеко). Если видимых слишком много,
 //! вместо кружков идёт карта плотности — одна картинка размером с экран.
 
-use life_core::genome::vegetarian;
+use life_core::genome::creature;
 use life_core::{Rules, World};
 use life_sim::observe::{EventKind, GeneStat, Snapshot, gene_stats};
 
@@ -91,8 +91,8 @@ pub struct Status {
 /// Прямоугольник мира: x0, y0, x1, y1 (x0 < x1, y0 < y1).
 pub type Area = (f64, f64, f64, f64);
 
-/// Сводка генов травоядных; None — никого нет.
-pub type GeneSummary = Option<[GeneStat; vegetarian::N]>;
+/// Сводка генов существ; None — никого нет.
+pub type GeneSummary = Option<[GeneStat; creature::N]>;
 
 /// Сводка по области мира (инструмент «Область»): кто внутри (по центру тела)
 /// и какой у них геном — рядом со сводкой по всему миру на том же тике.
@@ -101,8 +101,8 @@ pub struct RegionStats {
     pub area: Area,
     pub tick: u64,
     pub plants: usize,
-    pub vegetarians: usize,
-    /// Средняя заполненность бака травоядных внутри, 0..1.
+    pub creatures: usize,
+    /// Средняя заполненность бака существ внутри, 0..1.
     pub fullness: Option<f64>,
     pub inside: GeneSummary,
     pub world: GeneSummary,
@@ -113,17 +113,17 @@ impl RegionStats {
     /// тике (срез); иначе считается здесь.
     pub fn of(world: &World, area: Area, world_genes: Option<GeneSummary>) -> RegionStats {
         let inside = |x: f64, y: f64| x >= area.0 && x <= area.2 && y >= area.1 && y <= area.3;
-        let vegs = world.vegetarians.iter().filter(|v| inside(v.x, v.y));
-        let (n, sum) = vegs.clone().fold((0, 0.0), |(n, s), v| (n + 1, s + v.energy / v.pheno.max_energy));
+        let herd = world.creatures.iter().filter(|v| inside(v.x, v.y));
+        let (n, sum) = herd.clone().fold((0, 0.0), |(n, s), v| (n + 1, s + v.energy / v.pheno.max_energy));
         let world_genes = world_genes
-            .unwrap_or_else(|| gene_stats(&vegetarian::GENES, world.vegetarians.iter().map(|v| &v.genome)));
+            .unwrap_or_else(|| gene_stats(&creature::GENES, world.creatures.iter().map(|v| &v.genome)));
         RegionStats {
             area,
             tick: world.tick,
             plants: world.plants.iter().filter(|p| inside(p.x, p.y)).count(),
-            vegetarians: n,
+            creatures: n,
             fullness: (n > 0).then(|| sum / n as f64),
-            inside: gene_stats(&vegetarian::GENES, vegs.map(|v| &v.genome)),
+            inside: gene_stats(&creature::GENES, herd.map(|v| &v.genome)),
             world: world_genes,
         }
     }
@@ -143,14 +143,14 @@ pub struct Selected {
     pub max_energy: f64,
     /// Расход энергии за тик.
     pub upkeep: f64,
-    pub genome: [f64; vegetarian::N],
+    pub genome: [f64; creature::N],
     /// Слой по глубине (y от и до): где ему можно жить и есть.
     pub layer: (f64, f64),
 }
 
 impl Selected {
     pub fn of(world: &World, id: u64) -> Option<Selected> {
-        world.vegetarian(id).map(|v| Selected {
+        world.creature(id).map(|v| Selected {
             id,
             x: v.x,
             y: v.y,
@@ -186,14 +186,14 @@ pub struct Frame {
     pub rules: Rules,
     pub tick: u64,
     pub plants: usize,
-    pub vegetarians: usize,
+    pub creatures: usize,
     pub world_w: f64,
     pub world_h: f64,
     pub status: Status,
     /// Начало координат кружков в мире (f64): при ×10 000 мир шириной 6·10⁷,
     /// и в f32 абсолютные координаты теряли бы единицы пикселей.
     pub origin: (f64, f64),
-    /// Растения, потом травоядные — в таком порядке и рисуются.
+    /// Растения, потом существа — в таком порядке и рисуются.
     pub instances: Vec<Instance>,
     /// Вместо кружков, когда видимых больше `MAX_INSTANCES`.
     pub density: Option<Raster>,
@@ -223,7 +223,7 @@ pub struct Frame {
 pub const WORLD_TOP: [u8; 3] = [31, 38, 47];
 pub const WORLD_BOTTOM: [u8; 3] = [15, 18, 23];
 pub const PLANT_COLOR: [u8; 3] = [93, 211, 158];
-pub const VEGETARIAN_COLOR: [u8; 3] = [205, 134, 255];
+pub const CREATURE_COLOR: [u8; 3] = [205, 134, 255];
 
 pub fn lerp(a: [u8; 3], b: [u8; 3], t: f64) -> [u8; 3] {
     std::array::from_fn(|i| (a[i] as f64 + (b[i] as f64 - a[i] as f64) * t).round() as u8)
@@ -239,7 +239,7 @@ pub fn plant_color() -> [u8; 3] {
     lerp(WORLD_BOTTOM, PLANT_COLOR, 0.6)
 }
 
-/// Карта плотности: сколько растений и травоядных в каждой клетке
+/// Карта плотности: сколько растений и существ в каждой клетке
 /// прямоугольника мира, в цвете. Считается за один проход по миру, поэтому
 /// её цена не зависит от того, сколько существ видно.
 pub fn density(world: &World, rect: (f64, f64, f64, f64), w: usize, h: usize, out: Raster) -> Raster {
@@ -253,16 +253,16 @@ pub fn density(world: &World, rect: (f64, f64, f64, f64), w: usize, h: usize, ou
         }
     };
     world.plants.iter().for_each(|p| add(p.x, p.y, 0));
-    world.vegetarians.iter().for_each(|v| add(v.x, v.y, 1));
+    world.creatures.iter().for_each(|v| add(v.x, v.y, 1));
 
-    let colors = [PLANT_COLOR, VEGETARIAN_COLOR];
+    let colors = [PLANT_COLOR, CREATURE_COLOR];
     let mut rgba = out.rgba;
     rgba.clear();
     rgba.reserve(w * h * 4);
     for c in &counts {
         // Яркость по логарифму: одинокое существо видно, а скопление не слепит.
         let k = c.map(|n| if n == 0 { 0.0 } else { (0.6 + (n as f64).log2() / 10.0).min(1.0) });
-        // Травоядные поверх растений.
+        // Существа поверх растений.
         let mut px = [0.0f64; 3];
         let mut alpha = 0.0f64;
         for (kind, &a) in k.iter().enumerate() {
@@ -304,8 +304,7 @@ mod tests {
         use crate::motion::Motion;
         use life_core::rng::Rng;
 
-        let mut world =
-            World::new(&WorldConfig { scale: 400.0, n_vegetarians: Some(0), ..Default::default() });
+        let mut world = World::new(&WorldConfig { scale: 400.0, n_creatures: Some(0), ..Default::default() });
         let mut rng = Rng::new(9);
         let flora = world.flora().clone();
         world.plants =

@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use life_core::config::VEGETARIANS_AT_START;
+use life_core::config::CREATURES_AT_START;
 use life_core::flora::{Along, Profile};
 use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::{Rules, Shape, Space, WorldConfig};
@@ -30,7 +30,7 @@ pub enum Tab {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
-    Vegetarians,
+    Creatures,
     PlantGrowth,
     MutationSigma,
     PlantEnergy,
@@ -76,7 +76,7 @@ pub struct Field {
 
 /// Общее у полей-ползунков: всегда видны, вариантов нет.
 const SLIDER: Field = Field {
-    key: Key::Vegetarians,
+    key: Key::Creatures,
     label: "",
     hint: "",
     lo: 0.0,
@@ -130,9 +130,9 @@ fn percent(v: f64) -> String {
 pub const FIELDS: [Field; 22] = [
     // ── Мир ──────────────────────────────────────────────────────────────────
     Field {
-        key: Key::Vegetarians,
-        label: "Травоядных на старте",
-        hint: "Сколько травоядных на каждом участке 6000×4000 в первый момент. \
+        key: Key::Creatures,
+        label: "Существ на старте",
+        hint: "Сколько существ на каждом участке 6000×4000 в первый момент. \
                В большом мире их во столько раз больше, во сколько он больше.",
         lo: 1.0,
         hi: 200.0,
@@ -147,7 +147,7 @@ pub const FIELDS: [Field; 22] = [
     Field {
         key: Key::PlantGrowth,
         label: "Рост растений",
-        hint: "Сколько растений появляется за тик на участке 6000×4000. Больше еды — больше травоядных.",
+        hint: "Сколько растений появляется за тик на участке 6000×4000. Больше еды — больше существ.",
         lo: 0.2,
         hi: 3.0,
         step: 0.1,
@@ -161,7 +161,7 @@ pub const FIELDS: [Field; 22] = [
     Field {
         key: Key::Lurkers,
         label: "Затаившихся на старте",
-        hint: "Доля травоядных, которые, не видя еды, бродят втрое медленнее и тратят меньше. \
+        hint: "Доля существ, которые, не видя еды, бродят втрое медленнее и тратят меньше. \
                Остальные — стандартные. Дальше стратегия наследуется и изредка мутирует.",
         lo: 0.0,
         hi: 100.0,
@@ -187,7 +187,7 @@ pub const FIELDS: [Field; 22] = [
     Field {
         key: Key::PlantEnergy,
         label: "Энергия растения",
-        hint: "Сколько энергии даёт одно растение. Полный бак базового травоядного — 100.",
+        hint: "Сколько энергии даёт одно растение. Полный бак базового существа — 100.",
         lo: 10.0,
         hi: 150.0,
         step: 5.0,
@@ -239,7 +239,7 @@ pub const FIELDS: [Field; 22] = [
         key: Key::PlantDepthProfile,
         label: "Еда по глубине",
         hint: "Как густо растут растения от поверхности ко дну. Гены слоя от этого не меняются: \
-               травоядные сами найдут, на какой глубине выгоднее жить.",
+               существа сами найдут, на какой глубине выгоднее жить.",
         lo: 0.0,
         hi: 4.0,
         step: 1.0,
@@ -400,7 +400,7 @@ pub const FIELDS: [Field; 22] = [
     Field {
         key: Key::Cannibalism,
         label: "Каннибализм",
-        hint: "Травоядное съедает сородича, который намного мельче его, если тот оказался \
+        hint: "Существо съедает сородича, который намного мельче его, если тот оказался \
                вплотную. Никто никого не ищет: едят тех, кто рядом.",
         tab: Tab::Lab,
         rule: Some("cannibalism"),
@@ -455,7 +455,7 @@ impl Default for Settings {
             scale: 1.0,
             shape: WorldConfig::default().shape,
             values: FIELDS.map(|f| match f.key {
-                Key::Vegetarians => VEGETARIANS_AT_START as f64,
+                Key::Creatures => CREATURES_AT_START as f64,
                 // Упор игры — на каннибализм; у движка он по умолчанию выключен.
                 Key::Cannibalism => 1.0,
                 Key::PlantGrowth => 1.0,
@@ -527,8 +527,8 @@ impl Settings {
             scale: self.scale,
             shape: self.shape,
             rules: self.rules(),
-            n_vegetarians: Some(per_area(Key::Vegetarians)),
-            vegetarian_strategies: mix(Key::Lurkers),
+            n_creatures: Some(per_area(Key::Creatures)),
+            strategies: mix(Key::Lurkers),
         }
     }
 
@@ -588,7 +588,9 @@ impl Settings {
             s.shape = shape;
         }
         for (i, f) in FIELDS.iter().enumerate() {
-            if let Some(v) = num(json_key(f.key)) {
+            // до переименования в «существ» ключ был другим
+            let old = (f.key == Key::Creatures).then_some("n_vegetarians");
+            if let Some(v) = num(json_key(f.key)).or_else(|| old.and_then(num)) {
                 s.values[i] = f.snap(v);
             }
         }
@@ -632,7 +634,7 @@ impl Settings {
 
 fn json_key(key: Key) -> &'static str {
     match key {
-        Key::Vegetarians => "n_vegetarians",
+        Key::Creatures => "n_creatures",
         Key::PlantGrowth => "plant_growth",
         Key::MutationSigma => "mutation_sigma",
         Key::PlantEnergy => "plant_energy",
@@ -676,11 +678,11 @@ mod tests {
     /// подсказка не должна врать.
     #[test]
     fn подсказки_цитируют_базы_генов() {
-        use life_core::config::VEGETARIAN_ENERGY_PER_SIZE;
-        use life_core::genome::vegetarian::{GENES, Gene};
+        use life_core::config::ENERGY_PER_SIZE;
+        use life_core::genome::creature::{GENES, Gene};
         let hint = |key| FIELDS.iter().find(|f| f.key == key).expect("поле есть").hint;
-        let tank = GENES[Gene::Size as usize].base * VEGETARIAN_ENERGY_PER_SIZE;
-        assert!(hint(Key::PlantEnergy).contains(&format!("травоядного — {tank:.0}")));
+        let tank = GENES[Gene::Size as usize].base * ENERGY_PER_SIZE;
+        assert!(hint(Key::PlantEnergy).contains(&format!("существа — {tank:.0}")));
     }
 
     /// Правила игры по умолчанию — конфиг бит в бит, кроме каннибализма: его
@@ -752,17 +754,17 @@ mod tests {
     #[test]
     fn численности_растут_с_площадью() {
         let s = Settings { scale: 100.0, ..Default::default() };
-        assert_eq!(s.world_config(1).vegetarians_at_start(), VEGETARIANS_AT_START * 100);
-        assert_eq!(Settings::default().world_config(1).vegetarians_at_start(), 20);
+        assert_eq!(s.world_config(1).creatures_at_start(), CREATURES_AT_START * 100);
+        assert_eq!(Settings::default().world_config(1).creatures_at_start(), 20);
     }
 
     /// Доля второй стратегии — смесь мира; ноль — пустая смесь, как по умолчанию.
     #[test]
     fn доли_стратегий_становятся_смесью_мира() {
-        assert!(Settings::default().world_config(1).vegetarian_strategies.is_empty());
+        assert!(Settings::default().world_config(1).strategies.is_empty());
         let mut s = Settings::default();
         s.set(Key::Lurkers, 30.0);
-        assert_eq!(s.world_config(1).vegetarian_strategies, vec![70.0, 30.0]);
+        assert_eq!(s.world_config(1).strategies, vec![70.0, 30.0]);
     }
 
     /// Подписи вариантов — по порядку профилей движка, а у каждого правила
@@ -798,13 +800,13 @@ mod tests {
         let old = Settings::default();
         let mut new = old.clone();
         new.set(Key::PlantEnergy, 80.0);
-        new.set(Key::Vegetarians, 50.0); // стартовое условие — не правило
+        new.set(Key::Creatures, 50.0); // стартовое условие — не правило
         assert_eq!(describe_change(&old, &new).as_deref(), Some("правила: энергия растения 50 → 80"));
         assert_eq!(describe_change(&old, &old), None);
     }
 
-    /// Отношение видно только при включённом каннибализме. Старый файл с
-    /// ключами хищников читается, каннибализм в нём включён.
+    /// Отношение видно только при включённом каннибализме. Старый файл (с
+    /// ключами хищников и «n_vegetarians») читается, каннибализм в нём включён.
     #[test]
     fn галочка_каннибализма() {
         let mut s = Settings::default();
@@ -814,8 +816,11 @@ mod tests {
         assert!(!shown(&s));
         assert!(field(Key::Cannibalism).toggle);
 
-        let old = Settings::from_json(&serde_json::json!({ "n_predators": 10, "plant_energy": 80 }));
+        let old = Settings::from_json(
+            &serde_json::json!({ "n_predators": 10, "plant_energy": 80, "n_vegetarians": 50 }),
+        );
         assert!(old.get(Key::Cannibalism) == 1.0 && old.get(Key::PlantEnergy) == 80.0);
+        assert_eq!(old.get(Key::Creatures), 50.0, "старый ключ численности читается");
         let mut new = Settings::default();
         new.set(Key::Cannibalism, 0.0);
         assert_eq!(

@@ -3,14 +3,14 @@
 //!
 //! - [`Snapshot`] — срез мира: численности, накопленные счётчики рождений и
 //!   смертей, разброс каждого гена (не только среднее: среднее прячет раскол
-//!   на два вида), где по глубине и по ширине живут травоядные и растут
+//!   на два вида), где по глубине и по ширине живут существа и растут
 //!   растения, сытость.
 //! - [`EventTracker`] / [`events`] — хроника по срезам: обвалы и подъёмы численности с причинами,
-//!   вымирание, растения у потолка, сдвиги генов, сжатие травоядных в узкий слой.
+//!   вымирание, растения у потолка, сдвиги генов, сжатие существ в узкий слой.
 //! - [`ascii_map`] — карта мира текстом: слои, скопления, пустые края.
 
 use life_core::config::*;
-use life_core::genome::{GeneSpec, Genome, vegetarian};
+use life_core::genome::{GeneSpec, Genome, creature};
 use life_core::{Counters, World};
 
 /// На сколько полос делится глубина в срезе (0 — поверхность).
@@ -112,20 +112,20 @@ pub struct Snapshot {
     pub plants: usize,
     /// Потолок растений этого мира.
     pub plant_cap: usize,
-    pub vegetarians: usize,
+    pub creatures: usize,
     /// Накопленные с начала мира; потоки за промежуток — `b.counters.since(&a.counters)`.
     pub counters: Counters,
-    /// Сводка каждого гена травоядных, порядок — таблица `vegetarian::GENES`.
-    /// None — травоядных нет.
-    pub genes: Option<[GeneStat; vegetarian::N]>,
-    /// Глубина травоядных, % высоты мира (0 — поверхность, где гуще растения).
-    pub vegetarian_depth: Option<Spread>,
-    pub vegetarians_by_depth: [usize; DEPTH_BANDS],
+    /// Сводка каждого гена существ, порядок — таблица `creature::GENES`.
+    /// None — существ нет.
+    pub genes: Option<[GeneStat; creature::N]>,
+    /// Глубина существ, % высоты мира (0 — поверхность, где гуще растения).
+    pub depth: Option<Spread>,
+    pub creatures_by_depth: [usize; DEPTH_BANDS],
     pub plants_by_depth: [usize; DEPTH_BANDS],
-    pub vegetarians_by_width: [usize; WIDTH_BANDS],
+    pub creatures_by_width: [usize; WIDTH_BANDS],
     pub plants_by_width: [usize; WIDTH_BANDS],
-    /// Средняя заполненность бака травоядных, 0..1.
-    pub vegetarian_fullness: Option<f64>,
+    /// Средняя заполненность бака существ, 0..1.
+    pub fullness: Option<f64>,
 }
 
 fn band(at: f64, len: f64, bands: usize) -> usize {
@@ -140,15 +140,15 @@ fn average(values: impl Iterator<Item = f64>) -> Option<f64> {
 impl Snapshot {
     pub fn of(world: &World) -> Snapshot {
         let (w, h) = (world.space.width, world.space.height);
-        let vegs = &world.vegetarians;
+        let herd = &world.creatures;
 
-        let genes = gene_stats(&vegetarian::GENES, vegs.iter().map(|v| &v.genome));
-        let mut depth: Vec<f64> = vegs.iter().map(|v| v.y / h * 100.0).collect();
+        let genes = gene_stats(&creature::GENES, herd.iter().map(|v| &v.genome));
+        let mut depth: Vec<f64> = herd.iter().map(|v| v.y / h * 100.0).collect();
 
-        let (mut vegetarians_by_depth, mut vegetarians_by_width) = ([0; DEPTH_BANDS], [0; WIDTH_BANDS]);
-        for v in vegs {
-            vegetarians_by_depth[band(v.y, h, DEPTH_BANDS)] += 1;
-            vegetarians_by_width[band(v.x, w, WIDTH_BANDS)] += 1;
+        let (mut creatures_by_depth, mut creatures_by_width) = ([0; DEPTH_BANDS], [0; WIDTH_BANDS]);
+        for v in herd {
+            creatures_by_depth[band(v.y, h, DEPTH_BANDS)] += 1;
+            creatures_by_width[band(v.x, w, WIDTH_BANDS)] += 1;
         }
         let (mut plants_by_depth, mut plants_by_width) = ([0; DEPTH_BANDS], [0; WIDTH_BANDS]);
         for p in &world.plants {
@@ -161,15 +161,15 @@ impl Snapshot {
             area: world.space.area_ratio(),
             plants: world.plants.len(),
             plant_cap: world.space.per_area(PLANT_MAX),
-            vegetarians: vegs.len(),
+            creatures: herd.len(),
             counters: world.counters,
             genes,
-            vegetarian_depth: Spread::of(&mut depth),
-            vegetarians_by_depth,
+            depth: Spread::of(&mut depth),
+            creatures_by_depth,
             plants_by_depth,
-            vegetarians_by_width,
+            creatures_by_width,
             plants_by_width,
-            vegetarian_fullness: average(vegs.iter().map(|v| v.energy / v.pheno.max_energy)),
+            fullness: average(herd.iter().map(|v| v.energy / v.pheno.max_energy)),
         }
     }
 }
@@ -179,9 +179,9 @@ impl Snapshot {
 /// Что случилось. Ключ — для машинного разбора (JSON), текст — для чтения.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventKind {
-    VegetariansCrash,
-    VegetariansRise,
-    VegetariansExtinct,
+    CreaturesCrash,
+    CreaturesRise,
+    CreaturesExtinct,
     PlantsAtCap,
     PlantsEatenAgain,
     GeneShift,
@@ -193,9 +193,9 @@ pub enum EventKind {
 impl EventKind {
     pub fn key(self) -> &'static str {
         match self {
-            EventKind::VegetariansCrash => "vegetarians_crash",
-            EventKind::VegetariansRise => "vegetarians_rise",
-            EventKind::VegetariansExtinct => "vegetarians_extinct",
+            EventKind::CreaturesCrash => "creatures_crash",
+            EventKind::CreaturesRise => "creatures_rise",
+            EventKind::CreaturesExtinct => "creatures_extinct",
             EventKind::PlantsAtCap => "plants_at_cap",
             EventKind::PlantsEatenAgain => "plants_eaten_again",
             EventKind::GeneShift => "gene_shift",
@@ -217,8 +217,8 @@ pub struct Event {
 /// чтобы это было событием, а не шумом деления.
 const SWING: f64 = 2.0;
 /// Ниже этой численности (на базовую площадь) колебания не считаются: десяток
-/// травоядных, ставших пятком, — шум, а не обвал.
-const SWING_MIN_VEGETARIANS: f64 = 30.0;
+/// существ, ставших пятком, — шум, а не обвал.
+const SWING_MIN: f64 = 30.0;
 /// Сдвиг гена, который попадает в хронику: для размера, скорости и зрения —
 /// относительный, для генов-процентов — в процентных пунктах.
 const GENE_SHIFT_REL: f64 = 0.3;
@@ -226,7 +226,7 @@ const GENE_SHIFT_PTS: f64 = 15.0;
 /// Доля варианта гена-выбора (стратегии) сдвинулась на столько процентных
 /// пунктов — или вариант появился либо исчез.
 const SHARE_SHIFT_PTS: f64 = 15.0;
-/// Слой травоядных (10‒90% по глубине) уже этого — «сжались», шире второго —
+/// Слой существ (10‒90% по глубине) уже этого — «сжались», шире второго —
 /// «расселились». Зазор между порогами не даёт событию мигать туда-сюда.
 const LAYER_NARROW: f64 = 25.0;
 const LAYER_WIDE: f64 = 40.0;
@@ -234,12 +234,12 @@ const LAYER_WIDE: f64 = 40.0;
 const CAP_HIGH: f64 = 0.95;
 const CAP_LOW: f64 = 0.8;
 
-/// Причины перемены численности травоядных за промежуток.
-pub fn vegetarian_flows(c: &Counters) -> String {
-    let mut text = format!("родилось {}, умерло с голоду {}", c.vegetarians_born, c.vegetarians_starved);
+/// Причины перемены численности существ за промежуток.
+pub fn describe_flows(c: &Counters) -> String {
+    let mut text = format!("родилось {}, умерло с голоду {}", c.born, c.starved);
     // без каннибализма строка короче
-    if c.vegetarians_cannibalized > 0 {
-        text += &format!(", съедено своими {}", c.vegetarians_cannibalized);
+    if c.cannibalized > 0 {
+        text += &format!(", съедено своими {}", c.cannibalized);
     }
     text
 }
@@ -318,7 +318,7 @@ pub struct EventTracker {
     prev: Option<Snapshot>,
     swing: Option<Swing>,
     /// Сводка каждого гена на прошлой отметке и тик этой отметки.
-    gene_base: Option<[(GeneStat, u64); vegetarian::N]>,
+    gene_base: Option<[(GeneStat, u64); creature::N]>,
     narrow: bool,
     capped: bool,
 }
@@ -333,7 +333,7 @@ impl EventTracker {
         let Some(prev) = self.prev.replace(cur.clone()) else {
             self.swing = Some(Swing { peak: cur.clone(), trough: cur.clone() });
             self.gene_base = cur.genes.map(|g| g.map(|s| (s, cur.tick)));
-            self.narrow = cur.vegetarian_depth.is_some_and(|d| d.p90 - d.p10 < LAYER_NARROW);
+            self.narrow = cur.depth.is_some_and(|d| d.p90 - d.p10 < LAYER_NARROW);
             self.capped = cur.plants as f64 >= cur.plant_cap as f64 * CAP_HIGH;
             return;
         };
@@ -343,42 +343,42 @@ impl EventTracker {
         // ── численность: обвал и подъём считаются от пика/дна с прошлого события,
         // причины — счётчики между ними
         let swing = self.swing.get_or_insert_with(|| Swing { peak: prev.clone(), trough: prev.clone() });
-        let min = cur.area * SWING_MIN_VEGETARIANS;
-        let n = cur.vegetarians;
-        if swing.peak.vegetarians < n {
+        let min = cur.area * SWING_MIN;
+        let n = cur.creatures;
+        if swing.peak.creatures < n {
             swing.peak = cur.clone();
         }
-        if swing.trough.vegetarians > n {
+        if swing.trough.creatures > n {
             swing.trough = cur.clone();
         }
         let (peak, trough) = (&swing.peak, &swing.trough);
-        let flows = |from: &Snapshot| vegetarian_flows(&cur.counters.since(&from.counters));
-        let event = if n == 0 && prev.vegetarians > 0 {
+        let flows = |from: &Snapshot| describe_flows(&cur.counters.since(&from.counters));
+        let event = if n == 0 && prev.creatures > 0 {
             Some((
-                EventKind::VegetariansExtinct,
+                EventKind::CreaturesExtinct,
                 format!(
-                    "травоядные вымерли (пик {} на тике {}); с пика: {}",
-                    peak.vegetarians,
+                    "существа вымерли (пик {} на тике {}); с пика: {}",
+                    peak.creatures,
                     peak.tick,
                     flows(peak)
                 ),
             ))
-        } else if peak.vegetarians as f64 >= min && n as f64 * SWING <= peak.vegetarians as f64 {
+        } else if peak.creatures as f64 >= min && n as f64 * SWING <= peak.creatures as f64 {
             let text = format!(
-                "обвал травоядных: {} (тик {}) → {n}; за это время {}",
-                peak.vegetarians,
+                "обвал существ: {} (тик {}) → {n}; за это время {}",
+                peak.creatures,
                 peak.tick,
                 flows(peak)
             );
-            Some((EventKind::VegetariansCrash, text))
-        } else if n as f64 >= min && trough.vegetarians as f64 * SWING <= n as f64 && trough.vegetarians > 0 {
+            Some((EventKind::CreaturesCrash, text))
+        } else if n as f64 >= min && trough.creatures as f64 * SWING <= n as f64 && trough.creatures > 0 {
             let text = format!(
-                "подъём травоядных: {} (тик {}) → {n}; за это время {}",
-                trough.vegetarians,
+                "подъём существ: {} (тик {}) → {n}; за это время {}",
+                trough.creatures,
                 trough.tick,
                 flows(trough)
             );
-            Some((EventKind::VegetariansRise, text))
+            Some((EventKind::CreaturesRise, text))
         } else {
             None
         };
@@ -392,8 +392,8 @@ impl EventTracker {
         if !self.capped && fill >= CAP_HIGH {
             self.capped = true;
             let text = format!(
-                "растения упёрлись в потолок ({} из {}): травоядных {} — есть их некому или не там",
-                cur.plants, cur.plant_cap, cur.vegetarians
+                "растения упёрлись в потолок ({} из {}): существ {} — есть их некому или не там",
+                cur.plants, cur.plant_cap, cur.creatures
             );
             push(EventKind::PlantsAtCap, text);
         } else if self.capped && fill < CAP_LOW {
@@ -406,20 +406,20 @@ impl EventTracker {
 
         // ── гены: медиана ушла от прошлой отметки — отметка переносится; все
         // сдвиги одного среза — одно событие, иначе хроника тонет в генах
-        let (numbers, choices) = gene_shifts(&vegetarian::GENES, cur.genes, &mut self.gene_base, t);
+        let (numbers, choices) = gene_shifts(&creature::GENES, cur.genes, &mut self.gene_base, t);
         if !numbers.is_empty() {
             push(EventKind::GeneShift, format!("геном, медиана: {}", numbers.join("; ")));
         }
         if !choices.is_empty() {
-            push(EventKind::StrategyShift, format!("травоядные: {}", choices.join("; ")));
+            push(EventKind::StrategyShift, format!("существа: {}", choices.join("; ")));
         }
 
-        // ── слой: где по глубине держатся 80% травоядных
-        if let Some(d) = cur.vegetarian_depth {
+        // ── слой: где по глубине держатся 80% существ
+        if let Some(d) = cur.depth {
             let width = d.p90 - d.p10;
             let text = |what: &str| {
                 format!(
-                    "травоядные {what}: 80% живут на глубине {:.0}‒{:.0}% (медиана {:.0}%)",
+                    "существа {what}: 80% живут на глубине {:.0}‒{:.0}% (медиана {:.0}%)",
                     d.p10, d.p90, d.p50
                 )
             };
@@ -448,10 +448,10 @@ pub fn events(snaps: &[Snapshot]) -> Vec<Event> {
 
 /// Легенда к [`ascii_map`].
 pub const MAP_LEGEND: &str =
-    "O 4+ травоядных · o 1‒3 травоядных · : 4+ растений · . 1‒3 растения · верх — поверхность";
+    "O 4+ существ · o 1‒3 существа · : 4+ растений · . 1‒3 растения · верх — поверхность";
 
 /// Карта мира в `cols` колонок. Клетка показывает самое «важное», что в ней
-/// есть: травоядные важнее растений. Слева —
+/// есть: существа важнее растений. Слева —
 /// глубина в процентах. Строк столько, чтобы пропорции мира сохранились
 /// (символ примерно вдвое выше своей ширины), но не меньше 8 и не больше 40.
 pub fn ascii_map(world: &World, cols: usize) -> Vec<String> {
@@ -463,12 +463,12 @@ pub fn ascii_map(world: &World, cols: usize) -> Vec<String> {
         let r = ((y / h * rows as f64) as usize).min(rows - 1);
         r * cols + c
     };
-    let (mut plants, mut vegs) = (vec![0u32; rows * cols], vec![0u32; rows * cols]);
+    let (mut plants, mut herd) = (vec![0u32; rows * cols], vec![0u32; rows * cols]);
     for p in &world.plants {
         plants[cell(p.x, p.y)] += 1;
     }
-    for v in &world.vegetarians {
-        vegs[cell(v.x, v.y)] += 1;
+    for v in &world.creatures {
+        herd[cell(v.x, v.y)] += 1;
     }
 
     let border = format!("     +{}+", "-".repeat(cols));
@@ -477,7 +477,7 @@ pub fn ascii_map(world: &World, cols: usize) -> Vec<String> {
         let line: String = (0..cols)
             .map(|c| {
                 let i = r * cols + c;
-                match (vegs[i], plants[i]) {
+                match (herd[i], plants[i]) {
                     (v, _) if v >= 4 => 'O',
                     (v, _) if v > 0 => 'o',
                     (_, n) if n >= 4 => ':',

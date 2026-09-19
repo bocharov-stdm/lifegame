@@ -1,4 +1,4 @@
-//! Травоядное: ищет растения в своём слое глубины, делится.
+//! Существо: ищет растения в своём слое глубины, делится.
 //!
 //! Поиск соседей — забота мира. Существо получает его в виде чувств
 //! (`senses.rs`): «где ближайшее растение». Так оно не знает о сетке, а тесты
@@ -13,15 +13,15 @@ pub use phenotype::Phenotype;
 pub use strategy::{Intent, Me, Mind, Strategy};
 
 use crate::config::*;
-use crate::genome::VegetarianGenome;
-use crate::genome::vegetarian::Gene;
+use crate::genome::CreatureGenome;
+use crate::genome::creature::Gene;
 use crate::rng::Rng;
 use crate::rules::Rules;
-use crate::senses::VegetarianSenses;
+use crate::senses::Senses;
 use crate::space::Space;
 
 #[derive(Clone, Debug)]
-pub struct Vegetarian {
+pub struct Creature {
     /// Постоянный номер: по нему игра выбирает и следит за существом.
     pub id: u64,
     pub x: f64,
@@ -29,7 +29,7 @@ pub struct Vegetarian {
     pub energy: f64,
     pub alive: bool,
 
-    pub genome: VegetarianGenome,
+    pub genome: CreatureGenome,
     /// Всё, что выведено из генома и правил при рождении (`phenotype.rs`).
     pub pheno: Phenotype,
 
@@ -38,15 +38,15 @@ pub struct Vegetarian {
     pub rng: Rng,
 }
 
-impl Vegetarian {
-    /// Новое травоядное. Координата None — случайная в своей домашней полосе;
+impl Creature {
+    /// Новое существо. Координата None — случайная в своей домашней полосе;
     /// заданная зажимается только в мир: ребёнок рождается у родителя, а слой у
     /// него свой, мутировавший, — домой он дойдёт сам, телепорт был бы прыжком.
     /// energy None — полбака; заданная не больше бака.
     pub fn new(
         space: &Space,
         rules: &Rules,
-        genome: VegetarianGenome,
+        genome: CreatureGenome,
         x: Option<f64>,
         y: Option<f64>,
         energy: Option<f64>,
@@ -60,18 +60,18 @@ impl Vegetarian {
         let x = x.unwrap_or_else(|| rng.uniform(pheno.x_lo, pheno.x_hi)).clamp(pheno.x_lo, pheno.x_hi);
         let y = y.unwrap_or_else(|| rng.uniform(pheno.body_lo, pheno.body_hi)).clamp(pheno.y_lo, pheno.y_hi);
 
-        Vegetarian { id: 0, x, y, energy, alive: true, genome, pheno, mind: Mind::default(), rng }
+        Creature { id: 0, x, y, energy, alive: true, genome, pheno, mind: Mind::default(), rng }
     }
 
-    /// Базовое травоядное из конфига в случайном месте.
+    /// Базовое существо из конфига в случайном месте.
     pub fn base(space: &Space, rules: &Rules, rng: Rng) -> Self {
-        Vegetarian::new(space, rules, VegetarianGenome::BASE, None, None, None, rng)
+        Creature::new(space, rules, CreatureGenome::BASE, None, None, None, rng)
     }
 
     /// Один ход: стратегия решает, куда идти, существо делает шаг.
     ///
     /// Что вокруг — стратегия спрашивает у `senses`.
-    pub fn step(&mut self, senses: &impl VegetarianSenses) {
+    pub fn step(&mut self, senses: &impl Senses) {
         let me = Me { x: self.x, y: self.y, energy: self.energy, pheno: &self.pheno };
         let intent = strategy::decide(&me, &mut self.mind, &mut self.rng, senses);
         self.act(intent);
@@ -132,16 +132,16 @@ impl Vegetarian {
 
     /// Ребёнок, если после деления у родителя остаётся резерв. Номер ребёнку
     /// выдаёт мир.
-    pub fn maybe_divide(&mut self, space: &Space, rules: &Rules) -> Option<Vegetarian> {
+    pub fn maybe_divide(&mut self, space: &Space, rules: &Rules) -> Option<Creature> {
         let threshold = self.pheno.max_energy * (self.genome[Gene::ReproThreshold] / 100.0);
-        if self.energy < threshold + VEGETARIAN_REPRO_RESERVE {
+        if self.energy < threshold + REPRO_RESERVE {
             return None;
         }
         // Резерв проверяется и ПОСЛЕ дележа: доля ребёнка считается от всей
         // энергии, и без этого родитель отдавал всё до нуля и умирал.
         let child_energy = self.energy * (self.genome[Gene::ReproShare] / 100.0);
-        let left = self.energy - child_energy - VEGETARIAN_REPRO_COST;
-        if left < VEGETARIAN_REPRO_RESERVE {
+        let left = self.energy - child_energy - REPRO_COST;
+        if left < REPRO_RESERVE {
             return None;
         }
         self.energy = left;
@@ -152,6 +152,6 @@ impl Vegetarian {
         let cx = self.x + self.rng.uniform(-span, span);
         let cy = self.y + self.rng.uniform(-span, span);
         let rng = self.rng.fork();
-        Some(Vegetarian::new(space, rules, genome, Some(cx), Some(cy), Some(child_energy), rng))
+        Some(Creature::new(space, rules, genome, Some(cx), Some(cy), Some(child_energy), rng))
     }
 }

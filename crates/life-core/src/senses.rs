@@ -1,54 +1,54 @@
 //! Чувства: что существо может узнать о мире.
 //!
 //! Существа не видят сетку соседей: они спрашивают «где ближайшее растение» —
-//! через трейт. Мир отвечает по сеткам (`GridVegetarianSenses` ниже, строится
-//! на каждое существо), тесты — обычными замыканиями (`vegetarian_senses`) или
+//! через трейт. Мир отвечает по сеткам (`GridSenses` ниже, строится
+//! на каждое существо), тесты — обычными замыканиями (`senses_from`) или
 //! слепотой (`Blind`).
 //!
 //! Новое чувство — метод трейта, функция-запрос внизу и её сверка с перебором
 //! в тесте этого модуля. Чувств, смотрящих на свой же вид, не делать до
-//! параллельного тика: травоядные двигаются в своей фазе, и копии координат в
+//! параллельного тика: существа двигаются в своей фазе, и копии координат в
 //! сетке устарели бы (см. CLAUDE.md, «Neighbour search»).
 
+use crate::creature::Creature;
 use crate::grid::Grid;
 use crate::plant::Plant;
-use crate::vegetarian::Vegetarian;
 
-/// Чувства травоядного.
-pub trait VegetarianSenses {
+/// Чувства существа.
+pub trait Senses {
     /// Ближайшее живое растение строго ближе √r2.
     fn nearest_plant(&self, x: f64, y: f64, r2: f64) -> Option<(f64, f64)>;
 }
 
-/// Мир глазами травоядного: растения по сетке тика.
+/// Мир глазами существа: растения по сетке тика.
 ///
 /// Запросы и методы чувств помечены `#[inline(always)]`: без этого компилятор
-/// не встраивал поиск растения в ход травоядного, и мир ×100 шёл на 8%
+/// не встраивал поиск растения в ход существа, и мир ×100 шёл на 8%
 /// медленнее, чем с прежними замыканиями (замер против версии до чувств).
-pub(crate) struct GridVegetarianSenses<'a> {
+pub(crate) struct GridSenses<'a> {
     pub food: &'a Grid,
     pub plants: &'a [Plant],
 }
 
-impl VegetarianSenses for GridVegetarianSenses<'_> {
+impl Senses for GridSenses<'_> {
     #[inline(always)]
     fn nearest_plant(&self, x: f64, y: f64, r2: f64) -> Option<(f64, f64)> {
         nearest_plant(self.food, self.plants, x, y, r2)
     }
 }
 
-/// Чувства из замыкания — для тестов: `vegetarian_senses(|x, y, r2| ..)`.
+/// Чувства из замыкания — для тестов: `senses_from(|x, y, r2| ..)`.
 pub struct FnSenses<F>(pub F);
 
-/// Травоядному: ближайшее растение.
-pub fn vegetarian_senses<F>(plant: F) -> FnSenses<F>
+/// Существу: ближайшее растение.
+pub fn senses_from<F>(plant: F) -> FnSenses<F>
 where
     F: Fn(f64, f64, f64) -> Option<(f64, f64)>,
 {
     FnSenses(plant)
 }
 
-impl<F> VegetarianSenses for FnSenses<F>
+impl<F> Senses for FnSenses<F>
 where
     F: Fn(f64, f64, f64) -> Option<(f64, f64)>,
 {
@@ -60,7 +60,7 @@ where
 /// Ничего не видит.
 pub struct Blind;
 
-impl VegetarianSenses for Blind {
+impl Senses for Blind {
     fn nearest_plant(&self, _: f64, _: f64, _: f64) -> Option<(f64, f64)> {
         None
     }
@@ -75,7 +75,7 @@ impl VegetarianSenses for Blind {
 /// `max_size`, чьё тело касается круга радиуса `reach` вокруг (x, y).
 pub(crate) fn smaller_prey_in_contact(
     grid: &Grid,
-    vegetarians: &[Vegetarian],
+    creatures: &[Creature],
     max_half: f64,
     me: usize,
     (x, y): (f64, f64),
@@ -84,7 +84,7 @@ pub(crate) fn smaller_prey_in_contact(
 ) -> Option<usize> {
     let mut caught = None;
     grid.for_each_near(x, y, reach + max_half, |j, vx, vy| {
-        let v = &vegetarians[j];
+        let v = &creatures[j];
         if caught.is_some() || j == me || !v.alive || v.pheno.size > max_size {
             return;
         }
@@ -162,15 +162,15 @@ mod tests {
                     continue;
                 }
                 // часть существ и растений «съедена в этом тике» — их запросы обязаны пропускать
-                let mut vegs = w.vegetarians.clone();
-                vegs.iter_mut().step_by(7).for_each(|v| v.alive = false);
+                let mut herd = w.creatures.clone();
+                herd.iter_mut().step_by(7).for_each(|v| v.alive = false);
                 let mut plants = w.plants.clone();
                 plants.iter_mut().step_by(5).for_each(|p| p.alive = false);
-                prey.rebuild(&w.space, vegs.iter().map(|v| (v.x, v.y)));
+                prey.rebuild(&w.space, herd.iter().map(|v| (v.x, v.y)));
                 food.rebuild(&w.space, plants.iter().map(|p| (p.x, p.y)));
-                let max_half = vegs.iter().fold(0.0_f64, |m, v| m.max(v.pheno.half));
+                let max_half = herd.iter().fold(0.0_f64, |m, v| m.max(v.pheno.half));
 
-                for v in &w.vegetarians {
+                for v in &w.creatures {
                     let got = nearest_plant(&food, &plants, v.x, v.y, v.pheno.vision2)
                         .map(|(px, py)| dist2(px, py, v.x, v.y));
                     let want = min(plants
@@ -192,10 +192,10 @@ mod tests {
                     assert_eq!(n, want.iter().filter(|&&e| e).count());
                     checked += 1;
                 }
-                for (i, v) in vegs.iter().enumerate() {
+                for (i, v) in herd.iter().enumerate() {
                     for ratio in [CANNIBAL_RATIO, 1.1] {
                         let max_size = v.pheno.size / ratio;
-                        let fits = |j: usize, u: &Vegetarian| {
+                        let fits = |j: usize, u: &Creature| {
                             j != i
                                 && u.alive
                                 && u.pheno.size <= max_size
@@ -203,24 +203,24 @@ mod tests {
                         };
                         let got = smaller_prey_in_contact(
                             &prey,
-                            &vegs,
+                            &herd,
                             max_half,
                             i,
                             (v.x, v.y),
                             v.pheno.size,
                             max_size,
                         );
-                        let any = vegs.iter().enumerate().any(|(j, u)| fits(j, u));
+                        let any = herd.iter().enumerate().any(|(j, u)| fits(j, u));
                         assert_eq!(got.is_some(), any, "сид {seed}, тик {tick}: каннибал");
                         if let Some(j) = got {
-                            assert!(fits(j, &vegs[j]), "сид {seed}: съеден не тот сородич");
+                            assert!(fits(j, &herd[j]), "сид {seed}: съеден не тот сородич");
                         }
                     }
                 }
             }
             assert!(checked > 1000, "сид {seed}: проверено всего {checked} запросов — мир вымер?");
             if seed == 4 {
-                let biggest = w.vegetarians.iter().fold(0.0_f64, |m, v| m.max(v.pheno.size));
+                let biggest = w.creatures.iter().fold(0.0_f64, |m, v| m.max(v.pheno.size));
                 assert!(
                     biggest > 100.0,
                     "гиганты не выросли ({biggest:.0}) — вторая часть теста бессмысленна"

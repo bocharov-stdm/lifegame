@@ -1,11 +1,11 @@
-//! Геном травоядного.
+//! Геном существа.
 
 use super::{GeneKind, GeneSpec, Genome, Mutation, bases};
 use crate::config::STRATEGY_SWITCH_CHANCE;
+use crate::creature::strategy::VARIANTS as STRATEGIES;
 use crate::rng::Rng;
-use crate::vegetarian::strategy::VARIANTS as STRATEGIES;
 
-/// Гены травоядного — номера строк `GENES`.
+/// Гены существа — номера строк `GENES`.
 #[repr(usize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gene {
@@ -36,7 +36,7 @@ impl Gene {
 
 pub const N: usize = 9;
 
-/// Мутация травоядных: множитель не ниже 0.1, выпавшее ниже перетягивается
+/// Мутация существ: множитель не ниже 0.1, выпавшее ниже перетягивается
 /// заново, как в Python. Сигма — из правил мира.
 const SCALE: Mutation = Mutation::Scale { keep_above: None, reject_below: Some(-0.9) };
 
@@ -121,9 +121,9 @@ pub const GENES: [GeneSpec; N] = [
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct VegetarianGenome([f64; N]);
+pub struct CreatureGenome([f64; N]);
 
-impl VegetarianGenome {
+impl CreatureGenome {
     /// Стартовый геном — базы таблицы.
     pub const BASE: Self = Self(bases(&GENES));
 
@@ -150,7 +150,7 @@ impl VegetarianGenome {
     }
 }
 
-impl core::ops::Index<Gene> for VegetarianGenome {
+impl core::ops::Index<Gene> for CreatureGenome {
     type Output = f64;
 
     #[inline]
@@ -159,7 +159,7 @@ impl core::ops::Index<Gene> for VegetarianGenome {
     }
 }
 
-impl Genome for VegetarianGenome {
+impl Genome for CreatureGenome {
     const GENES: &'static [GeneSpec] = &GENES;
 
     fn values(&self) -> &[f64] {
@@ -184,7 +184,7 @@ mod tests {
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), N, "имена генов не повторяются");
-        assert_eq!(VegetarianGenome::BASE.get("vision"), Some(400.0));
+        assert_eq!(CreatureGenome::BASE.get("vision"), Some(400.0));
     }
 
     /// Мутагенность родителя растягивает разброс всех генов, и свой тоже, и
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn мутагенность_растягивает_разброс_потомков() {
         let spread = |m: f64| {
-            let parent = VegetarianGenome::BASE.with(Gene::Mutability, m);
+            let parent = CreatureGenome::BASE.with(Gene::Mutability, m);
             let mut rng = Rng::new(3);
             let (mut size, mut own, mut switched) = (0.0, 0.0, 0);
             for _ in 0..2000 {
@@ -209,7 +209,7 @@ mod tests {
         assert!(high.2 > low.2 * 5, "смена стратегии: {} против {}", high.2, low.2);
         let base = spread(1.0);
         assert!((base.0 - 0.3 * 0.8).abs() < 0.03, "при 1 разброс — сигма правил: {:.3}", base.0);
-        let capped = VegetarianGenome::BASE.with(Gene::Mutability, 1e300).mutate(0.3, &mut Rng::new(1));
+        let capped = CreatureGenome::BASE.with(Gene::Mutability, 1e300).mutate(0.3, &mut Rng::new(1));
         assert!(capped.to_values().iter().all(|v| v.is_finite()), "потолок: геном конечен");
     }
 }

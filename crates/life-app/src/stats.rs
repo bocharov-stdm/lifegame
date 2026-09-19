@@ -1,15 +1,15 @@
 //! Окно «Статистика»: то, чего не видно на боковой панели. Сытость, где живут
-//! травоядные и где растёт еда, и сводка по области, протянутой по миру. Данные — срезы мира (`Snapshot`), которые поток
+//! существа и где растёт еда, и сводка по области, протянутой по миру. Данные — срезы мира (`Snapshot`), которые поток
 //! симуляции и так снимает для хроники.
 
 use eframe::egui::{self, RichText, Vec2};
 use life_core::flora::Profile;
-use life_core::genome::{GeneSpec, vegetarian};
+use life_core::genome::{GeneSpec, creature};
 use life_sim::observe::GeneStat;
 
 use crate::app::{LifeApp, Tool};
 use crate::charts;
-use crate::frame::VEGETARIAN_COLOR;
+use crate::frame::CREATURE_COLOR;
 use crate::sim::Command;
 use crate::theme::{DANGER, GOOD, MUTED, TEXT, rgb, spaced};
 
@@ -58,29 +58,29 @@ impl LifeApp {
         ui.colored_label(
             MUTED,
             "Сытость — насколько в среднем полон бак. Растения у потолка — еды больше, чем успевают \
-             съесть: травоядных держит не голод.",
+             съесть: существ держит не голод.",
         );
     }
 
     fn where_tab(&mut self, ui: &mut egui::Ui) {
         let snaps = self.history.snapshots.points(self.whole);
-        ui.label(RichText::new("Глубина травоядных во времени").strong());
+        ui.label(RichText::new("Глубина существ во времени").strong());
         let hovered = charts::depth_map(ui, &snaps, 170.0);
         let Some(&at) = hovered.and_then(|i| snaps.get(i)).or(snaps.last()) else { return };
-        let layer = at.vegetarian_depth.map_or("травоядных нет".into(), |d| {
-            format!("80% травоядных на глубине {:.0}‒{:.0}%, медиана {:.0}%", d.p10, d.p90, d.p50)
+        let layer = at.depth.map_or("существ нет".into(), |d| {
+            format!("80% существ на глубине {:.0}‒{:.0}%, медиана {:.0}%", d.p10, d.p90, d.p50)
         });
         ui.colored_label(MUTED, format!("тик {} · {layer}; верх — поверхность", spaced(at.tick)));
         ui.add_space(8.0);
-        ui.label(RichText::new("Растения и травоядные по глубине").strong());
-        ui.colored_label(MUTED, "слева — доля растений, справа — доля травоядных");
-        charts::bands(ui, &at.plants_by_depth, &at.vegetarians_by_depth, ("поверхность", "дно"));
+        ui.label(RichText::new("Растения и существа по глубине").strong());
+        ui.colored_label(MUTED, "слева — доля растений, справа — доля существ");
+        charts::bands(ui, &at.plants_by_depth, &at.creatures_by_depth, ("поверхность", "дно"));
         // по ширине смотреть есть на что, только если еда по ней неравномерна
         let uneven = self.view.frame.as_ref().is_some_and(|f| f.rules.plant_width.kind() != Profile::Uniform);
         if uneven {
             ui.add_space(8.0);
             ui.label(RichText::new("По ширине").strong());
-            charts::bands(ui, &at.plants_by_width, &at.vegetarians_by_width, ("слева", "справа"));
+            charts::bands(ui, &at.plants_by_width, &at.creatures_by_width, ("слева", "справа"));
         }
     }
 
@@ -112,14 +112,14 @@ impl LifeApp {
         });
         ui.horizontal_wrapped(|ui| {
             ui.label(format!("растений {}", spaced(r.plants as u64)));
-            ui.colored_label(rgb(VEGETARIAN_COLOR), format!("травоядных {}", spaced(r.vegetarians as u64)));
+            ui.colored_label(rgb(CREATURE_COLOR), format!("существ {}", spaced(r.creatures as u64)));
             if let Some(f) = r.fullness {
                 ui.colored_label(MUTED, format!("сытость {:.0}%", f * 100.0));
             }
         });
         ui.add_space(6.0);
-        ui.label(RichText::new("Геном травоядных").strong());
-        compare(ui, "область-травоядные", &vegetarian::GENES, r.inside.as_ref(), r.world.as_ref());
+        ui.label(RichText::new("Геном существ").strong());
+        compare(ui, "область-существа", &creature::GENES, r.inside.as_ref(), r.world.as_ref());
         ui.add_space(6.0);
         ui.colored_label(MUTED, "Сводка обновляется на каждом срезе мира и сразу, когда область задана.");
     }
@@ -218,7 +218,7 @@ fn row(spec: &GeneSpec, inside: &GeneStat, world: Option<&GeneStat>) -> (String,
 mod tests {
     use super::*;
     use crate::frame::RegionStats;
-    use life_core::genome::vegetarian::Gene;
+    use life_core::genome::creature::Gene;
     use life_core::{World, WorldConfig};
     use life_sim::observe::Snapshot;
 
@@ -232,34 +232,33 @@ mod tests {
         let (x, y) = (w.space.width / 2.0, w.space.height / 2.0);
         let area = (0.0, 0.0, x, y);
         let r = RegionStats::of(&w, area, None);
-        let inside: Vec<_> = w.vegetarians.iter().filter(|v| v.x <= x && v.y <= y).collect();
-        assert_eq!(r.vegetarians, inside.len());
+        let inside: Vec<_> = w.creatures.iter().filter(|v| v.x <= x && v.y <= y).collect();
+        assert_eq!(r.creatures, inside.len());
         assert_eq!(r.plants, w.plants.iter().filter(|p| p.x <= x && p.y <= y).count());
-        let size = |s: &Option<[GeneStat; vegetarian::N]>| {
+        let size = |s: &Option<[GeneStat; creature::N]>| {
             s.as_ref().and_then(|g| g[Gene::Size as usize].spread().map(|s| s.mean))
         };
         let mean = inside.iter().map(|v| v.genome[Gene::Size]).sum::<f64>() / inside.len().max(1) as f64;
         if !inside.is_empty() {
             assert!((size(&r.inside).unwrap() - mean).abs() < 1e-9);
         }
-        let all =
-            w.vegetarians.iter().map(|v| v.genome[Gene::Size]).sum::<f64>() / w.vegetarians.len() as f64;
+        let all = w.creatures.iter().map(|v| v.genome[Gene::Size]).sum::<f64>() / w.creatures.len() as f64;
         assert!((size(&r.world).unwrap() - all).abs() < 1e-9);
         // весь мир — та же сводка внутри и снаружи
         let whole = RegionStats::of(&w, (0.0, 0.0, w.space.width, w.space.height), None);
         assert_eq!(whole.inside, whole.world);
-        assert_eq!(whole.vegetarians, w.vegetarians.len());
+        assert_eq!(whole.creatures, w.creatures.len());
     }
 
     #[test]
     fn строка_таблицы_сравнивает_среднее_и_доли() {
         use life_sim::observe::Spread;
-        let spec = &vegetarian::GENES[Gene::Size as usize];
+        let spec = &creature::GENES[Gene::Size as usize];
         let at = |mean| GeneStat::Number(Spread { p10: mean, p50: mean, p90: mean, mean });
         assert_eq!(row(spec, &at(60.0), Some(&at(40.0))), ("60".into(), "40".into(), "+50%".into()));
-        let layer = &vegetarian::GENES[Gene::MinY as usize];
+        let layer = &creature::GENES[Gene::MinY as usize];
         assert_eq!(row(layer, &at(30.0), Some(&at(40.0))).2, "-10 п.п.");
-        let strategy = &vegetarian::GENES[Gene::Strategy as usize];
+        let strategy = &creature::GENES[Gene::Strategy as usize];
         let mut a = [0.0; life_sim::observe::MAX_VARIANTS];
         a[1] = 0.75;
         a[0] = 0.25;
@@ -271,10 +270,10 @@ mod tests {
     }
 
     #[test]
-    fn снимок_без_травоядных_не_роняет_окно() {
+    fn снимок_без_существ_не_роняет_окно() {
         // пустой мир — срез без генов; вкладки должны это пережить (проверяется
         // в ui_tests), а сводка по области — пустая
-        let w = World::new(&WorldConfig { n_vegetarians: Some(0), ..Default::default() });
+        let w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
         let r = RegionStats::of(&w, (0.0, 0.0, 100.0, 100.0), None);
         assert!(r.inside.is_none() && r.world.is_none() && r.fullness.is_none());
         let s = Snapshot::of(&w);

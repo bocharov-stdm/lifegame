@@ -4,11 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Tiny Life Simulation — an evolutionary sandbox: plants and herbivores (`Vegetarian`) in a 2D
-world. Herbivores carry a genome (a gene table, see "Genes and strategies") that mutates on
+Tiny Life Simulation — an evolutionary sandbox: plants and creatures (`Creature`) in a 2D
+world. Creatures carry a genome (a gene table, see "Genes and strategies") that mutates on
 division; selection is emergent, not scripted. Predators were a second species until the git
 tag **`predators-final`**: mutations and cannibalism replaced them, and their code was removed
-(engine, report, game, tests). Look there for how they worked.
+(engine, report, game, tests). Look there for how they worked. While predators existed the
+creatures were «травоядные» (`Vegetarian`); old names are still read where files or habits
+keep them: flags `--vegetarians` / `--veg-mix`, settings key `n_vegetarians`, reference keys
+`vegetarians` / `vegetarian_strategies`.
 
 Everything — comments, doc comments, commit messages, README, CLI and test output — is written
 in Russian. Keep it that way when editing or adding code.
@@ -40,7 +43,7 @@ cargo fmt --all                                     # rustfmt.toml: width 110
 cargo run -p life-report --release                  # seed 1, 600 ticks: story + summary
 cargo run -p life-report --release -- --seeds 1 2 3 --ticks 3000
 cargo run -p life-report --release -- --rule plant_energy=80 --scale 10 --threads 4
-cargo run -p life-report --release -- --veg-mix 1 1                 # start with strategies 50/50
+cargo run -p life-report --release -- --mix 1 1                 # start with strategies 50/50
 cargo run -p life-report --release -- --scale 100 --shape 1:1 --rule plant_width_profile=waves
 cargo run -p life-report --release -- --compare reference/fingerprint.json   # balance vs the reference
 
@@ -70,14 +73,14 @@ cargo run -p life-report --release -- --ticks 5000 --json -          # everythin
 cargo run -p life-report --release -- --ticks 5000 --json run.json   # JSON to a file + text
 ```
 
-The story (always on for a single seed) prints: final state; herbivore births/deaths **by
+The story (always on for a single seed) prints: final state; creature births/deaths **by
 cause** (eaten by kin vs starved) — the counters in `World::counters`; a table by
-intervals with flows, gene medians, the depth layer holding 80% of herbivores and their
-fullness; genome start → end as median (10‒90%); herbivores vs plants by depth band (and by
+intervals with flows, gene medians, the depth layer holding 80% of creatures and their
+fullness; genome start → end as median (10‒90%); creatures vs plants by depth band (and by
 width band when the width food profile isn't uniform); a
 chronicle of events (crashes and rises with their causes, extinction, plants hitting the cap,
-gene shifts, herbivores squeezing into a thin layer); ASCII maps (top = surface, `O`/`o`
-herbivores, `:`/`.` plants). The JSON has the same plus every snapshot
+gene shifts, creatures squeezing into a thin layer); ASCII maps (top = surface, `O`/`o`
+creatures, `:`/`.` plants). The JSON has the same plus every snapshot
 (`life_sim::observe::Snapshot`: per-gene `GeneStat` — a spread for numeric genes, variant
 shares for choice genes —, depth and width histograms, cumulative counters). Format
 `life-report/3` (predator fields gone): top-level `genes` describes the gene table (key,
@@ -92,8 +95,8 @@ and the event chronicle for its in-game event feed.
 
 `reference/fingerprint.json` is the balance fingerprint (8 seeds x 20 000 ticks, series every
 60 ticks). It started as the last Python version's (`python/fingerprint.py` at `python-final`)
-and is re-taken from Rust after each deliberate balance change. It is a world of herbivores
-and plants (0 of 8 seeds extinct, ~1800‒2700 herbivores); metrics: herbivores and plants mean,
+and is re-taken from Rust after each deliberate balance change. It is a world of creatures
+and plants (0 of 8 seeds extinct, ~1800‒2700 creatures); metrics: creatures and plants mean,
 size max and final. `--compare` reruns the same seeds in Rust and checks each metric's mean
 against the reference's per-seed range; any mismatch exits with code 1 (CI relies on it). It
 refuses (code 2) when the world differs from the one the reference was taken on (world size —
@@ -133,9 +136,9 @@ even on threads or I/O), `life-sim` adds only the bounded runner and the observe
   "unbalanced" ones: breaking the balance is what the lab is for.
 - `world.rs` — `WorldConfig`, `World` (populations, `step()` — the phase order only,
   `stats()`, `counters`, `spawn_*` for tests and the app).
-- `genome/` — the gene table (`vegetarian::GENES`), `VegetarianGenome` (`Copy`, `[f64; N]`,
+- `genome/` — the gene table (`creature::GENES`), `CreatureGenome` (`Copy`, `[f64; N]`,
   indexed by `enum Gene`), the table-driven mutation.
-- `vegetarian/` — the entity: `mod.rs` (the creature, its `act` and the world hooks:
+- `creature/` — the entity: `mod.rs` (the creature, its `act` and the world hooks:
   `feed`/`devour`, `maybe_divide`, `apply_rules`), `phenotype.rs`, `strategy.rs` + one file per
   strategy (`standard.rs` — the original behaviour; `lurker.rs` — see "Genes and strategies").
   `plant.rs` — plants; `flora.rs` — where they grow (`Flora`, profiles).
@@ -173,58 +176,58 @@ digests). `--ignored` prints digests of 50 seeds × 2 worlds for a wider before/
 
 ### Tick ordering and the death flag
 
-`World::step()` runs: spawn plants → update herbivores (+ cannibalism) → `tick += 1`.
+`World::step()` runs: spawn plants → update creatures (+ cannibalism) → `tick += 1`.
 
 - Cannibalism (`rules.cannibalism`, off in the engine, on in the game) is a pass at the end of
-  the herbivore phase, after every herbivore has moved and before offspring are added (children
-  neither eat nor get eaten on their birth tick): by id order each live herbivore eats the first
+  the creature phase, after every creature has moved and before offspring are added (children
+  neither eat nor get eaten on their birth tick): by id order each live creature eats the first
   live one no bigger than `size / cannibal_ratio` whose body touches its eating radius (`size`,
   as for plants) and takes its energy. Physics, not a sense — nobody seeks kin — and no random
   numbers: with the rule off the world is bit for bit the old one. Counted in
-  `Counters::vegetarians_cannibalized`.
+  `Counters::cannibalized`.
 
 - Right after each creature's own step `alive` is checked: starving there sets `alive = false`,
   and a creature that died on its move must not eat or divide. Contact searches skip
   `alive == false` candidates. Dead creatures are removed once per phase (`retain`).
-- Eaten plants are marked and swept once per tick at the end of the herbivore phase.
+- Eaten plants are marked and swept once per tick at the end of the creature phase.
 - Offspring go into a separate buffer and get ids after the loop: children never act on the
   tick they were born.
-- `World::counters` (plants grown/eaten, herbivores born/starved/cannibalized) must balance with
+- `World::counters` (plants grown/eaten, creatures born/starved/cannibalized) must balance with
   the populations; a test checks it. Update the counters when adding any new way to be born or
   to die.
 
 ### Neighbour search
 
-- **Creatures do not see the grid**: `Vegetarian::step` takes *senses* (`senses.rs`:
-  `VegetarianSenses` — nearest plant). `World` builds a food grid per tick (and a herd grid for
-  the cannibalism pass) and answers through `GridVegetarianSenses`, built per creature; tests
-  pass `vegetarian_senses(|x, y, r2| ..)` or `Blind`. The queries and the grid senses are
+- **Creatures do not see the grid**: `Creature::step` takes *senses* (`senses.rs`:
+  `Senses` — nearest plant). `World` builds a food grid per tick (and a herd grid for
+  the cannibalism pass) and answers through `GridSenses`, built per creature; tests
+  pass `senses_from(|x, y, r2| ..)` or `Blind`. The queries and the grid senses are
   `#[inline(always)]`: without it the compiler stopped inlining the plant search into the
-  herbivore's step and a ×100 world ran 8% slower than with closures.
+  creature's step and a ×100 world ran 8% slower than with closures.
 - The cell is fixed (`GRID_CELL`); a query scans as many cells as its own radius covers, so one
   far-sighted creature does not inflate everyone's cell. `for_each_near` returns a *superset*;
   callers check distance.
 - The grid stores copies of coordinates. That is valid only because the queried entities do not
-  move within the phase (plants never move; herbivores stand still in the cannibalism pass).
+  move within the phase (plants never move; creatures stand still in the cannibalism pass).
   `alive` is always read from the entity, never from the grid.
 - Cannibalism touches by the prey's body edge (`size + v.half`), so its query radius adds half
-  of the largest herbivore.
-- A herbivore eats with a fresh query around its position *after* the step.
+  of the largest creature.
+- A creature eats with a fresh query around its position *after* the step.
 - The queries themselves are free functions at the bottom of `senses.rs`
   (`smaller_prey_in_contact`, `nearest_plant`, `eat_plants`), so that
   `запросы_к_сеткам_совпадают_с_перебором_в_живом_мире` (unit test in `senses.rs`) can check
   every one of them against brute force on real positions of a live world, including one with
-  giant herbivores. A wrong radius does not crash anything — it silently changes the balance.
+  giant creatures. A wrong radius does not crash anything — it silently changes the balance.
   Keep that test and `сетка_совпадает_с_перебором` passing when touching `grid.rs`, the
   queries or how creatures move; route any new neighbour query through such a function.
 - No senses on a creature's *own* species until the parallel tick (cannibalism is not a sense:
-  it runs as a separate pass when herbivores stand still, via `smaller_prey_in_contact`, which
-  the brute-force test checks too): herbivores move during their
-  own phase, so the grid's copied coordinates of other herbivores would be stale.
+  it runs as a separate pass when creatures stand still, via `smaller_prey_in_contact`, which
+  the brute-force test checks too): creatures move during their
+  own phase, so the grid's copied coordinates of other creatures would be stale.
 
 ### The soft layer
 
-The layer genes (`min_y`, `max_y`) are a *preference*, not a wall. A herbivore goes for any
+The layer genes (`min_y`, `max_y`) are a *preference*, not a wall. A creature goes for any
 visible plant, above or below its layer; with no food in sight it wanders inside its home band
 (`pheno.body_lo..body_hi` — the layer minus the body margin) and, when outside it (chased food,
 fled, was born there), walks straight back (`standard::pick_random_target`: outside the band
@@ -232,7 +235,7 @@ the wander target is the nearest band point; every wander target lies in the ban
 
 Physics clamps only to the world: `pheno.x_lo..x_hi`, `pheno.y_lo..y_hi` (body margin capped at
 half the world, so a body bigger than the world sits on the middle line instead of flipping).
-`Vegetarian::new` puts a random position into the home band and clamps a given one (a child next
+`Creature::new` puts a random position into the home band and clamps a given one (a child next
 to its parent, a spawn) to the world only — its mutated layer may differ, and it walks home
 instead of teleporting. A layer thinner than the body collapses the band to a line inside the
 world. `act` never steps past a target closer than the step (it lands on it): otherwise a
@@ -257,9 +260,9 @@ below). Scale is
 run out of memory before they look any different (per-machine memory guards are phase 6).
 
 Measured with predators (12 seeds × 20 000 ticks at ×10, before `predators-final`): no shape
-went extinct, but tall worlds were harsher. Final herbivores, median: strip 4930, 3:2 1541, 1:1
+went extinct, but tall worlds were harsher. Final creatures, median: strip 4930, 3:2 1541, 1:1
 1244, 2:1 1639; plants often sat at the cap; in 1:1 and 3:2 one seed each ended with 4
-herbivores. At ×100 3:2 holds ~15k herbivores vs ~60k in the strip. Why (story of 1:1 seed 3):
+creatures. At ×100 3:2 holds ~15k creatures vs ~60k in the strip. Why (story of 1:1 seed 3):
 the start layer is 5‒100% of depth, so in a 15 000-high world most newborns start far from
 the rich top and starve (starved 135k vs eaten 80k), the repro threshold collapses to ~7 and
 populations swing. Not tuned yet.
@@ -300,22 +303,22 @@ shallower exponents the stats run away to infinity. Read the comment block in `c
 before changing any of these.
 
 Extinction (history, with predators): before the soft layer and the strategies, 4 of 12 seeds
-died out within 20k ticks (herbivores squeezed into the top few % of depth, repro threshold
+died out within 20k ticks (creatures squeezed into the top few % of depth, repro threshold
 collapsed, they starved); with them, 0 of 12. The mutability gene brought it back to 6 of 12
-with predators: selection pulls herbivore mutability from 1 to ~0.2 (a less mutated child is
+with predators: selection pulls creature mutability from 1 to ~0.2 (a less mutated child is
 fitter on average), variation dries up and they lost to predators. Without predators — 0 of
-12, ~2000 herbivores, mutability settles near 0.4. The user chose deliberately: mutability has
+12, ~2000 creatures, mutability settles near 0.4. The user chose deliberately: mutability has
 no energy cost.
 
 Cannibalism, 8 seeds × 20 000 ticks: 0 of 8 extinct, but it is a size race — median size 24 →
-~80 (up to 230), 50‒180 herbivores instead of ~2000 (seed 1: 17% of deaths are «eaten by
+~80 (up to 230), 50‒180 creatures instead of ~2000 (seed 1: 17% of deaths are «eaten by
 kin»). Not tuned. Use the story
 (`--ticks 20000 --maps 3`, `--max-work 1e15` for full-length runs) to work on balance.
 
 Behaviour genes without a cost run away. Tried and removed: «испуг» (flee distance, % of
 vision) and «голод» (the former predators' hunger threshold) as free numeric genes. Hunger
 crept up (greed pays for each predator), predators ate the prey out; fear shot to ~100% of
-vision during predator booms and herbivores starved fleeing — 10 of 12 seeds extinct. Clamped to 10‒60% /
+vision during predator booms and creatures starved fleeing — 10 of 12 seeds extinct. Clamped to 10‒60% /
 30‒75% each alone cost ~2 of 12, both together 9 of 12. Such a gene needs a real trade-off
 first (a cost in upkeep or a behavioural catch).
 
@@ -323,13 +326,13 @@ first (a cost in upkeep or a behavioural catch).
 
 Tick cost grows with population, so a tick limit alone does not bound wall time. Every headless
 run is capped by four independent limits (`life_sim::Limits`): ticks, population ceiling, a
-compute budget (`total_work` = herbivores x plants, summed over ticks) and a wall-clock deadline;
+compute budget (`total_work` = creatures x plants, summed over ticks) and a wall-clock deadline;
 the ceiling and budget scale with area. Tests contain no `while` loops at all; every run is
 bounded by a tick count. Preserve this property in new tests.
 
 ### Performance-sensitive code
 
-`Vegetarian::step` is the hottest path. Genome-derived values (`upkeep`, `slow_speed`,
+`Creature::step` is the hottest path. Genome-derived values (`upkeep`, `slow_speed`,
 `slow_upkeep`, `vision2`, `size2`, `half`, layer bounds, the strategy) are precomputed once in
 `Phenotype::of` because the genome never changes during a lifetime. Distances are
 compared squared. The grid reuses its buffers between ticks. Strategy dispatch is a `match` on
@@ -340,13 +343,13 @@ previous version built in a `git worktree`, running both alternately (single run
 `life-report --scale 100 --ticks 1000 --seeds 1 2 --threads 1` (the summary's last column).
 
 `тик_укладывается_в_бюджет_на_фиксированной_нагрузке` guards against regressions at a fixed
-4000 herbivores / 4000 plants load in a x10 world: ~2 ms/tick with the grid, ~80 ms if queries degrade to a
+4000 creatures / 4000 plants load in a x10 world: ~2 ms/tick with the grid, ~80 ms if queries degrade to a
 full scan, threshold 20 ms. (At the old 400-creature load Rust is fast enough even by brute
 force, so the guard would not catch anything there.)
 
 ## Genes and strategies
 
-The gene table (`genome/vegetarian.rs`): `GeneSpec { key,
+The gene table (`genome/creature.rs`): `GeneSpec { key,
 label, about, kind, base, mutation }`, `kind` = `Absolute` | `Percent` (clamped 0‒100 on
 mutation) | `Choice(&[Variant])` (the value is a variant index). Everything that walks genes —
 mutation, `Stats`, observer, story, JSON, charts, creature card, help — iterates the table, never
@@ -368,7 +371,7 @@ The strategy is a gene: a row of each table, `Choice(&strategy::VARIANTS)`,
 `Mutation::Switch { chance: STRATEGY_SWITCH_CHANCE }`. **A choice gene with one variant is
 inert**: `Switch` draws nothing, so appending it did not shift a single random number; the UI,
 the story and the reference check hide such a gene. A start mix
-(`WorldConfig::vegetarian_strategies`, shares by variant; `--veg-mix` in the report,
+(`WorldConfig::strategies`, shares by variant; `--mix` in the report,
 «Затаившихся на старте» in «Новый мир») is dealt
 *without* drawing (`genome::variant_for`), so the same seed gives the same world.
 
@@ -397,7 +400,7 @@ Adding a strategy:
 2. Its own file with `decide` (and the hooks), using only `Me`, `Mind`, `rng` and senses; new
    state goes into `Mind` (keep it `Copy`). A new sense = a trait method + a query function in
    `senses.rs` + its brute-force check.
-3. Tests: `decide` scenarios with `vegetarian_senses`; a mixed population is
+3. Tests: `decide` scenarios with `senses_from`; a mixed population is
    deterministic (same seed, same digest); `StrategyShift` fires in the chronicle.
 4. Re-record the golden test and `--save-reference`. With two variants the strategy row, the
    share chart and the card line appear by themselves.
@@ -434,7 +437,7 @@ Adding a strategy:
 - `app.rs` — `LifeApp`: screens and transitions, owns the settings and the `SimHandle`; `theme.rs` —
   palette (port of `app/theme.py`).
 - `stats.rs` — the «Статистика» window (key I): «Энергия» (fullness, plants vs cap),
-  «Где живут» (herbivore depth over time as a heat map + p10/p50/p90, plants vs herbivores by
+  «Где живут» (creature depth over time as a heat map + p10/p50/p90, plants vs creatures by
   depth/width band) and «Область»: `Tool::Area` drags a rectangle in `view.rs` (drag draws instead of panning),
   `Command::SetRegion` makes the thread compute `frame::RegionStats` (who is inside, their gene
   stats next to the whole world's) at once — works while paused — and on every snapshot.
@@ -455,7 +458,7 @@ Adding a strategy:
 - Chronicle texts come from `life_sim::observe::EventTracker` — the same incremental tracker
   the report's `events()` wraps, so game and report print identical events.
 - Live rules: `World::set_rules` recomputes the whole phenotype (`apply_rules`); a test checks it
-  equals a newborn's. `World::pick` (returns the id) / `vegetarian(id)` serve selection and
+  equals a newborn's. `World::pick` (returns the id) / `creature(id)` serve selection and
   follow (the creature vec stays sorted by id — tested).
 - `ui_tests.rs` — egui_kittest: every screen at 960×600 and 1600×900, buttons/sliders inside
   the window and not overlapping (scrolled-away side-panel content excluded). They share one
@@ -481,7 +484,7 @@ The Python game at `python-final` remains the reference for behaviour details
   `origin` keeps the first average genome for «change from start».
 - `app/camera.py` — zoom to cursor, pan, clamp, follow: following moves the camera by the
   target's own displacement first and eases only the remainder.
-- `app/render.py` — draw order plants → herbivores (→ predators, then); cull by *body*, not centre
+- `app/render.py` — draw order plants → creatures (→ predators, then); cull by *body*, not centre
   (size is a gene); the circle is the body (`size`, `DIAM` are diameters).
 - Layout rules: everything scales from a 960x600 logical minimum; the successor of `TestLayout`
   must fail when a widget leaves the window, widgets overlap or a label does not fit.

@@ -34,7 +34,7 @@ pub enum SideTab {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
     Select,
-    SpawnVegetarian,
+    Spawn,
     /// Протянуть область и посмотреть геном тех, кто внутри.
     Area,
 }

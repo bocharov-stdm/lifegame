@@ -4,14 +4,14 @@
 
 use eframe::egui::{self, Align2, Key, RichText, Vec2};
 use life_core::flora::Profile;
-use life_core::genome::vegetarian::N;
-use life_core::genome::{GeneSpec, vegetarian};
+use life_core::genome::creature::N;
+use life_core::genome::{GeneSpec, creature};
 use life_core::{Rules, WorldConfig};
 use life_sim::observe::EventKind;
 
 use crate::app::{LifeApp, SideTab, Tool};
 use crate::charts;
-use crate::frame::{Ending, PLANT_COLOR, Selected, VEGETARIAN_COLOR};
+use crate::frame::{CREATURE_COLOR, Ending, PLANT_COLOR, Selected};
 use crate::settings::{self, FIELDS, Tab};
 use crate::sim::{Command, SPEEDS};
 use crate::theme::{self, ACCENT, DANGER, GOOD, MUTED, TEXT, rgb, spaced};
@@ -38,10 +38,10 @@ pub fn report_command(cfg: &WorldConfig, ticks: u64) -> String {
     if cfg.shape != base.shape {
         cmd += &format!(" --shape {}", cfg.shape.key());
     }
-    cmd += &format!(" --vegetarians {}", cfg.vegetarians_at_start());
-    if !cfg.vegetarian_strategies.is_empty() {
-        let shares: Vec<String> = cfg.vegetarian_strategies.iter().map(|s| s.to_string()).collect();
-        cmd += &format!(" --veg-mix {}", shares.join(" "));
+    cmd += &format!(" --creatures {}", cfg.creatures_at_start());
+    if !cfg.strategies.is_empty() {
+        let shares: Vec<String> = cfg.strategies.iter().map(|s| s.to_string()).collect();
+        cmd += &format!(" --mix {}", shares.join(" "));
     }
     let default = Rules::default();
     for key in life_core::rules::RULE_KEYS {
@@ -79,7 +79,7 @@ impl LifeApp {
                         self.sim.send(Command::Pick { x, y, radius });
                         self.side_tab = SideTab::Creature;
                     }
-                    Tool::SpawnVegetarian => self.sim.send(Command::Spawn { x, y }),
+                    Tool::Spawn => self.sim.send(Command::Spawn { x, y }),
                     Tool::Area => {}
                 },
                 Some(Click::Area(area)) => self.set_region(area),
@@ -87,7 +87,7 @@ impl LifeApp {
             }
             let hint = match self.tool {
                 Tool::Select => None,
-                Tool::SpawnVegetarian => Some("клик по миру — подсадить; Esc — обычный выбор"),
+                Tool::Spawn => Some("клик по миру — подсадить; Esc — обычный выбор"),
                 Tool::Area => Some(
                     "протяните мышью прямоугольник — геном тех, кто внутри; двигать мир — WASD и \
                      миникарта; Esc — обычный выбор",
@@ -191,7 +191,7 @@ impl LifeApp {
             ui.label("Создаём мир…");
             return;
         };
-        let (st, tick, counts) = (f.status, f.tick, [f.plants, f.vegetarians]);
+        let (st, tick, counts) = (f.status, f.tick, [f.plants, f.creatures]);
         let (tick_ms, build_ms) = (f.tick_ms, f.build_ms);
         ui.horizontal(|ui| {
             let (icon, hint) = if st.paused {
@@ -224,7 +224,7 @@ impl LifeApp {
             ui.separator();
             ui.label(format!("тик {}", spaced(tick)));
             ui.colored_label(rgb(PLANT_COLOR), format!("растения {}", spaced(counts[0] as u64)));
-            ui.colored_label(rgb(VEGETARIAN_COLOR), format!("травоядные {}", spaced(counts[1] as u64)));
+            ui.colored_label(rgb(CREATURE_COLOR), format!("существа {}", spaced(counts[1] as u64)));
             ui.separator();
             if st.lagging {
                 let target = SPEEDS[st.speed_index].unwrap_or(0.0);
@@ -256,8 +256,8 @@ impl LifeApp {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.tool, Tool::Select, "Выбор")
                 .on_hover_text("Клик по существу — выбрать");
-            ui.selectable_value(&mut self.tool, Tool::SpawnVegetarian, "+ травоядное")
-                .on_hover_text("Подсадить базовое травоядное кликом по миру");
+            ui.selectable_value(&mut self.tool, Tool::Spawn, "+ существо")
+                .on_hover_text("Подсадить базовое существо кликом по миру");
             ui.selectable_value(&mut self.tool, Tool::Area, "Область")
                 .on_hover_text("Протянуть прямоугольник по миру и увидеть геном тех, кто внутри");
             ui.separator();
@@ -308,15 +308,15 @@ impl LifeApp {
             ui.label(RichText::new("Численность").strong());
             charts::populations(ui, &self.history, self.whole, 150.0);
             ui.add_space(8.0);
-            ui.label(RichText::new("Геном травоядных").strong());
+            ui.label(RichText::new("Геном существ").strong());
             let snaps = self.history.snapshots.points(self.whole);
             let points: Vec<charts::GenePoint> =
                 snaps.iter().filter_map(|s| Some((s.tick, &s.genes.as_ref()?[..]))).collect();
             if points.is_empty() {
-                ui.colored_label(MUTED, "травоядных нет — нет и генома");
+                ui.colored_label(MUTED, "существ нет — нет и генома");
             } else {
-                let origin = self.history.vegetarian_origin.as_ref().map(|o| &o[..]);
-                charts::genome(ui, &vegetarian::GENES, &points, origin, rgb(VEGETARIAN_COLOR), 30.0);
+                let origin = self.history.gene_origin.as_ref().map(|o| &o[..]);
+                charts::genome(ui, &creature::GENES, &points, origin, rgb(CREATURE_COLOR), 30.0);
             }
             ui.add_space(8.0);
             self.research(ui);
@@ -356,9 +356,9 @@ impl LifeApp {
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             for e in self.log.iter().rev() {
                 let color = match e.kind {
-                    Some(EventKind::VegetariansCrash | EventKind::VegetariansExtinct) => DANGER,
-                    Some(EventKind::VegetariansRise) => GOOD,
-                    Some(EventKind::GeneShift | EventKind::StrategyShift) => rgb(VEGETARIAN_COLOR),
+                    Some(EventKind::CreaturesCrash | EventKind::CreaturesExtinct) => DANGER,
+                    Some(EventKind::CreaturesRise) => GOOD,
+                    Some(EventKind::GeneShift | EventKind::StrategyShift) => rgb(CREATURE_COLOR),
                     Some(_) => TEXT,
                     None => ACCENT,
                 };
@@ -478,7 +478,7 @@ impl LifeApp {
     fn ending_window(&mut self, ctx: &egui::Context) {
         let Some(ended) = self.view.frame.as_ref().and_then(|f| f.status.ended) else { return };
         let (title, text) = match ended {
-            Ending::Extinct => ("Все вымерли", "В мире не осталось ни одного травоядного."),
+            Ending::Extinct => ("Все вымерли", "В мире не осталось ни одного существа."),
             Ending::Explosion => (
                 "Взрыв численности",
                 "Существ стало так много, что мир почти наверняка пошёл вразнос. \
@@ -510,10 +510,10 @@ impl LifeApp {
 
 /// Карточка выбранного существа: энергия, гены.
 fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; N]>) {
-    let color = rgb(VEGETARIAN_COLOR);
+    let color = rgb(CREATURE_COLOR);
     ui.horizontal(|ui| {
         ui.label(RichText::new("●").color(color).size(18.0));
-        ui.label(RichText::new("Травоядное").strong().size(17.0));
+        ui.label(RichText::new("Существо").strong().size(17.0));
         ui.colored_label(MUTED, format!("№ {}", s.id));
     });
     let frac = (s.energy / s.max_energy).clamp(0.0, 1.0);
@@ -526,7 +526,7 @@ fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; N]>) {
     ui.add_space(6.0);
 
     egui::Grid::new("карточка").num_columns(3).spacing([14.0, 4.0]).show(ui, |ui| {
-        gene_rows(ui, &vegetarian::GENES, &s.genome, avg.as_ref());
+        gene_rows(ui, &creature::GENES, &s.genome, avg.as_ref());
     });
 }
 
@@ -575,14 +575,14 @@ mod tests {
         assert!(cmd.contains("--ticks 5000"));
         assert!(cmd.contains("--scale 10"));
         assert!(!cmd.contains("--shape"), "форма по умолчанию не пишется");
-        assert!(cmd.contains("--vegetarians 200"));
+        assert!(cmd.contains("--creatures 200"));
         assert!(cmd.contains("--rule plant_energy=80"));
         assert!(!cmd.contains("mutation_sigma"), "правила по умолчанию не пишутся");
         assert!(!cmd.contains("-mix"));
 
         let cfg = WorldConfig {
             shape: life_core::Shape::Square,
-            vegetarian_strategies: vec![70.0, 30.0],
+            strategies: vec![70.0, 30.0],
             rules: Rules::default().with("plant_width_profile", Profile::Waves.index()).unwrap(),
             ..Default::default()
         };
@@ -590,7 +590,7 @@ mod tests {
         assert!(cmd.contains("--shape 1:1"));
         assert!(cmd.contains("--rule plant_width_profile=waves"));
         assert!(!cmd.contains("plant_depth"), "профиль по глубине не трогали");
-        assert!(cmd.contains("--veg-mix 70 30"));
+        assert!(cmd.contains("--mix 70 30"));
         assert!(!cmd.contains("--pred-mix"));
     }
 }

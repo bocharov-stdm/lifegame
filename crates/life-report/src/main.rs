@@ -5,7 +5,7 @@
 //!     cargo run -p life-report --release -- --rule plant_energy=80 --rule size_power=1.5
 //!     cargo run -p life-report --release -- --scale 100 --ticks 2000   # мир в 100 раз больше
 //!     cargo run -p life-report --release -- --scale 100 --shape 1:1    # и квадратный
-//!     cargo run -p life-report --release -- --veg-mix 1 1                # стратегии поровну
+//!     cargo run -p life-report --release -- --mix 1 1                # стратегии поровну
 //!     cargo run -p life-report --release -- --compare reference/fingerprint.json
 //!     cargo run -p life-report --release -- --save-reference reference/fingerprint.json
 //!
@@ -27,16 +27,16 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
+use life_core::creature::strategy as creature_strategy;
 use life_core::genome::Variant;
-use life_core::genome::vegetarian::Gene;
+use life_core::genome::creature::Gene;
 use life_core::space::{MAX_SCALE, MIN_SCALE};
-use life_core::vegetarian::strategy as vegetarian_strategy;
 use life_core::{Rules, Shape, WorldConfig};
 use life_sim::observe::{self, Event, ascii_map};
 use life_sim::{Limits, SimResult, simulate};
 use rayon::prelude::*;
 
-/// Бюджет «травоядные x растения» на тик — как WORK_PER_TICK в Python.
+/// Бюджет «существа x растения» на тик — как WORK_PER_TICK в Python.
 const WORK_PER_TICK: f64 = 60_000.0;
 
 #[derive(Parser, Debug)]
@@ -62,12 +62,14 @@ struct Args {
     /// При масштабе 1 полоса и 3:2 — один и тот же мир 6000x4000.
     #[arg(long, default_value = "3:2", value_parser = Shape::parse)]
     shape: Shape,
-    #[arg(long)]
-    vegetarians: Option<usize>,
-    /// Стартовая смесь стратегий травоядных: доли вариантов по порядку
-    /// (стандартный, затаившийся). Например, `--veg-mix 1 1` — поровну.
-    #[arg(long, num_args = 1.., value_name = "ДОЛИ")]
-    veg_mix: Vec<f64>,
+    /// Существ на старте (по умолчанию — по площади мира). Старое имя
+    /// `--vegetarians` тоже понимается.
+    #[arg(long, alias = "vegetarians")]
+    creatures: Option<usize>,
+    /// Стартовая смесь стратегий: доли вариантов по порядку (стандартный,
+    /// затаившийся). Например, `--mix 1 1` — поровну. Старое имя — `--veg-mix`.
+    #[arg(long, alias = "veg-mix", num_args = 1.., value_name = "ДОЛИ")]
+    mix: Vec<f64>,
     /// Правило мира: имя=число (можно несколько раз). Профиль еды — и именем:
     /// `--rule plant_width_profile=waves`.
     #[arg(long = "rule", value_name = "ИМЯ=ЧИСЛО")]
@@ -151,7 +153,7 @@ fn main() {
         std::process::exit(2);
     };
     let rules = parse_rules(&args.rules).unwrap_or_else(|e| fail(e));
-    check_mix("--veg-mix", &args.veg_mix, &vegetarian_strategy::VARIANTS).unwrap_or_else(|e| fail(e));
+    check_mix("--mix", &args.mix, &creature_strategy::VARIANTS).unwrap_or_else(|e| fail(e));
     // JSON в stdout — и больше ничего: текст сломал бы разбор
     let quiet = args.json.as_deref().is_some_and(|p| p.as_os_str() == "-");
     if quiet && (args.compare.is_some() || args.save_reference.is_some()) {
@@ -173,8 +175,8 @@ fn main() {
         scale: args.scale,
         shape: args.shape,
         rules: rules.clone(),
-        n_vegetarians: args.vegetarians,
-        vegetarian_strategies: args.veg_mix.clone(),
+        n_creatures: args.creatures,
+        strategies: args.mix.clone(),
     };
 
     let reference = args.compare.as_ref().map(|path| {
@@ -284,14 +286,14 @@ fn main() {
 fn print_summary(results: &[(u64, SimResult)]) {
     println!(
         "\n{:>6} {:<18} {:>7} {:>6} {:>6} {:>7} {:>8} {:>8} {:>8}",
-        "сид", "итог", "тиков", "трав", "растен", "съедено", "разм.макс", "разм.фин", "мс/тик"
+        "сид", "итог", "тиков", "сущ", "растен", "съедено", "разм.макс", "разм.фин", "мс/тик"
     );
     for (seed, r) in results {
         let last = r.last();
         // доля съеденных сородичами среди всех умерших
         let c = r.world.counters;
-        let deaths = c.vegetarians_starved + c.vegetarians_cannibalized;
-        let eaten = c.vegetarians_cannibalized as f64 / deaths.max(1) as f64;
+        let deaths = c.starved + c.cannibalized;
+        let eaten = c.cannibalized as f64 / deaths.max(1) as f64;
         let sizes: Vec<f64> =
             r.history.iter().filter_map(|s| s.avg_genom.map(|g| g[Gene::Size as usize])).collect();
         let smax = sizes.iter().copied().fold(f64::NAN, f64::max);
@@ -300,7 +302,7 @@ fn print_summary(results: &[(u64, SimResult)]) {
             "{seed:>6} {:<18} {:>7} {:>6} {:>6} {:>6.0}% {:>8.1} {:>8.1} {:>8.3}",
             r.stop.to_string(),
             r.ticks_done,
-            last.vegetarians,
+            last.creatures,
             last.plants,
             eaten * 100.0,
             smax,

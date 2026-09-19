@@ -31,7 +31,7 @@ use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::{Rules, Shape, WorldConfig};
 
 #[derive(Parser)]
-#[command(about = "Tiny Life — эволюция растений и травоядных")]
+#[command(about = "Tiny Life — эволюция растений и существ")]
 struct Args {
     /// Сид мира; без него — случайный.
     #[arg(long)]
@@ -42,9 +42,10 @@ struct Args {
     /// Форма мира: 1:1, 3:2 (по умолчанию), 2:1 или strip — полоса высотой 4000.
     #[arg(long, value_parser = Shape::parse)]
     shape: Option<Shape>,
-    /// Травоядных на старте (по умолчанию — по площади мира).
-    #[arg(long)]
-    vegetarians: Option<usize>,
+    /// Существ на старте (по умолчанию — по площади мира); старое имя —
+    /// `--vegetarians`.
+    #[arg(long, alias = "vegetarians")]
+    creatures: Option<usize>,
     /// Правило мира: имя=число (можно несколько раз), как в life-report. Профиль
     /// еды — и именем: `--rule plant_width_profile=waves`.
     #[arg(long = "rule")]
@@ -85,13 +86,13 @@ fn attach_parent_console() {
     }
 }
 
-/// Значок окна: три кружка — растение, крупное и мелкое травоядное.
+/// Значок окна: три кружка — растение, крупное и мелкое существо.
 fn icon() -> eframe::egui::IconData {
     const N: usize = 64;
     let circles = [
         (18.0, 44.0, 10.0, frame::PLANT_COLOR),
-        (40.0, 22.0, 16.0, frame::VEGETARIAN_COLOR),
-        (48.0, 48.0, 11.0, frame::lerp(frame::WORLD_BOTTOM, frame::VEGETARIAN_COLOR, 0.65)),
+        (40.0, 22.0, 16.0, frame::CREATURE_COLOR),
+        (48.0, 48.0, 11.0, frame::lerp(frame::WORLD_BOTTOM, frame::CREATURE_COLOR, 0.65)),
     ];
     let mut rgba = vec![0u8; N * N * 4];
     for y in 0..N {
@@ -125,14 +126,14 @@ fn main() -> eframe::Result {
     let direct = args.seed.is_some()
         || args.scale != 1.0
         || args.shape.is_some()
-        || args.vegetarians.is_some()
+        || args.creatures.is_some()
         || !args.rules.is_empty();
     let start = direct.then(|| WorldConfig {
         seed: args.seed.unwrap_or_else(app::random_seed),
         scale: args.scale,
         shape: args.shape.unwrap_or(WorldConfig::default().shape),
         rules,
-        n_vegetarians: args.vegetarians,
+        n_creatures: args.creatures,
         ..Default::default()
     });
 

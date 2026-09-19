@@ -10,7 +10,7 @@
 
 use std::collections::VecDeque;
 
-use life_core::genome::vegetarian;
+use life_core::genome::creature;
 
 use life_sim::observe::{GeneStat, Snapshot};
 
@@ -24,9 +24,9 @@ pub const FULL: usize = 600;
 pub struct Sample {
     pub tick: u64,
     pub plants: f64,
-    pub vegetarians: f64,
-    /// Средний геном травоядных; None — травоядных нет.
-    pub genom: Option<[f64; vegetarian::N]>,
+    pub creatures: f64,
+    /// Средний геном существ; None — существ нет.
+    pub genom: Option<[f64; creature::N]>,
 }
 
 /// Ряд с окном недавнего и прореженной всей партией.
@@ -92,9 +92,9 @@ pub struct History {
     pub snapshots: Series<Snapshot>,
     /// Первый средний геном партии — база «изменения от начала»: в окне
     /// недавнего первая точка уже не начало партии.
-    pub origin: Option<[f64; vegetarian::N]>,
+    pub origin: Option<[f64; creature::N]>,
     /// Первая сводка генов каждого вида — тоже база «изменения от начала».
-    pub vegetarian_origin: Option<[GeneStat; vegetarian::N]>,
+    pub gene_origin: Option<[GeneStat; creature::N]>,
 }
 
 impl History {
@@ -106,7 +106,7 @@ impl History {
     }
 
     pub fn add_snapshot(&mut self, s: Snapshot) {
-        self.vegetarian_origin = self.vegetarian_origin.or(s.genes);
+        self.gene_origin = self.gene_origin.or(s.genes);
         self.snapshots.push(s);
     }
 }
@@ -146,12 +146,12 @@ mod tests {
     }
 
     #[test]
-    fn начало_генома_запоминается_с_первого_травоядного() {
+    fn начало_генома_запоминается_с_первого_существа() {
         let mut h = History::default();
-        let at = |tick, genom| Sample { tick, plants: 0.0, vegetarians: 0.0, genom };
+        let at = |tick, genom| Sample { tick, plants: 0.0, creatures: 0.0, genom };
         h.add_sample(at(0, None));
-        h.add_sample(at(10, Some([1.0; vegetarian::N])));
-        h.add_sample(at(20, Some([2.0; vegetarian::N])));
-        assert_eq!(h.origin, Some([1.0; vegetarian::N]));
+        h.add_sample(at(10, Some([1.0; creature::N])));
+        h.add_sample(at(20, Some([2.0; creature::N])));
+        assert_eq!(h.origin, Some([1.0; creature::N]));
     }
 }

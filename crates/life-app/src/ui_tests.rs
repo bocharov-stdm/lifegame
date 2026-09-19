@@ -126,7 +126,7 @@ fn игра_помещается_в_окно() {
         for tab in [SideTab::Charts, SideTab::Log, SideTab::Creature] {
             h.state_mut().side_tab = tab;
             if tab == SideTab::Creature {
-                // самый крупный кружок в кадре — травоядное (растения мелкие)
+                // самый крупный кружок в кадре — существо (растения мелкие)
                 let f = h.state().view.frame.as_ref().expect("кадр");
                 let (x, y) = {
                     let i =
@@ -163,7 +163,7 @@ fn крупный_план_рисуется() {
     let _gpu = gpu();
     let mut h = harness(NORMAL);
     h.state_mut().side_open = false;
-    // там, где существ гуще всего: травоядное с наибольшим числом соседей
+    // там, где существ гуще всего: существо с наибольшим числом соседей
     let (x, y) = {
         let f = h.state().view.frame.as_ref().expect("кадр");
         let all = h.state().view.instances();

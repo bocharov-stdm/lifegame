@@ -9,12 +9,12 @@
 //!
 //! Значение гена всегда f64: у гена-выбора это номер варианта (0, 1, 2…).
 
-pub mod vegetarian;
+pub mod creature;
 
 use crate::config::MAX_MUTABILITY;
 use crate::rng::Rng;
 
-pub use vegetarian::VegetarianGenome;
+pub use creature::CreatureGenome;
 
 /// Вариант гена-выбора: например, стратегия поведения.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -100,7 +100,7 @@ pub fn index_of(genes: &[GeneSpec], key: &str) -> Option<usize> {
 /// `mutability` — ген мутагенности родителя (`mutability_of`): умножает и
 /// разброс, и шанс смены варианта, у всех генов сразу, включая себя самого.
 ///
-/// Порядок и число случайных чисел — часть поведения мира: у травоядных цикл
+/// Порядок и число случайных чисел — часть поведения мира: у существ цикл
 /// gauss до множителя не ниже 0.1 (`reject_below`), с `keep_above` — ещё жребий
 /// «оставить» перед ним.
 pub(crate) fn mutate_values(

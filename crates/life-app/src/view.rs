@@ -11,7 +11,7 @@ use eframe::egui::{
 use eframe::egui_wgpu;
 
 use crate::camera::{Camera, Viewport};
-use crate::frame::{self, Area, Frame, Instance, Raster, VEGETARIAN_COLOR, ViewRequest};
+use crate::frame::{self, Area, CREATURE_COLOR, Frame, Instance, Raster, ViewRequest};
 use crate::render::Circles;
 use crate::sim::{Command, SimHandle};
 use crate::theme::{ACCENT, BG, LINE, MUTED, rgb};
@@ -216,14 +216,14 @@ impl WorldView {
             );
         }
 
-        // полоса слоя выбранного травоядного — где ему можно жить и есть
+        // полоса слоя выбранного существа — где ему можно жить и есть
         if let Some(s) = f.selected {
             let (lo, hi) = s.layer;
             let (_, y0) = cam.to_screen(0.0, lo);
             let (_, y1) = cam.to_screen(0.0, hi);
             let band = Rect::from_min_max(pos(left, y0), pos(right, y1.max(y0 + 1.0))).intersect(rect);
-            painter.rect_filled(band, 0.0, rgb(VEGETARIAN_COLOR).gamma_multiply(0.07));
-            let edge = Stroke::new(1.0, rgb(VEGETARIAN_COLOR).gamma_multiply(0.35));
+            painter.rect_filled(band, 0.0, rgb(CREATURE_COLOR).gamma_multiply(0.07));
+            let edge = Stroke::new(1.0, rgb(CREATURE_COLOR).gamma_multiply(0.35));
             painter.hline(band.x_range(), y0 as f32, edge);
             painter.hline(band.x_range(), y1 as f32, edge);
         }

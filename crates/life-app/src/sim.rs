@@ -13,7 +13,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use life_core::config::DIVIDE_PERIOD;
-use life_core::{Rules, VegetarianGenome, World, WorldConfig};
+use life_core::{CreatureGenome, Rules, World, WorldConfig};
 use life_sim::observe::{EventTracker, Snapshot};
 
 use crate::frame::{
@@ -74,7 +74,7 @@ pub enum Command {
         y: f64,
         radius: f64,
     },
-    /// Выбрать травоядное по номеру.
+    /// Выбрать существо по номеру.
     Select(Option<u64>),
     /// Область для сводки генов (инструмент «Область»); None — снять.
     SetRegion(Option<Area>),
@@ -83,7 +83,7 @@ pub enum Command {
         rules: Rules,
         note: String,
     },
-    /// Подсадить базовое травоядное в точку мира.
+    /// Подсадить базовое существо в точку мира.
     Spawn {
         x: f64,
         y: f64,
@@ -349,8 +349,8 @@ impl Sim {
                 self.log(None, note);
             }
             Command::Spawn { x, y } => {
-                self.world.spawn_vegetarian(VegetarianGenome::BASE, x, y, None);
-                self.log(None, "подсажено травоядное".into());
+                self.world.spawn(CreatureGenome::BASE, x, y, None);
+                self.log(None, "подсажено существо".into());
                 // Подсадка в вымерший мир его оживляет.
                 if self.ended == Some(Ending::Extinct) {
                     self.ended = None;
@@ -434,13 +434,13 @@ impl Sim {
             && Selected::of(&self.world, id).is_none()
         {
             self.selected = None;
-            self.log(None, "выбранное травоядное погибло".into());
+            self.log(None, "выбранное существо погибло".into());
         }
 
-        let veg = self.world.vegetarians.len();
-        if veg == 0 {
+        let n = self.world.creatures.len();
+        if n == 0 {
             self.ended = Some(Ending::Extinct);
-        } else if self.watch_explosion && veg > self.world.space.per_area(EXPLOSION_LIMIT) {
+        } else if self.watch_explosion && n > self.world.space.per_area(EXPLOSION_LIMIT) {
             self.ended = Some(Ending::Explosion);
         }
     }
@@ -451,7 +451,7 @@ impl Sim {
         if self.window.len() == DIVIDE_PERIOD as usize {
             self.window.pop_front();
         }
-        self.window.push_back([w.plants.len(), w.vegetarians.len()]);
+        self.window.push_back([w.plants.len(), w.creatures.len()]);
         if !w.tick.is_multiple_of(GRAPH_EVERY) {
             return;
         }
@@ -461,7 +461,7 @@ impl Sim {
         self.pending.samples.push(Sample {
             tick: w.tick,
             plants: avg(0),
-            vegetarians: avg(1),
+            creatures: avg(1),
             genom: stats.avg_genom,
         });
     }
@@ -580,7 +580,7 @@ impl Sim {
             rules: w.rules.clone(),
             tick: w.tick,
             plants: w.plants.len(),
-            vegetarians: w.vegetarians.len(),
+            creatures: w.creatures.len(),
             world_w: w.space.width,
             world_h: w.space.height,
             status: Status {
@@ -662,16 +662,16 @@ mod tests {
             runs.push(wait_frame(&h, |f| f.world_gen == world_gen && f.tick == 50));
         }
         let (a, b) = (&runs[0], &runs[1]);
-        assert_eq!((a.plants, a.vegetarians), (b.plants, b.vegetarians));
+        assert_eq!((a.plants, a.creatures), (b.plants, b.creatures));
         // и с тем же движком без окна
         let mut w = World::new(&cfg());
         (0..50).for_each(|_| w.step());
-        assert_eq!((w.plants.len(), w.vegetarians.len()), (a.plants, a.vegetarians));
+        assert_eq!((w.plants.len(), w.creatures.len()), (a.plants, a.creatures));
     }
 
     #[test]
     fn мир_без_жизни_заканчивает_партию() {
-        let empty = WorldConfig { n_vegetarians: Some(0), ..cfg() };
+        let empty = WorldConfig { n_creatures: Some(0), ..cfg() };
         let h = SimHandle::spawn(empty, Box::new(|| {}));
         let f = wait_frame(&h, |f| f.status.ended.is_some());
         assert_eq!(f.status.ended, Some(Ending::Extinct));
@@ -682,7 +682,7 @@ mod tests {
         let h = SimHandle::spawn(cfg(), Box::new(|| {}));
         h.send(Command::View(ViewRequest { x0: 0.0, y0: 0.0, x1: 6000.0, y1: 4000.0, px_w: 900, px_h: 600 }));
         let f = wait_frame(&h, |f| !f.instances.is_empty());
-        assert!(f.instances.len() >= 20, "20 травоядных на старте");
+        assert!(f.instances.len() >= 20, "20 существ на старте");
         assert!(f.density.is_none());
     }
 
@@ -709,7 +709,7 @@ mod tests {
         let mut snaps = vec![Snapshot::of(&w)];
         for _ in 0..ticks {
             w.step();
-            // срезы игры — на тех же тиках, что точки генома (травоядные в этом сиде живы)
+            // срезы игры — на тех же тиках, что точки генома (существа в этом сиде живы)
             if genes.contains(&w.tick) {
                 snaps.push(Snapshot::of(&w));
             }
@@ -722,7 +722,7 @@ mod tests {
     fn выбранное_существо_видно_в_кадре_и_погибает_с_записью() {
         let h = paused(cfg());
         wait_frame(&h, |f| f.world_gen == 1);
-        // первое травоядное мира — id 1; его координаты узнаем из кадра выбора
+        // первое существо мира — id 1; его координаты узнаем из кадра выбора
         h.send(Command::Select(Some(1)));
         let f = wait_frame(&h, |f| f.selected.is_some());
         let s = f.selected.unwrap();
@@ -745,13 +745,10 @@ mod tests {
             rules: rules.clone(), note: "энергия растения 50 → 80".into()
         });
         h.send(Command::Spawn { x: 3000.0, y: 2000.0 });
-        let frames = frames_until(&h, |f| f.vegetarians == 21);
+        let frames = frames_until(&h, |f| f.creatures == 21);
         let f = frames.last().unwrap();
         assert_eq!(f.rules, rules);
         let log: Vec<&str> = frames.iter().flat_map(|f| f.log.iter().map(|e| e.text.as_str())).collect();
-        assert!(
-            log.contains(&"энергия растения 50 → 80") && log.contains(&"подсажено травоядное"),
-            "{log:?}"
-        );
+        assert!(log.contains(&"энергия растения 50 → 80") && log.contains(&"подсажено существо"), "{log:?}");
     }
 }

@@ -1,15 +1,15 @@
-//! Фенотип травоядного: всё, что выводится из генома и правил мира один раз
+//! Фенотип существа: всё, что выводится из генома и правил мира один раз
 //! при рождении. Геном не меняется всю жизнь, поэтому ход (самый горячий код)
 //! читает готовые числа. Правила меняются на ходу (лаборатория) — тогда фенотип
-//! пересчитывается целиком (`Vegetarian::apply_rules`).
+//! пересчитывается целиком (`Creature::apply_rules`).
 //!
 //! Единственное место, где ген действует и платит: новый ген получает здесь
 //! своё действие, а его цена дописывается в конец суммы расхода.
 
 use super::Strategy;
-use crate::config::{SLOW_PACE, VEGETARIAN_ENERGY_PER_SIZE};
-use crate::genome::VegetarianGenome;
-use crate::genome::vegetarian::Gene;
+use crate::config::{ENERGY_PER_SIZE, SLOW_PACE};
+use crate::genome::CreatureGenome;
+use crate::genome::creature::Gene;
 use crate::rules::Rules;
 use crate::space::Space;
 
@@ -52,7 +52,7 @@ pub struct Phenotype {
 }
 
 impl Phenotype {
-    pub fn of(genome: &VegetarianGenome, rules: &Rules, space: &Space) -> Self {
+    pub fn of(genome: &CreatureGenome, rules: &Rules, space: &Space) -> Self {
         let size = genome[Gene::Size];
         let (mut min_pct, mut max_pct) =
             (genome[Gene::MinY].clamp(0.0, 100.0), genome[Gene::MaxY].clamp(0.0, 100.0));
@@ -94,7 +94,7 @@ impl Phenotype {
             x_hi,
             y_lo,
             y_hi,
-            max_energy: size * VEGETARIAN_ENERGY_PER_SIZE,
+            max_energy: size * ENERGY_PER_SIZE,
             upkeep: rules.upkeep(size, speed, vision),
             slow_speed,
             slow_upkeep: rules.upkeep(size, slow_speed, vision),

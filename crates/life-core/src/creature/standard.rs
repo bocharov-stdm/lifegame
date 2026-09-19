@@ -1,4 +1,4 @@
-//! «Стандартное» поведение травоядного — исходное: идёт к ближайшему видимому
+//! «Стандартное» поведение существа — исходное: идёт к ближайшему видимому
 //! растению; иначе бродит в своём слое, а оказавшись вне его (ушло за едой) —
 //! возвращается.
 //!
@@ -7,7 +7,7 @@
 
 use super::strategy::{Intent, Me, Mind};
 use crate::rng::Rng;
-use crate::senses::VegetarianSenses;
+use crate::senses::Senses;
 
 /// Какая ветка решения сработала.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,7 +17,7 @@ pub(super) enum Mode {
 }
 
 #[inline(always)]
-pub(crate) fn decide(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl VegetarianSenses) -> Intent {
+pub(crate) fn decide(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses) -> Intent {
     plan(me, mind, rng, senses, me.pheno.speed).0
 }
 
@@ -28,7 +28,7 @@ pub(super) fn plan(
     me: &Me,
     mind: &mut Mind,
     rng: &mut Rng,
-    senses: &impl VegetarianSenses,
+    senses: &impl Senses,
     step: f64,
 ) -> (Intent, Mode) {
     let (x, y) = (me.x, me.y);

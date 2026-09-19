@@ -53,7 +53,7 @@ pub struct Limits {
     pub sample_every: u64,
     /// Потолок существ на базовый мир; в большом мире растёт с площадью.
     pub max_creatures: usize,
-    /// Бюджет «травоядные x растения», просуммированный по тикам, на базовый мир.
+    /// Бюджет «существа x растения», просуммированный по тикам, на базовый мир.
     /// С сеткой соседей это сильно завышенная, но честная верхняя оценка работы.
     pub max_total_work: f64,
     pub deadline: Duration,
@@ -113,7 +113,7 @@ pub fn simulate(cfg: &WorldConfig, limits: &Limits, mut on_tick: impl FnMut(&Wor
 pub fn run(mut world: World, limits: &Limits, on_tick: &mut dyn FnMut(&World)) -> SimResult {
     let area = world.space.area_ratio();
     let max_creatures = (limits.max_creatures as f64 * area) as usize;
-    // работа ~ травоядные x растения, обе величины растут с площадью
+    // работа ~ существа x растения, обе величины растут с площадью
     let max_work = limits.max_total_work * area * area;
 
     // шаг 0 — «снимать как можно чаще», а не деление на ноль
@@ -130,8 +130,8 @@ pub fn run(mut world: World, limits: &Limits, on_tick: &mut dyn FnMut(&World)) -
         world.step();
         on_tick(&world);
 
-        let creatures = world.vegetarians.len();
-        total_work += (world.vegetarians.len() * world.plants.len()) as f64;
+        let creatures = world.creatures.len();
+        total_work += (world.creatures.len() * world.plants.len()) as f64;
 
         if creatures > max_creatures {
             stop = StopReason::Explosion;
