@@ -127,14 +127,21 @@ fn print_genome(first: &Snapshot, last: &Snapshot) {
         (Some(_), None) => println!("  к концу травоядных не осталось"),
         _ => println!("  травоядных не было"),
     }
-    // Средние генов хищников: крупные (зрение) — без дробной части.
+    // Средние генов хищников: крупные (зрение) — без дробной части; у гена-выбора
+    // — доли вариантов (инертный, с одним вариантом, не печатается).
     let genes = last.predator_genes.map_or(String::new(), |g| {
         predator::GENES
             .iter()
             .zip(&g)
-            .filter_map(|(spec, stat)| stat.spread().map(|s| (spec, s.mean)))
-            .map(|(spec, mean)| {
-                format!("{} {}, ", spec.label, opt(Some(mean), if mean >= 100.0 { 0 } else { 1 }))
+            .filter_map(|(spec, stat)| match stat {
+                GeneStat::Number(s) => {
+                    let digits = if s.mean >= 100.0 { 0 } else { 1 };
+                    Some(format!("{} {}, ", spec.label, opt(Some(s.mean), digits)))
+                }
+                GeneStat::Shares(s) if spec.variants().is_some_and(|v| v.len() > 1) => {
+                    Some(format!("{}: {}, ", spec.label, shares(spec, s)))
+                }
+                GeneStat::Shares(_) => None,
             })
             .collect()
     });

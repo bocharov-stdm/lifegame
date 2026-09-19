@@ -18,8 +18,8 @@ phases 0‒2 — engine (`crates/life-core`), bounded headless runner with an ob
 (`crates/life-app`, phases 4‒5 done ahead of phase 3). The Python version was removed; it lives
 at the git tag **`python-final`** (`python/` there) and is the behavioural spec the game was
 ported from. Still open: phase 3 (two-phase parallel tick — big worlds are single-threaded and
-lag at ×1000), phase 6 (machine benchmark instead of the scale estimate), the extinction
-balance problem.
+lag at ×1000), phase 6 (machine benchmark instead of the scale estimate), numeric behaviour
+genes (see "Balance").
 
 ## Commands
 
@@ -33,7 +33,8 @@ cargo fmt --all                                     # rustfmt.toml: width 110
 cargo run -p life-report --release                  # seed 1, 600 ticks: story + summary
 cargo run -p life-report --release -- --seeds 1 2 3 --ticks 3000
 cargo run -p life-report --release -- --rule plant_energy=80 --scale 10 --threads 4
-cargo run -p life-report --release -- --compare reference/fingerprint.json   # parity with Python
+cargo run -p life-report --release -- --veg-mix 1 1 --pred-mix 1 1   # start with strategies 50/50
+cargo run -p life-report --release -- --compare reference/fingerprint.json   # balance vs the reference
 
 play.bat / sh play.sh                                    # launcher for humans: build + run the game
 cargo run -p life-app --release                          # the game: menu
@@ -78,9 +79,9 @@ and the event chronicle for its in-game event feed.
 
 ### The reference fingerprint
 
-`reference/fingerprint.json` is the balance fingerprint of the last Python version (8 seeds x
-20 000 ticks, series every 60 ticks), made by `python/fingerprint.py` at `python-final`.
-`--compare` reruns the same seeds in Rust and checks each metric's mean against the reference's
+`reference/fingerprint.json` is the balance fingerprint (8 seeds x 20 000 ticks, series every
+60 ticks). It started as the last Python version's (`python/fingerprint.py` at `python-final`)
+and is re-taken from Rust after each deliberate balance change. `--compare` reruns the same seeds in Rust and checks each metric's mean against the reference's
 per-seed range; any mismatch exits with code 1 (CI relies on it). It refuses (code 2) when the
 world differs from the one the reference was taken on (scale, rules, start counts, predator
 speed/vision, start strategy mix) — a mismatch there would measure the conditions, not the
@@ -121,7 +122,8 @@ even on threads or I/O), `life-sim` adds only the bounded runner and the observe
   `PredatorGenome` (`Copy`, `[f64; N]`, indexed by `enum Gene`), the table-driven mutation.
 - `vegetarian/`, `predator/` — the entities: `mod.rs` (the creature, its `act` and the world
   hooks: `feed`/`eat`, `maybe_divide`, `apply_rules`), `phenotype.rs`, `strategy.rs` + one file
-  per strategy (`standard.rs` — the original behaviour, the only one so far). `plant.rs` — plants.
+  per strategy (`standard.rs` — the original behaviour; `lurker.rs`, `ambusher.rs` — see "Genes
+  and strategies"). `plant.rs` — plants.
 - `senses.rs` — what a creature can learn about the world (traits + grid-backed views + the
   query functions and their brute-force test).
 - `grid.rs` — `Grid`: counting-sort spatial grid with a fixed cell, rebuilt each tick.
@@ -145,8 +147,9 @@ balance instead of diffing numbers. The plant spawner draws its random number ev
 and migration draws only when it fires.
 
 `tests/golden.rs` pins behaviour bit for bit: an FNV digest of the world (positions, energy,
-ids, genes, an RNG probe of every creature and of the world) at checkpoints for five configs
-(defaults, giants, lab rules with migration, ×10, live rules + spawning). Any refactor must keep
+ids, all genes of both species, an RNG probe of every creature and of the world) at checkpoints
+for six configs (defaults, giants, lab rules with migration, ×10, live rules + spawning, a
+50/50 strategy mix — it also asserts both strategies coexist). Any refactor must keep
 it; a deliberate behaviour change re-records it (the test prints the table) in its own commit,
 together with `--save-reference`. The constants are asserted on Windows only: `ln`/`cos`/`powf`
 come from the platform libm, so Linux may differ in the last bit (there the test prints its
@@ -201,18 +204,22 @@ migrate predators. Herbivores see predators already moved this tick.
 - No senses on a creature's *own* species until the parallel tick: herbivores move during their
   own phase, so the grid's copied coordinates of other herbivores would be stale.
 
-One subtlety in the herbivore's `standard` strategy: the nearest plant is found first and *then* discarded if it
-falls outside the creature's vertical layer. Folding the layer check into the search would find
-the nearest plant *within the layer* — different behaviour, and the creature would stop
-wandering.
+### The soft layer
 
-Herbivore bands: `Vegetarian::new` clamps every position — random or given — into the
-creature's own band (`pheno.x_lo..x_hi`, `pheno.body_lo..body_hi`), so a step's clamps can only
-shorten it.
-The band always lies inside the world: a layer thinner than the body collapses to a line kept
-inside it, and the body margin is capped at half the world, so a body bigger than the world
-sits on the middle line instead of flipping `x_lo > x_hi`. Don't create herbivores outside
-their band or add moves that teleport.
+The layer genes (`min_y`, `max_y`) are a *preference*, not a wall. A herbivore goes for any
+visible plant, above or below its layer; with no food in sight it wanders inside its home band
+(`pheno.body_lo..body_hi` — the layer minus the body margin) and, when outside it (chased food,
+fled, was born there), walks straight back (`standard::pick_random_target`: outside the band
+the wander target is the nearest band point; every wander target lies in the band).
+
+Physics clamps only to the world: `pheno.x_lo..x_hi`, `pheno.y_lo..y_hi` (body margin capped at
+half the world, so a body bigger than the world sits on the middle line instead of flipping).
+`Vegetarian::new` puts a random position into the home band and clamps a given one (a child next
+to its parent, a spawn) to the world only — its mutated layer may differ, and it walks home
+instead of teleporting. A layer thinner than the body collapses the band to a line inside the
+world. `act` never steps past a target closer than the step (it lands on it): otherwise a
+creature returning to a band thinner than its step would oscillate across it forever. Don't
+add moves that teleport.
 
 ### World scale
 
@@ -243,9 +250,17 @@ trade-off at all: eating radius equals size (benefit ~ size²) and search radius
 shallower exponents the stats run away to infinity. Read the comment block in `config.rs`
 before changing any of these.
 
-Known open problem: with the current balance long runs (10‒20k ticks) often end in total
-extinction — herbivores squeeze into the top few % of depth, repro threshold collapses, they
-starve. Use the story (`--ticks 20000 --maps 3`) to work on it.
+Extinction: before the soft layer and the strategies, 4 of 12 seeds died out within 20k ticks
+(herbivores squeezed into the top few % of depth, repro threshold collapsed, they starved);
+with them, 0 of 12 (one seed ends with 2 herbivores and no predators). Use the story
+(`--ticks 20000 --maps 3`, `--max-work 1e15` for full-length runs) to work on balance.
+
+Behaviour genes without a cost run away. Tried and removed: «испуг» (flee distance, % of
+vision) and «голод» (predator hunger threshold) as free numeric genes. Hunger crept up (greed
+pays for each predator), predators ate the prey out; fear shot to ~100% of vision during
+predator booms and herbivores starved fleeing — 10 of 12 seeds extinct. Clamped to 10‒60% /
+30‒75% each alone cost ~2 of 12, both together 9 of 12. Such a gene needs a real trade-off
+first (a cost in upkeep or a behavioural catch).
 
 ### Termination guarantees
 
@@ -257,8 +272,8 @@ bounded by a tick count. Preserve this property in new tests.
 
 ### Performance-sensitive code
 
-`Vegetarian::step` is the hottest path. Genome-derived values (`upkeep`, `vision2`, `size2`,
-`half`, `flee2`, layer bounds, the strategy) are precomputed once in `Phenotype::of` because the
+`Vegetarian::step` is the hottest path. Genome-derived values (`upkeep`, `slow_speed`,
+`slow_upkeep`, `vision2`, `size2`, `half`, `flee2`, layer bounds, the strategy) are precomputed once in `Phenotype::of` because the
 genome never changes during a lifetime; the predator's phenotype likewise. Distances are
 compared squared. The grid reuses its buffers between ticks. Strategy dispatch is a `match` on
 an enum (static, inlined), never `Box<dyn>`.
@@ -290,10 +305,27 @@ even if it just died). Eating, catching and division stay world physics driven b
 
 The strategy is a gene: the last row of each table, `Choice(&strategy::VARIANTS)`,
 `Mutation::Switch { chance: STRATEGY_SWITCH_CHANCE }`. **A choice gene with one variant is
-inert**: `Switch` draws nothing, so appending it did not shift a single random number (the
-golden test proves it); the UI, the story and the reference check hide it. A start mix
-(`WorldConfig::vegetarian_strategies` / `predator_strategies`, shares by variant) is dealt
+inert**: `Switch` draws nothing, so appending it did not shift a single random number; the UI,
+the story and the reference check hide such a gene. A start mix
+(`WorldConfig::vegetarian_strategies` / `predator_strategies`, shares by variant; `--veg-mix` /
+`--pred-mix` in the report, «Затаившихся/Засадников на старте» in «Новый мир») is dealt
 *without* drawing (`genome::variant_for`), so the same seed gives the same world.
+
+**Slow pace** is physics a strategy may choose: `SLOW_PACE` (⅓) of its speed, paying the speed
+term for the step actually taken (`pheno.slow_speed`, `pheno.slow_upkeep` — `Rules::upkeep` at
+the reduced speed, so the lab's exponents apply). Herbivore: `Intent::slow`; predator: the
+strategy already sets step and `cost`. Fleeing and sprinting are always at full speed.
+
+The strategies:
+- herbivore `standard` — flee, else nearest visible plant, else wander in its layer;
+  `lurker` («затаившийся», `lurker.rs`) — the same decision (`standard::plan` returns which
+  branch fired), but wanders and returns home at slow pace. In every tested seed it replaces
+  `standard` (95‒100% by 20k ticks): the savings pay.
+- predator `standard` — hungry: chase the nearest prey, sprint near it; full: wander;
+  `ambusher` («засадник», `ambusher.rs`) — always wanders at slow pace, sprints only at prey
+  already within `PREDATOR_SPRINT_RANGE`, never chases from afar (`standard::pursue` /
+  `wander` are shared). They coexist in most seeds: 0‒97% ambushers by 20k ticks, depending
+  on the seed and the start mix.
 
 Adding a gene:
 1. A variant at the end of `enum Gene`, a row at the end of `GENES` (law, base, `about`).
@@ -345,11 +377,14 @@ Adding a strategy:
   fullness core, an eye along the heading, the predator's nose (decoration outside the body
   circle; picking and culling still use the circle). Selection ring and follow camera use the
   same interpolated position. The buffer is uploaded only when a new frame arrives.
+- `app.rs` — `LifeApp`: screens and transitions, owns the settings and the `SimHandle`; `theme.rs` —
+  palette (port of `app/theme.py`).
 - `view.rs` (world, selection, minimap), `camera.rs` (port of `camera.py`, f64), `game.rs`
   (game screen, lab window, creature card, `report_command`), `screens.rs` (menu, «Новый мир»,
   prefs, help), `charts.rs` (drawn with the painter — no plot crate), `history.rs`
   (port of `history.py`), `settings.rs` (`FIELDS`, the single slider spec; start counts are
-  *per base area* and scale with the world; file in `%APPDATA%\TinyLife`, atomic, clamped).
+  *per base area* and scale with the world; the strategy sliders are the share of the second
+  variant; file in `%APPDATA%\TinyLife`, atomic, clamped).
 - Chronicle texts come from `life_sim::observe::EventTracker` — the same incremental tracker
   the report's `events()` wraps, so game and report print identical events.
 - Live rules: `World::set_rules` recomputes the whole phenotype (`apply_rules`); a test checks it

@@ -113,6 +113,29 @@ fn прогон_снимает_срезы_вместе_с_историей() {
     assert!(ev.iter().all(|e| !e.text.is_empty()));
 }
 
+/// Стратегия расползлась по популяции — хроника это видит у обоих видов.
+#[test]
+fn хроника_видит_смену_стратегий() {
+    use life_core::genome::predator::Gene as PredatorGene;
+    use life_core::genome::vegetarian::Gene;
+    let mut w = world();
+    let before = Snapshot::of(&w);
+    let half = w.vegetarians.len() / 2;
+    for v in &mut w.vegetarians[..half] {
+        v.genome = v.genome.with(Gene::Strategy, 1.0);
+    }
+    for p in &mut w.predators {
+        p.genome = p.genome.with(PredatorGene::Strategy, 1.0);
+    }
+    w.tick = 60;
+    let e = events(&[before, Snapshot::of(&w)]);
+    let shifts: Vec<&str> =
+        e.iter().filter(|e| e.kind == EventKind::StrategyShift).map(|e| e.text.as_str()).collect();
+    assert_eq!(shifts.len(), 2, "{shifts:?}");
+    assert!(shifts[0].starts_with("травоядные") && shifts[0].contains("затаившийся"), "{shifts:?}");
+    assert!(shifts[1].starts_with("хищники") && shifts[1].contains("засадник"), "{shifts:?}");
+}
+
 /// Доли гена-выбора лежат в массиве на `MAX_VARIANTS`: вариантов в таблицах
 /// не больше.
 #[test]

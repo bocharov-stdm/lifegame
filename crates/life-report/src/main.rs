@@ -5,6 +5,7 @@
 //!     cargo run -p life-report --release -- --predators 20 --predator-speed 18
 //!     cargo run -p life-report --release -- --rule plant_energy=80 --rule size_power=1.5
 //!     cargo run -p life-report --release -- --scale 100 --ticks 2000   # мир в 100 раз больше
+//!     cargo run -p life-report --release -- --veg-mix 1 1 --pred-mix 1 1   # стратегии поровну
 //!     cargo run -p life-report --release -- --compare reference/fingerprint.json
 //!     cargo run -p life-report --release -- --save-reference reference/fingerprint.json
 //!
@@ -27,8 +28,11 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use life_core::config::*;
+use life_core::genome::Variant;
 use life_core::genome::vegetarian::Gene;
+use life_core::predator::strategy as predator_strategy;
 use life_core::space::{MAX_SCALE, MIN_SCALE};
+use life_core::vegetarian::strategy as vegetarian_strategy;
 use life_core::{Rules, WorldConfig};
 use life_sim::observe::{self, Event, ascii_map};
 use life_sim::{Limits, SimResult, simulate};
@@ -64,6 +68,13 @@ struct Args {
     predator_speed: f64,
     #[arg(long, default_value_t = PREDATOR_BASE_VISION)]
     predator_vision: f64,
+    /// Стартовая смесь стратегий травоядных: доли вариантов по порядку
+    /// (стандартный, затаившийся). Например, `--veg-mix 1 1` — поровну.
+    #[arg(long, num_args = 1.., value_name = "ДОЛИ")]
+    veg_mix: Vec<f64>,
+    /// Стартовая смесь стратегий хищников: (стандартный, засадник).
+    #[arg(long, num_args = 1.., value_name = "ДОЛИ")]
+    pred_mix: Vec<f64>,
     /// Правило мира: имя=число (можно несколько раз).
     #[arg(long = "rule", value_name = "ИМЯ=ЧИСЛО")]
     rules: Vec<String>,
@@ -122,6 +133,21 @@ fn parse_rules(pairs: &[String]) -> Result<Rules, String> {
     Ok(rules)
 }
 
+/// Смесь стратегий: доли не отрицательные, в сумме больше нуля, не больше
+/// вариантов, чем есть у вида.
+fn check_mix(flag: &str, shares: &[f64], variants: &[Variant]) -> Result<(), String> {
+    if shares.len() > variants.len() {
+        let names: Vec<&str> = variants.iter().map(|v| v.label).collect();
+        return Err(format!("{flag}: вариантов всего {} ({})", variants.len(), names.join(", ")));
+    }
+    if shares.iter().any(|s| !s.is_finite() || *s < 0.0)
+        || (!shares.is_empty() && shares.iter().sum::<f64>() <= 0.0)
+    {
+        return Err(format!("{flag}: доли — числа не меньше нуля, хотя бы одна больше"));
+    }
+    Ok(())
+}
+
 fn main() {
     let mut args = Args::parse();
     if let Some(n) = args.threads {
@@ -132,6 +158,8 @@ fn main() {
         std::process::exit(2);
     };
     let rules = parse_rules(&args.rules).unwrap_or_else(|e| fail(e));
+    check_mix("--veg-mix", &args.veg_mix, &vegetarian_strategy::VARIANTS).unwrap_or_else(|e| fail(e));
+    check_mix("--pred-mix", &args.pred_mix, &predator_strategy::VARIANTS).unwrap_or_else(|e| fail(e));
     // JSON в stdout — и больше ничего: текст сломал бы разбор
     let quiet = args.json.as_deref().is_some_and(|p| p.as_os_str() == "-");
     if quiet && (args.compare.is_some() || args.save_reference.is_some()) {
@@ -156,7 +184,8 @@ fn main() {
         n_predators: args.predators,
         predator_speed: args.predator_speed,
         predator_vision: args.predator_vision,
-        ..Default::default()
+        vegetarian_strategies: args.veg_mix.clone(),
+        predator_strategies: args.pred_mix.clone(),
     };
 
     let reference = args.compare.as_ref().map(|path| {

@@ -5,6 +5,7 @@
 //! о сетке, а тесты подсовывают вместо неё обычные замыкания. Чувства ленивые:
 //! пока существо бежит, растения оно не ищет вовсе.
 
+mod lurker;
 mod phenotype;
 mod standard;
 pub mod strategy;
@@ -39,9 +40,9 @@ pub struct Vegetarian {
 }
 
 impl Vegetarian {
-    /// Новое травоядное. Координата None — случайная в своей полосе; заданная
-    /// тоже зажимается в полосу: ребёнок рождается у родителя, а слой у него
-    /// свой, мутировавший, и без зажима первый ход телепортировал бы его.
+    /// Новое травоядное. Координата None — случайная в своей домашней полосе;
+    /// заданная зажимается только в мир: ребёнок рождается у родителя, а слой у
+    /// него свой, мутировавший, — домой он дойдёт сам, телепорт был бы прыжком.
     /// energy None — полбака; заданная не больше бака.
     pub fn new(
         space: &Space,
@@ -58,9 +59,7 @@ impl Vegetarian {
             None => pheno.max_energy * 0.5,
         };
         let x = x.unwrap_or_else(|| rng.uniform(pheno.x_lo, pheno.x_hi)).clamp(pheno.x_lo, pheno.x_hi);
-        let y = y
-            .unwrap_or_else(|| rng.uniform(pheno.body_lo, pheno.body_hi))
-            .clamp(pheno.body_lo, pheno.body_hi);
+        let y = y.unwrap_or_else(|| rng.uniform(pheno.body_lo, pheno.body_hi)).clamp(pheno.y_lo, pheno.y_hi);
 
         Vegetarian { id: 0, x, y, energy, alive: true, genome, pheno, mind: Mind::default(), rng }
     }
@@ -80,23 +79,32 @@ impl Vegetarian {
     }
 
     /// Шаг ровно на speed к точке намерения (и дальше неё), зажим в свою полосу,
-    /// расход энергии, смерть от голода.
+    /// расход энергии, смерть от голода. Медленный ход — меньше шаг и расход.
     #[inline(always)]
     fn act(&mut self, intent: Intent) {
-        let (x, y, speed) = (self.x, self.y, self.pheno.speed);
-        let (mut dx, mut dy) = (intent.tx - x, intent.ty - y);
+        let (speed, upkeep) = if intent.slow {
+            (self.pheno.slow_speed, self.pheno.slow_upkeep)
+        } else {
+            (self.pheno.speed, self.pheno.upkeep)
+        };
+        let (x, y) = (self.x, self.y);
+        let (dx, dy) = (intent.tx - x, intent.ty - y);
         let d = dx.hypot(dy);
-        if d != 0.0 {
+        // Точка ближе шага — встаём ровно на неё. Проскочить её нельзя: при мягком
+        // слое существо, возвращаясь на слой тоньше шага, качалось бы через него
+        // туда-сюда вечно. Бегство — точка ровно на шаг, его это не касается.
+        let (nx, ny) = if d <= speed {
+            (intent.tx, intent.ty)
+        } else {
             let k = speed / d;
-            dx *= k;
-            dy *= k;
-        }
+            (x + dx * k, y + dy * k)
+        };
         // Существо уже стоит внутри своих границ, так что зажим только укорачивает
         // шаг: за ход оно сдвигается не дальше speed.
-        self.x = (x + dx).clamp(self.pheno.x_lo, self.pheno.x_hi);
-        self.y = (y + dy).clamp(self.pheno.body_lo, self.pheno.body_hi);
+        self.x = nx.clamp(self.pheno.x_lo, self.pheno.x_hi);
+        self.y = ny.clamp(self.pheno.y_lo, self.pheno.y_hi);
 
-        self.energy -= self.pheno.upkeep;
+        self.energy -= upkeep;
         if self.energy <= 0.0 {
             self.alive = false;
         }

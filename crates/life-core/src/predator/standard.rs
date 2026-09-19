@@ -5,35 +5,50 @@ use super::Predator;
 use super::strategy::{Intent, Me, Mind};
 use crate::config::*;
 use crate::rng::Rng;
-use crate::senses::PredatorSenses;
+use crate::senses::{PredatorSenses, Prey};
 use crate::space::Space;
 
 #[inline(always)]
 pub(crate) fn decide(me: &Me, mind: &mut Mind, _rng: &mut Rng, senses: &impl PredatorSenses) -> Intent {
     // Сытый добычу не ищет вовсе.
     let prey = if me.hungry() { senses.nearest_prey(me.x, me.y, me.pheno.vision) } else { None };
+    match prey {
+        Some(p) => pursue(me, &p),
+        None => wander(me, mind, me.pheno.speed, me.pheno.upkeep),
+    }
+}
+
+/// Расстояние между краями тел хищника и добычи.
+#[inline(always)]
+pub(super) fn gap(me: &Me, p: &Prey) -> f64 {
+    (p.x - me.x).hypot(p.y - me.y) - p.half - Predator::DIAM / 2.0
+}
+
+/// Погоня за добычей: шаг к ней, вблизи — рывок.
+#[inline(always)]
+pub(super) fn pursue(me: &Me, p: &Prey) -> Intent {
+    let (dx, dy) = (p.x - me.x, p.y - me.y);
+    let dist = dx.hypot(dy);
+    let mut step = me.pheno.speed;
     let mut cost = me.pheno.upkeep;
-    let (dx, dy) = match prey {
-        Some(p) => {
-            let (dx, dy) = (p.x - me.x, p.y - me.y);
-            let dist = dx.hypot(dy);
-            let mut step = me.pheno.speed;
-            // Рывок: вблизи хищник догоняет и того, кто быстрее его на
-            // дистанции. Он стоит энергии — гнаться рывком вечно нельзя.
-            if dist - p.half - Predator::DIAM / 2.0 < PREDATOR_SPRINT_RANGE {
-                step *= PREDATOR_SPRINT_MULT;
-                cost += PREDATOR_SPRINT_COST;
-            }
-            let step = step.min(dist); // не проскакивать добычу насквозь
-            if dist != 0.0 { (dx * step / dist, dy * step / dist) } else { (0.0, 0.0) }
-        }
-        None => {
-            let (dx, dy) = (mind.tx - me.x, mind.ty - me.y);
-            let dist = dx.hypot(dy);
-            if dist == 0.0 { (0.0, 0.0) } else { (dx * me.pheno.speed / dist, dy * me.pheno.speed / dist) }
-        }
-    };
-    Intent { dx, dy, cost, chasing: prey.is_some() }
+    // Рывок: вблизи хищник догоняет и того, кто быстрее его на
+    // дистанции. Он стоит энергии — гнаться рывком вечно нельзя.
+    if dist - p.half - Predator::DIAM / 2.0 < PREDATOR_SPRINT_RANGE {
+        step *= PREDATOR_SPRINT_MULT;
+        cost += PREDATOR_SPRINT_COST;
+    }
+    let step = step.min(dist); // не проскакивать добычу насквозь
+    let (dx, dy) = if dist != 0.0 { (dx * step / dist, dy * step / dist) } else { (0.0, 0.0) };
+    Intent { dx, dy, cost, chasing: true }
+}
+
+/// Шаг `step` к цели блуждания по цене `cost` за тик.
+#[inline(always)]
+pub(super) fn wander(me: &Me, mind: &Mind, step: f64, cost: f64) -> Intent {
+    let (dx, dy) = (mind.tx - me.x, mind.ty - me.y);
+    let dist = dx.hypot(dy);
+    let (dx, dy) = if dist == 0.0 { (0.0, 0.0) } else { (dx * step / dist, dy * step / dist) };
+    Intent { dx, dy, cost, chasing: false }
 }
 
 /// Дошёл до цели блуждания — новая цель (даже если только что умер: так было

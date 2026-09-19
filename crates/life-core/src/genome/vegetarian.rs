@@ -87,7 +87,7 @@ pub const GENES: [GeneSpec; N] = [
     GeneSpec {
         key: "min_y",
         label: "min_y%",
-        about: "Верхняя граница слоя обитания, % глубины мира.",
+        about: "Верх слоя, где держится, % глубины мира; за видимой едой выходит из слоя.",
         kind: GeneKind::Percent,
         base: 5.0,
         mutation: SCALE,
@@ -95,7 +95,7 @@ pub const GENES: [GeneSpec; N] = [
     GeneSpec {
         key: "max_y",
         label: "max_y%",
-        about: "Нижняя граница слоя обитания, % глубины мира.",
+        about: "Низ слоя, где держится, % глубины мира; без еды возвращается в слой.",
         kind: GeneKind::Percent,
         base: 100.0,
         mutation: SCALE,
@@ -103,7 +103,7 @@ pub const GENES: [GeneSpec; N] = [
     GeneSpec {
         key: "strategy",
         label: "стратегия",
-        about: "Как себя ведёт: варианты — в `vegetarian/strategy.rs`.",
+        about: "Как себя ведёт; потомок изредка получает другую.",
         kind: GeneKind::Choice(&STRATEGIES),
         base: 0.0,
         mutation: Mutation::Switch { chance: STRATEGY_SWITCH_CHANCE },

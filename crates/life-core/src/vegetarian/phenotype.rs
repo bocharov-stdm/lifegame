@@ -7,7 +7,7 @@
 //! своё действие, а его цена дописывается в конец суммы расхода.
 
 use super::Strategy;
-use crate::config::VEGETARIAN_ENERGY_PER_SIZE;
+use crate::config::{SLOW_PACE, VEGETARIAN_ENERGY_PER_SIZE};
 use crate::genome::VegetarianGenome;
 use crate::genome::vegetarian::Gene;
 use crate::rules::Rules;
@@ -21,19 +21,27 @@ pub struct Phenotype {
     pub vision: f64,
 
     // ── слой обитания и границы ─────────────────────────────────────────────
-    /// Слой без запаса на тело — по нему решается, дотянемся ли до еды.
+    /// Слой из генов, без запаса на тело (его рисует окно).
     pub layer_lo: f64,
     pub layer_hi: f64,
-    /// Полоса, в которой держится само тело. Всегда внутри мира.
+    /// Домашняя полоса — слой с запасом на тело, всегда внутри мира. Слой
+    /// мягкий: за видимой едой существо выходит из полосы, а без еды бродит в
+    /// ней и возвращается в неё.
     pub body_lo: f64,
     pub body_hi: f64,
+    /// Границы тела в мире: дальше них центр не заходит никогда.
     pub x_lo: f64,
     pub x_hi: f64,
+    pub y_lo: f64,
+    pub y_hi: f64,
 
     // ── энергия и предвычисленное ───────────────────────────────────────────
     pub max_energy: f64,
     /// Расход за тик.
     pub upkeep: f64,
+    /// Медленный ход (`SLOW_PACE`): шаг и расход за тик на нём.
+    pub slow_speed: f64,
+    pub slow_upkeep: f64,
     pub vision2: f64,
     pub size2: f64,
     /// Радиус тела: по нему ловят и видят хищники.
@@ -70,9 +78,12 @@ impl Phenotype {
             body_hi = mid;
         }
         let (x_lo, x_hi) = (margin_x, space.width - margin_x);
+        // Домашняя полоса лежит внутри этих границ: слой — в пределах мира.
+        let (y_lo, y_hi) = (margin_y, space.height - margin_y);
 
         let speed = genome[Gene::Speed];
         let vision = genome[Gene::Vision];
+        let slow_speed = speed * SLOW_PACE;
         Phenotype {
             size,
             speed,
@@ -83,8 +94,12 @@ impl Phenotype {
             body_hi,
             x_lo,
             x_hi,
+            y_lo,
+            y_hi,
             max_energy: size * VEGETARIAN_ENERGY_PER_SIZE,
             upkeep: rules.upkeep(size, speed, vision),
+            slow_speed,
+            slow_upkeep: rules.upkeep(size, slow_speed, vision),
             vision2: vision * vision,
             size2: size * size,
             half: size / 2.0,

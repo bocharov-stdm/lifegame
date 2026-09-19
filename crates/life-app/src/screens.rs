@@ -230,6 +230,12 @@ impl LifeApp {
                             ui.label(spec.label);
                             ui.label(spec.about);
                             ui.end_row();
+                            // у гена-выбора — что значит каждый вариант
+                            for v in spec.variants().unwrap_or_default() {
+                                ui.colored_label(MUTED, format!("  {}", v.label));
+                                ui.label(v.about);
+                                ui.end_row();
+                            }
                         }
                     }
                 });

@@ -45,7 +45,7 @@ pub const GENES: [GeneSpec; N] = [
     GeneSpec {
         key: "strategy",
         label: "стратегия",
-        about: "Как себя ведёт: варианты — в `predator/strategy.rs`.",
+        about: "Как себя ведёт; потомок изредка получает другую.",
         kind: GeneKind::Choice(&STRATEGIES),
         base: 0.0,
         mutation: Mutation::Switch { chance: STRATEGY_SWITCH_CHANCE },

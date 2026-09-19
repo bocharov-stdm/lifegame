@@ -3,6 +3,7 @@
 //! Циклов без границы нет: все прогоны ограничены числом тиков.
 
 use life_core::config::*;
+use life_core::genome::predator::Gene as PredatorGene;
 use life_core::genome::vegetarian::{GENES, Gene};
 use life_core::grid::Grid;
 use life_core::plant::Plant;
@@ -237,24 +238,77 @@ fn огромное_тело_не_прыгает() {
     }
 }
 
-/// Ребёнок рождается в своём слое и не на диагонали от родителя.
+/// Ребёнок рождается у родителя (слой мягкий — не телепортируется в свой),
+/// внутри мира и не на диагонали от родителя.
 #[test]
-fn ребёнок_в_своём_слое() {
+fn ребёнок_рождается_у_родителя() {
     let (s, r) = (Space::default(), Rules::default());
     let g = BASE.with(Gene::ReproThreshold, 30.0);
     let mut parent = Vegetarian::new(&s, &r, g, Some(3000.0), Some(3900.0), None, Rng::new(0));
-    let mut diagonal = 0;
+    let (mut diagonal, mut outside) = (0, 0);
     for _ in 0..300 {
         parent.energy = parent.pheno.max_energy;
         let mut c = parent.maybe_divide(&s, &r).expect("сытый родитель не поделился");
-        assert!(c.pheno.body_lo <= c.y && c.y <= c.pheno.body_hi, "ребёнок вне слоя: y={}", c.y);
+        assert!(c.pheno.y_lo <= c.y && c.y <= c.pheno.y_hi, "ребёнок вне мира: y={}", c.y);
         assert!(c.pheno.x_lo <= c.x && c.x <= c.pheno.x_hi);
+        let span = parent.pheno.size * 2.0;
+        assert!(
+            (c.x - parent.x).abs() <= span && (c.y - parent.y).abs() <= span,
+            "ребёнок далеко от родителя"
+        );
+        outside += (c.y < c.pheno.body_lo || c.y > c.pheno.body_hi) as u32;
         diagonal += ((c.x - parent.x) == (c.y - parent.y)) as u32;
         let (x, y) = (c.x, c.y);
         c.step(&Blind);
         assert!((c.x - x).hypot(c.y - y) <= c.pheno.speed + 1e-9, "первый ход ребёнка — прыжок");
     }
     assert_eq!(diagonal, 0);
+    assert!(outside > 0, "ни один ребёнок не родился вне своего слоя — тест ничего не проверил");
+}
+
+/// Слой мягкий: растение над слоем видно — существо идёт и съедает его.
+#[test]
+fn еда_над_слоем_съедается() {
+    let mut w = empty_world(Rules::default());
+    let g = BASE.with(Gene::MinY, 50.0);
+    w.spawn_vegetarian(g, 3000.0, 2100.0, Some(80.0));
+    let v = &w.vegetarians[0];
+    assert!(v.y >= v.pheno.body_lo, "существо должно стартовать в своём слое");
+    let plant_y = v.pheno.layer_lo - 250.0;
+    w.plants.push(Plant::at(3000.0, plant_y));
+    let there = |w: &World| w.plants.iter().any(|p| p.x == 3000.0 && p.y == plant_y);
+    for _ in 0..60 {
+        w.step();
+        if !there(&w) {
+            break;
+        }
+    }
+    assert!(!there(&w), "растение над слоем осталось несъеденным");
+    assert!(w.vegetarians[0].y < w.vegetarians[0].pheno.body_lo, "съело, не выходя из слоя?");
+}
+
+/// Вне своего слоя и без еды существо возвращается домой и дальше держится в слое.
+#[test]
+fn без_еды_возвращается_в_слой() {
+    let g = BASE.with(Gene::MinY, 50.0);
+    let mut v = veg(3000.0, 500.0, g);
+    assert_eq!(v.y, 500.0, "заданная позиция не зажимается в слой");
+    let mut home = None;
+    for t in 0..400 {
+        let (x, y) = (v.x, v.y);
+        v.energy = v.pheno.max_energy;
+        v.step(&Blind);
+        assert!((v.x - x).hypot(v.y - y) <= v.pheno.speed + 1e-9, "прыжок дальше скорости");
+        let inside = v.pheno.body_lo <= v.y && v.y <= v.pheno.body_hi;
+        match home {
+            None if inside => home = Some(t),
+            Some(_) => assert!(inside, "вернулось в слой и снова ушло без еды: y={}", v.y),
+            None => {}
+        }
+    }
+    let t = home.expect("за 400 тиков не вернулось в слой");
+    let ideal = ((v.pheno.body_lo - 500.0) / v.pheno.speed).ceil() as usize;
+    assert!(t < ideal + 5, "шло домой {t} тиков вместо ~{ideal}: не по прямой");
 }
 
 /// Слой уже тела: существо живёт на линии и не стоит столбом.
@@ -398,6 +452,159 @@ fn мигранта_нет_пока_хищников_хватает() {
     assert_eq!(w.predators.len(), PREDATOR_MIGRATION_MIN);
 }
 
+// ── стратегии и гены поведения ─────────────────────────────────────────────
+
+/// Хищник с заданным геномом.
+fn predator_with(genome: PredatorGenome, energy: f64) -> Predator {
+    let (s, r) = (Space::default(), Rules::default());
+    Predator::new(&s, &r, genome, Some(1000.0), Some(2000.0), Some(energy), Rng::new(0))
+}
+
+const LURKER: VegetarianGenome = BASE.with(Gene::Strategy, 1.0);
+const AMBUSHER: PredatorGenome = PredatorGenome::BASE.with(PredatorGene::Strategy, 1.0);
+
+/// Расход, восстановленный из разницы энергий, совпадает с точностью до округления.
+fn close(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-12
+}
+
+/// Ход травоядного: (пройдено, потрачено).
+fn veg_move(v: &mut Vegetarian, senses: &impl life_core::senses::VegetarianSenses) -> (f64, f64) {
+    let (x, y, e) = (v.x, v.y, v.energy);
+    v.step(senses);
+    ((v.x - x).hypot(v.y - y), e - v.energy)
+}
+
+/// Ход хищника: (сдвиг по x, сдвиг по y, потрачено).
+fn pred_move(p: &mut Predator, senses: &impl life_core::senses::PredatorSenses) -> (f64, f64, f64) {
+    let (x, y, e) = (p.x, p.y, p.energy);
+    p.step(&Space::default(), senses);
+    (p.x - x, p.y - y, e - p.energy)
+}
+
+#[test]
+fn медленный_ход_дешевле() {
+    let v = veg(1000.0, 1000.0, BASE);
+    assert!((v.pheno.slow_speed - v.pheno.speed * SLOW_PACE).abs() < 1e-12);
+    assert!(v.pheno.slow_upkeep < v.pheno.upkeep);
+    assert_eq!(v.pheno.slow_upkeep, Rules::default().upkeep(40.0, v.pheno.slow_speed, v.pheno.vision));
+    let p = predator(1000.0, 2000.0, None);
+    assert!(p.pheno.slow_upkeep < p.pheno.upkeep);
+}
+
+/// Затаившийся без еды бродит медленно и дёшево; стандартный — на полной.
+#[test]
+fn затаившийся_без_еды_бродит_медленно() {
+    let mut lurker = veg(1000.0, 1000.0, LURKER);
+    let mut standard = veg(1000.0, 1000.0, BASE);
+    for _ in 0..20 {
+        let (d, cost) = veg_move(&mut lurker, &Blind);
+        assert!((d - lurker.pheno.slow_speed).abs() < 1e-9, "затаившийся прошёл {d}");
+        assert!(close(cost, lurker.pheno.slow_upkeep), "затаившийся потратил {cost}");
+        let (d, cost) = veg_move(&mut standard, &Blind);
+        assert!((d - standard.pheno.speed).abs() < 1e-9, "стандартный прошёл {d}");
+        assert!(close(cost, standard.pheno.upkeep), "стандартный потратил {cost}");
+    }
+}
+
+/// К еде и от хищника затаившийся идёт на полной скорости.
+#[test]
+fn затаившийся_к_еде_и_от_хищника_на_полной() {
+    let mut v = veg(1000.0, 1000.0, LURKER);
+    let (d, cost) = veg_move(&mut v, &vegetarian_senses(|_, _, _| None, |_, _, _| Some((1300.0, 1000.0))));
+    assert!((d - v.pheno.speed).abs() < 1e-9 && close(cost, v.pheno.upkeep), "к еде: {d}, {cost}");
+
+    let mut v = veg(1000.0, 1000.0, LURKER);
+    let near = |_: f64, _: f64, _: f64| Some((1050.0, 1000.0, 2500.0));
+    let (d, cost) = veg_move(&mut v, &vegetarian_senses(near, |_, _, _| None));
+    assert!((d - v.pheno.speed).abs() < 1e-9 && close(cost, v.pheno.upkeep), "от хищника: {d}, {cost}");
+    assert!(v.x < 1000.0, "бежит не от хищника");
+}
+
+/// Засадник бродит медленно и дёшево.
+#[test]
+fn засадник_бродит_медленно() {
+    let mut p = predator_with(AMBUSHER, 30.0);
+    for _ in 0..20 {
+        let (dx, dy, cost) = pred_move(&mut p, &Blind);
+        assert!((dx.hypot(dy) - p.pheno.slow_speed).abs() < 1e-9, "прошёл {}", dx.hypot(dy));
+        assert!(close(cost, p.pheno.slow_upkeep), "потратил {cost}");
+    }
+}
+
+/// Дальнюю добычу засадник не преследует, на близкую бросается рывком; сытый
+/// не бросается вовсе.
+#[test]
+fn засадник_бросается_только_на_близкую() {
+    let far = predator_senses(|_, _, _| Some(Prey { x: 1300.0, y: 2000.0, half: 20.0 }));
+    let near = predator_senses(|_, _, _| Some(Prey { x: 1150.0, y: 2000.0, half: 20.0 }));
+
+    let mut p = predator_with(AMBUSHER, 30.0);
+    let (dx, dy, cost) = pred_move(&mut p, &far);
+    assert!(
+        (dx.hypot(dy) - p.pheno.slow_speed).abs() < 1e-9 && close(cost, p.pheno.slow_upkeep),
+        "за дальней погнался"
+    );
+
+    let mut p = predator_with(AMBUSHER, 30.0);
+    let (dx, dy, cost) = pred_move(&mut p, &near);
+    assert!((dx - p.pheno.speed * PREDATOR_SPRINT_MULT).abs() < 1e-9 && dy.abs() < 1e-9, "рывка нет: {dx}");
+    assert!(close(cost, p.pheno.upkeep + PREDATOR_SPRINT_COST), "потратил {cost}");
+
+    let mut p = predator_with(AMBUSHER, PREDATOR_MAX_ENERGY);
+    let (dx, dy, cost) = pred_move(&mut p, &near);
+    assert!(
+        (dx.hypot(dy) - p.pheno.slow_speed).abs() < 1e-9 && close(cost, p.pheno.slow_upkeep),
+        "сытый бросился"
+    );
+
+    // стандартный за дальней гонится на обычной скорости
+    let mut p = predator_with(PredatorGenome::BASE, 30.0);
+    let (dx, _, _) = pred_move(&mut p, &far);
+    assert!((dx - p.pheno.speed).abs() < 1e-9);
+}
+
+/// Стратегия наследуется и изредка мутирует в другую.
+#[test]
+fn стратегия_мутирует_изредка() {
+    let (s, r) = (Space::default(), Rules::default());
+    let g = BASE.with(Gene::ReproThreshold, 30.0);
+    let mut parent = Vegetarian::new(&s, &r, g, Some(3000.0), Some(1000.0), None, Rng::new(7));
+    let n = 2000;
+    let mut switched = 0;
+    for _ in 0..n {
+        parent.energy = parent.pheno.max_energy;
+        let c = parent.maybe_divide(&s, &r).expect("сытый родитель не поделился");
+        switched += (c.genome[Gene::Strategy] != 0.0) as u32;
+    }
+    let rate = switched as f64 / n as f64;
+    assert!((rate - STRATEGY_SWITCH_CHANCE).abs() < 0.01, "стратегию сменили {rate:.3} детей");
+}
+
+/// Смешанный мир: стартовая смесь раздаётся без жребия, и тот же сид — тот же мир.
+#[test]
+fn смешанный_мир_детерминирован() {
+    let cfg = WorldConfig {
+        seed: 5,
+        vegetarian_strategies: vec![1.0, 1.0],
+        predator_strategies: vec![1.0, 1.0],
+        ..Default::default()
+    };
+    let w = World::new(&cfg);
+    let lurkers = w.vegetarians.iter().filter(|v| v.genome[Gene::Strategy] == 1.0).count();
+    assert_eq!(lurkers, w.vegetarians.len() / 2, "смесь 50/50 раздана неровно");
+    let ambushers = w.predators.iter().filter(|p| p.genome[PredatorGene::Strategy] == 1.0).count();
+    assert_eq!(ambushers, w.predators.len() / 2);
+    let run = || {
+        let mut w = World::new(&cfg);
+        for _ in 0..1000 {
+            w.step();
+        }
+        w.stats()
+    };
+    assert_eq!(run(), run());
+}
+
 // ── сетка соседей ───────────────────────────────────────────────────────────
 
 /// Сетка обязана быть НАДмножеством честного перебора. Пропусти она соседа —
@@ -514,12 +721,7 @@ fn инварианты_держатся_со_временем() {
         let s = w.space;
         for v in &w.vegetarians {
             assert!(v.alive && v.energy > 0.0 && v.energy <= v.pheno.max_energy + 1e-9);
-            assert!(
-                v.pheno.x_lo <= v.x
-                    && v.x <= v.pheno.x_hi
-                    && v.pheno.body_lo <= v.y
-                    && v.y <= v.pheno.body_hi
-            );
+            assert!(v.pheno.x_lo <= v.x && v.x <= v.pheno.x_hi && v.pheno.y_lo <= v.y && v.y <= v.pheno.y_hi);
             let g = v.genome.values();
             for (spec, x) in GENES.iter().zip(g) {
                 match spec.variants() {

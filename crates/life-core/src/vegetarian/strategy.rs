@@ -12,7 +12,7 @@
 //! конец, свой файл с `decide`, новое состояние — в `Mind`.
 
 use super::Phenotype;
-use super::standard;
+use super::{lurker, standard};
 use crate::genome::Variant;
 use crate::rng::Rng;
 use crate::senses::VegetarianSenses;
@@ -20,14 +20,16 @@ use crate::senses::VegetarianSenses;
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Strategy {
-    /// Бежит от хищника; иначе идёт к ближайшему растению своего слоя; иначе бродит.
+    /// Бежит от хищника; иначе идёт к ближайшему растению; иначе бродит в своём слое.
     #[default]
     Standard,
+    /// Как стандартный, но без еды в виду бродит медленно и дёшево.
+    Lurker,
 }
 
 impl Strategy {
     /// Все варианты в порядке `VARIANTS`.
-    pub const ALL: [Strategy; 1] = [Strategy::Standard];
+    pub const ALL: [Strategy; 2] = [Strategy::Standard, Strategy::Lurker];
 
     /// Стратегия по значению гена — номеру варианта.
     #[inline]
@@ -41,11 +43,18 @@ impl Strategy {
 }
 
 /// Варианты гена стратегии — в порядке `Strategy`. Только дописывать в конец.
-pub const VARIANTS: [Variant; 1] = [Variant {
-    key: "standard",
-    label: "стандартный",
-    about: "Бежит от хищника, иначе идёт к ближайшему растению своего слоя, иначе бродит.",
-}];
+pub const VARIANTS: [Variant; 2] = [
+    Variant {
+        key: "standard",
+        label: "стандартный",
+        about: "Бежит от хищника, иначе идёт к ближайшему растению, иначе бродит в своём слое.",
+    },
+    Variant {
+        key: "lurker",
+        label: "затаившийся",
+        about: "Как стандартный, но пока не видит еды, бродит втрое медленнее — и тратит меньше.",
+    },
+];
 
 /// Память травоядного между ходами. Общая для всех стратегий: новое состояние
 /// дописывается сюда (структура остаётся `Copy`).
@@ -76,6 +85,8 @@ pub struct Me<'a> {
 pub struct Intent {
     pub tx: f64,
     pub ty: f64,
+    /// Медленный ход: шаг `slow_speed` и расход `slow_upkeep` (`SLOW_PACE`).
+    pub slow: bool,
 }
 
 /// Куда идти на этом ходу.
@@ -83,6 +94,7 @@ pub struct Intent {
 pub(crate) fn decide(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl VegetarianSenses) -> Intent {
     match me.pheno.strategy {
         Strategy::Standard => standard::decide(me, mind, rng, senses),
+        Strategy::Lurker => lurker::decide(me, mind, rng, senses),
     }
 }
 
@@ -90,7 +102,7 @@ pub(crate) fn decide(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Vege
 #[inline(always)]
 pub(crate) fn after_eating(me: &Me, mind: &mut Mind, rng: &mut Rng) {
     match me.pheno.strategy {
-        Strategy::Standard => standard::after_eating(me, mind, rng),
+        Strategy::Standard | Strategy::Lurker => standard::after_eating(me, mind, rng),
     }
 }
 

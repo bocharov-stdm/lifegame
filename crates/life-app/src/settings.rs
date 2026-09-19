@@ -42,6 +42,8 @@ pub enum Key {
     PredatorDivideChance,
     PredatorMaxEnergy,
     PredatorMigration,
+    Lurkers,
+    Ambushers,
 }
 
 pub struct Field {
@@ -76,7 +78,11 @@ fn int(v: f64) -> String {
     format!("{v:.0}")
 }
 
-pub const FIELDS: [Field; 13] = [
+fn percent(v: f64) -> String {
+    format!("{v:.0}%")
+}
+
+pub const FIELDS: [Field; 15] = [
     // ── Мир ──────────────────────────────────────────────────────────────────
     Field {
         key: Key::Vegetarians,
@@ -133,6 +139,32 @@ pub const FIELDS: [Field; 13] = [
         hi: 1500.0,
         step: 50.0,
         format: int,
+        tab: Tab::World,
+        rule: None,
+    },
+    // Доля второго варианта стратегии; остальные — стандартные. Дальше стратегии
+    // наследуются и мутируют сами, и при нуле затаившиеся всё равно появятся.
+    Field {
+        key: Key::Lurkers,
+        label: "Затаившихся на старте",
+        hint: "Доля травоядных, которые, не видя еды, бродят втрое медленнее и тратят меньше. \
+               Остальные — стандартные. Дальше стратегия наследуется и изредка мутирует.",
+        lo: 0.0,
+        hi: 100.0,
+        step: 5.0,
+        format: percent,
+        tab: Tab::World,
+        rule: None,
+    },
+    Field {
+        key: Key::Ambushers,
+        label: "Засадников на старте",
+        hint: "Доля хищников, которые бродят втрое медленнее и тратят меньше, а бросаются только \
+               на близкую добычу. Остальные — стандартные, гонятся за любой видимой.",
+        lo: 0.0,
+        hi: 100.0,
+        step: 5.0,
+        format: percent,
         tab: Tab::World,
         rule: None,
     },
@@ -264,6 +296,7 @@ impl Default for Settings {
                 Key::PlantGrowth => 1.0,
                 Key::PredatorSpeed => PREDATOR_BASE_SPEED,
                 Key::PredatorVision => PREDATOR_BASE_VISION,
+                Key::Lurkers | Key::Ambushers => 0.0,
                 _ => rules.get(f.rule.expect("правило")).expect("правило есть в Rules"),
             }),
             fullscreen: false,
@@ -312,6 +345,12 @@ impl Settings {
     pub fn world_config(&self, seed: u64) -> WorldConfig {
         let space = Space::scaled(self.scale);
         let per_area = |key| (self.get(key) * space.area_ratio()).round() as usize;
+        // доли вариантов (стандартный, второй); ноль — пустая смесь, как у мира
+        // по умолчанию
+        let mix = |key| {
+            let p = self.get(key);
+            if p > 0.0 { vec![100.0 - p, p] } else { Vec::new() }
+        };
         WorldConfig {
             seed,
             scale: self.scale,
@@ -320,7 +359,8 @@ impl Settings {
             n_predators: Some(per_area(Key::Predators)),
             predator_speed: self.get(Key::PredatorSpeed),
             predator_vision: self.get(Key::PredatorVision),
-            ..Default::default()
+            vegetarian_strategies: mix(Key::Lurkers),
+            predator_strategies: mix(Key::Ambushers),
         }
     }
 
@@ -432,6 +472,8 @@ fn json_key(key: Key) -> &'static str {
         Key::PredatorDivideChance => "predator_divide_chance",
         Key::PredatorMaxEnergy => "predator_max_energy",
         Key::PredatorMigration => "predator_migration",
+        Key::Lurkers => "lurkers_percent",
+        Key::Ambushers => "ambushers_percent",
     }
 }
 
@@ -541,6 +583,19 @@ mod tests {
         assert_eq!(cfg.predators_at_start(), PREDATORS_AT_START * 100);
         let base = Settings::default().world_config(1);
         assert_eq!((base.vegetarians_at_start(), base.predators_at_start()), (20, 6));
+    }
+
+    /// Доля второй стратегии — смесь мира; ноль — пустая смесь, как по умолчанию.
+    #[test]
+    fn доли_стратегий_становятся_смесью_мира() {
+        let base = Settings::default().world_config(1);
+        assert!(base.vegetarian_strategies.is_empty() && base.predator_strategies.is_empty());
+        let mut s = Settings::default();
+        s.set(Key::Lurkers, 30.0);
+        s.set(Key::Ambushers, 100.0);
+        let cfg = s.world_config(1);
+        assert_eq!(cfg.vegetarian_strategies, vec![70.0, 30.0]);
+        assert_eq!(cfg.predator_strategies, vec![0.0, 100.0]);
     }
 
     #[test]

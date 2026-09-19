@@ -3,7 +3,7 @@
 //! (`Predator::act`), после хода стратегия может передумать о цели (`settle`).
 
 use super::Phenotype;
-use super::standard;
+use super::{ambusher, standard};
 use crate::genome::Variant;
 use crate::rng::Rng;
 use crate::senses::PredatorSenses;
@@ -15,11 +15,13 @@ pub enum Strategy {
     /// Голодный гонится за ближайшей добычей с рывком вблизи, сытый бродит.
     #[default]
     Standard,
+    /// Бродит медленно и дёшево, бросается рывком только на близкую добычу.
+    Ambusher,
 }
 
 impl Strategy {
     /// Все варианты в порядке `VARIANTS`.
-    pub const ALL: [Strategy; 1] = [Strategy::Standard];
+    pub const ALL: [Strategy; 2] = [Strategy::Standard, Strategy::Ambusher];
 
     /// Стратегия по значению гена — номеру варианта.
     #[inline]
@@ -33,11 +35,19 @@ impl Strategy {
 }
 
 /// Варианты гена стратегии — в порядке `Strategy`. Только дописывать в конец.
-pub const VARIANTS: [Variant; 1] = [Variant {
-    key: "standard",
-    label: "стандартный",
-    about: "Голодный гонится за ближайшей добычей, вблизи — рывком; сытый бродит и не ест.",
-}];
+pub const VARIANTS: [Variant; 2] = [
+    Variant {
+        key: "standard",
+        label: "стандартный",
+        about: "Голодный гонится за ближайшей добычей, вблизи — рывком; сытый бродит и не ест.",
+    },
+    Variant {
+        key: "ambusher",
+        label: "засадник",
+        about: "Бродит втрое медленнее и тратит меньше; голодный бросается рывком только на \
+                близкую добычу, дальнюю не преследует.",
+    },
+];
 
 /// Память хищника между ходами.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -75,6 +85,7 @@ pub struct Intent {
 pub(crate) fn decide(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl PredatorSenses) -> Intent {
     match me.pheno.strategy {
         Strategy::Standard => standard::decide(me, mind, rng, senses),
+        Strategy::Ambusher => ambusher::decide(me, mind, rng, senses),
     }
 }
 
@@ -82,7 +93,7 @@ pub(crate) fn decide(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Pred
 #[inline(always)]
 pub(crate) fn settle(me: &Me, mind: &mut Mind, rng: &mut Rng, space: &Space, intent: &Intent) {
     match me.pheno.strategy {
-        Strategy::Standard => standard::settle(me, mind, rng, space, intent),
+        Strategy::Standard | Strategy::Ambusher => standard::settle(me, mind, rng, space, intent),
     }
 }
 

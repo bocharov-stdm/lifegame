@@ -3,6 +3,7 @@
 //! Логика — как в `app/render.py` (тег python-final): у каждой величины своя
 //! шкала, под курсором — значения в этой точке, справа — изменение от начала.
 
+use eframe::egui::text::{LayoutJob, TextWrapping};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 use life_core::genome::GeneSpec;
 use life_core::genome::vegetarian::{GENES, N};
@@ -124,31 +125,38 @@ pub fn genome(ui: &mut egui::Ui, history: &History, whole: bool, row_h: f32) {
             Pos2::new(spark_rect.right(), top + row_h - 3.0),
         );
 
-        let (value, change) = match (at.genes[g], origin[g]) {
+        let (value, value_color, change) = match (at.genes[g], origin[g]) {
             (GeneStat::Number(now), GeneStat::Number(was)) => {
                 number_row(&painter, spark, &points, g, spec.is_percent(), color);
-                number_text(now.p50, was.p50, spec.is_percent())
+                let (value, change) = number_text(now.p50, was.p50, spec.is_percent());
+                (value, TEXT, change)
             }
-            (GeneStat::Shares(now), GeneStat::Shares(was)) => {
+            (GeneStat::Shares(now), GeneStat::Shares(_)) => {
                 shares_row(&painter, spark, &points, g, spec.variants().unwrap_or_default().len());
-                shares_text(spec, &now, &was)
+                shares_text(spec, &now)
             }
-            _ => (String::new(), String::new()),
+            _ => (String::new(), TEXT, String::new()),
         };
-        painter.text(
-            Pos2::new(rect.right() - value_w + 8.0, row.center().y),
-            Align2::LEFT_CENTER,
-            value,
-            font.clone(),
-            TEXT,
-        );
-        painter.text(
+        let change = painter.text(
             Pos2::new(rect.right(), row.center().y),
             Align2::RIGHT_CENTER,
             change,
             font.clone(),
             MUTED,
         );
+        // Значение не заходит на изменение справа: длинное (имя варианта)
+        // обрезается многоточием.
+        let left = rect.right() - value_w + 8.0;
+        let mut job = LayoutJob::simple_singleline(value, font.clone(), value_color);
+        job.wrap = TextWrapping {
+            max_width: (change.left() - 6.0 - left).max(0.0),
+            max_rows: 1,
+            break_anywhere: true,
+            overflow_character: Some('…'),
+        };
+        let galley = painter.layout_job(job);
+        let pos = Pos2::new(left, row.center().y - galley.size().y / 2.0);
+        painter.galley(pos, galley, value_color);
     }
     if let Some(i) = hovered {
         let x = x_at(spark_rect, i, n);
@@ -253,13 +261,13 @@ fn shares_row(painter: &egui::Painter, spark: Rect, points: &[GenePoint], g: usi
     }
 }
 
-/// Самый частый вариант и изменение его доли от начала.
-fn shares_text(spec: &GeneSpec, now: &[f64; MAX_VARIANTS], was: &[f64; MAX_VARIANTS]) -> (String, String) {
+/// Самый частый вариант — именем его цвета (легенда к слоям графика) — и его доля.
+fn shares_text(spec: &GeneSpec, now: &[f64; MAX_VARIANTS]) -> (String, Color32, String) {
     let variants = spec.variants().unwrap_or_default();
     let Some((k, v)) = variants.iter().enumerate().max_by(|a, b| now[a.0].total_cmp(&now[b.0])) else {
-        return (String::new(), String::new());
+        return (String::new(), TEXT, String::new());
     };
-    (format!("{} {:.0}%", v.label, now[k] * 100.0), format!("{:+.0} п.п.", (now[k] - was[k]) * 100.0))
+    (v.label.to_string(), VARIANT_COLORS[k % VARIANT_COLORS.len()], format!("{:.0}%", now[k] * 100.0))
 }
 
 /// Цвет-подсказка для полос энергии: голодные — красным.

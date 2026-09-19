@@ -1,5 +1,6 @@
 //! Хищник: бродит, голодный — охотится с рывком вблизи, ловит при касании тел.
 
+mod ambusher;
 mod phenotype;
 mod standard;
 pub mod strategy;
