@@ -298,7 +298,12 @@ before changing any of these.
 
 Extinction: before the soft layer and the strategies, 4 of 12 seeds died out within 20k ticks
 (herbivores squeezed into the top few % of depth, repro threshold collapsed, they starved);
-with them, 0 of 12 (one seed ends with 2 herbivores and no predators). Use the story
+with them, 0 of 12 (one seed ends with 2 herbivores and no predators). The mutability gene
+(see "Genes and strategies") brought it back to 6 of 12 with predators (3 of the 8 reference
+seeds): selection pulls herbivore mutability from 1 to ~0.2 (a less mutated child is fitter on
+average), variation dries up and they lose to predators. With mutability pinned at 1 — 0 of
+12; without predators (the game's default) — 0 of 12, ~2000 herbivores, mutability settles
+near 0.4. The user chose deliberately: mutability has no energy cost. Use the story
 (`--ticks 20000 --maps 3`, `--max-work 1e15` for full-length runs) to work on balance.
 
 Behaviour genes without a cost run away. Tried and removed: «испуг» (flee distance, % of
@@ -349,7 +354,12 @@ cannot move, feed or divide the creature — the property a parallel tick needs.
 `after_eating` (herbivore — re-targets even while fleeing), `settle` (predator, after the move —
 even if it just died). Eating, catching and division stay world physics driven by the phenotype.
 
-The strategy is a gene: the last row of each table, `Choice(&strategy::VARIANTS)`,
+**Mutability** (`mutability`, last row of both tables, base 1): the parent's value multiplies
+the mutation sigma of every gene — itself included — and the strategy switch chance
+(`mutate_values(.., mutability, ..)`, capped by `MAX_MUTABILITY`). It has no cost and no
+phenotype; it acts only at division.
+
+The strategy is a gene: a row of each table, `Choice(&strategy::VARIANTS)`,
 `Mutation::Switch { chance: STRATEGY_SWITCH_CHANCE }`. **A choice gene with one variant is
 inert**: `Switch` draws nothing, so appending it did not shift a single random number; the UI,
 the story and the reference check hide such a gene. A start mix
@@ -433,6 +443,8 @@ Adding a strategy:
   `charts.rs` (drawn with the painter — no plot crate), `history.rs`
   (port of `history.py`), `settings.rs` (`FIELDS`, the single field spec — label, hint,
   range, `choices`, `shown`; start counts are *per base area* and scale with the world; the
+  game starts **without predators** by default (engine, report and reference keep
+  `PREDATORS_AT_START`); the
   strategy sliders are the share of the second variant; the shape is `Settings::shape`; file in
   `%APPDATA%\TinyLife`, atomic, clamped).
 - Chronicle texts come from `life_sim::observe::EventTracker` — the same incremental tracker

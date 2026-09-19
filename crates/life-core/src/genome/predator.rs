@@ -12,13 +12,14 @@ pub enum Gene {
     Speed,
     Vision,
     Strategy,
+    Mutability,
 }
 
 impl Gene {
-    pub const ALL: [Gene; N] = [Gene::Speed, Gene::Vision, Gene::Strategy];
+    pub const ALL: [Gene; N] = [Gene::Speed, Gene::Vision, Gene::Strategy, Gene::Mutability];
 }
 
-pub const N: usize = 3;
+pub const N: usize = 4;
 
 /// Мутация хищника: с шансом 0.4 ген меняется (жребий «оставить» — больше
 /// 0.6), множитель без нижней границы, сигма `PREDATOR_SIGMA`.
@@ -50,6 +51,14 @@ pub const GENES: [GeneSpec; N] = [
         base: 0.0,
         mutation: Mutation::Switch { chance: STRATEGY_SWITCH_CHANCE },
     },
+    GeneSpec {
+        key: "mutability",
+        label: "мутагенность",
+        about: "Множитель на разброс мутаций у потомка — всех генов, и этого тоже.",
+        kind: GeneKind::Absolute,
+        base: 1.0,
+        mutation: SCALE,
+    },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -76,7 +85,8 @@ impl PredatorGenome {
     /// Геном потомка (см. `mutate_values`).
     pub fn mutate(&self, rng: &mut Rng) -> Self {
         let mut child = *self;
-        super::mutate_values(&mut child.0, &GENES, PREDATOR_SIGMA, rng);
+        let mutability = super::mutability_of(self[Gene::Mutability]);
+        super::mutate_values(&mut child.0, &GENES, PREDATOR_SIGMA, mutability, rng);
         child
     }
 }

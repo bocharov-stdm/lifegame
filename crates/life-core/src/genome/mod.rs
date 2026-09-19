@@ -12,6 +12,7 @@
 pub mod predator;
 pub mod vegetarian;
 
+use crate::config::MAX_MUTABILITY;
 use crate::rng::Rng;
 
 pub use predator::PredatorGenome;
@@ -98,11 +99,19 @@ pub fn index_of(genes: &[GeneSpec], key: &str) -> Option<usize> {
 
 /// Мутация значений по таблице, ген за геном в её порядке. `sigma` — разброс
 /// законов `Scale`: у травоядных из правил мира, у хищника — из конфига.
+/// `mutability` — ген мутагенности родителя (`mutability_of`): умножает и
+/// разброс, и шанс смены варианта, у всех генов сразу, включая себя самого.
 ///
 /// Порядок и число случайных чисел — часть поведения мира: у травоядных цикл
 /// gauss до множителя не ниже 0.1, у хищника жребий «оставить» и один gauss.
-/// Выражения ровно те, что были до таблицы, — золотой тест это проверяет.
-pub(crate) fn mutate_values(values: &mut [f64], genes: &[GeneSpec], sigma: f64, rng: &mut Rng) {
+pub(crate) fn mutate_values(
+    values: &mut [f64],
+    genes: &[GeneSpec],
+    sigma: f64,
+    mutability: f64,
+    rng: &mut Rng,
+) {
+    let sigma = sigma * mutability;
     for (value, spec) in values.iter_mut().zip(genes) {
         match spec.mutation {
             Mutation::Scale { keep_above, reject_below } => {
@@ -133,7 +142,7 @@ pub(crate) fn mutate_values(values: &mut [f64], genes: &[GeneSpec], sigma: f64, 
                 if n < 2 {
                     continue; // один вариант: менять не на что, жребий не тянем
                 }
-                if rng.random() < chance {
+                if rng.random() < chance * mutability {
                     // любой другой вариант, равновероятно
                     let k = rng.randint(0, n as i64 - 2) as usize;
                     let current = *value as usize;
@@ -142,6 +151,13 @@ pub(crate) fn mutate_values(values: &mut [f64], genes: &[GeneSpec], sigma: f64, 
             }
         }
     }
+}
+
+/// Мутагенность из значения гена: не выше `MAX_MUTABILITY`. Без потолка
+/// множитель, уходя вверх поколение за поколением, мог бы дорасти до
+/// бесконечности, а сигма — стать NaN.
+pub(crate) fn mutability_of(gene: f64) -> f64 {
+    gene.min(MAX_MUTABILITY)
 }
 
 /// Какой вариант гена-выбора получит существо `i` из `n` при стартовой смеси
@@ -205,7 +221,7 @@ mod tests {
         let before = rng.clone();
         let mut v = [0.0];
         for _ in 0..100 {
-            mutate_values(&mut v, &[choice(&ONE, 1.0)], 0.3, &mut rng);
+            mutate_values(&mut v, &[choice(&ONE, 1.0)], 0.3, 1.0, &mut rng);
         }
         assert_eq!(v, [0.0]);
         assert_eq!(rng, before, "ген с одним вариантом не сдвигает случайные числа");
@@ -218,7 +234,7 @@ mod tests {
         for start in 0..3 {
             for _ in 0..300 {
                 let mut v = [start as f64];
-                mutate_values(&mut v, &[choice(&THREE, 1.0)], 0.3, &mut rng);
+                mutate_values(&mut v, &[choice(&THREE, 1.0)], 0.3, 1.0, &mut rng);
                 let k = v[0] as usize;
                 assert!(k < 3 && k != start, "с шансом 1 вариант меняется на другой: {start} → {k}");
                 assert_eq!(v[0], k as f64, "номер варианта — целое");
@@ -244,7 +260,7 @@ mod tests {
         let mut rng = Rng::new(1);
         let mut v = [2.0];
         for _ in 0..100 {
-            mutate_values(&mut v, &[choice(&THREE, 0.0)], 0.3, &mut rng);
+            mutate_values(&mut v, &[choice(&THREE, 0.0)], 0.3, 1.0, &mut rng);
         }
         assert_eq!(v, [2.0]);
     }

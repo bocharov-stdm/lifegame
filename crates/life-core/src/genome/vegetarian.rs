@@ -17,6 +17,7 @@ pub enum Gene {
     MinY,
     MaxY,
     Strategy,
+    Mutability,
 }
 
 impl Gene {
@@ -29,10 +30,11 @@ impl Gene {
         Gene::MinY,
         Gene::MaxY,
         Gene::Strategy,
+        Gene::Mutability,
     ];
 }
 
-pub const N: usize = 8;
+pub const N: usize = 9;
 
 /// Мутация травоядных: множитель не ниже 0.1, выпавшее ниже перетягивается
 /// заново, как в Python. Сигма — из правил мира.
@@ -108,6 +110,14 @@ pub const GENES: [GeneSpec; N] = [
         base: 0.0,
         mutation: Mutation::Switch { chance: STRATEGY_SWITCH_CHANCE },
     },
+    GeneSpec {
+        key: "mutability",
+        label: "мутагенность",
+        about: "Множитель на разброс мутаций у потомка — всех генов, и этого тоже.",
+        kind: GeneKind::Absolute,
+        base: 1.0,
+        mutation: SCALE,
+    },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -134,7 +144,8 @@ impl VegetarianGenome {
     /// Геном потомка (см. `mutate_values`).
     pub fn mutate(&self, sigma: f64, rng: &mut Rng) -> Self {
         let mut child = *self;
-        super::mutate_values(&mut child.0, &GENES, sigma, rng);
+        let mutability = super::mutability_of(self[Gene::Mutability]);
+        super::mutate_values(&mut child.0, &GENES, sigma, mutability, rng);
         child
     }
 }
@@ -174,5 +185,31 @@ mod tests {
         keys.dedup();
         assert_eq!(keys.len(), N, "имена генов не повторяются");
         assert_eq!(VegetarianGenome::BASE.get("vision"), Some(400.0));
+    }
+
+    /// Мутагенность родителя растягивает разброс всех генов, и свой тоже, и
+    /// чаще меняет стратегию; потолок `MAX_MUTABILITY` держит её конечной.
+    #[test]
+    fn мутагенность_растягивает_разброс_потомков() {
+        let spread = |m: f64| {
+            let parent = VegetarianGenome::BASE.with(Gene::Mutability, m);
+            let mut rng = Rng::new(3);
+            let (mut size, mut own, mut switched) = (0.0, 0.0, 0);
+            for _ in 0..2000 {
+                let child = parent.mutate(0.3, &mut rng);
+                size += (child[Gene::Size] / 40.0 - 1.0).abs();
+                own += (child[Gene::Mutability] / m - 1.0).abs();
+                switched += (child[Gene::Strategy] != 0.0) as usize;
+            }
+            (size / 2000.0, own / 2000.0, switched)
+        };
+        let (low, high) = (spread(0.2), spread(2.0));
+        assert!(high.0 > low.0 * 5.0, "размер: {:.3} против {:.3}", high.0, low.0);
+        assert!(high.1 > low.1 * 5.0, "сама мутагенность: {:.3} против {:.3}", high.1, low.1);
+        assert!(high.2 > low.2 * 5, "смена стратегии: {} против {}", high.2, low.2);
+        let base = spread(1.0);
+        assert!((base.0 - 0.3 * 0.8).abs() < 0.03, "при 1 разброс — сигма правил: {:.3}", base.0);
+        let capped = VegetarianGenome::BASE.with(Gene::Mutability, 1e300).mutate(0.3, &mut Rng::new(1));
+        assert!(capped.to_values().iter().all(|v| v.is_finite()), "потолок: геном конечен");
     }
 }

@@ -8,9 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use life_core::config::{
-    PREDATOR_BASE_SPEED, PREDATOR_BASE_VISION, PREDATORS_AT_START, VEGETARIANS_AT_START,
-};
+use life_core::config::{PREDATOR_BASE_SPEED, PREDATOR_BASE_VISION, VEGETARIANS_AT_START};
 use life_core::flora::{Along, Profile};
 use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::{Rules, Shape, Space, WorldConfig};
@@ -515,7 +513,10 @@ impl Default for Settings {
             shape: WorldConfig::default().shape,
             values: FIELDS.map(|f| match f.key {
                 Key::Vegetarians => VEGETARIANS_AT_START as f64,
-                Key::Predators => PREDATORS_AT_START as f64,
+                // Игра по умолчанию начинается без хищников: мир травоядных и
+                // растений. Движок и отчёт стартуют с `PREDATORS_AT_START` —
+                // на нём проверяется баланс хищников (эталон, золотой тест).
+                Key::Predators => 0.0,
                 Key::PlantGrowth => 1.0,
                 Key::PredatorSpeed => PREDATOR_BASE_SPEED,
                 Key::PredatorVision => PREDATOR_BASE_VISION,
@@ -742,6 +743,7 @@ pub fn describe_change(old: &Settings, new: &Settings) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use life_core::config::PREDATORS_AT_START;
 
     /// Подсказки называют числа из таблицы генов словами: поменяли базу —
     /// подсказка не должна врать.
@@ -818,12 +820,17 @@ mod tests {
 
     #[test]
     fn численности_растут_с_площадью() {
-        let s = Settings { scale: 100.0, ..Default::default() };
+        let mut s = Settings { scale: 100.0, ..Default::default() };
+        s.set(Key::Predators, PREDATORS_AT_START as f64);
         let cfg = s.world_config(1);
         assert_eq!(cfg.vegetarians_at_start(), VEGETARIANS_AT_START * 100);
         assert_eq!(cfg.predators_at_start(), PREDATORS_AT_START * 100);
         let base = Settings::default().world_config(1);
-        assert_eq!((base.vegetarians_at_start(), base.predators_at_start()), (20, 6));
+        assert_eq!(
+            (base.vegetarians_at_start(), base.predators_at_start()),
+            (20, 0),
+            "по умолчанию хищников нет"
+        );
     }
 
     /// Доля второй стратегии — смесь мира; ноль — пустая смесь, как по умолчанию.
