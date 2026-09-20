@@ -1,5 +1,5 @@
 //! Фенотип существа: всё, что выводится из генома и правил мира один раз
-//! при рождении. Геном не меняется всю жизнь, поэтому ход (самый горячий код)
+//! при рождении и росте тела. Геном не меняется всю жизнь, поэтому ход (самый горячий код)
 //! читает готовые числа. Правила меняются на ходу (лаборатория) — тогда фенотип
 //! пересчитывается целиком (`Creature::apply_rules`).
 //!
@@ -7,7 +7,7 @@
 //! своё действие, а его цена дописывается в конец суммы расхода.
 
 use super::Strategy;
-use crate::config::{ENERGY_PER_SIZE, SLOW_PACE};
+use crate::config::{ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, SLOW_PACE};
 use crate::genome::CreatureGenome;
 use crate::genome::creature::Gene;
 use crate::rules::Rules;
@@ -18,6 +18,12 @@ pub struct Phenotype {
     /// Диаметр тела.
     pub size: f64,
     pub speed: f64,
+    pub life_pace: f64,
+    pub retreat: f64,
+    pub plant_efficiency: f64,
+    pub meat_efficiency: f64,
+    pub prey_ratio: f64,
+    pub plant_energy: f64,
     pub vision: f64,
 
     // ── слой обитания и границы ─────────────────────────────────────────────
@@ -46,6 +52,9 @@ pub struct Phenotype {
     pub size2: f64,
     /// Радиус тела: по нему съедают сородичи (каннибализм).
     pub half: f64,
+    /// С какого расстояния до края тела опасного чужака бежать
+    /// (`FLEE_SIGHT_SHARE` зрения).
+    pub flee: f64,
 
     /// Стратегия поведения (`strategy.rs`).
     pub strategy: Strategy,
@@ -53,7 +62,12 @@ pub struct Phenotype {
 
 impl Phenotype {
     pub fn of(genome: &CreatureGenome, rules: &Rules, space: &Space) -> Self {
-        let size = genome[Gene::Size];
+        Self::at_size(genome, rules, space, genome[Gene::Size])
+    }
+
+    /// Фенотип по фактическому телу: наследственный предел хранится в геноме.
+    pub fn at_size(genome: &CreatureGenome, rules: &Rules, space: &Space, size: f64) -> Self {
+        let life_pace = genome[Gene::LifePace].clamp(0.5, 2.0);
         let (mut min_pct, mut max_pct) =
             (genome[Gene::MinY].clamp(0.0, 100.0), genome[Gene::MaxY].clamp(0.0, 100.0));
         if min_pct > max_pct {
@@ -85,6 +99,12 @@ impl Phenotype {
         Phenotype {
             size,
             speed,
+            life_pace,
+            plant_efficiency: 1.0 - 0.8 * genome[Gene::Carnivory].clamp(0.0, 100.0) / 100.0,
+            meat_efficiency: 0.2 + 0.8 * genome[Gene::Carnivory].clamp(0.0, 100.0) / 100.0,
+            prey_ratio: genome[Gene::PreyRatio].clamp(1.0, 5.0),
+            plant_energy: rules.plant_energy,
+            retreat: 0.8 - 0.6 * genome[Gene::Bravery].clamp(0.0, 100.0) / 100.0,
             vision,
             layer_lo,
             layer_hi,
@@ -95,12 +115,13 @@ impl Phenotype {
             y_lo,
             y_hi,
             max_energy: size * ENERGY_PER_SIZE,
-            upkeep: rules.upkeep(size, speed, vision),
+            upkeep: rules.upkeep(size, speed, vision) * life_pace,
             slow_speed,
-            slow_upkeep: rules.upkeep(size, slow_speed, vision),
+            slow_upkeep: rules.upkeep(size, slow_speed, vision) * life_pace,
             vision2: vision * vision,
             size2: size * size,
             half: size / 2.0,
+            flee: vision * FLEE_SIGHT_SHARE,
             strategy: Strategy::from_gene(genome[Gene::Strategy]),
         }
     }

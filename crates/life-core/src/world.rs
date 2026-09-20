@@ -1,10 +1,11 @@
 //! Состояние симуляции и один логический тик.
 //!
-//! Порядок тика: растения → существа (и каннибализм) → счётчик тиков.
-//! Съеденный в этом тике и умерший на своём ходу не действуют дальше. Дети
-//! копятся в отдельном буфере и не ходят в тик рождения. Съеденные растения
-//! помечаются и выметаются раз за тик. Каннибализм (правило) — отдельный проход
-//! после хода всех существ, когда они уже стоят.
+//! Порядок тика: растения → существа (снимок стада, ходы, каннибализм) →
+//! счётчик тиков. Сородичей видят по снимку на начало фазы. Съеденный в этом
+//! тике и умерший на своём ходу не действуют дальше. Дети копятся в отдельном
+//! буфере и не ходят в тик рождения. Съеденные растения помечаются и
+//! выметаются раз за тик. Каннибализм (правило) — отдельный проход после хода
+//! всех существ, когда они уже стоят.
 //!
 //! Хищники были отдельным видом до тега `predators-final`: их заменили мутации
 //! и каннибализм.
@@ -18,7 +19,7 @@ use crate::grid::Grid;
 use crate::plant::Plant;
 use crate::rng::Rng;
 use crate::rules::Rules;
-use crate::senses::{GridSenses, eat_plants, smaller_prey_in_contact};
+use crate::senses::{GridSenses, Herd, eat_plants};
 use crate::space::{Shape, Space};
 
 /// С чего начинается мир. None у существ — значение из конфига,
@@ -82,6 +83,8 @@ pub struct Counters {
     pub plants_eaten: u64,
     pub born: u64,
     pub starved: u64,
+    pub old_age: u64,
+    pub combat: u64,
     /// Съедены сородичами (каннибализм).
     pub cannibalized: u64,
 }
@@ -94,6 +97,8 @@ impl Counters {
             plants_eaten: self.plants_eaten - earlier.plants_eaten,
             born: self.born - earlier.born,
             starved: self.starved - earlier.starved,
+            old_age: self.old_age - earlier.old_age,
+            combat: self.combat - earlier.combat,
             cannibalized: self.cannibalized - earlier.cannibalized,
         }
     }
@@ -101,6 +106,8 @@ impl Counters {
 
 #[derive(Clone, Debug)]
 pub struct World {
+    pub flocks: std::collections::BTreeMap<u64, crate::flock::Flock>,
+    flock_seed: u64,
     pub space: Space,
     pub rules: Rules,
     pub tick: u64,
@@ -114,6 +121,8 @@ pub struct World {
     flora: Flora,
     /// Поток мира: растения и подсадка. У каждого существа поток свой.
     rng: Rng,
+    /// Снимок стада на начало фазы существ: по нему видят сородичей.
+    herd: Herd,
     prey_grid: Grid,
     food_grid: Grid,
 }
@@ -133,8 +142,11 @@ impl World {
             plants: Vec::new(),
             creatures: Vec::with_capacity(n_start),
             counters: Counters::default(),
+            flocks: Default::default(),
+            flock_seed: cfg.seed,
             next_id: 1,
             rng: Rng::new(0),
+            herd: Herd::new(),
             prey_grid: Grid::new(GRID_CELL),
             food_grid: Grid::new(GRID_CELL),
         };
@@ -157,6 +169,9 @@ impl World {
 
     pub fn add_creature(&mut self, mut v: Creature) {
         v.id = self.take_id();
+        if v.flock == 0 {
+            v.flock = v.id;
+        }
         self.creatures.push(v);
     }
 
@@ -194,30 +209,46 @@ impl World {
     }
 
     fn update_creatures(&mut self) {
-        let divide = self.tick.is_multiple_of(DIVIDE_PERIOD);
-        let World { space, rules, plants, creatures, prey_grid, food_grid, counters, .. } = self;
+        crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.flock_seed, true);
+        let World { space, rules, plants, creatures, herd, prey_grid, food_grid, counters, .. } = self;
         food_grid.rebuild(space, plants.iter().map(|p| (p.x, p.y)));
+        // Сородичей видят такими, какими они были в начале фазы: исход не
+        // зависит от порядка ходов. Пока съесть друг друга нельзя (каннибализм
+        // выключен), бояться некого — снимок не строится, и мир бит в бит прежний.
+        let herd = if rules.cannibals() {
+            herd.rebuild(space, creatures, rules.cannibal_ratio);
+            Some(&*herd)
+        } else {
+            None
+        };
 
         let mut offspring = Vec::new();
         for v in creatures.iter_mut() {
-            v.step(&GridSenses { food: food_grid, plants });
+            v.step(&GridSenses { food: food_grid, plants, herd });
             if !v.alive {
-                counters.starved += 1;
+                if v.death == Some(crate::creature::Death::OldAge) {
+                    counters.old_age += 1;
+                } else {
+                    counters.starved += 1;
+                }
                 continue; // умер от голода на этом ходу: не ест и не делится
             }
-
+        }
+        // Все решения видели одни растения; питание начинается после всех ходов.
+        for v in creatures.iter_mut().filter(|v| v.alive) {
             // ест всё не дальше size от центра — уже с новой позиции
             let eaten = eat_plants(food_grid, plants, v.x, v.y, v.pheno.size);
             counters.plants_eaten += eaten as u64;
             v.feed(eaten, rules);
-
-            if divide && let Some(child) = v.maybe_divide(space, rules) {
-                offspring.push(child);
-            }
         }
         if rules.cannibals() {
             // все уже сходили, дети ещё в буфере — они в тик рождения не едят и не съедаются
-            Self::cannibalism(space, rules, creatures, prey_grid, counters);
+            crate::combat::resolve(space, rules, creatures, prey_grid, counters);
+        }
+        for v in creatures.iter_mut().filter(|v| v.alive) {
+            if let Some(child) = v.maybe_divide(space, rules) {
+                offspring.push(child);
+            }
         }
         creatures.retain(|v| v.alive);
         plants.retain(|p| p.alive); // выметаем съеденное
@@ -225,40 +256,7 @@ impl World {
         for child in offspring {
             self.add_creature(child);
         }
-    }
-
-    /// Каннибализм: существа по порядку номеров съедают по одному сородичу,
-    /// который мельче в `cannibal_ratio` раз и касается телом радиуса поедания
-    /// (радиус — размер, как у растений). Это физика, а не чувство: никто не
-    /// ищет сородичей, едят тех, кто уже рядом. Существа в этом проходе стоят,
-    /// поэтому копии координат в сетке верны. Случайных чисел нет.
-    fn cannibalism(
-        space: &Space,
-        rules: &Rules,
-        creatures: &mut [Creature],
-        grid: &mut Grid,
-        counters: &mut Counters,
-    ) {
-        grid.rebuild(space, creatures.iter().map(|v| (v.x, v.y)));
-        let max_half = creatures.iter().fold(0.0_f64, |m, v| m.max(v.pheno.half));
-        for i in 0..creatures.len() {
-            let v = &creatures[i];
-            if !v.alive {
-                continue; // съеден раньше в этом проходе или умер от голода
-            }
-            let max_size = v.pheno.size / rules.cannibal_ratio;
-            let Some(j) =
-                smaller_prey_in_contact(grid, creatures, max_half, i, (v.x, v.y), v.pheno.size, max_size)
-            else {
-                continue;
-            };
-            let prey = &mut creatures[j];
-            let gain = prey.energy;
-            prey.alive = false;
-            prey.energy = 0.0;
-            counters.cannibalized += 1;
-            creatures[i].devour(gain);
-        }
+        crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.flock_seed, false);
     }
 
     // ── статистика ──────────────────────────────────────────────────────────

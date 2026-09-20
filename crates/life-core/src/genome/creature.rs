@@ -18,6 +18,10 @@ pub enum Gene {
     MaxY,
     Strategy,
     Mutability,
+    LifePace,
+    Bravery,
+    Carnivory,
+    PreyRatio,
 }
 
 impl Gene {
@@ -31,10 +35,14 @@ impl Gene {
         Gene::MaxY,
         Gene::Strategy,
         Gene::Mutability,
+        Gene::LifePace,
+        Gene::Bravery,
+        Gene::Carnivory,
+        Gene::PreyRatio,
     ];
 }
 
-pub const N: usize = 9;
+pub const N: usize = 13;
 
 /// Мутация существ: множитель не ниже 0.1, выпавшее ниже перетягивается
 /// заново, как в Python. Сигма — из правил мира.
@@ -118,6 +126,38 @@ pub const GENES: [GeneSpec; N] = [
         base: 1.0,
         mutation: SCALE,
     },
+    GeneSpec {
+        key: "life_pace",
+        label: "темп_жизни",
+        about: "Быстрее рост и рождения, дороже содержание и короче жизнь (0,5–2).",
+        kind: GeneKind::Absolute,
+        base: 1.0,
+        mutation: SCALE,
+    },
+    GeneSpec {
+        key: "bravery",
+        label: "храбрость",
+        about: "До какой потери здоровья продолжает защищаться, %.",
+        kind: GeneKind::Percent,
+        base: 50.0,
+        mutation: SCALE,
+    },
+    GeneSpec {
+        key: "carnivory",
+        label: "плотоядность",
+        about: "Лучше усваивает добычу, хуже растения, %.",
+        kind: GeneKind::Percent,
+        base: 25.0,
+        mutation: SCALE,
+    },
+    GeneSpec {
+        key: "prey_ratio",
+        label: "отношение_добычи",
+        about: "Во сколько раз добыча меньше охотника (1–5).",
+        kind: GeneKind::Absolute,
+        base: 2.5,
+        mutation: SCALE,
+    },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -146,6 +186,8 @@ impl CreatureGenome {
         let mut child = *self;
         let mutability = super::mutability_of(self[Gene::Mutability]);
         super::mutate_values(&mut child.0, &GENES, sigma, mutability, rng);
+        child.0[Gene::LifePace as usize] = child[Gene::LifePace].clamp(0.5, 2.0);
+        child.0[Gene::PreyRatio as usize] = child[Gene::PreyRatio].clamp(1.0, 5.0);
         child
     }
 }

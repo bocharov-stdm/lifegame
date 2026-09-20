@@ -516,6 +516,14 @@ fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; N]>) {
         ui.label(RichText::new("Существо").strong().size(17.0));
         ui.colored_label(MUTED, format!("№ {}", s.id));
     });
+    ui.label(format!(
+        "Тело {:.1} / {:.1} · возраст {:.0}",
+        s.half * 2.0,
+        s.genome[creature::Gene::Size as usize],
+        s.age
+    ));
+    ui.label(format!("Здоровье {:.1} / {:.1} · {}", s.health, s.max_health, s.state));
+    ui.label(s.flock.map_or("Одиночка".into(), |id| format!("Стая № {id}")));
     let frac = (s.energy / s.max_energy).clamp(0.0, 1.0);
     ui.horizontal(|ui| {
         ui.colored_label(MUTED, "энергия");

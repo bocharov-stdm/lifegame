@@ -49,7 +49,7 @@ fn digest(w: &World) -> u64 {
     let mut h = Fnv::new();
     h.u64(w.tick);
     let c = w.counters;
-    for v in [c.plants_grown, c.plants_eaten, c.born, c.starved, c.cannibalized] {
+    for v in [c.plants_grown, c.plants_eaten, c.born, c.starved, c.cannibalized, c.old_age, c.combat] {
         h.u64(v);
     }
     h.u64(w.plants.len() as u64);
@@ -62,6 +62,30 @@ fn digest(w: &World) -> u64 {
     h.u64(w.creatures.len() as u64);
     for v in &w.creatures {
         h.u64(v.id);
+        h.u64(v.parent);
+        h.u64(v.flock);
+        h.f64(v.birth_size);
+        h.f64(v.pheno.size);
+        h.f64(v.age);
+        h.f64(v.health);
+        h.u64(v.reproduction_wait);
+        h.u64(v.peaceful_ticks as u64);
+        h.u64(v.death.map_or(0, |d| d as u64 + 1));
+        h.u64(v.mind.flee_ticks as u64);
+        h.f64(v.mind.flee_dx);
+        h.f64(v.mind.flee_dy);
+        h.u64(v.mind.attack.unwrap_or(0));
+        h.u64(v.mind.target.is_some() as u64);
+        if let Some((x, y)) = v.mind.target {
+            h.f64(x);
+            h.f64(y);
+        }
+        h.u64(v.flock_goal.is_some() as u64);
+        if let Some(g) = v.flock_goal {
+            for n in [g.x, g.y, g.tx, g.ty] {
+                h.f64(n);
+            }
+        }
         h.f64(v.x);
         h.f64(v.y);
         h.f64(v.energy);
@@ -72,6 +96,16 @@ fn digest(w: &World) -> u64 {
             h.f64(g);
         }
         h.u64(v.rng.clone().next_u64());
+    }
+    h.u64(w.flocks.len() as u64);
+    for (id, f) in &w.flocks {
+        h.u64(*id);
+        h.u64(f.members as u64);
+        h.u64(f.remaining as u64);
+        for n in [f.goal.x, f.goal.y, f.goal.tx, f.goal.ty] {
+            h.f64(n);
+        }
+        h.u64(f.rng.clone().next_u64());
     }
     // поток мира и счётчик номеров: подсадка в копии мира
     let mut probe = w.clone();
@@ -206,22 +240,14 @@ fn run(case: &Case) -> (Vec<(u64, u64)>, World, Seen) {
 #[cfg(windows)]
 #[rustfmt::skip]
 const GOLDEN: &[&[(u64, u64)]] = &[
-    // A: сид 1, по умолчанию
-    &[(1, 0x3b44c17be97da83c), (2, 0x379472af7567f72a), (10, 0x0443743d6da10915), (31, 0xdb9734875812dd71), (100, 0x9a4a567a352e2083), (250, 0xe1b7eb0520828760), (500, 0xb3f2294caab14a7f), (1000, 0x647cf10b5724d920), (2000, 0x51947d2b25b9c6a1), (3000, 0x556d79f2484d6ad4), ],
-    // B: сид 4, гиганты
-    &[(1, 0xa913efd85ccdd5c4), (2, 0x0b397a7d656c41d1), (10, 0xfd91c35f6e7500be), (31, 0xc35b9810dce9753d), (100, 0x03182f8397d10693), (250, 0xe004caca8c189a44), (500, 0x3a19407c5307e695), (1000, 0xf88ce0feceac6f9f), (2000, 0x52c86f72797fd549), ],
-    // C: сид 7, лаборатория
-    &[(1, 0x4d6dd5cb1b810180), (2, 0x29ce9c9c3f306d93), (10, 0xe2b2697801db84d6), (31, 0x08e60df497e6d33a), (100, 0x1178090fd5a1ecbd), (250, 0x3de1341425e28bd0), (500, 0x2d355d53eaf29f23), (1000, 0x9dde273052316417), (2000, 0x04c10546352eddfe), (3000, 0xe0a50fa2f5b909f1), ],
-    // D: сид 2, масштаб 10
-    &[(1, 0xce8336c8cd08e944), (2, 0xf8fd6698caa0e348), (10, 0x4f1b3bf9a8ce891b), (31, 0x9e5d35c05155965a), (100, 0xd9857fe66564ba0b), (250, 0xde6e1e43b886825e), (500, 0xad781c1b90952c92), ],
-    // E: сид 3, правила на ходу и подсадка
-    &[(1, 0x92e3997a0550a9a3), (2, 0x493e0592c02fc42e), (10, 0xf0b8b9b1b9873bb4), (31, 0x73cbcfd46ff26bf5), (100, 0xa4f075b3a2373a56), (250, 0xf5a912eed6c459fa), (500, 0xfbad887a17f8edf8), (1000, 0xa5248d0fc4dbb7d4), ],
-    // F: сид 5, смесь стратегий
-    &[(1, 0x89b8030aee40f225), (2, 0x4dc081f9d6c203e6), (10, 0x99e93cb6da032a1b), (31, 0x89c78924c39ee5f0), (100, 0x1dc5d8cf3bcf3c5a), (250, 0x641fcba4bfbe4339), (500, 0x63f69d4ce75dce6f), (1000, 0x7e222e329e2d9f64), (2000, 0xfd4282be274dd1bc), ],
-    // G: сид 6, квадрат x10, еда линейно и волнами
-    &[(1, 0xe5516ae536fc6e82), (2, 0x42dbcccd5fee28b0), (10, 0x0bb8f8ba4f4a5bcc), (31, 0x0cae41c19514fa53), (100, 0x304ebc38a4cbe31f), (250, 0x659b2110f9a53671), (500, 0x4711667a866dc148), (1000, 0x54237efd759e01e6), ],
-    // H: сид 8, каннибализм
-    &[(1, 0x8004cef2da5711f9), (2, 0x804072b0cc049f3a), (10, 0x88f073899c3c6482), (31, 0x8cea17195bcc4d8e), (100, 0xd7868680f3f34215), (250, 0x85319629685cf1c6), (500, 0x5c31700e34588653), (1000, 0x93b23247896784ad), (2000, 0x09ceed3ea083a658), ],
+    &[(1, 0x2cf2620927bb5ddc), (2, 0x709b7d441868ea83), (10, 0x48d07e56bd444b0f), (31, 0xdec002cbe208b26b), (100, 0xd7dc1bee26cac5ce), (250, 0xa98391a9ffe530a2), (500, 0x2568282a61c6b491), (1000, 0x194378fbf9bf80fa), (2000, 0x34453229980d2be2), (3000, 0x5d856ee07b101c73), ],
+    &[(1, 0xf4703c72e16f18e2), (2, 0x757b061bf3e3ab71), (10, 0x217550c5223f9e99), (31, 0xfa972cebd818c836), (100, 0x59a2548ddbe67772), (250, 0xc3c47d49593da28a), (500, 0x03a3f5c1dfa2e169), (1000, 0x253a2f0088fca850), (2000, 0x5b7f7d5716b6e463), ],
+    &[(1, 0xd631060ac04a60bb), (2, 0x77772600c4be7aaf), (10, 0xf9ad4074bcd57c8a), (31, 0xcae3a34ed88444bf), (100, 0x2ce2e75fd23b27c3), (250, 0xb84e5b469374689b), (500, 0xda50402f62587f28), (1000, 0x9c8fc0b9a2026d23), (2000, 0x9b5d3641bfaf465c), (3000, 0xc0c64471924a16e8), ],
+    &[(1, 0xefe53f73e7cfea6f), (2, 0xaf599429904e89ae), (10, 0x54ecb1bbc8a6c7f6), (31, 0x86f3c07392b2ddfd), (100, 0x4d469b74369b77ce), (250, 0xe92c3250e0b5a17f), (500, 0x15dfd500e406d04a), ],
+    &[(1, 0xaf9a592bb87c6f7c), (2, 0xc937d0b98a50e8f4), (10, 0x6ee88077744d3d12), (31, 0x9dde833d94b547e2), (100, 0xc4097020d74416a7), (250, 0x859ccfffff0282d5), (500, 0xf365731745877372), (1000, 0x4322a97baba49254), ],
+    &[(1, 0x8af58968756719b2), (2, 0x908064403d7521fe), (10, 0xbf954aff7653b71e), (31, 0x7f809301ae5c1457), (100, 0x462139c88f374ea1), (250, 0xfec96dff6b64bf29), (500, 0x0903c38724b51b5d), (1000, 0x473a1fd1d7304613), (2000, 0x65c1865d0093b3b7), ],
+    &[(1, 0x6e35da68a3380a52), (2, 0xaa24d6fadfcb466a), (10, 0x9f5ac0d1f18d88a2), (31, 0x15acfb640c43f674), (100, 0x8ea013560007a880), (250, 0x5424c876f7692e06), (500, 0x601ad6245bb29fe9), (1000, 0x29b792642f258ba1), ],
+    &[(1, 0xde18e1ff0365a4b7), (2, 0x56e2c978a66710b4), (10, 0x0bd0eb65579e4d96), (31, 0x585713635530cafa), (100, 0xe9690903ebd1da6c), (250, 0x25f8691148c6c301), (500, 0x2d807eb928f32607), (1000, 0x9314ace02f4542d2), (2000, 0x86cf0ef0684f306c), ],
 ];
 
 #[cfg(not(windows))]
@@ -252,7 +278,7 @@ fn мир_ведёт_себя_как_при_записи() {
                 "{}: жизнь идёт — существа едят и делятся",
                 case.name
             ),
-            7 => assert!(c.cannibalized > 0, "{}: сородичей едят", case.name),
+            7 => assert!(c.combat > 0, "{}: сородичей едят", case.name),
             _ => {}
         }
 

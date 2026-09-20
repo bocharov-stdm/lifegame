@@ -22,14 +22,14 @@ phases 0‒2 — engine (`crates/life-core`), bounded headless runner with an ob
 (`crates/life-sim`), balance report (`crates/life-report`) — and the game itself
 (`crates/life-app`, phases 4‒5 done ahead of phase 3). The Python version was removed; it lives
 at the git tag **`python-final`** (`python/` there) and is the behavioural spec the game was
-ported from. Still open: phase 3 (two-phase parallel tick — big worlds are single-threaded and
-lag at ×1000), phase 6 (machine benchmark instead of the scale estimate), numeric behaviour
-genes (see "Balance"), and the behaviour reform agreed with the user (stages, in order: kin
-sight + kinship + fleeing from those who can eat you; growth fed by food; pace-of-life gene and
-aging; health and multi-tick fights with a bravery gene; carnivory and prey-ratio genes with
-active hunting; flocks with a tag, a centre and their own target). **Important, deferred by the
-user: what a flock gives its members** (shared alarm, shared eyes on food, group defence, joint
-hunting) — flocks come first with no benefit but «members don't eat each other».
+ported from. Реформа поведения реализована: родство и бегство, пищевой рост, темп жизни и
+старение, здоровье и одновременные бои, плотоядность и охота, наследуемые стаи.
+Точное описание механик и проверок — `BEHAVIOR.md`.
+Открыты фаза 3 (параллельное исполнение тика) и фаза 6 (отдельный бенчмарк машины).
+Движок пока последовательный; снимок соседей и разделение движения/питания не означают
+распараллеливание. Преимущества стай (разведка, тревога, защита, совместная охота)
+отложены пользователем: есть только общая цель и запрет атаковать своих.
+
 
 ## Commands
 
@@ -83,7 +83,7 @@ gene shifts, creatures squeezing into a thin layer); ASCII maps (top = surface, 
 creatures, `:`/`.` plants). The JSON has the same plus every snapshot
 (`life_sim::observe::Snapshot`: per-gene `GeneStat` — a spread for numeric genes, variant
 shares for choice genes —, depth and width histograms, cumulative counters). Format
-`life-report/3` (predator fields gone): top-level `genes` describes the gene table (key,
+`life-report/4` (predator fields gone): top-level `genes` describes the gene table (key,
 label, kind, variants);
 keys are English (event `kind`), texts Russian. Long runs may stop on the work budget
 ("перегрузка") — raise it with `--max-work`.
@@ -96,8 +96,8 @@ and the event chronicle for its in-game event feed.
 `reference/fingerprint.json` is the balance fingerprint (8 seeds x 20 000 ticks, series every
 60 ticks). It started as the last Python version's (`python/fingerprint.py` at `python-final`)
 and is re-taken from Rust after each deliberate balance change. It is a world of creatures
-and plants (0 of 8 seeds extinct, ~1800‒2700 creatures); metrics: creatures and plants mean,
-size max and final. `--compare` reruns the same seeds in Rust and checks each metric's mean
+and plants (0 of 8 seeds extinct, 323–1107 creatures without combat); metrics: creatures and plants mean,
+size max and final. Текущий эталон имеет `model: "life-behavior/1"`; эталоны без этой версии отклоняются. `--compare` reruns the same seeds in Rust and checks each metric's mean
 against the reference's per-seed range; any mismatch exits with code 1 (CI relies on it). It
 refuses (code 2) when the world differs from the one the reference was taken on (world size —
 compared as `Space`, not shape name, since at ×1 strip and 3:2 are the same 6000x4000 —,
@@ -174,27 +174,24 @@ together with `--save-reference`. The constants are asserted on Windows only: `l
 come from the platform libm, so Linux may differ in the last bit (there the test prints its
 digests). `--ignored` prints digests of 50 seeds × 2 worlds for a wider before/after diff.
 
-### Tick ordering and the death flag
+### Порядок тика и жизненный цикл
 
-`World::step()` runs: spawn plants → update creatures (+ cannibalism) → `tick += 1`.
+Растения → центры стай и снимок соседей → решения, возраст и движение всех существ →
+питание растениями → одновременные удары и питание победителей → размножение выживших →
+удаление погибших и добавление детей → обновление состава стай → номер тика.
 
-- Cannibalism (`rules.cannibalism`, off in the engine, on in the game) is a pass at the end of
-  the creature phase, after every creature has moved and before offspring are added (children
-  neither eat nor get eaten on their birth tick): by id order each live creature eats the first
-  live one no bigger than `size / cannibal_ratio` whose body touches its eating radius (`size`,
-  as for plants) and takes its energy. Physics, not a sense — nobody seeks kin — and no random
-  numbers: with the rule off the world is bit for bit the old one. Counted in
-  `Counters::cannibalized`.
+`Creature` хранит возраст, здоровье, диаметр при рождении, родителя, метку стаи и
+индивидуальный таймер размножения. `Phenotype::at_size` учитывает фактическое тело;
+`Gene::Size` — взрослый предел. Изменение правил сохраняет возраст и размер.
 
-- Right after each creature's own step `alive` is checked: starving there sets `alive = false`,
-  and a creature that died on its move must not eat or divide. Contact searches skip
-  `alive == false` candidates. Dead creatures are removed once per phase (`retain`).
-- Eaten plants are marked and swept once per tick at the end of the creature phase.
-- Offspring go into a separate buffer and get ids after the loop: children never act on the
-  tick they were born.
-- `World::counters` (plants grown/eaten, creatures born/starved/cannibalized) must balance with
-  the populations; a test checks it. Update the counters when adding any new way to be born or
-  to die.
+`combat.rs` собирает удары до применения урона: возможна взаимная гибель. Один удар
+на участника за тик; добычу получает один выживший победитель. Смерть имеет единственную
+причину (`Starved`, `OldAge`, `Combat`). Старое поле `cannibalized` оставлено для
+совместимости структуры счётчиков, в новой модели равно нулю и не дублирует `combat`.
+
+Дети добавляются после боёв и размножения. Погибший на своём ходу не питается; погибший
+в бою не получает добычу и не размножается. Съеденные растения помечаются и удаляются
+после фазы. Геном дополняется только в конце таблицы.
 
 ### Neighbour search
 
@@ -210,20 +207,13 @@ digests). `--ignored` prints digests of 50 seeds × 2 worlds for a wider before/
 - The grid stores copies of coordinates. That is valid only because the queried entities do not
   move within the phase (plants never move; creatures stand still in the cannibalism pass).
   `alive` is always read from the entity, never from the grid.
-- Cannibalism touches by the prey's body edge (`size + v.half`), so its query radius adds half
-  of the largest creature.
-- A creature eats with a fresh query around its position *after* the step.
-- The queries themselves are free functions at the bottom of `senses.rs`
-  (`smaller_prey_in_contact`, `nearest_plant`, `eat_plants`), so that
-  `запросы_к_сеткам_совпадают_с_перебором_в_живом_мире` (unit test in `senses.rs`) can check
-  every one of them against brute force on real positions of a live world, including one with
-  giant creatures. A wrong radius does not crash anything — it silently changes the balance.
-  Keep that test and `сетка_совпадает_с_перебором` passing when touching `grid.rs`, the
-  queries or how creatures move; route any new neighbour query through such a function.
-- No senses on a creature's *own* species until the parallel tick (cannibalism is not a sense:
-  it runs as a separate pass when creatures stand still, via `smaller_prey_in_contact`, which
-  the brute-force test checks too): creatures move during their
-  own phase, so the grid's copied coordinates of other creatures would be stale.
+- Бой использует отдельную сетку после движения; контакт — сумма половин диаметров.
+  Радиус запроса учитывает крупнейшее тело. Питание растениями также ищет соседей после движения.
+- Сохранять проверки пространственных запросов против полного перебора в тестах `senses.rs`.
+- Сородичи видны по неизменяемому `Herd` на начало фазы; в снимке все существа,
+  поскольку мелкие нужны как добыча. Родство и метки стаи исключают своих из угроз и целей.
+- После движения боевая сетка строится заново; контакт — сумма радиусов тел.
+
 
 ### The soft layer
 
@@ -310,10 +300,9 @@ fitter on average), variation dries up and they lost to predators. Without preda
 12, ~2000 creatures, mutability settles near 0.4. The user chose deliberately: mutability has
 no energy cost.
 
-Cannibalism, 8 seeds × 20 000 ticks: 0 of 8 extinct, but it is a size race — median size 24 →
-~80 (up to 230), 50‒180 creatures instead of ~2000 (seed 1: 17% of deaths are «eaten by
-kin»). Not tuned. Use the story
-(`--ticks 20000 --maps 3`, `--max-work 1e15` for full-length runs) to work on balance.
+Текущая реформа: 8/8 миров выжили в каждом режиме за 20 000 тиков.
+Численность: 323–1107 без боёв, 366–797 с боями. Старые результаты гонки размеров
+относятся к мгновенному поеданию и больше не описывают модель. См. `BEHAVIOR.md`.
 
 Behaviour genes without a cost run away. Tried and removed: «испуг» (flee distance, % of
 vision) and «голод» (the former predators' hunger threshold) as free numeric genes. Hunger
@@ -334,7 +323,7 @@ bounded by a tick count. Preserve this property in new tests.
 
 `Creature::step` is the hottest path. Genome-derived values (`upkeep`, `slow_speed`,
 `slow_upkeep`, `vision2`, `size2`, `half`, layer bounds, the strategy) are precomputed once in
-`Phenotype::of` because the genome never changes during a lifetime. Distances are
+`Phenotype::of` while the genome remains constant. Body-dependent values are recomputed when food grows the body. Distances are
 compared squared. The grid reuses its buffers between ticks. Strategy dispatch is a `match` on
 an enum (static, inlined), never `Box<dyn>`.
 
@@ -362,7 +351,7 @@ per species, their formulas differ). A strategy sees only itself, its memory and
 cannot move, feed or divide the creature — the property a parallel tick needs. Hooks:
 `after_eating` (re-targets right after eating). Eating, catching and division stay world physics driven by the phenotype.
 
-**Mutability** (`mutability`, last row of the table, base 1): the parent's value multiplies
+**Mutability** (`mutability`, base 1): the parent's value multiplies
 the mutation sigma of every gene — itself included — and the strategy switch chance
 (`mutate_values(.., mutability, ..)`, capped by `MAX_MUTABILITY`). It has no cost and no
 phenotype; it acts only at division.

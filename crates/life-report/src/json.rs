@@ -27,6 +27,8 @@ fn counters(c: &Counters) -> Value {
         "plants_eaten": c.plants_eaten,
         "born": c.born,
         "starved": c.starved,
+        "old_age": c.old_age,
+        "combat": c.combat,
         "cannibalized": c.cannibalized,
     })
 }
@@ -85,6 +87,8 @@ fn snapshot(s: &Snapshot) -> Value {
         "plants": s.plants,
         "plant_cap": s.plant_cap,
         "creatures": s.creatures,
+        "juveniles": s.juveniles,
+        "flocks": s.flocks,
         "counters": counters(&s.counters),
         "genes": genes,
         "depth_pct": s.depth.as_ref().map(spread),
@@ -111,7 +115,7 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
     let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(rules.get(k)))).collect();
     let space = cfg.space();
     json!({
-        "format": "life-report/3",
+        "format": "life-report/4",
         "world": { "scale": cfg.scale, "shape": cfg.shape.key(), "width": space.width, "height": space.height },
         "ticks": ticks,
         "sample_every": sample_every,

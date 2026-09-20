@@ -1,8 +1,9 @@
-//! Существо: ищет растения в своём слое глубины, делится.
+//! Существо: ищет растения в своём слое глубины, бежит от чужих, которые могут
+//! его съесть, делится.
 //!
 //! Поиск соседей — забота мира. Существо получает его в виде чувств
-//! (`senses.rs`): «где ближайшее растение». Так оно не знает о сетке, а тесты
-//! подсовывают вместо неё обычные замыкания.
+//! (`senses.rs`): «где ближайшее растение», «кто рядом опасен». Так оно не
+//! знает о сетке, а тесты подсовывают вместо неё обычные замыкания.
 
 mod lurker;
 mod phenotype;
@@ -20,20 +21,63 @@ use crate::rules::Rules;
 use crate::senses::Senses;
 use crate::space::Space;
 
+/// Кто кому родня: номер существа и номер его родителя (0 — родителя нет:
+/// стартовое или подсаженное). Мир выдаёт номера с 1, так что 0 ничей.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Kinship {
+    pub id: u64,
+    pub parent: u64,
+}
+
+impl Kinship {
+    /// Родня: сам, родитель и ребёнок, дети одного родителя. Родня друг друга
+    /// не ест и друг от друга не бежит. Внуки и двоюродные — уже чужие: иначе
+    /// за сотню поколений родным стал бы весь мир.
+    #[inline(always)]
+    pub fn kin(self, other: Kinship) -> bool {
+        self.id == other.id
+            || self.parent == other.id
+            || other.parent == self.id
+            || (self.parent != 0 && self.parent == other.parent)
+    }
+}
+
+/// Причина смерти задаётся ровно один раз.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Death {
+    Starved,
+    OldAge,
+    Combat,
+}
+
 #[derive(Clone, Debug)]
 pub struct Creature {
     /// Постоянный номер: по нему игра выбирает и следит за существом.
     pub id: u64,
+    /// Номер родителя; 0 — стартовое или подсаженное. Родителя может уже не
+    /// быть в живых: братья и сёстры узнают друг друга и без него.
+    pub parent: u64,
+    pub flock: u64,
+    pub flock_goal: Option<crate::flock::FlockGoal>,
     pub x: f64,
     pub y: f64,
     pub energy: f64,
+    /// Диаметр при рождении: вложенная в рост энергия доступна добытчику.
+    pub birth_size: f64,
+    /// Размеры мира нужны для роста без перемещения центра.
+    space: Space,
     pub alive: bool,
+    pub age: f64,
+    pub health: f64,
+    pub peaceful_ticks: u32,
+    pub reproduction_wait: u64,
+    pub death: Option<Death>,
 
     pub genome: CreatureGenome,
     /// Всё, что выведено из генома и правил при рождении (`phenotype.rs`).
     pub pheno: Phenotype,
 
-    /// Память между ходами: цель блуждания (`strategy.rs`).
+    /// Память между ходами: цель блуждания, бегство (`strategy.rs`).
     pub mind: Mind,
     pub rng: Rng,
 }
@@ -60,7 +104,33 @@ impl Creature {
         let x = x.unwrap_or_else(|| rng.uniform(pheno.x_lo, pheno.x_hi)).clamp(pheno.x_lo, pheno.x_hi);
         let y = y.unwrap_or_else(|| rng.uniform(pheno.body_lo, pheno.body_hi)).clamp(pheno.y_lo, pheno.y_hi);
 
-        Creature { id: 0, x, y, energy, alive: true, genome, pheno, mind: Mind::default(), rng }
+        Creature {
+            id: 0,
+            parent: 0,
+            flock: 0,
+            flock_goal: None,
+            x,
+            y,
+            energy,
+            birth_size: pheno.size,
+            space: *space,
+            alive: true,
+            age: 0.0,
+            health: pheno.size,
+            peaceful_ticks: 60,
+            reproduction_wait: (DIVIDE_PERIOD as f64 / pheno.life_pace).ceil() as u64,
+            death: None,
+            genome,
+            pheno,
+            mind: Mind::default(),
+            rng,
+        }
+    }
+
+    /// Номер и родитель: по ним узнают родню.
+    #[inline(always)]
+    pub fn kinship(&self) -> Kinship {
+        Kinship { id: self.id, parent: self.parent }
     }
 
     /// Базовое существо из конфига в случайном месте.
@@ -72,8 +142,40 @@ impl Creature {
     ///
     /// Что вокруг — стратегия спрашивает у `senses`.
     pub fn step(&mut self, senses: &impl Senses) {
-        let me = Me { x: self.x, y: self.y, energy: self.energy, pheno: &self.pheno };
+        if !self.alive {
+            return;
+        }
+        self.age += self.pheno.life_pace;
+        if self.age >= LIFESPAN {
+            self.alive = false;
+            self.death = Some(Death::OldAge);
+            return;
+        }
+        self.health = self.health.min(self.max_health());
+        self.peaceful_ticks = self.peaceful_ticks.saturating_add(1);
+        if self.peaceful_ticks >= 60 && self.energy > self.pheno.max_energy * 0.5 {
+            let healed = (self.max_health() * 0.002)
+                .min(self.max_health() - self.health)
+                .min(self.energy - self.pheno.max_energy * 0.5)
+                .max(0.0);
+            self.health += healed;
+            self.energy -= healed;
+        }
+        if self.adult() {
+            self.reproduction_wait = self.reproduction_wait.saturating_sub(1);
+        }
+        let me = Me {
+            x: self.x,
+            y: self.y,
+            energy: self.energy,
+            kinship: self.kinship(),
+            flock: self.flock,
+            flock_goal: self.flock_goal,
+            health_share: self.health / self.max_health(),
+            pheno: &self.pheno,
+        };
         let intent = strategy::decide(&me, &mut self.mind, &mut self.rng, senses);
+        self.mind.attack = intent.attack;
         self.act(intent);
     }
 
@@ -106,13 +208,20 @@ impl Creature {
         self.energy -= upkeep;
         if self.energy <= 0.0 {
             self.alive = false;
+            self.death = Some(Death::Starved);
         }
     }
 
-    /// Правила поменялись посреди жизни (лаборатория на ходу): фенотип — как у
-    /// только что рождённого с тем же геномом.
+    /// Новые правила пересчитывают фенотип по прежнему фактическому телу.
     pub fn apply_rules(&mut self, rules: &Rules, space: &Space) {
-        self.pheno = Phenotype::of(&self.genome, rules, space);
+        self.pheno = Phenotype::at_size(&self.genome, rules, space, self.pheno.size);
+        self.space = *space;
+        if !rules.cannibals() {
+            self.mind.attack = None;
+            self.mind.flee_ticks = 0;
+            self.mind.flee_dx = 0.0;
+            self.mind.flee_dy = 0.0;
+        }
     }
 
     /// Съедено `eaten` растений: энергия, и стратегия узнаёт, что поело.
@@ -120,19 +229,61 @@ impl Creature {
         if eaten == 0 {
             return;
         }
-        self.energy = self.pheno.max_energy.min(self.energy + rules.plant_energy * eaten as f64);
-        let me = Me { x: self.x, y: self.y, energy: self.energy, pheno: &self.pheno };
+        self.nourish(rules.plant_energy * eaten as f64 * self.pheno.plant_efficiency, rules);
+        let me = Me {
+            x: self.x,
+            y: self.y,
+            energy: self.energy,
+            kinship: self.kinship(),
+            flock: self.flock,
+            flock_goal: self.flock_goal,
+            health_share: self.health / self.max_health(),
+            pheno: &self.pheno,
+        };
         strategy::after_eating(&me, &mut self.mind, &mut self.rng);
     }
 
+    /// Растёт только на усвоенной пище; остаток наполняет запас.
+    pub fn nourish(&mut self, gain: f64, rules: &Rules) {
+        let gain = gain.max(0.0);
+        let room = self.x.min(self.space.width - self.x).min(self.y.min(self.space.height - self.y));
+        let limit = self.genome[Gene::Size].min(room).max(self.pheno.size);
+        let growth = (gain * self.pheno.life_pace / (1.0 + self.pheno.life_pace) / ENERGY_PER_SIZE)
+            .min(limit - self.pheno.size);
+        let health_share = self.health / self.max_health();
+        if growth > 0.0 {
+            self.pheno = Phenotype::at_size(&self.genome, rules, &self.space, self.pheno.size + growth);
+        }
+        self.health = self.max_health() * health_share;
+        self.energy = self.pheno.max_energy.min(self.energy + gain - growth * ENERGY_PER_SIZE);
+    }
+
+    /// Старение в последней пятой жизни уменьшает здоровье до половины.
+    pub fn max_health(&self) -> f64 {
+        self.pheno.size * (1.0 - ((self.age / LIFESPAN - 0.8) / 0.2).clamp(0.0, 1.0) * 0.5)
+    }
+
+    /// Достигнут наследственный размер.
+    pub fn adult(&self) -> bool {
+        self.pheno.size >= self.genome[Gene::Size]
+    }
+
+    /// Бежит ли сейчас от кого-то (для окна игры и наблюдателя).
+    pub fn fleeing(&self) -> bool {
+        self.mind.flee_ticks > 0
+    }
+
     /// Съеден сородич (каннибализм): его энергия — едоку, не выше полного бака.
-    pub fn devour(&mut self, energy: f64) {
-        self.energy = self.pheno.max_energy.min(self.energy + energy.max(0.0));
+    pub fn devour(&mut self, energy: f64, rules: &Rules) {
+        self.nourish(energy * self.pheno.meat_efficiency, rules);
     }
 
     /// Ребёнок, если после деления у родителя остаётся резерв. Номер ребёнку
     /// выдаёт мир.
     pub fn maybe_divide(&mut self, space: &Space, rules: &Rules) -> Option<Creature> {
+        if !self.alive || !self.adult() || self.reproduction_wait > 0 {
+            return None;
+        }
         let threshold = self.pheno.max_energy * (self.genome[Gene::ReproThreshold] / 100.0);
         if self.energy < threshold + REPRO_RESERVE {
             return None;
@@ -145,6 +296,7 @@ impl Creature {
             return None;
         }
         self.energy = left;
+        self.reproduction_wait = (DIVIDE_PERIOD as f64 / self.pheno.life_pace).ceil() as u64;
         let genome = self.genome.mutate(rules.mutation_sigma, &mut self.rng);
 
         // Смещения по осям независимые: с одним общим дети ложились на диагональ.
@@ -152,6 +304,16 @@ impl Creature {
         let cx = self.x + self.rng.uniform(-span, span);
         let cy = self.y + self.rng.uniform(-span, span);
         let rng = self.rng.fork();
-        Some(Creature::new(space, rules, genome, Some(cx), Some(cy), Some(child_energy), rng))
+        let baby_genome = genome.with(Gene::Size, genome[Gene::Size] * 0.5);
+        let mut child = Creature::new(space, rules, baby_genome, Some(cx), Some(cy), Some(child_energy), rng);
+        child.genome = genome;
+        child.parent = self.id;
+        child.flock = if self.rng.random() < 0.99 { self.flock } else { 0 };
+        child.reproduction_wait = (DIVIDE_PERIOD as f64 / child.pheno.life_pace).ceil() as u64;
+        child.birth_size = child.genome[Gene::Size] * 0.5;
+        child.pheno = Phenotype::at_size(&child.genome, rules, space, child.birth_size);
+        child.health = child.max_health();
+        child.energy = child.energy.min(child.pheno.max_energy);
+        Some(child)
     }
 }

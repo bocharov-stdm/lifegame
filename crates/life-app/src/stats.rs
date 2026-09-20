@@ -52,6 +52,14 @@ impl LifeApp {
 
     fn energy_tab(&mut self, ui: &mut egui::Ui) {
         let snaps = self.history.snapshots.points(self.whole);
+        if let Some(s) = snaps.last() {
+            ui.label(format!(
+                "Молодых {:.0}% · стай {}",
+                100.0 * s.juveniles as f64 / s.creatures.max(1) as f64,
+                s.flocks
+            ));
+            ui.label(life_sim::observe::describe_flows(&s.counters));
+        }
         ui.label(RichText::new("Сытость").strong());
         charts::energy(ui, &snaps, 190.0);
         ui.add_space(4.0);

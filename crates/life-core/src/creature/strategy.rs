@@ -11,7 +11,7 @@
 //! решает, какая выживет. Новая стратегия — вариант `Strategy` и `VARIANTS` в
 //! конец, свой файл с `decide`, новое состояние — в `Mind`.
 
-use super::Phenotype;
+use super::{Kinship, Phenotype};
 use super::{lurker, standard};
 use crate::genome::Variant;
 use crate::rng::Rng;
@@ -20,7 +20,8 @@ use crate::senses::Senses;
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Strategy {
-    /// Идёт к ближайшему растению; иначе бродит в своём слое.
+    /// Бежит от опасных чужаков; иначе идёт к ближайшему растению; иначе
+    /// бродит в своём слое.
     #[default]
     Standard,
     /// Как стандартный, но без еды в виду бродит медленно и дёшево.
@@ -60,6 +61,14 @@ pub const VARIANTS: [Variant; 2] = [
 /// дописывается сюда (структура остаётся `Copy`).
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Mind {
+    /// Выбранная цель удара в текущем тике.
+    pub attack: Option<u64>,
+    /// Сколько ещё тиков бежать после испуга.
+    pub flee_ticks: u32,
+    /// Последний вектор бегства (единичный): бежим по нему, и когда угроза
+    /// пропала из виду.
+    pub flee_dx: f64,
+    pub flee_dy: f64,
     /// Цель блуждания. None до первого выбора: иначе новорождённый пошёл бы
     /// потом к месту своего рождения.
     pub target: Option<(f64, f64)>,
@@ -70,17 +79,24 @@ pub struct Me<'a> {
     pub x: f64,
     pub y: f64,
     pub energy: f64,
+    /// Номер и родитель: чувства не показывают родню угрозой.
+    pub kinship: Kinship,
+    pub flock: u64,
+    pub flock_goal: Option<crate::flock::FlockGoal>,
     pub pheno: &'a Phenotype,
+    pub health_share: f64,
 }
 
 /// Решение хода: точка, к которой шагнуть. Шаг — не дальше speed в её сторону;
-/// точку ближе шага существо не проскакивает, а встаёт на неё.
+/// точку ближе шага существо не проскакивает, а встаёт на неё. Поэтому
+/// бегство — точка ровно на шаг от себя.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Intent {
     pub tx: f64,
     pub ty: f64,
     /// Медленный ход: шаг `slow_speed` и расход `slow_upkeep` (`SLOW_PACE`).
     pub slow: bool,
+    pub attack: Option<u64>,
 }
 
 /// Куда идти на этом ходу.

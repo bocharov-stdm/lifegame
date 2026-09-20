@@ -4,11 +4,12 @@
 
 use life_core::config::*;
 use life_core::creature::Creature;
+use life_core::creature::Kinship;
 use life_core::genome::creature::{GENES, Gene};
 use life_core::grid::Grid;
 use life_core::plant::Plant;
 use life_core::rng::Rng;
-use life_core::senses::{Blind, senses_from};
+use life_core::senses::{Blind, Threat, senses_from};
 use life_core::{Counters, CreatureGenome, Genome, Rules, Shape, Space, World, WorldConfig};
 
 const BASE: CreatureGenome = CreatureGenome::BASE;
@@ -68,12 +69,10 @@ fn cannibal_world(on: bool, small: f64, dx: f64) -> World {
 #[test]
 fn каннибал_съедает_мелкого_рядом() {
     let mut w = cannibal_world(true, 30.0, 10.0);
-    let prey_energy = w.creatures[1].energy;
     w.step();
-    assert_eq!(w.creatures.len(), 1, "мелкий сородич в досягаемости съеден");
-    assert_eq!(w.counters.cannibalized, 1);
-    let big = &w.creatures[0];
-    assert!(big.energy > 100.0 + prey_energy - 5.0, "энергия жертвы досталась едоку: {}", big.energy);
+    assert_eq!(w.creatures.len(), 2, "полное здоровье не теряется за один удар");
+    assert!(w.creatures[1].health < w.creatures[1].max_health());
+    assert_eq!(w.counters.combat, 0);
 }
 
 #[test]
@@ -88,23 +87,6 @@ fn каннибал_не_ест_крупного_дальнего_и_при_вы
         assert_eq!(w.creatures.len(), 2, "{why}");
         assert_eq!(w.counters.cannibalized, 0, "{why}");
     }
-}
-
-/// Съеденный сородич в этом же тике сам никого не ест: тройка «крупный →
-/// средний → мелкий» по порядку номеров теряет только среднего.
-#[test]
-fn съеденный_сородич_не_ест() {
-    let rules = Rules::default().with("cannibalism", 1.0).unwrap();
-    let mut w = empty_world(rules);
-    w.tick = 1;
-    w.spawn(genom(250.0), 3000.0, 2000.0, Some(500.0));
-    w.spawn(genom(90.0), 3150.0, 2000.0, None);
-    w.spawn(genom(30.0), 3200.0, 2000.0, None);
-    let ids: Vec<u64> = w.creatures.iter().map(|v| v.id).collect();
-    w.step();
-    let left: Vec<u64> = w.creatures.iter().map(|v| v.id).collect();
-    assert_eq!(w.counters.cannibalized, 1, "одно поедание за тик на едока");
-    assert_eq!(left, vec![ids[0], ids[2]], "съеден средний, мелкий цел");
 }
 
 /// Выключенный каннибализм — тот же мир бит в бит, что и без правила вовсе:
@@ -124,9 +106,164 @@ fn каннибализм_выключен_бит_в_бит_и_счётчики_
     let on = Rules::default().with("cannibalism", 1.0).unwrap().with("cannibal_ratio", 1.2).unwrap();
     let w = run(on);
     let c = w.counters;
-    assert!(c.cannibalized > 0, "за 3000 тиков при отношении 1.2 хоть кого-то съели: {c:?}");
+    assert!(c.combat > 0, "за 3000 тиков при отношении 1.2 хоть кого-то съели: {c:?}");
     let n0 = CREATURES_AT_START as u64;
-    assert_eq!(w.creatures.len() as u64, n0 + c.born - c.starved - c.cannibalized);
+    assert_eq!(w.creatures.len() as u64, n0 + c.born - c.starved - c.cannibalized - c.old_age - c.combat);
+}
+
+// ── родство и бегство ──────────────────────────────────────────────────────
+
+/// Ребёнок знает родителя; родня — родитель, дети и братья, но не внуки.
+#[test]
+fn родство_наследуется() {
+    let mut w = empty_world(Rules::default());
+    let id = w.spawn(BASE.with(Gene::ReproThreshold, 30.0), 3000.0, 2000.0, None);
+    let (s, r) = (w.space, w.rules.clone());
+    let parent = &mut w.creatures[0];
+    assert_eq!(parent.parent, 0, "подсаженное — без родителя");
+    let mut kids = Vec::new();
+    for n in 0..2 {
+        parent.reproduction_wait = 0;
+        parent.energy = parent.pheno.max_energy;
+        let mut kid = parent.maybe_divide(&s, &r).expect("сытый родитель не поделился");
+        kid.id = 100 + n; // номер выдаёт мир
+        kids.push(kid);
+    }
+    let parent = parent.kinship();
+    let (a, b) = (kids[0].kinship(), kids[1].kinship());
+    assert_eq!(a.parent, id, "ребёнок помнит родителя");
+    assert!(parent.kin(a) && a.kin(parent), "родитель и ребёнок — родня");
+    assert!(a.kin(b), "братья — родня");
+    kids[0].nourish(10000.0, &r);
+    kids[0].reproduction_wait = 0;
+    kids[0].energy = kids[0].pheno.max_energy;
+    let mut grandchild = kids[0].maybe_divide(&s, &r).expect("сытый ребёнок не поделился");
+    grandchild.id = 200;
+    let grandchild = grandchild.kinship();
+    assert!(a.kin(grandchild), "ребёнок и внук — родня");
+    assert!(!parent.kin(grandchild) && !b.kin(grandchild), "внук деду и дяде уже чужой");
+    let strangers = (Kinship { id: 7, parent: 0 }, Kinship { id: 8, parent: 0 });
+    assert!(!strangers.0.kin(strangers.1), "стартовые без родителя друг другу не братья");
+}
+
+/// Мир с крупным существом размера `big` и мелким (30) на `dx` правее;
+/// `kin` задаёт им родство руками.
+fn threat_world(cannibals: bool, big: f64, dx: f64, kin: impl Fn(&mut World)) -> World {
+    let mut w = cannibal_world(cannibals, 30.0, dx);
+    let v = &mut w.creatures[0];
+    v.genome = genom(big);
+    v.pheno = life_core::creature::Phenotype::of(&v.genome, &w.rules, &w.space);
+    kin(&mut w);
+    w
+}
+
+/// Тик мира: сдвиг мелкого по x и y и бежит ли он теперь.
+fn small_step(mut w: World) -> (f64, f64, bool) {
+    let (x0, y0) = (w.creatures[1].x, w.creatures[1].y);
+    w.step();
+    let v = &w.creatures[1];
+    (v.x - x0, v.y - y0, v.fleeing())
+}
+
+#[test]
+fn мелкий_бежит_от_крупного_чужака() {
+    // до края тела крупного 150 - 50 = 100: ближе трети зрения (133)
+    let w = threat_world(true, 100.0, 150.0, |_| {});
+    let speed = w.creatures[1].pheno.speed;
+    let (dx, dy, fleeing) = small_step(w);
+    assert!(fleeing, "мелкий не испугался");
+    assert!((dx - speed).abs() < 1e-9 && dy.abs() < 1e-9, "бежал не прочь: ({dx}, {dy})");
+}
+
+#[test]
+fn не_бежит_от_родни_равного_и_далёкого() {
+    let parent = |w: &mut World| w.creatures[1].parent = w.creatures[0].id;
+    let child = |w: &mut World| w.creatures[0].parent = w.creatures[1].id;
+    let brothers = |w: &mut World| {
+        w.creatures[0].parent = 999;
+        w.creatures[1].parent = 999;
+    };
+    let strangers = |w: &mut World| w.creatures[1].parent = 999; // у крупного родителя нет
+    let cases: [(World, &str); 6] = [
+        (threat_world(true, 100.0, 150.0, parent), "от родителя"),
+        (threat_world(true, 100.0, 150.0, child), "от своего ребёнка"),
+        (threat_world(true, 100.0, 150.0, brothers), "от брата"),
+        (threat_world(true, 70.0, 150.0, |_| {}), "от того, кто крупнее всего в 2.3 раза"),
+        (threat_world(true, 100.0, 250.0, |_| {}), "от того, до кого 200 — дальше трети зрения"),
+        (threat_world(false, 100.0, 150.0, |_| {}), "когда есть сородичей нельзя"),
+    ];
+    for (w, why) in cases {
+        let (_, _, fleeing) = small_step(w);
+        assert!(!fleeing, "бежит {why}");
+    }
+    let (_, _, fleeing) = small_step(threat_world(true, 100.0, 150.0, strangers));
+    assert!(fleeing, "от чужого с другим родителем не бежит");
+}
+
+/// Испуг длится FLEE_TICKS тиков и тогда, когда угроза пропала из виду, —
+/// даже мимо видимой еды; потом существо снова идёт к еде. Затаившийся бежит
+/// на полной скорости.
+#[test]
+fn бежит_ещё_после_пропажи_угрозы() {
+    let food = |_: f64, _: f64, _: f64| Some((900.0, 1000.0));
+    let threat = Threat { id: 999, x: 960.0, y: 1000.0, gap: 20.0 };
+    for g in [BASE, LURKER] {
+        let mut v = creature(1000.0, 1000.0, g);
+        v.health = v.max_health() * 0.1;
+        let x0 = v.x;
+        let (d, _) = move_once(&mut v, &senses_from(food).with_threat(threat));
+        assert!(v.x > x0 && close(d, v.pheno.speed), "не побежал прочь на полной скорости");
+        for t in 0..FLEE_TICKS {
+            let x = v.x;
+            move_once(&mut v, &senses_from(food));
+            assert!(v.x > x, "бросил бежать на тике {t}");
+        }
+        assert!(!v.fleeing());
+        let x = v.x;
+        move_once(&mut v, &senses_from(food));
+        assert!(v.x < x, "испуг прошёл, а к еде не идёт");
+    }
+    // угроза в виду, но дальше порога — к еде
+    let mut v = creature(1000.0, 1000.0, BASE);
+    let far = Threat { gap: v.pheno.flee + 1.0, ..threat };
+    move_once(&mut v, &senses_from(food).with_threat(far));
+    assert!(v.x < 1000.0 && !v.fleeing(), "испугался далёкого");
+}
+
+#[test]
+fn каннибал_не_ест_родню() {
+    let as_parent = |w: &mut World| w.creatures[1].parent = w.creatures[0].id;
+    let as_brother = |w: &mut World| {
+        w.creatures[0].parent = 999;
+        w.creatures[1].parent = 999;
+    };
+    for (w, why) in [
+        (threat_world(true, 100.0, 10.0, as_parent), "своего ребёнка"),
+        (threat_world(true, 100.0, 10.0, as_brother), "брата"),
+    ] {
+        let mut w = w;
+        w.step();
+        assert_eq!(w.creatures.len(), 2, "каннибал съел {why}");
+        assert_eq!(w.counters.cannibalized, 0);
+    }
+}
+
+/// Мир с бегством детерминирован: сородичей видят по снимку на начало фазы.
+#[test]
+fn мир_с_бегством_детерминирован() {
+    let rules = Rules::default().with("cannibalism", 1.0).unwrap().with("cannibal_ratio", 1.5).unwrap();
+    let run = || {
+        let mut w = World::new(&WorldConfig { seed: 9, rules: rules.clone(), ..Default::default() });
+        let mut fled = 0;
+        for _ in 0..2000 {
+            w.step();
+            fled += w.creatures.iter().filter(|v| v.fleeing()).count();
+        }
+        (w.stats(), w.counters, fled)
+    };
+    let (a, b) = (run(), run());
+    assert_eq!(a, b);
+    assert!(a.2 > 0, "за 2000 тиков никто ни разу не испугался");
 }
 
 /// Умершее от голода на своём ходу существо не ест и не делится.
@@ -152,6 +289,7 @@ fn родитель_сохраняет_резерв() {
     for share in [10.0, 30.0, 50.0, 70.0, 90.0] {
         let g = BASE.with(Gene::ReproThreshold, 30.0).with(Gene::ReproShare, share);
         let mut p = Creature::new(&s, &r, g, Some(1000.0), Some(1000.0), Some(60.0), Rng::new(0));
+        p.reproduction_wait = 0;
         match p.maybe_divide(&s, &r) {
             Some(_) => {
                 divided += 1;
@@ -201,6 +339,7 @@ fn ребёнок_рождается_у_родителя() {
     let mut parent = Creature::new(&s, &r, g, Some(3000.0), Some(3900.0), None, Rng::new(0));
     let (mut diagonal, mut outside) = (0, 0);
     for _ in 0..300 {
+        parent.reproduction_wait = 0;
         parent.energy = parent.pheno.max_energy;
         let mut c = parent.maybe_divide(&s, &r).expect("сытый родитель не поделился");
         assert!(c.pheno.y_lo <= c.y && c.y <= c.pheno.y_hi, "ребёнок вне мира: y={}", c.y);
@@ -335,6 +474,7 @@ fn стратегия_мутирует_изредка() {
     let n = 2000;
     let mut switched = 0;
     for _ in 0..n {
+        parent.reproduction_wait = 0;
         parent.energy = parent.pheno.max_energy;
         let c = parent.maybe_divide(&s, &r).expect("сытый родитель не поделился");
         switched += (c.genome[Gene::Strategy] != 0.0) as u32;
@@ -515,8 +655,8 @@ fn счётчики_сходятся_с_численностью() {
         w.step();
     }
     let c = w.counters;
-    assert!(c.born > 0 && c.cannibalized > 0 && c.starved > 0, "{c:?}");
-    assert_eq!(w.creatures.len() as u64, n0 + c.born - c.starved - c.cannibalized);
+    assert!(c.born > 0 && c.combat > 0 && c.starved > 0, "{c:?}");
+    assert_eq!(w.creatures.len() as u64, n0 + c.born - c.starved - c.cannibalized - c.old_age - c.combat);
     assert_eq!(w.plants.len() as u64, plants0 + c.plants_grown - c.plants_eaten);
     assert_eq!(c.since(&c), Counters::default());
 }
@@ -651,8 +791,8 @@ fn новые_правила_пересчитывают_живых_как_нов
     w.set_rules(rules.clone());
     let space = w.space;
     for v in &w.creatures {
-        let fresh = Creature::new(&space, &rules, v.genome, Some(v.x), Some(v.y), None, Rng::new(0));
-        assert_eq!(v.pheno, fresh.pheno, "фенотип живого — как у новорождённого с тем же геномом");
+        let fresh = life_core::creature::Phenotype::at_size(&v.genome, &rules, &space, v.pheno.size);
+        assert_eq!(v.pheno, fresh, "правила сохраняют фактический размер");
     }
     assert_eq!(w.rules, rules);
 }
@@ -682,4 +822,24 @@ fn профиль_еды_меняется_на_ходу() {
     let left = |ps: &[Plant]| ps.iter().filter(|p| p.x < third).count() as f64 / ps.len() as f64;
     assert!(left(fresh) > 0.99, "новые — у левого края: {:.3}", left(fresh));
     assert!(left(old) < 0.5, "старые остались равномерными: {:.3}", left(old));
+}
+
+#[test]
+fn выключение_каннибализма_сбрасывает_испуг() {
+    let mut w = threat_world(true, 100.0, 150.0, |_| {});
+    w.step();
+    assert!(w.creatures[1].fleeing());
+    w.set_rules(Rules::default());
+    assert!(w.creatures.iter().all(|v| !v.fleeing()));
+}
+
+#[test]
+fn совпавшая_угроза_не_обездвиживает() {
+    let mut v = creature(1000.0, 1000.0, BASE);
+    let senses = senses_from(|_, _, _| None).with_threat(Threat { id: 999, x: v.x, y: v.y, gap: -50.0 });
+    v.health = v.max_health() * 0.1;
+    let before = (v.x, v.y);
+    v.step(&senses);
+    assert!((v.x - before.0).hypot(v.y - before.1) > 0.0);
+    assert!(v.x.is_finite() && v.y.is_finite());
 }

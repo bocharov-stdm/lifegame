@@ -59,6 +59,9 @@ impl Reference {
     pub fn load(path: &Path) -> Result<Reference, String> {
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         let data: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        if data["model"].as_str() != Some("life-behavior/1") {
+            return Err("Эталон другой модели поведения. Пересоздайте его через --save-reference после проверки баланса.".into());
+        }
         let field = |v: &Value, k: &str| v.get(k).cloned().ok_or(format!("нет поля {k}"));
         let ticks = field(&data, "ticks")?.as_u64().ok_or("ticks — не число")?;
         let sample_every = field(&data, "sample_every")?.as_u64().ok_or("sample_every — не число")?;
@@ -242,6 +245,7 @@ pub fn save_reference(
         .collect();
     let data = json!({
         "source": "rust",
+        "model": "life-behavior/1",
         "sample_every": sample_every,
         "ticks": ticks,
         "genes": GENES.iter().map(|g| g.key).collect::<Vec<_>>(),
@@ -339,4 +343,18 @@ pub fn print_comparison(reference: &Reference, results: &[(u64, SimResult)]) -> 
         ours.len()
     );
     all_agree
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn старый_эталон_отклоняется_до_чтения_рядов() {
+        let path = std::env::temp_dir().join(format!("life-old-reference-{}.json", std::process::id()));
+        std::fs::write(&path, "{}").unwrap();
+        let result = Reference::load(&path);
+        std::fs::remove_file(path).unwrap();
+        assert!(result.err().unwrap().contains("другой модели поведения"));
+    }
 }

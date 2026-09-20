@@ -113,6 +113,8 @@ pub struct Snapshot {
     /// Потолок растений этого мира.
     pub plant_cap: usize,
     pub creatures: usize,
+    pub juveniles: usize,
+    pub flocks: usize,
     /// Накопленные с начала мира; потоки за промежуток — `b.counters.since(&a.counters)`.
     pub counters: Counters,
     /// Сводка каждого гена существ, порядок — таблица `creature::GENES`.
@@ -162,6 +164,8 @@ impl Snapshot {
             plants: world.plants.len(),
             plant_cap: world.space.per_area(PLANT_MAX),
             creatures: herd.len(),
+            juveniles: herd.iter().filter(|v| !v.adult()).count(),
+            flocks: world.flocks.values().filter(|f| f.members >= 2).count(),
             counters: world.counters,
             genes,
             depth: Spread::of(&mut depth),
@@ -237,6 +241,12 @@ const CAP_LOW: f64 = 0.8;
 /// Причины перемены численности существ за промежуток.
 pub fn describe_flows(c: &Counters) -> String {
     let mut text = format!("родилось {}, умерло с голоду {}", c.born, c.starved);
+    if c.old_age > 0 {
+        text += &format!(", от старости {}", c.old_age);
+    }
+    if c.combat > 0 {
+        text += &format!(", в бою {}", c.combat);
+    }
     // без каннибализма строка короче
     if c.cannibalized > 0 {
         text += &format!(", съедено своими {}", c.cannibalized);

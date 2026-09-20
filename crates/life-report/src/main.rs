@@ -286,14 +286,14 @@ fn main() {
 fn print_summary(results: &[(u64, SimResult)]) {
     println!(
         "\n{:>6} {:<18} {:>7} {:>6} {:>6} {:>7} {:>8} {:>8} {:>8}",
-        "сид", "итог", "тиков", "сущ", "растен", "съедено", "разм.макс", "разм.фин", "мс/тик"
+        "сид", "итог", "тиков", "сущ", "растен", "в бою", "разм.макс", "разм.фин", "мс/тик"
     );
     for (seed, r) in results {
         let last = r.last();
         // доля съеденных сородичами среди всех умерших
         let c = r.world.counters;
-        let deaths = c.starved + c.cannibalized;
-        let eaten = c.cannibalized as f64 / deaths.max(1) as f64;
+        let deaths = c.starved + c.cannibalized + c.old_age + c.combat;
+        let eaten = c.combat as f64 / deaths.max(1) as f64;
         let sizes: Vec<f64> =
             r.history.iter().filter_map(|s| s.avg_genom.map(|g| g[Gene::Size as usize])).collect();
         let smax = sizes.iter().copied().fold(f64::NAN, f64::max);

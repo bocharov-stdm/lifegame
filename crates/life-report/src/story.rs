@@ -36,12 +36,13 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
         last.tick, last.plants, last.plant_cap, last.creatures
     );
     println!(
-        "Существа за прогон: {} (из умерших съедено {}).",
+        "Существа за прогон: {} (из умерших погибли в бою {}).",
         describe_flows(&c),
-        percent(c.cannibalized, c.cannibalized + c.starved)
+        percent(c.combat, c.cannibalized + c.starved + c.old_age + c.combat)
     );
     println!("Растения за прогон: выросло {}, съедено {}.", c.plants_grown, c.plants_eaten);
 
+    println!("Молодых {} из {}, стай {}.", last.juveniles, last.creatures, last.flocks);
     print_intervals(snaps, rows);
     print_genome(first, last);
     print_depth(last);

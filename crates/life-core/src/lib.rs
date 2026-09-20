@@ -20,3 +20,7 @@ pub use genome::{CreatureGenome, Genome};
 pub use rules::Rules;
 pub use space::{Shape, Space};
 pub use world::{Counters, Stats, World, WorldConfig};
+
+mod combat;
+
+pub mod flock;

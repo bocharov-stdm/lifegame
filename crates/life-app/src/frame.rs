@@ -132,6 +132,11 @@ impl RegionStats {
 /// Выбранное существо, как оно есть на тике кадра.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Selected {
+    pub age: f64,
+    pub health: f64,
+    pub max_health: f64,
+    pub flock: Option<u64>,
+    pub state: &'static str,
     pub id: u64,
     pub x: f64,
     pub y: f64,
@@ -151,6 +156,19 @@ pub struct Selected {
 impl Selected {
     pub fn of(world: &World, id: u64) -> Option<Selected> {
         world.creature(id).map(|v| Selected {
+            age: v.age,
+            health: v.health,
+            max_health: v.max_health(),
+            flock: world.flocks.get(&v.flock).filter(|f| f.members >= 2).map(|_| v.flock),
+            state: if v.fleeing() {
+                "убегает"
+            } else if v.mind.attack.is_some() {
+                "охотится / защищается"
+            } else if !v.adult() {
+                "растёт"
+            } else {
+                "ищет пищу / странствует"
+            },
             id,
             x: v.x,
             y: v.y,
