@@ -73,6 +73,7 @@ pub struct LifeApp {
     /// Последняя сводка по протянутой области; None — области нет.
     pub region: Option<RegionStats>,
     pub tool: Tool,
+    pub flock_colors: bool,
     pub setup_tab: Tab,
     pub prefs_open: bool,
     pub help_open: bool,
@@ -126,6 +127,7 @@ impl LifeApp {
             stats_tab: StatsTab::Energy,
             region: None,
             tool: Tool::Select,
+            flock_colors: false,
             setup_tab: Tab::World,
             prefs_open: false,
             help_open: false,
@@ -147,7 +149,7 @@ impl LifeApp {
             self.region = None;
             self.view.area = None;
         }
-        if let Some(r) = f.region.take() {
+        if let Some(r) = f.region.take().filter(|r| self.view.area == Some(r.area)) {
             self.region = Some(r);
         }
         for s in f.samples.drain(..) {

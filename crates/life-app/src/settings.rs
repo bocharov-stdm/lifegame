@@ -458,6 +458,8 @@ impl Default for Settings {
                 Key::Creatures => CREATURES_AT_START as f64,
                 // Упор игры — на каннибализм; у движка он по умолчанию выключен.
                 Key::Cannibalism => 1.0,
+                // Меньше плотность популяции при прежней модели жизненного цикла.
+                Key::CostScale => 3.0,
                 Key::PlantGrowth => 1.0,
                 Key::Lurkers => 0.0,
                 _ => rules.get(f.rule.expect("правило")).expect("правило есть в Rules"),
@@ -685,14 +687,14 @@ mod tests {
         assert!(hint(Key::PlantEnergy).contains(&format!("существа — {tank:.0}")));
     }
 
-    /// Правила игры по умолчанию — конфиг бит в бит, кроме каннибализма: его
-    /// игра включает сама.
+    /// Игровой профиль включает бои и более дорогую жизнь для меньшей плотности.
     #[test]
-    fn по_умолчанию_правила_как_в_конфиге_кроме_каннибализма() {
-        let want = Rules::default().with("cannibalism", 1.0).unwrap();
+    fn по_умолчанию_спокойный_игровой_профиль() {
+        let want = Rules::default().with("cannibalism", 1.0).unwrap().with("cost_scale", 3.0).unwrap();
         assert_eq!(Settings::default().rules(), want);
         let mut s = Settings::default();
         s.set(Key::Cannibalism, 0.0);
+        s.set(Key::CostScale, 1.0);
         assert_eq!(s.rules(), Rules::default());
     }
 

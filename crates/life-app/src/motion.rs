@@ -107,6 +107,7 @@ impl Ring {
 
 #[derive(Default, Debug)]
 pub struct Motion {
+    pub flock_colors: bool,
     started: bool,
     creatures: Vec<Seen>,
     /// Отсортированы по (born, xbits).
@@ -297,7 +298,10 @@ impl Motion {
 
         for v in &world.creatures {
             let fullness = (v.energy / v.pheno.max_energy).clamp(0.0, 1.0) as f32;
-            let color = frame::rgba(frame::CREATURE_COLOR, (fullness * 255.0) as u8);
+            let color = frame::rgba(
+                frame::creature_color(world, v.flock, self.flock_colors),
+                (fullness * 255.0) as u8,
+            );
             if !body(v.id, v.x, v.y, v.pheno.half, color, fullness) {
                 return false;
             }
@@ -392,6 +396,31 @@ mod tests {
         let heading = (after.meta & 0xFFFF) as f32 / 65536.0 * TAU;
         let expected = turn(initial_heading(id), 0.0, TURN).rem_euclid(TAU);
         assert!((heading - expected).abs() < 1e-3, "курс {heading}, ожидался {expected}");
+    }
+
+    #[test]
+    fn цвета_стай_согласованы_и_не_меняют_мир() {
+        let mut world = empty_world();
+        for x in [1000.0, 1500.0, 2000.0] {
+            world.spawn(BASE, x, 2000.0, None);
+        }
+        world.creatures[1].flock = world.creatures[0].flock;
+        world.step(); // обновляет состав стай
+        world.plants.clear(); // этот сценарий проверяет только кружки существ
+        let tag = world.creatures[0].flock;
+        let mut motion = Motion { flock_colors: true, ..Default::default() };
+        let mut out = Vec::new();
+        motion.collect(&world, ALL, &mut out);
+        let colors: Vec<_> = out.iter().map(|v| v.color & 0xFFFFFF).collect();
+        assert_eq!(colors[0], colors[1]);
+        assert_ne!(colors[0], colors[2]);
+        motion.collect(&world, ALL, &mut out);
+        assert_eq!(colors, out.iter().map(|v| v.color & 0xFFFFFF).collect::<Vec<_>>());
+        assert_eq!(world.tick, 1);
+        assert_eq!(world.creatures[0].flock, tag);
+        motion.flock_colors = false;
+        motion.collect(&world, ALL, &mut out);
+        assert!(out.iter().all(|v| v.color & 0xFFFFFF == frame::rgba(frame::CREATURE_COLOR, 0)));
     }
 
     #[test]

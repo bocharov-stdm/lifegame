@@ -396,6 +396,15 @@ Adding a strategy:
 
 ## The game (`crates/life-app`)
 
+Игровой профиль по умолчанию: `cost_scale=3`, каннибализм включён, старт 30 т/с.
+«Спокойнее» применяет профиль к старой партии; сохранённые настройки автоматически
+не переписываются. Эталон профиля — `reference/calm-fingerprint.json` (сверять с
+`--rule cost_scale=3 --rule cannibalism=1`). Базовый эталон движка остаётся прежним.
+«Стаи» переключает окраску в потоке симуляции, включая миникарту и плотность.
+После протягивания области инструмент возвращается к выбору; Esc и «Убрать рамку»
+снимают область. Входящую сводку принимать только для текущего прямоугольника,
+иначе отложенный кадр может воскресить снятую область.
+
 **The window never waits for the simulation** — that is the rule every change must keep.
 
 - `sim.rs` — the simulation thread owns `World`. The UI sends `Command`s over a channel (pause,

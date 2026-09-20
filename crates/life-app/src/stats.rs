@@ -136,12 +136,16 @@ impl LifeApp {
     pub fn clear_region(&mut self) {
         self.region = None;
         self.view.area = None;
+        self.view.cancel_area_drag();
+        self.tool = Tool::Select;
         self.sim.send(Command::SetRegion(None));
     }
 
     /// Протянута новая область: сводку посчитает поток, окно откроется на ней.
     pub fn set_region(&mut self, area: crate::frame::Area) {
         self.view.area = Some(area);
+        self.region = None;
+        self.tool = Tool::Select;
         self.sim.send(Command::SetRegion(Some(area)));
         self.stats_open = true;
         self.stats_tab = StatsTab::Region;

@@ -260,24 +260,56 @@ pub fn plant_color() -> [u8; 3] {
 /// Карта плотности: сколько растений и существ в каждой клетке
 /// прямоугольника мира, в цвете. Считается за один проход по миру, поэтому
 /// её цена не зависит от того, сколько существ видно.
+#[cfg(test)]
 pub fn density(world: &World, rect: (f64, f64, f64, f64), w: usize, h: usize, out: Raster) -> Raster {
+    density_colored(world, rect, w, h, out, false)
+}
+
+/// Цвет стаи устойчив между кадрами и не расходует генераторы симуляции.
+pub fn creature_color(world: &World, tag: u64, colored: bool) -> [u8; 3] {
+    if !colored {
+        return CREATURE_COLOR;
+    }
+    if world.flocks.get(&tag).is_none_or(|f| f.members < 2) {
+        return [160, 166, 178];
+    }
+    let hue = (life_core::rng::mix(tag) % 360) as f32 / 360.0;
+    let rgb = eframe::egui::ecolor::Hsva::new(hue, 0.55, 0.95, 1.0).to_srgb();
+    [rgb[0], rgb[1], rgb[2]]
+}
+
+pub fn density_colored(
+    world: &World,
+    rect: (f64, f64, f64, f64),
+    w: usize,
+    h: usize,
+    out: Raster,
+    colored: bool,
+) -> Raster {
     let (x0, y0, x1, y1) = rect;
     let (sx, sy) = (w as f64 / (x1 - x0), h as f64 / (y1 - y0));
     let mut counts = vec![[0u32; 2]; w * h];
-    let mut add = |x: f64, y: f64, kind: usize| {
+    let mut hues = vec![[0u64; 3]; w * h];
+    let mut add = |x: f64, y: f64, kind: usize, color: [u8; 3]| {
         let (cx, cy) = ((x - x0) * sx, (y - y0) * sy);
         if cx >= 0.0 && cy >= 0.0 && (cx as usize) < w && (cy as usize) < h {
-            counts[cy as usize * w + cx as usize][kind] += 1;
+            let i = cy as usize * w + cx as usize;
+            counts[i][kind] += 1;
+            if kind == 1 {
+                for (sum, value) in hues[i].iter_mut().zip(color) {
+                    *sum += value as u64;
+                }
+            }
         }
     };
-    world.plants.iter().for_each(|p| add(p.x, p.y, 0));
-    world.creatures.iter().for_each(|v| add(v.x, v.y, 1));
+    world.plants.iter().for_each(|p| add(p.x, p.y, 0, PLANT_COLOR));
+    world.creatures.iter().for_each(|v| add(v.x, v.y, 1, creature_color(world, v.flock, colored)));
 
-    let colors = [PLANT_COLOR, CREATURE_COLOR];
     let mut rgba = out.rgba;
     rgba.clear();
     rgba.reserve(w * h * 4);
-    for c in &counts {
+    for (c, hue) in counts.iter().zip(&hues) {
+        let colors = [PLANT_COLOR, hue.map(|sum| (sum / c[1].max(1) as u64) as u8)];
         // Яркость по логарифму: одинокое существо видно, а скопление не слепит.
         let k = c.map(|n| if n == 0 { 0.0 } else { (0.6 + (n as f64).log2() / 10.0).min(1.0) });
         // Существа поверх растений.

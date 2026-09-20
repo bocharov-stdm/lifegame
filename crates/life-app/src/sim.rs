@@ -34,8 +34,8 @@ pub const SPEEDS: [Option<f64>; 9] = [
     Some(1920.0),
     None,
 ];
-/// 60 т/с — как один тик за кадр в Python-версии.
-pub const DEFAULT_SPEED: usize = 2;
+/// Спокойный старт: 30 т/с; ускорение доступно на верхней панели.
+pub const DEFAULT_SPEED: usize = 1;
 
 /// Существ на базовую площадь, после которых партия останавливается
 /// («взрыв численности»). Как `EXPLOSION_LIMIT` в Python; растёт с площадью.
@@ -66,6 +66,7 @@ pub enum Command {
     /// Один тик — только на паузе.
     Step,
     SetSpeed(usize),
+    FlockColors(bool),
     View(ViewRequest),
     /// Выбрать существо у точки мира (клик): ближайшее, до края тела которого
     /// не дальше `radius`. Мимо — выбор снимается.
@@ -324,6 +325,11 @@ impl Sim {
                 self.reset_tps();
                 self.dirty = true;
             }
+            Command::FlockColors(enabled) => {
+                self.motion.flock_colors = enabled;
+                self.last_minimap = None;
+                self.dirty = true;
+            }
             Command::View(v) => {
                 if self.view != Some(v) {
                     self.view = Some(v);
@@ -401,7 +407,9 @@ impl Sim {
         self.due = 0.0;
         self.last_time = Instant::now();
         self.last_minimap = None;
+        let flock_colors = self.motion.flock_colors;
         self.motion = Motion::default();
+        self.motion.flock_colors = flock_colors;
         self.tick_ms = 0.0;
         self.reset_tps();
         self.pending = Pending::default();
@@ -561,14 +569,27 @@ impl Sim {
                 // Карта плотности ровно по видимой области, клетка — пара пикселей.
                 let (dw, dh) =
                     ((view.px_w as usize / 2).clamp(1, 1024), (view.px_h as usize / 2).clamp(1, 1024));
-                density =
-                    Some(frame::density(w, (view.x0, view.y0, view.x1, view.y1), dw, dh, Raster::default()));
+                density = Some(frame::density_colored(
+                    w,
+                    (view.x0, view.y0, view.x1, view.y1),
+                    dw,
+                    dh,
+                    Raster::default(),
+                    self.motion.flock_colors,
+                ));
             }
         }
         let minimap = if self.last_minimap.is_none_or(|t| t.elapsed() >= MINIMAP_INTERVAL) {
             self.last_minimap = Some(Instant::now());
             let (mw, mh) = frame::minimap_size(w.space.width, w.space.height);
-            Some(frame::density(w, (0.0, 0.0, w.space.width, w.space.height), mw, mh, Raster::default()))
+            Some(frame::density_colored(
+                w,
+                (0.0, 0.0, w.space.width, w.space.height),
+                mw,
+                mh,
+                Raster::default(),
+                self.motion.flock_colors,
+            ))
         } else {
             None
         };

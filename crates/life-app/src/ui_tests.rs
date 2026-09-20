@@ -350,12 +350,74 @@ fn статистика_помещается_в_окно() {
         for tab in [StatsTab::Energy, StatsTab::Where, StatsTab::Region] {
             h.state_mut().stats_tab = tab;
             settle(h);
+            assert_eq!(h.state().view.area, Some((0.0, 0.0, w / 2.0, hh / 3.0)));
             check_layout(h, size, &format!("статистика, {tab:?}, {tag}"), None);
             shot(h, &format!("статистика-{tab:?}-{tag}"));
         }
-        h.state_mut().clear_region();
+        h.state_mut().stats_open = false;
+        h.state_mut().side_open = true;
+        for tab in [SideTab::Charts, SideTab::Log, SideTab::Creature] {
+            h.state_mut().side_tab = tab;
+            settle(h);
+            assert!(h.state().view.area.is_some(), "смена вкладки сохраняет область");
+        }
+        h.get_by_label("Убрать рамку").click();
         settle(h);
         assert!(h.state().region.is_none() && h.state().view.area.is_none());
+    });
+}
+
+#[test]
+fn раскраска_стай_и_спокойный_профиль_работают_на_паузе() {
+    let _gpu = gpu();
+    each_size(|h, size, tag| {
+        h.state_mut().side_open = false;
+        settle(h);
+        let tick = h.state().view.frame.as_ref().unwrap().tick;
+        h.get_by_label("Стаи").click();
+        for _ in 0..100 {
+            h.step();
+            let colors: std::collections::BTreeSet<_> = h
+                .state()
+                .view
+                .instances()
+                .iter()
+                .filter(|v| (v.meta >> 16) & 3 == crate::motion::KIND_CREATURE)
+                .map(|v| v.color & 0xFFFFFF)
+                .collect();
+            if colors.len() > 2 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let colors: std::collections::BTreeSet<_> = h
+            .state()
+            .view
+            .instances()
+            .iter()
+            .filter(|v| (v.meta >> 16) & 3 == crate::motion::KIND_CREATURE)
+            .map(|v| v.color & 0xFFFFFF)
+            .collect();
+        assert!(colors.len() > 2, "стаи имеют разные цвета");
+        assert_eq!(h.state().view.frame.as_ref().unwrap().tick, tick);
+        // Пакет из 600 шагов выполнен без ожидания: дать закончиться анимации рождения.
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        settle(h);
+        check_layout(h, size, "вид стай", None);
+        shot(h, &format!("стаи-{tag}"));
+        h.get_by_label("Спокойнее").click();
+        for _ in 0..100 {
+            h.step();
+            if h.state().view.frame.as_ref().unwrap().rules.cost_scale == 3.0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let f = h.state().view.frame.as_ref().unwrap();
+        assert_eq!(f.rules.cost_scale, 3.0);
+        assert_eq!(crate::sim::SPEEDS[f.status.speed_index], Some(30.0));
+        assert_eq!(f.tick, tick);
+        assert!(h.state().game.as_ref().unwrap().rules_changed);
     });
 }
 

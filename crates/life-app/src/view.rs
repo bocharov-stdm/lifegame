@@ -76,6 +76,11 @@ fn image(r: &Raster) -> egui::ColorImage {
 }
 
 impl WorldView {
+    pub fn cancel_area_drag(&mut self) {
+        self.drag_from = None;
+        self.dragged_area = None;
+    }
+
     /// Принять новый кадр. Приращения (история, хроника) забирает вызывающий.
     pub fn accept(&mut self, ctx: &egui::Context, sim: &SimHandle, mut f: Frame) {
         let fresh = Arc::new(std::mem::take(&mut f.instances));
@@ -170,15 +175,19 @@ impl WorldView {
                 }
                 // на кадре отпускания указателя может уже не быть — берём
                 // последнюю протянутую область
-                if response.drag_stopped() {
+                if response.drag_stopped() || ui.input(|i| i.pointer.any_released()) {
                     self.drag_from = None;
                     click = self.dragged_area.take().map(Click::Area);
                 } else if self.drag_from.is_some() {
                     drawing = self.dragged_area;
                 }
-            } else if response.dragged() {
-                let d = response.drag_delta();
-                cam.pan(d.x as f64, d.y as f64);
+            } else {
+                self.drag_from = None;
+                self.dragged_area = None;
+                if response.dragged() {
+                    let d = response.drag_delta();
+                    cam.pan(d.x as f64, d.y as f64);
+                }
             }
             if response.hovered() {
                 let (scroll, zoom, pointer) =

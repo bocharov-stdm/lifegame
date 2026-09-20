@@ -58,6 +58,23 @@ pub fn report_command(cfg: &WorldConfig, ticks: u64) -> String {
 }
 
 impl LifeApp {
+    /// Спокойный профиль доступен и существующей партии со старыми настройками.
+    pub fn calm_world(&mut self) {
+        let Some(f) = &self.view.frame else { return };
+        let rules = f.rules.with("cost_scale", 3.0).expect("допустимая стоимость содержания");
+        self.lab.take_rules(&rules);
+        self.settings.set(settings::Key::CostScale, 3.0);
+        self.save_settings();
+        self.sim.send(Command::SetRules {
+            rules, note: "спокойный профиль: содержание ×3".into()
+        });
+        self.sim.send(Command::SetSpeed(crate::sim::DEFAULT_SPEED));
+        if let Some(g) = &mut self.game {
+            g.rules_changed = true;
+        }
+        self.toast("30 т/с · содержание ×3; численность изменится постепенно".into());
+    }
+
     pub fn game_screen(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.game_keyboard(&ctx);
@@ -162,8 +179,11 @@ impl LifeApp {
             self.stats_open = !self.stats_open;
         }
         if escape {
-            if self.tool != Tool::Select {
+            if self.view.area.is_some() {
+                self.clear_region();
+            } else if self.tool != Tool::Select {
                 self.tool = Tool::Select;
+                self.view.cancel_area_drag();
             } else if self.lab_open {
                 self.lab_open = false;
             } else if self.stats_open {
@@ -253,13 +273,19 @@ impl LifeApp {
     }
 
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.selectable_value(&mut self.tool, Tool::Select, "Выбор")
                 .on_hover_text("Клик по существу — выбрать");
             ui.selectable_value(&mut self.tool, Tool::Spawn, "+ существо")
                 .on_hover_text("Подсадить базовое существо кликом по миру");
             ui.selectable_value(&mut self.tool, Tool::Area, "Область")
                 .on_hover_text("Протянуть прямоугольник по миру и увидеть геном тех, кто внутри");
+            if self.view.area.is_some() && ui.button("Убрать рамку").on_hover_text("Снять область (Esc)").clicked() {
+                self.clear_region();
+            }
+            if ui.toggle_value(&mut self.flock_colors, "Стаи").on_hover_text("Один цвет на стаю; одиночки серые").changed() {
+                self.sim.send(Command::FlockColors(self.flock_colors));
+            }
             ui.separator();
             if ui.button("Весь мир").on_hover_text("Показать весь мир (Home)").clicked()
                 && let Some(cam) = &mut self.view.camera
@@ -270,6 +296,9 @@ impl LifeApp {
             ui.toggle_value(&mut self.stats_open, "Статистика")
                 .on_hover_text("Сытость, где живут, область (I)");
             ui.toggle_value(&mut self.side_open, "Панель").on_hover_text("Графики, хроника, существо (Tab)");
+            if ui.button("Спокойнее").on_hover_text("30 тиков/с и содержание ×3: численность постепенно снижается. Можно применить к старой партии.").clicked() {
+                self.calm_world();
+            }
             if ui
                 .button("Заново")
                 .on_hover_text("Та же партия с начала: тот же сид и стартовые правила")
