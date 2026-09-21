@@ -412,7 +412,8 @@ fn схлопнутый_слой_проходим() {
     assert_eq!(v.pheno.body_lo, v.pheno.body_hi);
     let x0 = v.x;
     for _ in 0..50 {
-        v.energy = v.pheno.max_energy;
+        // Сытость ниже порога отдыха: здесь проверяется именно движение по линии.
+        v.energy = v.pheno.max_energy * 0.8;
         v.step(&Blind);
         assert_eq!(v.y, v.pheno.body_lo);
     }

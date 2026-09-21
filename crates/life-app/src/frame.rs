@@ -167,7 +167,7 @@ impl Selected {
             } else if !v.adult() {
                 "растёт"
             } else {
-                "ищет пищу / странствует"
+                v.mind.social.activity.label()
             },
             id,
             x: v.x,
@@ -193,6 +193,33 @@ pub struct LogEntry {
     pub text: String,
 }
 
+/// Область стаи: средний центр и среднеквадратичный разброс тел вокруг него.
+#[derive(Clone, Debug)]
+pub struct FlockArea {
+    pub details: life_core::flock::Summary,
+    pub id: u64,
+    pub x: f64,
+    pub y: f64,
+    pub radius: f64,
+    pub members: usize,
+    pub color: [u8; 3],
+}
+
+pub fn flock_areas(world: &World) -> Vec<FlockArea> {
+    life_core::flock::summaries(world)
+        .into_iter()
+        .map(|s| FlockArea {
+            id: s.id,
+            x: s.x,
+            y: s.y,
+            members: s.members,
+            radius: s.radius,
+            color: creature_color(world, s.id, true),
+            details: s,
+        })
+        .collect()
+}
+
 #[derive(Debug, Default)]
 pub struct Frame {
     /// Номер мира: растёт при «Заново» и новом мире. Окно по нему понимает,
@@ -213,11 +240,13 @@ pub struct Frame {
     pub origin: (f64, f64),
     /// Растения, потом существа — в таком порядке и рисуются.
     pub instances: Vec<Instance>,
+    pub flock_areas: Vec<FlockArea>,
     /// Вместо кружков, когда видимых больше `MAX_INSTANCES`.
     pub density: Option<Raster>,
     /// Весь мир крупными клетками; приходит не в каждом кадре.
     pub minimap: Option<Raster>,
     pub selected: Option<Selected>,
+    pub selected_flock: Option<life_core::flock::Summary>,
     /// Новое с прошлого кадра: точки графиков и записи хроники. Кадры не
     /// теряются (поток кладёт новый, только когда окно забрало прошлый),
     /// поэтому приращений достаточно.
@@ -343,6 +372,28 @@ mod tests {
     #[test]
     fn кружок_ровно_32_байта() {
         assert_eq!(std::mem::size_of::<Instance>(), 32);
+    }
+
+    #[test]
+    fn область_стаи_следует_за_составом_и_разбросом() {
+        let mut world = World::new(&WorldConfig { seed: 7, n_creatures: Some(3), ..Default::default() });
+        let tag = world.creatures[0].flock;
+        world.creatures[1].flock = tag;
+        for (v, x) in world.creatures.iter_mut().zip([100.0, 300.0, 900.0]) {
+            v.x = x;
+            v.y = 200.0;
+        }
+        let areas = flock_areas(&world);
+        assert_eq!(areas.len(), 1, "одиночка не образует область");
+        let a = &areas[0];
+        assert_eq!((a.id, a.members, a.x, a.y), (tag, 2, 200.0, 200.0));
+        let half = world.creatures[0].pheno.half;
+        assert!((a.radius - (10000.0 + half * half).sqrt()).abs() < 1e-9);
+        world.creatures[1].x = 100.0;
+        assert!((flock_areas(&world)[0].radius - half).abs() < 1e-9);
+        world.creatures[1].alive = false;
+        assert!(flock_areas(&world).is_empty(), "исчезнувшая стая не оставляет область");
+        assert_eq!(world.tick, 0, "отрисовка не двигает симуляцию");
     }
 
     /// Страж скорости кадра: 200 тыс. видимых существ собираются в кадр

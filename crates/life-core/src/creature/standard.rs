@@ -33,6 +33,31 @@ pub(super) fn plan(
     senses: &impl Senses,
     step: f64,
 ) -> (Intent, Mode) {
+    let plant = senses.nearest_plant(me.x, me.y, me.pheno.vision2);
+    personal_plant(me, mind, senses);
+    if let Some((x, y)) = plant {
+        mind.social.observed_food =
+            Some(crate::social::Food { x, y, tick: mind.social.tick, observer: me.kinship.id });
+    }
+    if let Some(f) = mind.social.food
+        && (!f.fresh(mind.social.tick)
+            || (plant.is_none() && (f.x - me.x).hypot(f.y - me.y) <= me.pheno.size))
+    {
+        mind.social.food = None;
+        mind.social.rejected_food = Some(f);
+    }
+    let (intent, mode) = plan_inner(me, mind, rng, senses, step);
+    if intent.attack.is_some() && intent.tx == me.x && intent.ty == me.y {
+        mind.social.activity = crate::social::Activity::Alarm;
+        mind.social.rest_until = 0;
+        mind.social.course = None;
+        return (intent, mode);
+    }
+    let intent = crate::social::adjust(me, mind, intent, mode == Mode::Food, mode == Mode::Flee);
+    (intent, mode)
+}
+
+fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, step: f64) -> (Intent, Mode) {
     let (x, y, speed) = (me.x, me.y, me.pheno.speed);
 
     // Испуг: чужак, который может съесть, ближе порога. Бежит FLEE_TICKS тиков
@@ -41,7 +66,16 @@ pub(super) fn plan(
     // зрение — выбрать, куда бежать. Ответ тот же, а запрос спокойного в
     // девять раз меньше по площади.
     let within = if mind.flee_ticks > 0 { me.pheno.vision } else { me.pheno.flee };
-    let threat = senses.nearest_threat(me, within);
+    let threat = mind
+        .social
+        .hit
+        .filter(|h| mind.social.tick.saturating_sub(h.tick) <= 1)
+        .and_then(|h| senses.visible_enemy(me, h.enemy))
+        .or_else(|| senses.nearest_threat(me, within));
+    if let Some(t) = threat {
+        mind.social.observed_alarm =
+            Some(crate::social::Alarm { enemy: t.id, x: t.x, y: t.y, tick: mind.social.tick });
+    }
     if let Some(t) = threat
         && t.gap <= me.pheno.half
         && me.health_share >= me.pheno.retreat
@@ -82,7 +116,15 @@ pub(super) fn plan(
         return (intent, Mode::Flee);
     }
 
-    let plant = senses.nearest_plant(x, y, me.pheno.vision2);
+    let plant = mind.social.personal_food;
+    if plant.is_none()
+        && mind.attack.is_none()
+        && crate::social::group_duty(me, mind)
+        && let Some(g) = me.flock_goal
+    {
+        let (tx, ty) = mind.social.context.center.unwrap_or((g.x, g.y));
+        return (Intent { tx, ty, slow: false, attack: None }, Mode::Wander);
+    }
     let prey = if mind.attack.is_some() || me.energy <= me.pheno.max_energy * 0.9 {
         senses.prey(me, mind.attack)
     } else {
@@ -101,7 +143,13 @@ pub(super) fn plan(
         return (Intent { tx, ty, slow: false, attack: None }, Mode::Food);
     }
 
-    if let Some(g) = me.flock_goal {
+    if crate::social::follows_reports(me, mind)
+        && let Some(f) = mind.social.food
+    {
+        return (Intent { tx: f.x, ty: f.y, slow: false, attack: None }, Mode::Wander);
+    }
+
+    if let Some(g) = me.flock_goal.filter(|_| me.pheno.sociability > 0.0) {
         let (tx, ty) = if (x - g.x).hypot(y - g.y) > me.pheno.vision { (g.x, g.y) } else { (g.tx, g.ty) };
         return (Intent { tx, ty, slow: false, attack: None }, Mode::Wander);
     }
@@ -116,6 +164,21 @@ pub(super) fn plan(
     }
     let (tx, ty) = mind.target.unwrap();
     (Intent { tx, ty, slow: false, attack: None }, Mode::Wander)
+}
+
+fn personal_plant(me: &Me, mind: &mut Mind, senses: &impl Senses) -> Option<(f64, f64)> {
+    let old = mind.social.personal_food.filter(|&(x, y)| {
+        (x - me.x).hypot(y - me.y) <= me.pheno.vision && senses.nearest_plant(x, y, 1e-8).is_some()
+    });
+    let plant = old.or_else(|| {
+        if crate::social::group_duty(me, mind) {
+            None
+        } else {
+            senses.nearest_plant(me.x, me.y, me.pheno.vision2)
+        }
+    });
+    mind.social.personal_food = plant;
+    plant
 }
 
 /// Поело — сразу новая цель, чтобы не топтаться (и во время бегства тоже).

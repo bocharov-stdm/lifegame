@@ -61,6 +61,7 @@ pub const VARIANTS: [Variant; 2] = [
 /// дописывается сюда (структура остаётся `Copy`).
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Mind {
+    pub social: crate::social::Memory,
     /// Выбранная цель удара в текущем тике.
     pub attack: Option<u64>,
     /// Сколько ещё тиков бежать после испуга.

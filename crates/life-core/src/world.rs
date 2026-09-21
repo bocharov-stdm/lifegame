@@ -106,6 +106,9 @@ impl Counters {
 
 #[derive(Clone, Debug)]
 pub struct World {
+    pub next_flock: u64,
+    pub split_watches: Vec<crate::flock::SplitWatch>,
+    pub social_counts: crate::social::Counters,
     pub flocks: std::collections::BTreeMap<u64, crate::flock::Flock>,
     flock_seed: u64,
     pub space: Space,
@@ -135,6 +138,9 @@ impl World {
         let n_start = cfg.creatures_at_start();
 
         let mut w = World {
+            next_flock: 1,
+            split_watches: Vec::new(),
+            social_counts: Default::default(),
             flora: Flora::new(&rules, &space),
             space,
             rules,
@@ -170,7 +176,10 @@ impl World {
     pub fn add_creature(&mut self, mut v: Creature) {
         v.id = self.take_id();
         if v.flock == 0 {
-            v.flock = v.id;
+            v.flock = self.next_flock;
+            self.next_flock += 1;
+        } else {
+            self.next_flock = self.next_flock.max(v.flock + 1);
         }
         self.creatures.push(v);
     }
@@ -210,6 +219,13 @@ impl World {
 
     fn update_creatures(&mut self) {
         crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.flock_seed, true);
+        crate::flock::food_goals(&mut self.flocks, &mut self.creatures, self.tick);
+        self.prey_grid.rebuild(&self.space, self.creatures.iter().map(|v| (v.x, v.y)));
+        crate::social::prepare(&mut self.creatures, &self.prey_grid, self.tick);
+        if self.rules.cannibals() {
+            self.social_counts.interventions +=
+                crate::social::prepare_aid(&mut self.creatures, &self.prey_grid, self.tick);
+        }
         let World { space, rules, plants, creatures, herd, prey_grid, food_grid, counters, .. } = self;
         food_grid.rebuild(space, plants.iter().map(|p| (p.x, p.y)));
         // Сородичей видят такими, какими они были в начале фазы: исход не
@@ -243,7 +259,7 @@ impl World {
         }
         if rules.cannibals() {
             // все уже сходили, дети ещё в буфере — они в тик рождения не едят и не съедаются
-            crate::combat::resolve(space, rules, creatures, prey_grid, counters);
+            crate::combat::resolve(space, rules, creatures, prey_grid, counters, self.tick + 1);
         }
         for v in creatures.iter_mut().filter(|v| v.alive) {
             if let Some(child) = v.maybe_divide(space, rules) {
@@ -256,7 +272,32 @@ impl World {
         for child in offspring {
             self.add_creature(child);
         }
+        if (self.tick + 1).is_multiple_of(60) {
+            self.prey_grid.rebuild(&self.space, self.creatures.iter().map(|v| (v.x, v.y)));
+            self.social_counts.splits += crate::flock::split(
+                &mut self.creatures,
+                &self.prey_grid,
+                &mut self.split_watches,
+                &mut self.next_flock,
+                self.tick + 1,
+            );
+        }
+        let prior_alarms: Vec<_> = self.flocks.iter().filter(|(_, f)| f.alarmed).map(|(&id, _)| id).collect();
         crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.flock_seed, false);
+        self.social_counts.alarm_ends +=
+            prior_alarms.iter().filter(|id| !self.flocks.contains_key(id)).count() as u64;
+        let alarmed: std::collections::BTreeSet<_> = self
+            .creatures
+            .iter()
+            .filter(|v| v.mind.social.activity == crate::social::Activity::Alarm)
+            .map(|v| v.flock)
+            .collect();
+        for (id, f) in &mut self.flocks {
+            let active = f.members >= 2 && alarmed.contains(id);
+            self.social_counts.alarms += (active && !f.alarmed) as u64;
+            self.social_counts.alarm_ends += (!active && f.alarmed) as u64;
+            f.alarmed = active;
+        }
     }
 
     // ── статистика ──────────────────────────────────────────────────────────
@@ -283,6 +324,12 @@ impl World {
     /// цена действовала бы только на новорождённых, и игрок двигал бы ползунок,
     /// не видя последствий.
     pub fn set_rules(&mut self, rules: Rules) {
+        if !rules.cannibals() {
+            for f in self.flocks.values_mut() {
+                self.social_counts.alarm_ends += f.alarmed as u64;
+                f.alarmed = false;
+            }
+        }
         for v in &mut self.creatures {
             v.apply_rules(&rules, &self.space);
         }

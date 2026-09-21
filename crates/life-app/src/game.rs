@@ -95,6 +95,7 @@ impl LifeApp {
                     Tool::Select => {
                         self.sim.send(Command::Pick { x, y, radius });
                         self.side_tab = SideTab::Creature;
+                        self.side_open = true;
                     }
                     Tool::Spawn => self.sim.send(Command::Spawn { x, y }),
                     Tool::Area => {}
@@ -283,7 +284,7 @@ impl LifeApp {
             if self.view.area.is_some() && ui.button("Убрать рамку").on_hover_text("Снять область (Esc)").clicked() {
                 self.clear_region();
             }
-            if ui.toggle_value(&mut self.flock_colors, "Стаи").on_hover_text("Один цвет на стаю; одиночки серые").changed() {
+            if ui.toggle_value(&mut self.flock_colors, "Стаи").on_hover_text("Области вокруг центров стай; цвет и число участников").changed() {
                 self.sim.send(Command::FlockColors(self.flock_colors));
             }
             ui.separator();
@@ -410,6 +411,21 @@ impl LifeApp {
     }
 
     fn creature_tab(&mut self, ui: &mut egui::Ui) {
+        if let Some(s) = self.view.frame.as_ref().and_then(|f| f.selected_flock.as_ref()) {
+            ui.heading(format!("Стая № {}", s.id));
+            ui.label(format!("Участников: {} · молодых: {}", s.members, s.juveniles));
+            ui.label(format!("Сейчас: {}", s.activity.label()));
+            ui.label(format!("Общительность: {:.0}%", s.sociability * 100.0));
+            ui.label(format!("Сытость: {:.0}%", s.fullness * 100.0));
+            ui.label(format!("Разброс вокруг центра: {:.0}", s.radius));
+            if let Some((x, y)) = s.goal {
+                ui.label(format!("Цель: {x:.0}, {y:.0}"));
+            }
+            if ui.button("Снять выбор").clicked() {
+                self.sim.send(Command::Select(None));
+            }
+            return;
+        }
         let Some(s) = self.view.frame.as_ref().and_then(|f| f.selected) else {
             ui.colored_label(MUTED, "Никто не выбран. Кликните по существу в мире.");
             return;

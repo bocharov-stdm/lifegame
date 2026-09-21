@@ -48,6 +48,10 @@ impl Fnv {
 fn digest(w: &World) -> u64 {
     let mut h = Fnv::new();
     h.u64(w.tick);
+    h.u64(w.next_flock);
+    for byte in format!("{:?}{:?}", w.split_watches, w.social_counts).bytes() {
+        h.u64(byte as u64);
+    }
     let c = w.counters;
     for v in [c.plants_grown, c.plants_eaten, c.born, c.starved, c.cannibalized, c.old_age, c.combat] {
         h.u64(v);
@@ -62,6 +66,9 @@ fn digest(w: &World) -> u64 {
     h.u64(w.creatures.len() as u64);
     for v in &w.creatures {
         h.u64(v.id);
+        for byte in format!("{:?}", v.mind.social).bytes() {
+            h.u64(byte as u64);
+        }
         h.u64(v.parent);
         h.u64(v.flock);
         h.f64(v.birth_size);
@@ -99,6 +106,9 @@ fn digest(w: &World) -> u64 {
     }
     h.u64(w.flocks.len() as u64);
     for (id, f) in &w.flocks {
+        for byte in format!("{f:?}").bytes() {
+            h.u64(byte as u64);
+        }
         h.u64(*id);
         h.u64(f.members as u64);
         h.u64(f.remaining as u64);
@@ -240,14 +250,14 @@ fn run(case: &Case) -> (Vec<(u64, u64)>, World, Seen) {
 #[cfg(windows)]
 #[rustfmt::skip]
 const GOLDEN: &[&[(u64, u64)]] = &[
-    &[(1, 0x2cf2620927bb5ddc), (2, 0x709b7d441868ea83), (10, 0x48d07e56bd444b0f), (31, 0xdec002cbe208b26b), (100, 0xd7dc1bee26cac5ce), (250, 0xa98391a9ffe530a2), (500, 0x2568282a61c6b491), (1000, 0x194378fbf9bf80fa), (2000, 0x34453229980d2be2), (3000, 0x5d856ee07b101c73), ],
-    &[(1, 0xf4703c72e16f18e2), (2, 0x757b061bf3e3ab71), (10, 0x217550c5223f9e99), (31, 0xfa972cebd818c836), (100, 0x59a2548ddbe67772), (250, 0xc3c47d49593da28a), (500, 0x03a3f5c1dfa2e169), (1000, 0x253a2f0088fca850), (2000, 0x5b7f7d5716b6e463), ],
-    &[(1, 0xd631060ac04a60bb), (2, 0x77772600c4be7aaf), (10, 0xf9ad4074bcd57c8a), (31, 0xcae3a34ed88444bf), (100, 0x2ce2e75fd23b27c3), (250, 0xb84e5b469374689b), (500, 0xda50402f62587f28), (1000, 0x9c8fc0b9a2026d23), (2000, 0x9b5d3641bfaf465c), (3000, 0xc0c64471924a16e8), ],
-    &[(1, 0xefe53f73e7cfea6f), (2, 0xaf599429904e89ae), (10, 0x54ecb1bbc8a6c7f6), (31, 0x86f3c07392b2ddfd), (100, 0x4d469b74369b77ce), (250, 0xe92c3250e0b5a17f), (500, 0x15dfd500e406d04a), ],
-    &[(1, 0xaf9a592bb87c6f7c), (2, 0xc937d0b98a50e8f4), (10, 0x6ee88077744d3d12), (31, 0x9dde833d94b547e2), (100, 0xc4097020d74416a7), (250, 0x859ccfffff0282d5), (500, 0xf365731745877372), (1000, 0x4322a97baba49254), ],
-    &[(1, 0x8af58968756719b2), (2, 0x908064403d7521fe), (10, 0xbf954aff7653b71e), (31, 0x7f809301ae5c1457), (100, 0x462139c88f374ea1), (250, 0xfec96dff6b64bf29), (500, 0x0903c38724b51b5d), (1000, 0x473a1fd1d7304613), (2000, 0x65c1865d0093b3b7), ],
-    &[(1, 0x6e35da68a3380a52), (2, 0xaa24d6fadfcb466a), (10, 0x9f5ac0d1f18d88a2), (31, 0x15acfb640c43f674), (100, 0x8ea013560007a880), (250, 0x5424c876f7692e06), (500, 0x601ad6245bb29fe9), (1000, 0x29b792642f258ba1), ],
-    &[(1, 0xde18e1ff0365a4b7), (2, 0x56e2c978a66710b4), (10, 0x0bd0eb65579e4d96), (31, 0x585713635530cafa), (100, 0xe9690903ebd1da6c), (250, 0x25f8691148c6c301), (500, 0x2d807eb928f32607), (1000, 0x9314ace02f4542d2), (2000, 0x86cf0ef0684f306c), ],
+    &[(1, 0x320e6a9bc8ef4e7e), (2, 0xfdd3126113f19142), (10, 0x1993f210be7a5bf2), (31, 0x07c27b341b890886), (100, 0xacc3f89389c779f7), (250, 0xfa69adc88d38bddf), (500, 0x2e35093ce2412c2a), (1000, 0x79c7f10cad9947bc), (2000, 0x51cb32f585724f5c), (3000, 0xc5e9a6c114da6632), ],
+    &[(1, 0x5efb722c30434fa2), (2, 0xf3d1feddff6cb3e8), (10, 0x8bb79cb008e8da91), (31, 0x38a848de2e64590d), (100, 0xdf17b659f1b8158a), (250, 0xf72d1d967be370be), (500, 0xe2d9749ede8c8adf), (1000, 0x88250fdb029f9176), (2000, 0x64e59995157a29a7), ],
+    &[(1, 0xf4adbcaa32abeced), (2, 0x994ad21bbb024e68), (10, 0xabec7e82680e55ca), (31, 0xb20b06c9b1b1c4b3), (100, 0xe5e17fe3499c05db), (250, 0xc9efd5e81b925e7a), (500, 0x2c5ecde2f42180df), (1000, 0x8d003da81749f439), (2000, 0xeda0efd30bf18596), (3000, 0xe69c4e7e6240a666), ],
+    &[(1, 0x3758396b8d55b22a), (2, 0x46b71421dc4d024c), (10, 0x4fbb025c50f2de72), (31, 0x059bf17607241a75), (100, 0x1c4db22e1152cd97), (250, 0x1bd1b6dc5148dd09), (500, 0x8b4e04fc0f6f34f6), ],
+    &[(1, 0xc227d2d1f605608d), (2, 0x7adc7007d150e33f), (10, 0x77f5ad8b88c00cbf), (31, 0x8a522a70fec690b4), (100, 0x5523eb70a1d189b3), (250, 0xc5a928392f3212c5), (500, 0x980b8989101f5dc4), (1000, 0x35d3b88411afca74), ],
+    &[(1, 0x82e1e93117590419), (2, 0x05828c22e762df75), (10, 0x6ec94e73eae69ff9), (31, 0x56b17941339b3e55), (100, 0xd422e34745e615ab), (250, 0x7a9a27c16100cc4b), (500, 0x0a0004b9a5568351), (1000, 0x67affed9fe5946ac), (2000, 0x62f97c87918ec230), ],
+    &[(1, 0x6b0377ae6e681f43), (2, 0xc8ec1ed1c99fff2c), (10, 0xa506685705005cbc), (31, 0x840701d39c4cbe2c), (100, 0xd4db20701f5fb55a), (250, 0x0b73e65f55fd0764), (500, 0x7e6e4c8b3ed00d2c), (1000, 0x08f3b45502ed13cd), ],
+    &[(1, 0x222a7c06d9caadb7), (2, 0x5af52f89d9905c90), (10, 0x2f06452be9156121), (31, 0x4198fe86250bfe50), (100, 0x4439296bfab2ab91), (250, 0xb1e2907bcf0cf7f6), (500, 0x73350457e4f4f8c7), (1000, 0xa48095b9a0b32aab), (2000, 0xd42178291141b111), ],
 ];
 
 #[cfg(not(windows))]

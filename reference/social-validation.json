@@ -1,0 +1,15 @@
+{
+  "baseline_commit": "3745cc3",
+  "model": "life-behavior/2",
+  "ticks_per_world": 20000,
+  "seeds": [1, 2, 3, 4, 5, 6, 7, 8],
+  "completed_worlds": 32,
+  "measurement": "social_probe: последовательные ненулевые перемещения без боя и бегства, скалярное произведение меньше нуля",
+  "performance_4000_4000_ms": {"baseline": 1.918, "current": 3.659, "limit": 20},
+  "profiles": [
+    {"cost_scale": 1, "cannibalism": 0, "surviving": 8, "final_populations": [562, 585, 780, 774, 527, 708, 798, 701], "baseline_median": 810, "median": 704.5, "population_change_pct": -13.02, "baseline_turn_share": 0.19403266401593822, "turn_share": 0.03524447151733421, "turn_reduction_pct": 81.84},
+    {"cost_scale": 1, "cannibalism": 1, "surviving": 8, "final_populations": [399, 563, 784, 774, 366, 591, 429, 464], "baseline_median": 523.5, "median": 513.5, "population_change_pct": -1.91, "baseline_turn_share": 0.18720066175238811, "turn_share": 0.04528138562895171, "turn_reduction_pct": 75.81},
+    {"cost_scale": 3, "cannibalism": 0, "surviving": 8, "final_populations": [554, 354, 262, 535, 262, 321, 273, 441], "baseline_median": 294.5, "median": 337.5, "population_change_pct": 14.60, "baseline_turn_share": 0.1440571805768696, "turn_share": 0.028121991961930947, "turn_reduction_pct": 80.48},
+    {"cost_scale": 3, "cannibalism": 1, "surviving": 8, "final_populations": [214, 211, 302, 237, 314, 257, 94, 405], "baseline_median": 216, "median": 247, "population_change_pct": 14.35, "baseline_turn_share": 0.1383295351898596, "turn_share": 0.03201762677846739, "turn_reduction_pct": 76.85}
+  ]
+}

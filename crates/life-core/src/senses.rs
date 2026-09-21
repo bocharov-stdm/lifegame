@@ -23,6 +23,9 @@ use crate::space::Space;
 
 /// Чувства существа.
 pub trait Senses {
+    fn visible_enemy(&self, _me: &Me, _id: u64) -> Option<Threat> {
+        None
+    }
     /// Ближайшее живое растение строго ближе √r2.
     fn nearest_plant(&self, x: f64, y: f64, r2: f64) -> Option<(f64, f64)>;
 
@@ -83,6 +86,16 @@ pub(crate) struct GridSenses<'a> {
 }
 
 impl Senses for GridSenses<'_> {
+    fn visible_enemy(&self, me: &Me, id: u64) -> Option<Threat> {
+        let herd = self.herd?;
+        let i = herd.seen.binary_search_by_key(&id, |s| s.kinship.id).ok()?;
+        let s = &herd.seen[i];
+        let distance = (s.x - me.x).hypot(s.y - me.y);
+        if me.kinship.kin(s.kinship) || me.flock == s.flock || distance > me.pheno.vision {
+            return None;
+        }
+        Some(Threat { id, x: s.x, y: s.y, gap: distance - s.half })
+    }
     fn prey(&self, me: &Me, previous: Option<u64>) -> Option<Prey> {
         let herd = self.herd?;
         let max_size = me.pheno.size / me.pheno.prey_ratio.max(herd.ratio);

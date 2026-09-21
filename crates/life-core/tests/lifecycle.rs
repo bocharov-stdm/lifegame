@@ -93,7 +93,12 @@ fn раны_лечатся_за_энергию_после_паузы() {
     let e = v.energy;
     v.step(&life_core::senses::Blind);
     assert!((v.health - 20.08).abs() < 1e-9);
-    assert!((e - v.energy - v.pheno.upkeep - 0.08).abs() < 1e-9);
+    let upkeep = if v.mind.social.activity == life_core::social::Activity::Resting {
+        v.pheno.slow_upkeep
+    } else {
+        v.pheno.upkeep
+    };
+    assert!((e - v.energy - upkeep - 0.08).abs() < 1e-9);
 }
 
 #[test]

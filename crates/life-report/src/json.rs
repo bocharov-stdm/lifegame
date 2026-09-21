@@ -89,6 +89,9 @@ fn snapshot(s: &Snapshot) -> Value {
         "creatures": s.creatures,
         "juveniles": s.juveniles,
         "flocks": s.flocks,
+        "activities": life_core::social::Activity::ALL.iter().enumerate().map(|(i,a)| json!({"name":a.label(),"count":s.activities[i],"share": if s.creatures>0 {s.activities[i] as f64/s.creatures as f64} else {0.0}})).collect::<Vec<_>>(),
+        "flock_spread": s.flock_spread.as_ref().map(spread),
+        "social": {"alarms":s.social_counts.alarms,"alarm_ends":s.social_counts.alarm_ends,"interventions":s.social_counts.interventions,"splits":s.social_counts.splits},
         "counters": counters(&s.counters),
         "genes": genes,
         "depth_pct": s.depth.as_ref().map(spread),
@@ -115,7 +118,7 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
     let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(rules.get(k)))).collect();
     let space = cfg.space();
     json!({
-        "format": "life-report/4",
+        "format": "life-report/5",
         "world": { "scale": cfg.scale, "shape": cfg.shape.key(), "width": space.width, "height": space.height },
         "ticks": ticks,
         "sample_every": sample_every,

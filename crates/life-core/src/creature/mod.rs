@@ -145,6 +145,7 @@ impl Creature {
         if !self.alive {
             return;
         }
+        self.mind.social.tick += 1;
         self.age += self.pheno.life_pace;
         if self.age >= LIFESPAN {
             self.alive = false;
@@ -204,6 +205,10 @@ impl Creature {
         // шаг: за ход оно сдвигается не дальше speed.
         self.x = nx.clamp(self.pheno.x_lo, self.pheno.x_hi);
         self.y = ny.clamp(self.pheno.y_lo, self.pheno.y_hi);
+        let moved = (self.x - x, self.y - y);
+        if moved.0.hypot(moved.1) > 1e-9 {
+            self.mind.social.heading = Some(moved);
+        }
 
         self.energy -= upkeep;
         if self.energy <= 0.0 {
@@ -217,6 +222,16 @@ impl Creature {
         self.pheno = Phenotype::at_size(&self.genome, rules, space, self.pheno.size);
         self.space = *space;
         if !rules.cannibals() {
+            self.mind.social.alarm = None;
+            self.mind.social.observed_alarm = None;
+            self.mind.social.hit = None;
+            self.mind.social.aid = None;
+            self.mind.social.context.alarm = None;
+            self.mind.social.gathering = false;
+            self.mind.social.shared_flee = false;
+            if self.mind.social.activity == crate::social::Activity::Alarm {
+                self.mind.social.activity = crate::social::Activity::Travelling;
+            }
             self.mind.attack = None;
             self.mind.flee_ticks = 0;
             self.mind.flee_dx = 0.0;
@@ -270,7 +285,7 @@ impl Creature {
 
     /// Бежит ли сейчас от кого-то (для окна игры и наблюдателя).
     pub fn fleeing(&self) -> bool {
-        self.mind.flee_ticks > 0
+        self.mind.flee_ticks > 0 || self.mind.social.shared_flee
     }
 
     /// Съеден сородич (каннибализм): его энергия — едоку, не выше полного бака.

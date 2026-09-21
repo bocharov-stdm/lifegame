@@ -10,5 +10,8 @@ use crate::senses::Senses;
 #[inline(always)]
 pub(crate) fn decide(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses) -> Intent {
     let (intent, mode) = standard::plan(me, mind, rng, senses, me.pheno.slow_speed);
-    Intent { slow: mode == Mode::Wander, ..intent }
+    Intent {
+        slow: intent.slow || (mode == Mode::Wander && mind.social.activity != crate::social::Activity::Alarm),
+        ..intent
+    }
 }

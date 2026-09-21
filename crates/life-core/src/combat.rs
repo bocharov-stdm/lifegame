@@ -9,6 +9,7 @@ pub(crate) fn resolve(
     creatures: &mut [Creature],
     grid: &mut Grid,
     counters: &mut Counters,
+    tick: u64,
 ) {
     grid.rebuild(space, creatures.iter().map(|v| (v.x, v.y)));
     let max_half = creatures.iter().filter(|v| v.alive).fold(0.0_f64, |m, v| m.max(v.pheno.half));
@@ -47,6 +48,12 @@ pub(crate) fn resolve(
     }
     let mut damage = vec![0.0; creatures.len()];
     for &(i, j, d, cost) in &hits {
+        let signal =
+            crate::social::Alarm { enemy: creatures[i].id, x: creatures[i].x, y: creatures[i].y, tick };
+        if creatures[j].mind.social.hit.is_none_or(|h| h.tick != tick || signal.enemy < h.enemy) {
+            creatures[j].mind.social.hit = Some(signal);
+            creatures[j].mind.social.observed_alarm = Some(signal);
+        }
         creatures[i].energy -= cost;
         creatures[i].peaceful_ticks = 0;
         creatures[j].peaceful_ticks = 0;
@@ -107,6 +114,7 @@ mod tests {
             &mut w.creatures,
             &mut Grid::new(crate::config::GRID_CELL),
             &mut w.counters,
+            w.tick + 1,
         );
     }
     #[test]

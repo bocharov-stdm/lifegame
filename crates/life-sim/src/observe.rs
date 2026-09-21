@@ -106,6 +106,9 @@ pub fn gene_stats<'a, G: Genome, const N: usize>(
 /// Срез мира на одном тике.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
+    pub activities: [usize; 5],
+    pub social_counts: life_core::social::Counters,
+    pub flock_spread: Option<Spread>,
     pub tick: u64,
     /// Во сколько раз мир больше базового: пороги событий растут с площадью.
     pub area: f64,
@@ -159,6 +162,17 @@ impl Snapshot {
         }
 
         Snapshot {
+            activities: {
+                let mut counts = [0; 5];
+                for v in herd {
+                    counts[v.mind.social.activity as usize] += 1;
+                }
+                counts
+            },
+            social_counts: world.social_counts,
+            flock_spread: Spread::of(
+                &mut life_core::flock::summaries(world).iter().map(|s| s.radius).collect::<Vec<_>>(),
+            ),
             tick: world.tick,
             area: world.space.area_ratio(),
             plants: world.plants.len(),
@@ -183,6 +197,9 @@ impl Snapshot {
 /// Что случилось. Ключ — для машинного разбора (JSON), текст — для чтения.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventKind {
+    FlockAlarm,
+    FlockCalm,
+    FlockSplit,
     CreaturesCrash,
     CreaturesRise,
     CreaturesExtinct,
@@ -197,6 +214,9 @@ pub enum EventKind {
 impl EventKind {
     pub fn key(self) -> &'static str {
         match self {
+            EventKind::FlockAlarm => "flock_alarm",
+            EventKind::FlockCalm => "flock_calm",
+            EventKind::FlockSplit => "flock_split",
             EventKind::CreaturesCrash => "creatures_crash",
             EventKind::CreaturesRise => "creatures_rise",
             EventKind::CreaturesExtinct => "creatures_extinct",
@@ -349,6 +369,27 @@ impl EventTracker {
         };
         let t = cur.tick;
         let mut push = |kind, text: String| out.push(Event { tick: t, kind, text });
+        for (kind, n, label) in [
+            (
+                EventKind::FlockAlarm,
+                cur.social_counts.alarms.saturating_sub(prev.social_counts.alarms),
+                "начало тревоги",
+            ),
+            (
+                EventKind::FlockCalm,
+                cur.social_counts.alarm_ends.saturating_sub(prev.social_counts.alarm_ends),
+                "окончание тревоги",
+            ),
+            (
+                EventKind::FlockSplit,
+                cur.social_counts.splits.saturating_sub(prev.social_counts.splits),
+                "отделение новой стаи",
+            ),
+        ] {
+            if n > 0 {
+                push(kind, format!("Стаи: {label}, событий за промежуток: {n}"));
+            }
+        }
 
         // ── численность: обвал и подъём считаются от пика/дна с прошлого события,
         // причины — счётчики между ними

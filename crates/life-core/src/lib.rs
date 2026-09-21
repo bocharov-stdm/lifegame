@@ -24,3 +24,4 @@ pub use world::{Counters, Stats, World, WorldConfig};
 mod combat;
 
 pub mod flock;
+pub mod social;

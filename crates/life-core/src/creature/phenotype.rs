@@ -18,6 +18,7 @@ pub struct Phenotype {
     /// Диаметр тела.
     pub size: f64,
     pub speed: f64,
+    pub sociability: f64,
     pub life_pace: f64,
     pub retreat: f64,
     pub plant_efficiency: f64,
@@ -99,6 +100,7 @@ impl Phenotype {
         Phenotype {
             size,
             speed,
+            sociability: genome[Gene::Sociability].clamp(0.0, 100.0) / 100.0,
             life_pace,
             plant_efficiency: 1.0 - 0.8 * genome[Gene::Carnivory].clamp(0.0, 100.0) / 100.0,
             meat_efficiency: 0.2 + 0.8 * genome[Gene::Carnivory].clamp(0.0, 100.0) / 100.0,

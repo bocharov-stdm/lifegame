@@ -399,12 +399,25 @@ fn раскраска_стай_и_спокойный_профиль_работа
             .map(|v| v.color & 0xFFFFFF)
             .collect();
         assert!(colors.len() > 2, "стаи имеют разные цвета");
+        let areas = &h.state().view.frame.as_ref().unwrap().flock_areas;
+        assert!(!areas.is_empty(), "кнопка включает области стай");
+        assert!(areas.iter().all(|a| a.members >= 2 && a.radius.is_finite() && a.radius > 0.0));
         assert_eq!(h.state().view.frame.as_ref().unwrap().tick, tick);
         // Пакет из 600 шагов выполнен без ожидания: дать закончиться анимации рождения.
         std::thread::sleep(std::time::Duration::from_millis(800));
         settle(h);
         check_layout(h, size, "вид стай", None);
         shot(h, &format!("стаи-{tag}"));
+        h.get_by_label("Стаи").click();
+        for _ in 0..100 {
+            h.step();
+            if h.state().view.frame.as_ref().unwrap().flock_areas.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(h.state().view.frame.as_ref().unwrap().flock_areas.is_empty());
+        assert_eq!(h.state().view.frame.as_ref().unwrap().tick, tick);
         h.get_by_label("Спокойнее").click();
         for _ in 0..100 {
             h.step();
@@ -419,6 +432,124 @@ fn раскраска_стай_и_спокойный_профиль_работа
         assert_eq!(f.tick, tick);
         assert!(h.state().game.as_ref().unwrap().rules_changed);
     });
+}
+
+#[test]
+fn стайные_сценарии_и_карточка_без_окна() {
+    use life_core::{CreatureGenome, Rules, World, genome::creature::Gene, plant::Plant, social::Activity};
+    let _gpu = gpu();
+    let fixture = || {
+        let mut w = World::new(&WorldConfig {
+            seed: 42,
+            n_creatures: Some(0),
+            rules: Rules::default().with("plant_rate", 0.0).unwrap().with("cannibalism", 1.0).unwrap(),
+            ..Default::default()
+        });
+        for (x, y) in [(2800.0, 1900.0), (2900.0, 2000.0), (3000.0, 2100.0), (3100.0, 1900.0)] {
+            w.spawn(CreatureGenome::BASE, x, y, Some(65.0));
+        }
+        for v in &mut w.creatures {
+            v.flock = 1;
+            v.reproduction_wait = 10000;
+        }
+        w
+    };
+    let mut w = fixture();
+    for x in [2870.0, 2990.0, 3070.0] {
+        w.plants.push(Plant::at(x, 2000.0));
+    }
+    w.step();
+    let mut scenes = vec![("кормёжка", w.clone())];
+    for _ in 0..240 {
+        w.step();
+    }
+    assert!(w.plants.is_empty());
+    scenes.push(("переход", w));
+    let mut w = fixture();
+    w.spawn(CreatureGenome::BASE.with(Gene::Size, 120.0), 2950.0, 2000.0, Some(180.0));
+    w.creatures.last_mut().unwrap().age = life_core::config::LIFESPAN - 12.0;
+    let (mut alarm, mut gathering) = (false, false);
+    for _ in 0..200 {
+        w.step();
+        if !alarm && w.creatures.iter().any(|v| v.mind.social.activity == Activity::Alarm) {
+            scenes.push(("тревога", w.clone()));
+            alarm = true;
+        }
+        if alarm
+            && !gathering
+            && w.creatures.iter().all(|v| v.mind.social.activity != Activity::Alarm)
+            && w.creatures.iter().any(|v| v.mind.social.activity == Activity::Gathering)
+        {
+            scenes.push(("сбор", w.clone()));
+            gathering = true;
+        }
+    }
+    assert!(alarm && gathering, "после ухода угрозы стая собирается");
+    for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
+        let mut h = harness(size);
+        h.state_mut().side_open = false;
+        h.state_mut().flock_colors = true;
+        for (name, w) in &scenes {
+            let generation = h.state().view.frame.as_ref().unwrap().world_gen;
+            h.state_mut().sim.send(Command::TestWorld(Box::new(w.clone())));
+            for _ in 0..200 {
+                h.step();
+                if h.state()
+                    .view
+                    .frame
+                    .as_ref()
+                    .is_some_and(|f| f.world_gen > generation && !f.flock_areas.is_empty())
+                {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(h.state().view.frame.as_ref().unwrap().world_gen > generation);
+            if let Some(cam) = &mut h.state_mut().view.camera {
+                let (sx, sy) = cam.to_screen(3000.0, 2000.0);
+                cam.zoom_at(sx, sy, 2.5);
+                cam.center_on(3000.0, 2000.0);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(750));
+            settle(&mut h);
+            shot(&mut h, &format!("поведение-{name}-{tag}"));
+        }
+        let area = h.state().view.frame.as_ref().unwrap().flock_areas[0].clone();
+        // Точка внутри области, но вне тел: выбор именно стаи.
+        let w = &scenes.last().unwrap().1;
+        let point = (0..36)
+            .map(|i| {
+                let a = i as f64 * std::f64::consts::TAU / 36.0;
+                (area.x + area.radius * 0.7 * a.cos(), area.y + area.radius * 0.7 * a.sin())
+            })
+            .find(|&(x, y)| w.pick(x, y, 0.0).is_none())
+            .unwrap();
+        h.state_mut().sim.send(Command::Pick { x: point.0, y: point.1, radius: 0.0 });
+        h.state_mut().side_open = true;
+        h.state_mut().side_tab = SideTab::Creature;
+        for _ in 0..100 {
+            h.step();
+            if h.state().view.frame.as_ref().unwrap().selected_flock.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(h.state().view.frame.as_ref().unwrap().selected_flock.as_ref().unwrap().id, area.id);
+        settle(&mut h);
+        check_layout(&h, size, "карточка стаи", None);
+        shot(&mut h, &format!("карточка-стаи-{tag}"));
+        let v = &w.creatures[0];
+        h.state_mut().sim.send(Command::Pick { x: v.x, y: v.y, radius: 0.0 });
+        for _ in 0..100 {
+            h.step();
+            if h.state().view.frame.as_ref().unwrap().selected.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(h.state().view.frame.as_ref().unwrap().selected_flock.is_none());
+        assert_eq!(h.state().view.frame.as_ref().unwrap().selected.unwrap().id, v.id);
+    }
 }
 
 /// Игра по умолчанию — с каннибализмом: галочка есть в лаборатории.

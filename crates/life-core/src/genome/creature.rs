@@ -22,6 +22,7 @@ pub enum Gene {
     Bravery,
     Carnivory,
     PreyRatio,
+    Sociability,
 }
 
 impl Gene {
@@ -39,10 +40,11 @@ impl Gene {
         Gene::Bravery,
         Gene::Carnivory,
         Gene::PreyRatio,
+        Gene::Sociability,
     ];
 }
 
-pub const N: usize = 13;
+pub const N: usize = 14;
 
 /// Мутация существ: множитель не ниже 0.1, выпавшее ниже перетягивается
 /// заново, как в Python. Сигма — из правил мира.
@@ -156,6 +158,14 @@ pub const GENES: [GeneSpec; N] = [
         about: "Во сколько раз добыча меньше охотника (1–5).",
         kind: GeneKind::Absolute,
         base: 2.5,
+        mutation: SCALE,
+    },
+    GeneSpec {
+        key: "sociability",
+        label: "общительность",
+        about: "Привязанность к своим, сообщения и помощь ценой личного времени, %.",
+        kind: GeneKind::Percent,
+        base: 50.0,
         mutation: SCALE,
     },
 ];

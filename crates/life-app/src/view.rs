@@ -225,6 +225,33 @@ impl WorldView {
             );
         }
 
+        // Области стай под телами: обрезаем по миру, чтобы заливка не выходила за край.
+        let flock_painter = painter.with_clip_rect(world_rect.intersect(rect));
+        for flock in &f.flock_areas {
+            let (x, y) = cam.to_screen(flock.x, flock.y);
+            let center = pos(x, y);
+            let radius = (flock.radius * cam.zoom) as f32;
+            let radius = radius.max(12.0);
+            if !Rect::from_center_size(center, Vec2::splat(radius * 2.0)).intersects(rect) {
+                continue;
+            }
+            let [r, g, b] = flock.color;
+            flock_painter.circle_filled(center, radius, Color32::from_rgba_unmultiplied(r, g, b, 20));
+            flock_painter.circle_stroke(
+                center,
+                radius,
+                Stroke::new(1.0, Color32::from_rgba_unmultiplied(r, g, b, 130)),
+            );
+            flock_painter.circle_filled(center, 2.5, rgb(flock.color));
+            flock_painter.text(
+                center + Vec2::new(0.0, -7.0),
+                Align2::CENTER_BOTTOM,
+                format!("№{} · {} · {}", flock.id, flock.members, flock.details.activity.label()),
+                FontId::proportional(11.0),
+                rgb(flock.color),
+            );
+        }
+
         // полоса слоя выбранного существа — где ему можно жить и есть
         if let Some(s) = f.selected {
             let (lo, hi) = s.layer;

@@ -43,6 +43,17 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     println!("Растения за прогон: выросло {}, съедено {}.", c.plants_grown, c.plants_eaten);
 
     println!("Молодых {} из {}, стай {}.", last.juveniles, last.creatures, last.flocks);
+    let social = last.social_counts;
+    println!(
+        "Стаи: тревог {}, завершено {}, вмешательств {}, отделений {}.",
+        social.alarms, social.alarm_ends, social.interventions, social.splits
+    );
+    for (i, a) in life_core::social::Activity::ALL.iter().enumerate() {
+        println!("  {}: {}", a.label(), percent(last.activities[i] as u64, last.creatures as u64));
+    }
+    if let Some(s) = last.flock_spread {
+        println!("Разброс стай: {}.", spread(&s));
+    }
     print_intervals(snaps, rows);
     print_genome(first, last);
     print_depth(last);
