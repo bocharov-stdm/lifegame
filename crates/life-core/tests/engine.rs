@@ -718,26 +718,42 @@ fn стартовые_численности_известны_до_постро�
 /// и полным перебором успевал бы, а здесь перебор — десятки миллионов пар за тик.
 /// Порог с большим запасом: тест ловит поломку вроде «сетка перестала работать
 /// и всё стало O(n²)», а не шум машины CI: с сеткой ~2 мс, без неё ~80 мс,
-/// порог 20. Растения подсыпаются каждый тик,
-/// чтобы нагрузка не таяла.
+/// порог 20. Растения подсыпаются каждый тик, чтобы нагрузка не таяла.
+/// Боевой вариант дополнительно собирает 80 живых стай по 50 участников.
 #[test]
 fn тик_укладывается_в_бюджет_на_фиксированной_нагрузке() {
-    let mut w =
-        World::new(&WorldConfig { seed: 9, scale: 10.0, n_creatures: Some(4000), ..Default::default() });
-    let mut rng = Rng::new(9);
-    let ticks = 100;
-    let started = std::time::Instant::now();
-    for _ in 0..ticks {
-        while w.plants.len() < 4000 {
-            let p = w.flora().plant(&mut rng);
-            w.plants.push(p);
+    for combat in [0.0, 1.0] {
+        let mut w = World::new(&WorldConfig {
+            seed: 9,
+            scale: 10.0,
+            n_creatures: Some(4000),
+            rules: Rules::default().with("cannibalism", combat).unwrap(),
+            ..Default::default()
+        });
+        if combat == 1.0 {
+            for (i, v) in w.creatures.iter_mut().enumerate() {
+                let pack = i / 50;
+                v.flock = pack as u64 + 1;
+                v.x = 500.0 + (pack % 10) as f64 * (w.space.width - 1000.0) / 9.0 + (i % 10) as f64 * 8.0;
+                v.y =
+                    500.0 + (pack / 10) as f64 * (w.space.height - 1000.0) / 7.0 + (i % 50 / 10) as f64 * 8.0;
+            }
         }
-        w.step();
+        let mut rng = Rng::new(9);
+        let ticks = 100;
+        let started = std::time::Instant::now();
+        for _ in 0..ticks {
+            while w.plants.len() < 4000 {
+                let p = w.flora().plant(&mut rng);
+                w.plants.push(p);
+            }
+            w.step();
+        }
+        let ms = started.elapsed().as_secs_f64() * 1000.0 / ticks as f64;
+        eprintln!("  [скорость] {ms:.3} мс/тик при 4000/4000, бои {combat:.0}");
+        assert!(w.creatures.len() > 1000, "нагрузка растаяла — замер бессмыслен");
+        assert!(ms < 20.0, "тик {ms:.2} мс при 4000/4000: где-то перебор вместо сетки?");
     }
-    let ms = started.elapsed().as_secs_f64() * 1000.0 / ticks as f64;
-    eprintln!("  [скорость] {ms:.3} мс/тик при 4000/4000");
-    assert!(w.creatures.len() > 1000, "нагрузка растаяла — замер бессмыслен");
-    assert!(ms < 20.0, "тик {ms:.2} мс при 4000/4000: где-то перебор вместо сетки?");
 }
 
 // ── игра: выбор, слежение, правила на ходу ──────────────────────────────────

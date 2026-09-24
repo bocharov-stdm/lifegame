@@ -113,6 +113,7 @@ pub struct Snapshot {
     /// Во сколько раз мир больше базового: пороги событий растут с площадью.
     pub area: f64,
     pub plants: usize,
+    pub corpses: usize,
     /// Потолок растений этого мира.
     pub plant_cap: usize,
     pub creatures: usize,
@@ -176,6 +177,7 @@ impl Snapshot {
             tick: world.tick,
             area: world.space.area_ratio(),
             plants: world.plants.len(),
+            corpses: world.corpses.len(),
             plant_cap: world.space.per_area(PLANT_MAX),
             creatures: herd.len(),
             juveniles: herd.iter().filter(|v| !v.adult()).count(),

@@ -60,6 +60,7 @@ struct SeenPlant {
     born: u32,
     xbits: u64,
     y: f64,
+    r: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -186,12 +187,14 @@ impl Motion {
                 continue;
             }
             let (x, y) = ((p.x - x0) as f32, (p.y - y0) as f32);
+            let remaining = f64::from(p.portions) / f64::from(life_core::plant::PORTIONS);
+            let radius = (r * (0.45 + 0.55 * remaining)) as f32;
             out.push(Instance {
                 x,
                 y,
                 px: x,
                 py: y,
-                r: r as f32,
+                r: radius,
                 color,
                 age: self.ticks.age(p.born as u64 + 1, now),
                 meta: meta(KIND_PLANT, 0.0),
@@ -199,7 +202,7 @@ impl Motion {
             if out.len() > MAX_INSTANCES {
                 return false;
             }
-            seen.push(SeenPlant { born: p.born, xbits: p.x.to_bits(), y: p.y });
+            seen.push(SeenPlant { born: p.born, xbits: p.x.to_bits(), y: p.y, r: radius });
         }
         // Внутри одного тика рождения порядок по x — свой, но одинаковый в обоих
         // кадрах; растения идут по тику рождения, так что сортировка почти даром.
@@ -219,7 +222,7 @@ impl Motion {
                     kind: KIND_PLANT,
                     x,
                     y: p.y,
-                    r: r as f32,
+                    r: p.r,
                     color,
                     heading: 0.0,
                     starved: false,
@@ -467,6 +470,20 @@ mod tests {
         std::thread::sleep(GHOST_LIFE + Duration::from_millis(20));
         m.collect(&world, ALL, &mut out);
         assert!(out.iter().all(|i| i.meta & GHOST == 0), "призраки догорели");
+    }
+
+    #[test]
+    fn растение_уменьшается_после_порции_пищи() {
+        let mut world = empty_world();
+        world.plants.push(life_core::plant::Plant::at(1000.0, 1000.0));
+        let mut motion = Motion::default();
+        let mut out = Vec::new();
+        motion.collect(&world, ALL, &mut out);
+        let original = out[0].r;
+        assert_eq!(original, PLANT_RADIUS as f32);
+        let _ = world.plants[0].bite();
+        motion.collect(&world, ALL, &mut out);
+        assert!(out[0].r < original && out[0].r > original * 0.45);
     }
 
     #[test]

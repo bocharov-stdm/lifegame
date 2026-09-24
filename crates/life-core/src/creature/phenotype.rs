@@ -24,6 +24,10 @@ pub struct Phenotype {
     pub plant_efficiency: f64,
     pub meat_efficiency: f64,
     pub prey_ratio: f64,
+    /// Возможность и личный стиль дальнего боя.
+    pub shooter: bool,
+    pub fire_preference: f64,
+    pub fire_reserve: f64,
     pub plant_energy: f64,
     pub vision: f64,
 
@@ -105,6 +109,9 @@ impl Phenotype {
             plant_efficiency: 1.0 - 0.8 * genome[Gene::Carnivory].clamp(0.0, 100.0) / 100.0,
             meat_efficiency: 0.2 + 0.8 * genome[Gene::Carnivory].clamp(0.0, 100.0) / 100.0,
             prey_ratio: genome[Gene::PreyRatio].clamp(1.0, 5.0),
+            shooter: genome[Gene::Shooter] >= 0.5,
+            fire_preference: genome[Gene::FirePreference].clamp(0.0, 100.0) / 100.0,
+            fire_reserve: genome[Gene::FireReserve].clamp(0.0, 100.0) / 100.0,
             plant_energy: rules.plant_energy,
             retreat: 0.8 - 0.6 * genome[Gene::Bravery].clamp(0.0, 100.0) / 100.0,
             vision,

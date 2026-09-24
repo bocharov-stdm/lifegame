@@ -1,6 +1,6 @@
-//! «Стандартное» поведение существа — исходное: бежит от чужого, который может
-//! его съесть; иначе идёт к ближайшему видимому растению; иначе бродит в своём
-//! слое, а оказавшись вне его (ушло за едой, убегало) — возвращается.
+//! «Стандартное» поведение: бежит от опасности; иначе оценивает растение,
+//! падаль и живую добычу с учётом дороги и времени питания; иначе бродит в своём
+//! слое, а оказавшись вне его — возвращается.
 //!
 //! Решение разбито на `plan`, который говорит ещё и какая ветка сработала:
 //! «затаившийся» (`lurker.rs`) ведёт себя так же, но бродит медленно.
@@ -82,6 +82,7 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
         && me.energy > me.pheno.size * 0.05
     {
         mind.flee_ticks = 0;
+        mind.social.shared_flee = false;
         return (Intent { tx: x, ty: y, slow: false, attack: Some(t.id) }, Mode::Food);
     }
     let mut fleeing = false;
@@ -117,7 +118,9 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
     }
 
     let plant = mind.social.personal_food;
+    let corpse = senses.best_corpse(me);
     if plant.is_none()
+        && corpse.is_none()
         && mind.attack.is_none()
         && crate::social::group_duty(me, mind)
         && let Some(g) = me.flock_goal
@@ -131,13 +134,22 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
         None
     };
     let plant_score = plant.map_or(0.0, |(px, py)| {
-        me.pheno.plant_energy * me.pheno.plant_efficiency
-            / (((px - x).hypot(py - y) - me.pheno.size).max(0.0) / speed.max(0.01) + 1.0)
+        me.pheno.plant_energy * crate::config::PLANT_BITE_YIELD * me.pheno.plant_efficiency
+            / (((px - x).hypot(py - y) - me.pheno.size).max(0.0) / speed.max(0.01)
+                + f64::from(crate::plant::PORTIONS))
     });
+    let corpse_score = corpse.map_or(0.0, |c| c.score);
     if let Some(p) = prey
-        && (mind.attack == Some(p.id) || p.score > plant_score)
+        && (mind.attack == Some(p.id) || p.score > plant_score.max(corpse_score))
     {
+        mind.social.personal_food = None;
         return (Intent { tx: p.x, ty: p.y, slow: false, attack: Some(p.id) }, Mode::Food);
+    }
+    if let Some(c) = corpse
+        && c.score > plant_score
+    {
+        mind.social.personal_food = None;
+        return (Intent { tx: c.x, ty: c.y, slow: false, attack: None }, Mode::Food);
     }
     if let Some((tx, ty)) = plant {
         return (Intent { tx, ty, slow: false, attack: None }, Mode::Food);
@@ -210,4 +222,75 @@ fn pick_random_target(me: &Me, mind: &mut Mind, rng: &mut Rng) {
         }
     }
     mind.target = Some((me.x, me.y));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::creature::Creature;
+    use crate::genome::creature::Gene;
+    use crate::senses::{CorpseFood, Prey, Threat};
+    use crate::{CreatureGenome, Rules, Space};
+
+    struct FoodSense {
+        prey: Option<Prey>,
+    }
+
+    impl Senses for FoodSense {
+        fn nearest_plant(&self, _: f64, _: f64, _: f64) -> Option<(f64, f64)> {
+            Some((1010.0, 1000.0))
+        }
+
+        fn best_corpse(&self, _: &Me) -> Option<CorpseFood> {
+            Some(CorpseFood { owner: 2, x: 990.0, y: 1000.0, score: 3.0 })
+        }
+
+        fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
+            None
+        }
+
+        fn prey(&self, _: &Me, _: Option<u64>) -> Option<Prey> {
+            self.prey
+        }
+    }
+
+    #[test]
+    fn плотоядный_идёт_к_падали_травоядный_к_растению_начатый_бой_сохраняется() {
+        for (carnivory, target) in [(100.0, 990.0), (0.0, 1010.0)] {
+            let v = Creature::new(
+                &Space::default(),
+                &Rules::default(),
+                CreatureGenome::BASE.with(Gene::Carnivory, carnivory),
+                Some(1000.0),
+                Some(1000.0),
+                Some(30.0),
+                Rng::new(1),
+            );
+            let me = Me {
+                x: v.x,
+                y: v.y,
+                energy: v.energy,
+                kinship: v.kinship(),
+                flock: v.flock,
+                flock_goal: None,
+                pheno: &v.pheno,
+                health_share: 1.0,
+            };
+            let mut mind = Mind::default();
+            let mut rng = Rng::new(3);
+            let (intent, mode) = plan(&me, &mut mind, &mut rng, &FoodSense { prey: None }, v.pheno.speed);
+            assert_eq!(mode, Mode::Food);
+            assert_eq!(intent.tx, target);
+
+            mind.attack = Some(9);
+            let (fight, _) = plan(
+                &me,
+                &mut mind,
+                &mut rng,
+                &FoodSense { prey: Some(Prey { id: 9, x: 1020.0, y: 1000.0, score: 0.1 }) },
+                v.pheno.speed,
+            );
+            assert_eq!(fight.attack, Some(9));
+        }
+    }
 }

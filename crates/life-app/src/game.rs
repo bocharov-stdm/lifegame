@@ -418,6 +418,12 @@ impl LifeApp {
             ui.label(format!("Общительность: {:.0}%", s.sociability * 100.0));
             ui.label(format!("Сытость: {:.0}%", s.fullness * 100.0));
             ui.label(format!("Разброс вокруг центра: {:.0}", s.radius));
+            ui.label(format!("Территория: радиус {:.0}", s.territory_radius));
+            ui.label(if s.warned > 0 {
+                format!("Предупреждённых вторженцев: {}", s.warned)
+            } else {
+                "Территория спокойна".to_string()
+            });
             if let Some((x, y)) = s.goal {
                 ui.label(format!("Цель: {x:.0}, {y:.0}"));
             }

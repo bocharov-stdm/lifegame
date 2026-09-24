@@ -176,6 +176,12 @@ impl Creature {
             pheno: &self.pheno,
         };
         let intent = strategy::decide(&me, &mut self.mind, &mut self.rng, senses);
+        let intent = crate::territory::steer(self, intent);
+        if self.mind.social.territory_guard.is_some() && intent.attack.is_some() && !self.fleeing() {
+            self.mind.social.activity = crate::social::Activity::Alarm;
+            self.mind.social.rest_until = 0;
+            self.mind.social.course = None;
+        }
         self.mind.attack = intent.attack;
         self.act(intent);
     }
@@ -222,6 +228,10 @@ impl Creature {
         self.pheno = Phenotype::at_size(&self.genome, rules, space, self.pheno.size);
         self.space = *space;
         if !rules.cannibals() {
+            self.mind.social.territory_avoid = None;
+            self.mind.social.territory_guard = None;
+            self.mind.social.territory_side = None;
+            self.mind.social.territory_escape = None;
             self.mind.social.alarm = None;
             self.mind.social.observed_alarm = None;
             self.mind.social.hit = None;
@@ -244,7 +254,12 @@ impl Creature {
         if eaten == 0 {
             return;
         }
-        self.nourish(rules.plant_energy * eaten as f64 * self.pheno.plant_efficiency, rules);
+        self.nourish(
+            rules.plant_energy * crate::config::PLANT_BITE_YIELD / f64::from(crate::plant::PORTIONS)
+                * eaten as f64
+                * self.pheno.plant_efficiency,
+            rules,
+        );
         let me = Me {
             x: self.x,
             y: self.y,

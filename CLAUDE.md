@@ -29,6 +29,9 @@ ported from. Реформа поведения реализована: родс�
 Движок пока последовательный; снимок соседей и разделение движения/питания не означают
 распараллеливание. Стаи обмениваются локальными сведениями о еде и тревоге,
 отдыхают, собираются, переходят к новым местам и ограниченно прикрывают своих.
+У стаи есть территория; чужаки стараются обходить её, а предупреждённых
+вторженцев взрослые защитники могут обстрелять. Растения и трупы доступны
+порциями, выстрелы слабее контактного удара и расходуют энергию.
 Совместной охоты, вожаков, раздела добычи и слияния стай нет. Общительность —
 наследуемый ген; устойчиво отделённые группы получают новую метку. См. `BEHAVIOR.md`.
 
@@ -85,7 +88,7 @@ gene shifts, creatures squeezing into a thin layer); ASCII maps (top = surface, 
 creatures, `:`/`.` plants). The JSON has the same plus every snapshot
 (`life_sim::observe::Snapshot`: per-gene `GeneStat` — a spread for numeric genes, variant
 shares for choice genes —, depth and width histograms, cumulative counters). Format
-`life-report/5` (социальные счётчики, занятия и разброс стай): top-level `genes` describes the gene table (key,
+`life-report/6` (социальные счётчики, территории, трупы, питание и выстрелы): top-level `genes` describes the gene table (key,
 label, kind, variants);
 keys are English (event `kind`), texts Russian. Long runs may stop on the work budget
 ("перегрузка") — raise it with `--max-work`.
@@ -99,7 +102,7 @@ and the event chronicle for its in-game event feed.
 60 ticks). It started as the last Python version's (`python/fingerprint.py` at `python-final`)
 and is re-taken from Rust after each deliberate balance change. It is a world of creatures
 and plants (0 of 8 seeds extinct, 323–1107 creatures without combat); metrics: creatures and plants mean,
-size max and final. Текущий эталон имеет `model: "life-behavior/2"`; эталоны без этой версии отклоняются. `--compare` reruns the same seeds in Rust and checks each metric's mean
+size max and final. Текущий эталон имеет `model: "life-behavior/3"`; эталоны без этой версии отклоняются. `--compare` reruns the same seeds in Rust and checks each metric's mean
 against the reference's per-seed range; any mismatch exits with code 1 (CI relies on it). It
 refuses (code 2) when the world differs from the one the reference was taken on (world size —
 compared as `Space`, not shape name, since at ×1 strip and 3:2 are the same 6000x4000 —,
@@ -403,8 +406,10 @@ Adding a strategy:
 не переписываются. Эталон профиля — `reference/calm-fingerprint.json` (сверять с
 `--rule cost_scale=3 --rule cannibalism=1`). Базовый эталон движка остаётся прежним.
 «Стаи» переключает области вокруг центров стай и окраску, включая миникарту и плотность.
-Радиус области — среднеквадратичное расстояние участников от центра с учётом тела;
-это разброс стаи, а не граница территории. Подпись показывает метку и число участников.
+Внутренняя область показывает среднеквадратичный разброс участников; отдельный
+контур показывает территорию, которую стая защищает. Подпись показывает метку,
+число участников и занятие. Клик по любому из кругов открывает карточку стаи;
+попадание в тело существа имеет преимущество.
 После протягивания области инструмент возвращается к выбору; Esc и «Убрать рамку»
 снимают область. Входящую сводку принимать только для текущего прямоугольника,
 иначе отложенный кадр может воскресить снятую область.

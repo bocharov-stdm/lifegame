@@ -49,11 +49,28 @@ fn digest(w: &World) -> u64 {
     let mut h = Fnv::new();
     h.u64(w.tick);
     h.u64(w.next_flock);
-    for byte in format!("{:?}{:?}", w.split_watches, w.social_counts).bytes() {
+    for byte in format!(
+        "{:?}{:?}{:?}{:?}",
+        w.split_watches, w.social_counts, w.territory.encounters, w.territory.attacks
+    )
+    .bytes()
+    {
         h.u64(byte as u64);
     }
     let c = w.counters;
-    for v in [c.plants_grown, c.plants_eaten, c.born, c.starved, c.cannibalized, c.old_age, c.combat] {
+    for v in [
+        c.plants_grown,
+        c.plants_eaten,
+        c.plant_bites,
+        c.meat_bites,
+        c.ranged_shots,
+        c.territorial_fights,
+        c.born,
+        c.starved,
+        c.cannibalized,
+        c.old_age,
+        c.combat,
+    ] {
         h.u64(v);
     }
     h.u64(w.plants.len() as u64);
@@ -62,6 +79,19 @@ fn digest(w: &World) -> u64 {
         h.f64(p.y);
         h.u64(p.alive as u64);
         h.u64(p.born as u64);
+        h.u64(p.portions as u64);
+    }
+    h.u64(w.corpses.len() as u64);
+    for c in &w.corpses {
+        for byte in format!("{c:?}").bytes() {
+            h.u64(byte as u64);
+        }
+    }
+    h.u64(w.shots.len() as u64);
+    for shot in &w.shots {
+        for byte in format!("{shot:?}").bytes() {
+            h.u64(byte as u64);
+        }
     }
     h.u64(w.creatures.len() as u64);
     for v in &w.creatures {
@@ -155,7 +185,11 @@ fn cases() -> Vec<Case> {
         },
         Case {
             name: "B: сид 4, гиганты",
-            cfg: WorldConfig { seed: 4, rules: rules(&[("size_power", 1.0)]), ..Default::default() },
+            cfg: WorldConfig {
+                seed: 4,
+                rules: rules(&[("size_power", 1.0), ("plant_energy", 120.0)]),
+                ..Default::default()
+            },
             ticks: 2000,
             before: |_| {},
         },
@@ -250,14 +284,14 @@ fn run(case: &Case) -> (Vec<(u64, u64)>, World, Seen) {
 #[cfg(windows)]
 #[rustfmt::skip]
 const GOLDEN: &[&[(u64, u64)]] = &[
-    &[(1, 0x320e6a9bc8ef4e7e), (2, 0xfdd3126113f19142), (10, 0x1993f210be7a5bf2), (31, 0x07c27b341b890886), (100, 0xacc3f89389c779f7), (250, 0xfa69adc88d38bddf), (500, 0x2e35093ce2412c2a), (1000, 0x79c7f10cad9947bc), (2000, 0x51cb32f585724f5c), (3000, 0xc5e9a6c114da6632), ],
-    &[(1, 0x5efb722c30434fa2), (2, 0xf3d1feddff6cb3e8), (10, 0x8bb79cb008e8da91), (31, 0x38a848de2e64590d), (100, 0xdf17b659f1b8158a), (250, 0xf72d1d967be370be), (500, 0xe2d9749ede8c8adf), (1000, 0x88250fdb029f9176), (2000, 0x64e59995157a29a7), ],
-    &[(1, 0xf4adbcaa32abeced), (2, 0x994ad21bbb024e68), (10, 0xabec7e82680e55ca), (31, 0xb20b06c9b1b1c4b3), (100, 0xe5e17fe3499c05db), (250, 0xc9efd5e81b925e7a), (500, 0x2c5ecde2f42180df), (1000, 0x8d003da81749f439), (2000, 0xeda0efd30bf18596), (3000, 0xe69c4e7e6240a666), ],
-    &[(1, 0x3758396b8d55b22a), (2, 0x46b71421dc4d024c), (10, 0x4fbb025c50f2de72), (31, 0x059bf17607241a75), (100, 0x1c4db22e1152cd97), (250, 0x1bd1b6dc5148dd09), (500, 0x8b4e04fc0f6f34f6), ],
-    &[(1, 0xc227d2d1f605608d), (2, 0x7adc7007d150e33f), (10, 0x77f5ad8b88c00cbf), (31, 0x8a522a70fec690b4), (100, 0x5523eb70a1d189b3), (250, 0xc5a928392f3212c5), (500, 0x980b8989101f5dc4), (1000, 0x35d3b88411afca74), ],
-    &[(1, 0x82e1e93117590419), (2, 0x05828c22e762df75), (10, 0x6ec94e73eae69ff9), (31, 0x56b17941339b3e55), (100, 0xd422e34745e615ab), (250, 0x7a9a27c16100cc4b), (500, 0x0a0004b9a5568351), (1000, 0x67affed9fe5946ac), (2000, 0x62f97c87918ec230), ],
-    &[(1, 0x6b0377ae6e681f43), (2, 0xc8ec1ed1c99fff2c), (10, 0xa506685705005cbc), (31, 0x840701d39c4cbe2c), (100, 0xd4db20701f5fb55a), (250, 0x0b73e65f55fd0764), (500, 0x7e6e4c8b3ed00d2c), (1000, 0x08f3b45502ed13cd), ],
-    &[(1, 0x222a7c06d9caadb7), (2, 0x5af52f89d9905c90), (10, 0x2f06452be9156121), (31, 0x4198fe86250bfe50), (100, 0x4439296bfab2ab91), (250, 0xb1e2907bcf0cf7f6), (500, 0x73350457e4f4f8c7), (1000, 0xa48095b9a0b32aab), (2000, 0xd42178291141b111), ],
+    &[(1, 0x2ef57cfc3a52a92a), (2, 0x1590eb05be2a8acb), (10, 0x422c2850599a40e7), (31, 0x66ab763589492bd7), (100, 0x82151b35425bb53f), (250, 0x0977c31370eff0da), (500, 0x1138fa25b80e4940), (1000, 0x555b21b9b52ab77e), (2000, 0xfad1605c640bb724), (3000, 0x2d69056bd0302d81), ],
+    &[(1, 0xada373d0c30098de), (2, 0x069a420462c0b909), (10, 0x2829336044e27d9c), (31, 0x91c6b244c3c69e59), (100, 0x5f6fdd7acb9b0c29), (250, 0x84b43ae466d830a8), (500, 0x99cb97fcd7e47824), (1000, 0x1f1c3db6509c8d2c), (2000, 0x0ddc62812e8d6374), ],
+    &[(1, 0x439b43f0d7df89ec), (2, 0x17240be8feb7831d), (10, 0x4808aa3262b6f706), (31, 0x9222cbb73c65d20c), (100, 0x19a4defa64a3fabd), (250, 0x9266080d01e0d92a), (500, 0x4faef47abf2aa408), (1000, 0xe586c6760eb74b4a), (2000, 0xe401eca3ecad59bc), (3000, 0xddafeffcf60e5eaa), ],
+    &[(1, 0xf516c2ad553000d2), (2, 0xd3ce569c56f9b125), (10, 0xe4d0e5ac0f24aac1), (31, 0x7a1239d3f3e06185), (100, 0xb7915b5120506b31), (250, 0xa273344eb4e84059), (500, 0x327572c8d59a6071), ],
+    &[(1, 0x6ef63f1a8cbb6308), (2, 0xdb8320e871e9759f), (10, 0xb5510f895e246fce), (31, 0x8791b3cfb2ac2f69), (100, 0x4d2f8afce17c798d), (250, 0xa4e833baaf45d1dc), (500, 0xa5dc5d0d8167533f), (1000, 0xa6438b73ca022769), ],
+    &[(1, 0xcf22edc6f21215f5), (2, 0x60b7ff4ad98ab321), (10, 0x5565db1677822570), (31, 0xbd3b3aef00f80007), (100, 0x66f1b32bfa6a04db), (250, 0xb7f7a7776ec47d97), (500, 0xf3ee30a86d3eb78f), (1000, 0x02bd0deb4c15f104), (2000, 0x3c87c316786f7e99), ],
+    &[(1, 0x169950d88390e56b), (2, 0x370cadf372112563), (10, 0x7dcdc44f2cddf7e7), (31, 0x249d01859ca1916f), (100, 0xd04d471b94501c0e), (250, 0x258db93fdfeeb49f), (500, 0xf141631b73e6f01c), (1000, 0xfe6388abb8f890f4), ],
+    &[(1, 0xbec5ba2625c3731b), (2, 0xc1a78488ef667321), (10, 0x703d7218c5fa4294), (31, 0x122ebc8e563046be), (100, 0x7c7af11ff1c907a2), (250, 0x9367395a8eb6dd8d), (500, 0x4e9b29f72e52de13), (1000, 0x085f34b7feb3e466), (2000, 0x5fce6729a3f10a73), ],
 ];
 
 #[cfg(not(windows))]

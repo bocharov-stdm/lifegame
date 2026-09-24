@@ -201,6 +201,7 @@ pub struct FlockArea {
     pub x: f64,
     pub y: f64,
     pub radius: f64,
+    pub territory_radius: f64,
     pub members: usize,
     pub color: [u8; 3],
 }
@@ -214,10 +215,28 @@ pub fn flock_areas(world: &World) -> Vec<FlockArea> {
             y: s.y,
             members: s.members,
             radius: s.radius,
+            territory_radius: s.territory_radius,
             color: creature_color(world, s.id, true),
             details: s,
         })
         .collect()
+}
+
+/// Видимый остаток трупа; его сытость определяет прозрачность отметки.
+#[derive(Clone, Copy, Debug)]
+pub struct CorpseMark {
+    pub x: f64,
+    pub y: f64,
+    pub size: f64,
+    pub fullness: f64,
+}
+
+/// Короткий след удара, уже собранный потоком симуляции.
+#[derive(Clone, Copy, Debug)]
+pub struct ShotTrail {
+    pub from: (f64, f64),
+    pub to: (f64, f64),
+    pub age: f32,
 }
 
 #[derive(Debug, Default)]
@@ -241,6 +260,8 @@ pub struct Frame {
     /// Растения, потом существа — в таком порядке и рисуются.
     pub instances: Vec<Instance>,
     pub flock_areas: Vec<FlockArea>,
+    pub corpses: Vec<CorpseMark>,
+    pub shots: Vec<ShotTrail>,
     /// Вместо кружков, когда видимых больше `MAX_INSTANCES`.
     pub density: Option<Raster>,
     /// Весь мир крупными клетками; приходит не в каждом кадре.
@@ -389,6 +410,8 @@ mod tests {
         assert_eq!((a.id, a.members, a.x, a.y), (tag, 2, 200.0, 200.0));
         let half = world.creatures[0].pheno.half;
         assert!((a.radius - (10000.0 + half * half).sqrt()).abs() < 1e-9);
+        assert!((a.territory_radius - (1.4 * a.radius + 40.0).clamp(120.0, 320.0)).abs() < 1e-9);
+        assert_eq!(a.details.warned, 0);
         world.creatures[1].x = 100.0;
         assert!((flock_areas(&world)[0].radius - half).abs() < 1e-9);
         world.creatures[1].alive = false;

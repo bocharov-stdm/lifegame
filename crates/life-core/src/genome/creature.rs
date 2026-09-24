@@ -1,7 +1,7 @@
 //! Геном существа.
 
-use super::{GeneKind, GeneSpec, Genome, Mutation, bases};
-use crate::config::STRATEGY_SWITCH_CHANCE;
+use super::{GeneKind, GeneSpec, Genome, Mutation, Variant, bases};
+use crate::config::{SHOOTER_SWITCH_CHANCE, STRATEGY_SWITCH_CHANCE};
 use crate::creature::strategy::VARIANTS as STRATEGIES;
 use crate::rng::Rng;
 
@@ -23,6 +23,9 @@ pub enum Gene {
     Carnivory,
     PreyRatio,
     Sociability,
+    Shooter,
+    FirePreference,
+    FireReserve,
 }
 
 impl Gene {
@@ -41,10 +44,23 @@ impl Gene {
         Gene::Carnivory,
         Gene::PreyRatio,
         Gene::Sociability,
+        Gene::Shooter,
+        Gene::FirePreference,
+        Gene::FireReserve,
     ];
 }
 
-pub const N: usize = 14;
+pub const N: usize = 17;
+
+/// Наследуемая возможность стрелять. Основатели не стреляют.
+pub const SHOOTER_VARIANTS: [Variant; 2] = [
+    Variant {
+        key: "no", label: "без выстрела", about: "Атакует только при соприкосновении."
+    },
+    Variant {
+        key: "yes", label: "стреляет", about: "Может потратить энергию на слабый дальний удар."
+    },
+];
 
 /// Мутация существ: множитель не ниже 0.1, выпавшее ниже перетягивается
 /// заново, как в Python. Сигма — из правил мира.
@@ -168,6 +184,30 @@ pub const GENES: [GeneSpec; N] = [
         base: 50.0,
         mutation: SCALE,
     },
+    GeneSpec {
+        key: "shooter",
+        label: "стрелок",
+        about: "Редко наследуемая способность стрелять на расстоянии.",
+        kind: GeneKind::Choice(&SHOOTER_VARIANTS),
+        base: 0.0,
+        mutation: Mutation::Switch { chance: SHOOTER_SWITCH_CHANCE },
+    },
+    GeneSpec {
+        key: "fire_preference",
+        label: "предпочтение_выстрела",
+        about: "Насколько рано стреляет при сближении с целью, %.",
+        kind: GeneKind::Percent,
+        base: 50.0,
+        mutation: SCALE,
+    },
+    GeneSpec {
+        key: "fire_reserve",
+        label: "резерв_стрельбы",
+        about: "Минимальная доля запаса энергии после выстрела, %.",
+        kind: GeneKind::Percent,
+        base: 50.0,
+        mutation: SCALE,
+    },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -237,6 +277,9 @@ mod tests {
         keys.dedup();
         assert_eq!(keys.len(), N, "имена генов не повторяются");
         assert_eq!(CreatureGenome::BASE.get("vision"), Some(400.0));
+        assert_eq!(CreatureGenome::BASE[Gene::Shooter], 0.0);
+        assert_eq!(CreatureGenome::BASE[Gene::FirePreference], 50.0);
+        assert_eq!(CreatureGenome::BASE[Gene::FireReserve], 50.0);
     }
 
     /// Мутагенность родителя растягивает разброс всех генов, и свой тоже, и
@@ -246,22 +289,44 @@ mod tests {
         let spread = |m: f64| {
             let parent = CreatureGenome::BASE.with(Gene::Mutability, m);
             let mut rng = Rng::new(3);
-            let (mut size, mut own, mut switched) = (0.0, 0.0, 0);
+            let (mut size, mut own) = (0.0, 0.0);
             for _ in 0..2000 {
                 let child = parent.mutate(0.3, &mut rng);
                 size += (child[Gene::Size] / 40.0 - 1.0).abs();
                 own += (child[Gene::Mutability] / m - 1.0).abs();
-                switched += (child[Gene::Strategy] != 0.0) as usize;
             }
-            (size / 2000.0, own / 2000.0, switched)
+            (size / 2000.0, own / 2000.0)
         };
         let (low, high) = (spread(0.2), spread(2.0));
         assert!(high.0 > low.0 * 5.0, "размер: {:.3} против {:.3}", high.0, low.0);
         assert!(high.1 > low.1 * 5.0, "сама мутагенность: {:.3} против {:.3}", high.1, low.1);
-        assert!(high.2 > low.2 * 5, "смена стратегии: {} против {}", high.2, low.2);
+        let switches = |m: f64| {
+            let parent = CreatureGenome::BASE.with(Gene::Mutability, m);
+            let mut rng = Rng::new(317);
+            (0..50_000).filter(|_| parent.mutate(0.0, &mut rng)[Gene::Strategy] != 0.0).count()
+        };
+        let (rare, frequent) = (switches(0.2), switches(2.0));
+        assert!(frequent > rare * 3, "смена стратегии: {frequent} против {rare}");
         let base = spread(1.0);
         assert!((base.0 - 0.3 * 0.8).abs() < 0.03, "при 1 разброс — сигма правил: {:.3}", base.0);
         let capped = CreatureGenome::BASE.with(Gene::Mutability, 1e300).mutate(0.3, &mut Rng::new(1));
         assert!(capped.to_values().iter().all(|v| v.is_finite()), "потолок: геном конечен");
+    }
+
+    #[test]
+    fn способность_стрелять_возникает_редко_и_наследуется() {
+        let mut rng = Rng::new(81);
+        let mut shooters = 0;
+        for _ in 0..20_000 {
+            let child = CreatureGenome::BASE.mutate(0.0, &mut rng);
+            shooters += (child[Gene::Shooter] == 1.0) as usize;
+        }
+        assert!((5..=40).contains(&shooters), "редкие стрелки: {shooters}");
+        let parent = CreatureGenome::BASE.with(Gene::Shooter, 1.0);
+        let mut inherited = 0;
+        for _ in 0..1000 {
+            inherited += (parent.mutate(0.0, &mut rng)[Gene::Shooter] == 1.0) as usize;
+        }
+        assert!(inherited >= 990, "способность обычно наследуется: {inherited}");
     }
 }

@@ -19,7 +19,7 @@ use crate::grid::Grid;
 use crate::plant::Plant;
 use crate::rng::Rng;
 use crate::rules::Rules;
-use crate::senses::{GridSenses, Herd, eat_plants};
+use crate::senses::{GridSenses, Herd, bite_plant};
 use crate::space::{Shape, Space};
 
 /// С чего начинается мир. None у существ — значение из конфига,
@@ -81,6 +81,10 @@ pub struct Stats {
 pub struct Counters {
     pub plants_grown: u64,
     pub plants_eaten: u64,
+    pub plant_bites: u64,
+    pub meat_bites: u64,
+    pub ranged_shots: u64,
+    pub territorial_fights: u64,
     pub born: u64,
     pub starved: u64,
     pub old_age: u64,
@@ -95,6 +99,10 @@ impl Counters {
         Counters {
             plants_grown: self.plants_grown - earlier.plants_grown,
             plants_eaten: self.plants_eaten - earlier.plants_eaten,
+            plant_bites: self.plant_bites - earlier.plant_bites,
+            meat_bites: self.meat_bites - earlier.meat_bites,
+            ranged_shots: self.ranged_shots - earlier.ranged_shots,
+            territorial_fights: self.territorial_fights - earlier.territorial_fights,
             born: self.born - earlier.born,
             starved: self.starved - earlier.starved,
             old_age: self.old_age - earlier.old_age,
@@ -106,6 +114,9 @@ impl Counters {
 
 #[derive(Clone, Debug)]
 pub struct World {
+    pub corpses: Vec<crate::corpse::Corpse>,
+    pub shots: Vec<crate::Shot>,
+    pub territory: crate::territory::State,
     pub next_flock: u64,
     pub split_watches: Vec<crate::flock::SplitWatch>,
     pub social_counts: crate::social::Counters,
@@ -128,6 +139,8 @@ pub struct World {
     herd: Herd,
     prey_grid: Grid,
     food_grid: Grid,
+    corpse_grid: Grid,
+    bitten_plants: Vec<bool>,
 }
 
 impl World {
@@ -138,6 +151,9 @@ impl World {
         let n_start = cfg.creatures_at_start();
 
         let mut w = World {
+            corpses: Vec::new(),
+            shots: Vec::new(),
+            territory: Default::default(),
             next_flock: 1,
             split_watches: Vec::new(),
             social_counts: Default::default(),
@@ -155,6 +171,8 @@ impl World {
             herd: Herd::new(),
             prey_grid: Grid::new(GRID_CELL),
             food_grid: Grid::new(GRID_CELL),
+            corpse_grid: Grid::new(GRID_CELL),
+            bitten_plants: Vec::new(),
         };
         let variants = creature_strategy::VARIANTS.len();
         for i in 0..n_start {
@@ -218,16 +236,49 @@ impl World {
     }
 
     fn update_creatures(&mut self) {
+        let now = self.tick + 1;
+        self.shots.retain(|s| now.saturating_sub(s.tick) <= 8);
+        if self.rules.cannibals() {
+            self.corpses.retain_mut(|c| c.decay(now));
+        } else {
+            self.corpses.clear();
+        }
         crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.flock_seed, true);
         crate::flock::food_goals(&mut self.flocks, &mut self.creatures, self.tick);
         self.prey_grid.rebuild(&self.space, self.creatures.iter().map(|v| (v.x, v.y)));
         crate::social::prepare(&mut self.creatures, &self.prey_grid, self.tick);
+        let territorial_targets = if self.rules.cannibals() {
+            self.territory.prepare(&mut self.flocks, &mut self.creatures, &self.space, self.tick)
+        } else {
+            self.territory.clear();
+            for f in self.flocks.values_mut() {
+                f.warned = 0;
+            }
+            vec![None; self.creatures.len()]
+        };
         if self.rules.cannibals() {
             self.social_counts.interventions +=
                 crate::social::prepare_aid(&mut self.creatures, &self.prey_grid, self.tick);
         }
-        let World { space, rules, plants, creatures, herd, prey_grid, food_grid, counters, .. } = self;
+        let World {
+            space,
+            rules,
+            plants,
+            corpses,
+            creatures,
+            herd,
+            prey_grid,
+            food_grid,
+            corpse_grid,
+            bitten_plants,
+            counters,
+            shots,
+            ..
+        } = self;
         food_grid.rebuild(space, plants.iter().map(|p| (p.x, p.y)));
+        corpse_grid.rebuild(space, corpses.iter().map(|c| (c.x, c.y)));
+        bitten_plants.clear();
+        bitten_plants.resize(plants.len(), false);
         // Сородичей видят такими, какими они были в начале фазы: исход не
         // зависит от порядка ходов. Пока съесть друг друга нельзя (каннибализм
         // выключен), бояться некого — снимок не строится, и мир бит в бит прежний.
@@ -240,7 +291,14 @@ impl World {
 
         let mut offspring = Vec::new();
         for v in creatures.iter_mut() {
-            v.step(&GridSenses { food: food_grid, plants, herd });
+            v.step(&GridSenses {
+                food: food_grid,
+                plants,
+                corpse_grid: rules.cannibals().then_some(&*corpse_grid),
+                corpses,
+                now,
+                herd,
+            });
             if !v.alive {
                 if v.death == Some(crate::creature::Death::OldAge) {
                     counters.old_age += 1;
@@ -250,21 +308,105 @@ impl World {
                 continue; // умер от голода на этом ходу: не ест и не делится
             }
         }
-        // Все решения видели одни растения; питание начинается после всех ходов.
-        for v in creatures.iter_mut().filter(|v| v.alive) {
-            // ест всё не дальше size от центра — уже с новой позиции
-            let eaten = eat_plants(food_grid, plants, v.x, v.y, v.pheno.size);
-            counters.plants_eaten += eaten as u64;
-            v.feed(eaten, rules);
+        // Один укус на существо и не больше одной порции с растения за тик.
+        let mut fed = vec![false; creatures.len()];
+        let max_corpse_half = corpses.iter().fold(0.0_f64, |m, c| m.max(c.size * 0.5));
+        // Растения идут до боя, трупы — после. На копии заранее распределяем
+        // порции трупов по ID: тот, кому остатка уже не хватит, может взять
+        // растение сейчас, не получая второй порции в этом тике.
+        let mut reserved_corpses = rules.cannibals().then(|| corpses.clone());
+        for (i, v) in creatures.iter_mut().enumerate().filter(|(_, v)| v.alive) {
+            let prefer_corpse = reserved_corpses.as_mut().is_some_and(|reserved| {
+                let Some(j) = crate::corpse::contact(
+                    corpse_grid,
+                    reserved,
+                    (v.x, v.y),
+                    v.pheno.size,
+                    max_corpse_half,
+                    now,
+                ) else {
+                    return false;
+                };
+                let c = &reserved[j];
+                let prefers = c.portion(rules.plant_energy)
+                    * v.pheno.meat_efficiency
+                    * crate::config::CORPSE_BITE_YIELD
+                    > rules.plant_energy * crate::config::PLANT_BITE_YIELD
+                        / f64::from(crate::plant::PORTIONS)
+                        * v.pheno.plant_efficiency;
+                if prefers {
+                    reserved[j].bite(now, rules.plant_energy);
+                }
+                prefers
+            });
+            if !prefer_corpse {
+                if let Some(finished) = bite_plant(food_grid, plants, bitten_plants, v.x, v.y, v.pheno.size) {
+                    counters.plant_bites += 1;
+                    counters.plants_eaten += finished as u64;
+                    v.feed(1, rules);
+                    fed[i] = true;
+                } else if let Some(reserved) = reserved_corpses.as_mut()
+                    && let Some(j) = crate::corpse::contact(
+                        corpse_grid,
+                        reserved,
+                        (v.x, v.y),
+                        v.pheno.size,
+                        max_corpse_half,
+                        now,
+                    )
+                {
+                    // Растение досталось более раннему ID; этот едок теперь
+                    // претендует на труп раньше следующих участников.
+                    reserved[j].bite(now, rules.plant_energy);
+                }
+            }
         }
         if rules.cannibals() {
-            // все уже сходили, дети ещё в буфере — они в тик рождения не едят и не съедаются
-            crate::combat::resolve(space, rules, creatures, prey_grid, counters, self.tick + 1);
+            // Все уже сходили; новорождённых ещё нет. Удары одновременны.
+            let result = crate::combat::resolve(
+                space,
+                rules,
+                creatures,
+                prey_grid,
+                counters,
+                now,
+                &territorial_targets,
+            );
+            counters.ranged_shots += result.shots.len() as u64;
+            counters.territorial_fights += result.territorial_attacks;
+            shots.extend(result.shots);
+            for (flock, enemy) in result.attacked_flocks {
+                self.territory.attacks.insert((flock, enemy, now));
+            }
+            // Трупы прошлого тика делятся между выжившими по порядку ID.
+            for (i, v) in creatures.iter_mut().enumerate() {
+                if !v.alive || fed[i] {
+                    continue;
+                }
+                if let Some(gain) = crate::corpse::bite(
+                    corpse_grid,
+                    corpses,
+                    (v.x, v.y),
+                    v.pheno.size,
+                    max_corpse_half,
+                    rules.plant_energy,
+                    now,
+                ) {
+                    v.devour(gain * crate::config::CORPSE_BITE_YIELD, rules);
+                    counters.meat_bites += 1;
+                    fed[i] = true;
+                }
+            }
         }
         for v in creatures.iter_mut().filter(|v| v.alive) {
             if let Some(child) = v.maybe_divide(space, rules) {
                 offspring.push(child);
             }
+        }
+        if rules.cannibals() {
+            corpses.extend(
+                creatures.iter().filter(|v| !v.alive).map(|v| crate::corpse::Corpse::from_creature(v, now)),
+            );
         }
         creatures.retain(|v| v.alive);
         plants.retain(|p| p.alive); // выметаем съеденное
@@ -282,6 +424,8 @@ impl World {
                 self.tick + 1,
             );
         }
+        self.social_counts.departures +=
+            crate::flock::departures(&mut self.creatures, &mut self.next_flock, now);
         let prior_alarms: Vec<_> = self.flocks.iter().filter(|(_, f)| f.alarmed).map(|(&id, _)| id).collect();
         crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.flock_seed, false);
         self.social_counts.alarm_ends +=
@@ -325,9 +469,13 @@ impl World {
     /// не видя последствий.
     pub fn set_rules(&mut self, rules: Rules) {
         if !rules.cannibals() {
+            self.corpses.clear();
+            self.shots.clear();
+            self.territory.clear();
             for f in self.flocks.values_mut() {
                 self.social_counts.alarm_ends += f.alarmed as u64;
                 f.alarmed = false;
+                f.warned = 0;
             }
         }
         for v in &mut self.creatures {

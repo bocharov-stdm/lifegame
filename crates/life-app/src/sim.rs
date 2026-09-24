@@ -17,7 +17,8 @@ use life_core::{CreatureGenome, Rules, World, WorldConfig};
 use life_sim::observe::{EventTracker, Snapshot};
 
 use crate::frame::{
-    self, Area, Ending, Frame, Instance, LogEntry, Raster, RegionStats, Selected, Status, ViewRequest,
+    self, Area, CorpseMark, Ending, Frame, Instance, LogEntry, Raster, RegionStats, Selected, ShotTrail,
+    Status, ViewRequest,
 };
 use crate::history::Sample;
 use crate::motion::Motion;
@@ -207,6 +208,7 @@ struct Sim {
     last_minimap: Option<Instant>,
     /// Память прошлого кадра: движение, рождения, призраки.
     motion: Motion,
+    recent_shots: VecDeque<(ShotTrail, Instant)>,
 }
 
 impl Sim {
@@ -252,6 +254,7 @@ impl Sim {
             blocked: false,
             last_minimap: None,
             motion: Motion::default(),
+            recent_shots: VecDeque::new(),
         };
         sim.observe_start();
         sim
@@ -319,6 +322,11 @@ impl Sim {
             #[cfg(test)]
             Command::TestWorld(world) => {
                 self.world = *world;
+                self.recent_shots.clear();
+                for shot in &self.world.shots {
+                    self.recent_shots
+                        .push_back((ShotTrail { from: shot.from, to: shot.to, age: 0.0 }, Instant::now()));
+                }
                 self.world_gen += 1;
                 self.selected = None;
                 self.selected_flock = None;
@@ -361,7 +369,9 @@ impl Sim {
                 self.selected_flock = if self.selected.is_none() && self.motion.flock_colors {
                     frame::flock_areas(&self.world)
                         .into_iter()
-                        .filter(|s| (s.x - x).hypot(s.y - y) <= s.radius.max(radius * 1.2))
+                        .filter(|s| {
+                            (s.x - x).hypot(s.y - y) <= s.radius.max(s.territory_radius).max(radius * 1.2)
+                        })
                         .min_by(|a, b| {
                             (a.x - x)
                                 .hypot(a.y - y)
@@ -449,6 +459,7 @@ impl Sim {
         let flock_colors = self.motion.flock_colors;
         self.motion = Motion::default();
         self.motion.flock_colors = flock_colors;
+        self.recent_shots.clear();
         self.tick_ms = 0.0;
         self.reset_tps();
         self.pending = Pending::default();
@@ -468,6 +479,14 @@ impl Sim {
     fn tick(&mut self) {
         let start = Instant::now();
         self.world.step();
+        let now = Instant::now();
+        for shot in self.world.shots.iter().filter(|shot| shot.tick == self.world.tick) {
+            self.recent_shots.push_back((ShotTrail { from: shot.from, to: shot.to, age: 0.0 }, now));
+        }
+        self.recent_shots.retain(|(_, at)| now.duration_since(*at).as_secs_f32() < 0.25);
+        while self.recent_shots.len() > 512 {
+            self.recent_shots.pop_front();
+        }
         let ms = start.elapsed().as_secs_f64() * 1000.0;
         self.tick_ms = if self.tick_ms == 0.0 { ms } else { self.tick_ms * 0.95 + ms * 0.05 };
         self.tps_ticks += 1;
@@ -644,7 +663,8 @@ impl Sim {
         if let Some(view) = self.view.filter(|_| self.motion.flock_colors) {
             let (x0, y0, x1, y1) = view.padded();
             flock_areas.retain(|s| {
-                s.x + s.radius >= x0 && s.x - s.radius <= x1 && s.y + s.radius >= y0 && s.y - s.radius <= y1
+                let radius = s.radius.max(s.territory_radius);
+                s.x + radius >= x0 && s.x - radius <= x1 && s.y + radius >= y0 && s.y - radius <= y1
             });
         } else {
             flock_areas.clear();
@@ -669,6 +689,38 @@ impl Sim {
             origin,
             instances,
             flock_areas,
+            corpses: self
+                .view
+                .map(|v| {
+                    let (x0, y0, x1, y1) = v.padded();
+                    w.corpses
+                        .iter()
+                        .filter(|c| {
+                            c.x + c.size >= x0
+                                && c.x - c.size <= x1
+                                && c.y + c.size >= y0
+                                && c.y - c.size <= y1
+                        })
+                        .take(10_000)
+                        .map(|c| CorpseMark {
+                            x: c.x,
+                            y: c.y,
+                            size: c.size,
+                            fullness: if c.initial > 0.0 {
+                                (c.remaining / c.initial).clamp(0.0, 1.0)
+                            } else {
+                                0.0
+                            },
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            shots: self
+                .recent_shots
+                .iter()
+                .filter(|(_, at)| at.elapsed().as_secs_f32() < 0.25)
+                .map(|(s, at)| ShotTrail { age: at.elapsed().as_secs_f32(), ..*s })
+                .collect(),
             density,
             minimap,
             selected: self.selected.and_then(|id| Selected::of(w, id)),

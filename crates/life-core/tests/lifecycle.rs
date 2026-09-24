@@ -213,10 +213,96 @@ fn близкое_растение_выгоднее_далёкой_добычи(
     });
     w.spawn(CreatureGenome::BASE.with(Gene::Size, 100.0), 1000.0, 1000.0, Some(100.0));
     w.spawn(CreatureGenome::BASE.with(Gene::Size, 30.0), 1200.0, 1000.0, Some(50.0));
-    w.plants.push(life_core::plant::Plant { x: 1000.0, y: 1000.0, alive: true, born: 0 });
+    w.plants.push(life_core::plant::Plant::at(1000.0, 1000.0));
     w.step();
     assert_eq!(w.creatures[0].mind.attack, None);
-    assert_eq!(w.counters.plants_eaten, 1);
+    assert_eq!(w.counters.plant_bites, 1);
+    assert_eq!(w.counters.plants_eaten, 0);
+    assert_eq!(w.plants[0].portions, 4);
+}
+
+#[test]
+fn один_остаток_трупа_получает_едок_с_меньшим_id() {
+    use life_core::{World, WorldConfig, corpse::Corpse};
+    let mut w = World::new(&WorldConfig {
+        n_creatures: Some(0),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap().with("cannibalism", 1.0).unwrap(),
+        ..Default::default()
+    });
+    for _ in 0..2 {
+        w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(30.0));
+        w.creatures.last_mut().unwrap().reproduction_wait = 1000;
+    }
+    w.creatures[1].flock = w.creatures[0].flock;
+    let mut corpse = Corpse::from_creature(&w.creatures[0], 0);
+    corpse.owner = 99;
+    corpse.remaining = 10.0;
+    w.corpses.push(corpse);
+    w.step();
+    assert_eq!(w.counters.meat_bites, 1);
+    assert_eq!(w.corpses[0].remaining, 0.0);
+    assert!(w.creatures[0].energy > w.creatures[1].energy);
+}
+
+#[test]
+fn исчерпанный_труп_не_лишает_следующего_едока_доступного_растения() {
+    use life_core::{World, WorldConfig, corpse::Corpse, plant::Plant};
+    let mut w = World::new(&WorldConfig {
+        n_creatures: Some(0),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap().with("cannibalism", 1.0).unwrap(),
+        ..Default::default()
+    });
+    for _ in 0..2 {
+        w.spawn(CreatureGenome::BASE.with(Gene::Carnivory, 100.0), 1000.0, 1000.0, Some(30.0));
+        w.creatures.last_mut().unwrap().reproduction_wait = 1000;
+    }
+    w.creatures[1].flock = w.creatures[0].flock;
+    let mut corpse = Corpse::from_creature(&w.creatures[0], 0);
+    corpse.owner = 99;
+    corpse.remaining = 10.0;
+    w.corpses.push(corpse);
+    w.plants.push(Plant::at(1000.0, 1000.0));
+
+    w.step();
+
+    assert_eq!(w.counters.meat_bites, 1);
+    assert_eq!(w.counters.plant_bites, 1);
+    assert_eq!(w.plants[0].portions, 4);
+    assert_eq!(w.creatures.len(), 2);
+    assert!(w.creatures[0].energy > w.creatures[1].energy);
+}
+
+#[test]
+fn после_чужого_укуса_растения_резерв_трупа_сохраняет_еду_следующему() {
+    use life_core::{World, WorldConfig, corpse::Corpse, plant::Plant};
+    let mut w = World::new(&WorldConfig {
+        n_creatures: Some(0),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap().with("cannibalism", 1.0).unwrap(),
+        ..Default::default()
+    });
+    let plant_eater = CreatureGenome::BASE.with(Gene::Sociability, 0.0);
+    let meat_eater = plant_eater.with(Gene::Carnivory, 100.0);
+    w.spawn(plant_eater, 1000.0, 1000.0, Some(30.0));
+    w.spawn(plant_eater, 1000.0, 1000.0, Some(30.0));
+    w.spawn(meat_eater, 1080.0, 1000.0, Some(30.0));
+    let flock = w.creatures[0].flock;
+    for v in &mut w.creatures {
+        v.flock = flock;
+        v.reproduction_wait = 1000;
+    }
+    let mut corpse = Corpse::from_creature(&w.creatures[0], 0);
+    corpse.owner = 99;
+    corpse.x = 1040.0;
+    corpse.remaining = 10.0;
+    w.corpses.push(corpse);
+    w.plants.push(Plant::at(1000.0, 1000.0));
+    w.plants.push(Plant::at(1080.0, 1000.0));
+
+    w.step();
+
+    assert_eq!(w.counters.meat_bites, 1);
+    assert_eq!(w.counters.plant_bites, 2);
+    assert_eq!(w.plants.iter().map(|p| p.portions).collect::<Vec<_>>(), [4, 4]);
 }
 
 #[test]

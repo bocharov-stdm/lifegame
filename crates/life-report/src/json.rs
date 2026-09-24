@@ -25,6 +25,10 @@ fn counters(c: &Counters) -> Value {
     json!({
         "plants_grown": c.plants_grown,
         "plants_eaten": c.plants_eaten,
+        "plant_bites": c.plant_bites,
+        "meat_bites": c.meat_bites,
+        "ranged_shots": c.ranged_shots,
+        "territorial_fights": c.territorial_fights,
         "born": c.born,
         "starved": c.starved,
         "old_age": c.old_age,
@@ -85,13 +89,14 @@ fn snapshot(s: &Snapshot) -> Value {
     json!({
         "tick": s.tick,
         "plants": s.plants,
+        "corpses": s.corpses,
         "plant_cap": s.plant_cap,
         "creatures": s.creatures,
         "juveniles": s.juveniles,
         "flocks": s.flocks,
         "activities": life_core::social::Activity::ALL.iter().enumerate().map(|(i,a)| json!({"name":a.label(),"count":s.activities[i],"share": if s.creatures>0 {s.activities[i] as f64/s.creatures as f64} else {0.0}})).collect::<Vec<_>>(),
         "flock_spread": s.flock_spread.as_ref().map(spread),
-        "social": {"alarms":s.social_counts.alarms,"alarm_ends":s.social_counts.alarm_ends,"interventions":s.social_counts.interventions,"splits":s.social_counts.splits},
+        "social": {"alarms":s.social_counts.alarms,"alarm_ends":s.social_counts.alarm_ends,"interventions":s.social_counts.interventions,"splits":s.social_counts.splits,"departures":s.social_counts.departures},
         "counters": counters(&s.counters),
         "genes": genes,
         "depth_pct": s.depth.as_ref().map(spread),
@@ -118,7 +123,7 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
     let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(rules.get(k)))).collect();
     let space = cfg.space();
     json!({
-        "format": "life-report/5",
+        "format": "life-report/6",
         "world": { "scale": cfg.scale, "shape": cfg.shape.key(), "width": space.width, "height": space.height },
         "ticks": ticks,
         "sample_every": sample_every,
@@ -140,10 +145,45 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
                 "ticks_done": run.res.ticks_done,
                 "ms_per_tick": r(run.res.ms_per_tick()),
                 "totals": counters(&last.counters.since(&first.counters)),
+                "social_totals": {
+                    "alarms": last.social_counts.alarms - first.social_counts.alarms,
+                    "alarm_ends": last.social_counts.alarm_ends - first.social_counts.alarm_ends,
+                    "interventions": last.social_counts.interventions - first.social_counts.interventions,
+                    "splits": last.social_counts.splits - first.social_counts.splits,
+                    "departures": last.social_counts.departures - first.social_counts.departures,
+                },
                 "events": run.events.iter().map(event).collect::<Vec<_>>(),
                 "maps": run.maps.iter().map(|(t, rows)| json!({ "tick": t, "rows": rows })).collect::<Vec<_>>(),
                 "snapshots": snaps.iter().map(snapshot).collect::<Vec<_>>(),
             })
         }).collect::<Vec<_>>(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use life_core::{World, corpse::Corpse};
+    use life_sim::{Limits, run};
+
+    #[test]
+    fn отчёт_содержит_новые_поля_питания_и_боя() {
+        let cfg = WorldConfig::default();
+        let mut world = World::new(&cfg);
+        let dead = world.creatures.pop().unwrap();
+        world.corpses.push(Corpse::from_creature(&dead, 0));
+        let res = run(world, &Limits { ticks: 0, ..Limits::default() }, &mut |_| {});
+        let runs = [Run { seed: cfg.seed, res: &res, events: &[], maps: &[] }];
+        let data = report(&cfg, &cfg.rules, 0, 1, &runs);
+        assert_eq!(data["format"], "life-report/6");
+        let run = &data["runs"][0];
+        let snap = &run["snapshots"][0];
+        for key in ["plant_bites", "meat_bites", "ranged_shots", "territorial_fights"] {
+            assert!(run["totals"][key].as_u64().is_some(), "нет итогового счётчика {key}");
+            assert!(snap["counters"][key].as_u64().is_some(), "нет счётчика среза {key}");
+        }
+        assert_eq!(snap["corpses"], 1);
+        assert_eq!(snap["social"]["departures"], 0);
+        assert_eq!(run["social_totals"]["departures"], 0);
+    }
 }

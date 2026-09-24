@@ -232,10 +232,24 @@ impl WorldView {
             let center = pos(x, y);
             let radius = (flock.radius * cam.zoom) as f32;
             let radius = radius.max(12.0);
-            if !Rect::from_center_size(center, Vec2::splat(radius * 2.0)).intersects(rect) {
+            let territory = (flock.territory_radius * cam.zoom) as f32;
+            if !Rect::from_center_size(center, Vec2::splat(territory.max(radius) * 2.0)).intersects(rect) {
                 continue;
             }
             let [r, g, b] = flock.color;
+            let warning = flock.details.warned > 0;
+            flock_painter.circle_stroke(
+                center,
+                territory,
+                Stroke::new(
+                    if warning { 1.8 } else { 1.0 },
+                    if warning {
+                        Color32::from_rgba_unmultiplied(255, 156, 92, 210)
+                    } else {
+                        Color32::from_rgba_unmultiplied(r, g, b, 75)
+                    },
+                ),
+            );
             flock_painter.circle_filled(center, radius, Color32::from_rgba_unmultiplied(r, g, b, 20));
             flock_painter.circle_stroke(
                 center,
@@ -244,11 +258,32 @@ impl WorldView {
             );
             flock_painter.circle_filled(center, 2.5, rgb(flock.color));
             flock_painter.text(
-                center + Vec2::new(0.0, -7.0),
+                center + Vec2::new(0.0, -radius.min(80.0) - 7.0),
                 Align2::CENTER_BOTTOM,
                 format!("№{} · {} · {}", flock.id, flock.members, flock.details.activity.label()),
                 FontId::proportional(11.0),
                 rgb(flock.color),
+            );
+        }
+
+        for corpse in &f.corpses {
+            let (x, y) = cam.to_screen(corpse.x, corpse.y);
+            let center = pos(x, y);
+            if !rect.contains(center) {
+                continue;
+            }
+            let radius = (corpse.size * 0.24 * cam.zoom) as f32;
+            let radius = radius.clamp(2.0, 12.0);
+            let alpha = (75.0 + 95.0 * corpse.fullness) as u8;
+            flock_painter.circle_filled(
+                center,
+                radius,
+                Color32::from_rgba_unmultiplied(168, 136, 108, alpha),
+            );
+            flock_painter.circle_stroke(
+                center,
+                radius,
+                Stroke::new(1.0, Color32::from_rgba_unmultiplied(225, 193, 158, alpha)),
             );
         }
 
@@ -293,6 +328,26 @@ impl WorldView {
                     since,
                 },
             ));
+        }
+        let shot_painter = painter.with_clip_rect(world_rect.intersect(rect));
+        for shot in &f.shots {
+            let age = shot.age + f.built.map_or(0.0, |built| built.elapsed().as_secs_f32());
+            if age >= 0.25 {
+                continue;
+            }
+            let (x0, y0) = cam.to_screen(shot.from.0, shot.from.1);
+            let (x1, y1) = cam.to_screen(shot.to.0, shot.to.1);
+            let alpha = ((1.0 - age / 0.25) * 220.0) as u8;
+            shot_painter.line_segment(
+                [pos(x0, y0), pos(x1, y1)],
+                Stroke::new(1.6, Color32::from_rgba_unmultiplied(255, 216, 122, alpha)),
+            );
+            shot_painter.circle_filled(
+                pos(x1, y1),
+                2.0,
+                Color32::from_rgba_unmultiplied(255, 216, 122, alpha),
+            );
+            ui.ctx().request_repaint();
         }
         painter.rect_stroke(world_rect, 0.0, Stroke::new(1.0, LINE), StrokeKind::Outside);
 

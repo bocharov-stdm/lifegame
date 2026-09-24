@@ -32,8 +32,8 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     let space = res.world.space;
     println!("Мир {:.0}x{:.0}; еда {}.", space.width, space.height, flora::describe(&res.world.rules));
     println!(
-        "Итог на тике {}: растений {} из {}, существ {}.",
-        last.tick, last.plants, last.plant_cap, last.creatures
+        "Итог на тике {}: растений {} из {}, трупов {}, существ {}.",
+        last.tick, last.plants, last.plant_cap, last.corpses, last.creatures
     );
     println!(
         "Существа за прогон: {} (из умерших погибли в бою {}).",
@@ -41,12 +41,16 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
         percent(c.combat, c.cannibalized + c.starved + c.old_age + c.combat)
     );
     println!("Растения за прогон: выросло {}, съедено {}.", c.plants_grown, c.plants_eaten);
+    println!(
+        "Питание: порций растений {}, мяса {}. Выстрелов {}, территориальных ударов {}.",
+        c.plant_bites, c.meat_bites, c.ranged_shots, c.territorial_fights
+    );
 
     println!("Молодых {} из {}, стай {}.", last.juveniles, last.creatures, last.flocks);
     let social = last.social_counts;
     println!(
-        "Стаи: тревог {}, завершено {}, вмешательств {}, отделений {}.",
-        social.alarms, social.alarm_ends, social.interventions, social.splits
+        "Стаи: тревог {}, завершено {}, вмешательств {}, отделений {}, ушедших взрослых {}.",
+        social.alarms, social.alarm_ends, social.interventions, social.splits, social.departures
     );
     for (i, a) in life_core::social::Activity::ALL.iter().enumerate() {
         println!("  {}: {}", a.label(), percent(last.activities[i] as u64, last.creatures as u64));

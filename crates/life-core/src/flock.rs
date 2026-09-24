@@ -8,6 +8,8 @@ pub struct Summary {
     pub x: f64,
     pub y: f64,
     pub radius: f64,
+    pub territory_radius: f64,
+    pub warned: usize,
     pub members: usize,
     pub juveniles: usize,
     pub sociability: f64,
@@ -38,6 +40,10 @@ pub fn summaries(world: &crate::World) -> Vec<Summary> {
         let i = (0..5).max_by_key(|&i| (s.activities[i], std::cmp::Reverse(i))).unwrap();
         s.activity = crate::social::Activity::ALL[i];
         s.goal = world.flocks.get(&s.id).map(|f| (f.goal.tx, f.goal.ty));
+        if let Some(f) = world.flocks.get(&s.id) {
+            s.territory_radius = f.territory_radius;
+            s.warned = f.warned;
+        }
     }
     for v in world.creatures.iter().filter(|v| v.alive) {
         let s = groups.get_mut(&v.flock).unwrap();
@@ -48,6 +54,7 @@ pub fn summaries(world: &crate::World) -> Vec<Summary> {
         .filter(|s| s.members >= 2)
         .map(|mut s| {
             s.radius = (s.radius / s.members as f64).sqrt();
+            s.territory_radius = (1.4 * s.radius + 40.0).clamp(120.0, 320.0);
             s
         })
         .collect()
@@ -147,6 +154,8 @@ pub struct FlockGoal {
 
 #[derive(Clone, Debug)]
 pub struct Flock {
+    pub territory_radius: f64,
+    pub warned: usize,
     pub alarmed: bool,
     pub food_goal: bool,
     pub food_since: u64,
@@ -159,7 +168,8 @@ pub struct Flock {
     hi: f64,
 }
 
-pub(crate) fn update(
+#[doc(hidden)]
+pub fn update(
     flocks: &mut BTreeMap<u64, Flock>,
     creatures: &mut [Creature],
     space: &Space,
@@ -176,6 +186,8 @@ pub(crate) fn update(
     for v in creatures.iter().filter(|v| v.alive) {
         let f = flocks.entry(v.flock).or_insert_with(|| Flock {
             alarmed: false,
+            territory_radius: 0.0,
+            warned: 0,
             food_goal: false,
             food_since: 0,
             last_food: None,
@@ -192,11 +204,21 @@ pub(crate) fn update(
         f.lo += v.pheno.layer_lo;
         f.hi += v.pheno.layer_hi;
     }
+    let mut spread = BTreeMap::<u64, f64>::new();
+    for v in creatures.iter().filter(|v| v.alive) {
+        let f = &flocks[&v.flock];
+        let n = f.members as f64;
+        let cx = f.goal.x / n;
+        let cy = f.goal.y / n;
+        *spread.entry(v.flock).or_default() += (v.x - cx).powi(2) + (v.y - cy).powi(2) + v.pheno.half.powi(2);
+    }
     flocks.retain(|_, f| f.members > 0);
-    for f in flocks.values_mut() {
+    for (tag, f) in flocks.iter_mut() {
         let n = f.members as f64;
         f.goal.x /= n;
         f.goal.y /= n;
+        f.territory_radius =
+            if f.members >= 2 { (1.4 * (spread[tag] / n).sqrt() + 40.0).clamp(120.0, 320.0) } else { 0.0 };
         if advance {
             f.remaining = f.remaining.saturating_sub(1);
         }
@@ -212,6 +234,43 @@ pub(crate) fn update(
     for v in creatures {
         v.flock_goal = flocks.get(&v.flock).filter(|f| f.members >= 2).map(|f| f.goal);
     }
+}
+
+/// Переполненная стая теряет одного взрослого за тик с растущим шансом.
+pub fn departures(creatures: &mut [Creature], next: &mut u64, tick: u64) -> u64 {
+    let mut groups = BTreeMap::<u64, (usize, f64, f64)>::new();
+    for v in creatures.iter() {
+        let g = groups.entry(v.flock).or_default();
+        g.0 += 1;
+        g.1 += v.x;
+        g.2 += v.y;
+    }
+    let mut chosen = BTreeMap::<u64, (usize, f64, u64)>::new();
+    for (i, v) in creatures.iter().enumerate() {
+        let Some(&(n, sx, sy)) = groups.get(&v.flock).filter(|&&(n, _, _)| n > 50) else { continue };
+        if !v.adult() {
+            continue;
+        }
+        let d2 = (v.x - sx / n as f64).powi(2) + (v.y - sy / n as f64).powi(2);
+        if chosen.get(&v.flock).is_none_or(|&(_, old, id)| d2 > old || (d2 == old && v.id < id)) {
+            chosen.insert(v.flock, (i, d2, v.id));
+        }
+    }
+    let mut count = 0;
+    for (tag, (i, _, _)) in chosen {
+        let extra = (groups[&tag].0 - 50) as f64;
+        let probability = (0.06 * extra * extra).min(1.0);
+        let roll = (crate::rng::mix(tag ^ crate::rng::mix(tick)) >> 11) as f64 / (1u64 << 53) as f64;
+        if roll < probability {
+            creatures[i].flock = *next;
+            *next += 1;
+            creatures[i].flock_goal = None;
+            creatures[i].mind.social = Default::default();
+            creatures[i].mind.attack = None;
+            count += 1;
+        }
+    }
+    count
 }
 
 /// Выбор кормового места за два прохода, без перебора всех существ для каждой стаи.

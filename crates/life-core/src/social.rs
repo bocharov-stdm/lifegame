@@ -56,6 +56,7 @@ pub struct Counters {
     pub alarm_ends: u64,
     pub interventions: u64,
     pub splits: u64,
+    pub departures: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -73,6 +74,13 @@ impl Food {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Memory {
+    pub last_shot: u64,
+    pub territory_avoid: Option<crate::territory::Area>,
+    pub territory_guard: Option<crate::territory::Guard>,
+    /// Выбранная сторона обхода сохраняется, пока видна та же граница.
+    pub territory_side: Option<(u64, i8)>,
+    /// Курс выхода из пересекающихся областей держится до выхода из всех них.
+    pub territory_escape: Option<(f64, f64)>,
     pub shared_flee: bool,
     pub rest_ready: u64,
     pub heading: Option<(f64, f64)>,

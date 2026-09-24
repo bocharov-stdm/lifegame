@@ -4,12 +4,17 @@ use std::collections::BTreeMap;
 fn main() {
     let seeds: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(8);
     assert!((1..=8).contains(&seeds), "проверка рассчитана на 1–8 seed");
-    println!("cost,combat,seed,ticks,population,turns,moves,ms");
+    println!(
+        "cost,combat,seed,ticks,population,turns,moves,territory_turns,territory_moves,route_turns,route_moves,inside_turns,inside_moves,ms"
+    );
     for cost in [1.0, 3.0] {
         if std::env::args().nth(2).is_some_and(|s| s.parse::<f64>().ok() != Some(cost)) {
             continue;
         }
         for combat in [0.0, 1.0] {
+            if std::env::args().nth(3).is_some_and(|s| s.parse::<f64>().ok() != Some(combat)) {
+                continue;
+            }
             let tasks: Vec<_> = (1..=seeds)
                 .map(|seed| {
                     std::thread::spawn(move || {
@@ -24,7 +29,10 @@ fn main() {
                         });
                         let start_count = w.creatures.len() as u64;
                         let mut previous = BTreeMap::<u64, (f64, f64)>::new();
-                        let (mut turns, mut moves) = (0_u64, 0_u64);
+                        let (mut turns, mut moves, mut territory_turns, mut territory_moves) =
+                            (0_u64, 0_u64, 0_u64, 0_u64);
+                        let (mut route_turns, mut route_moves, mut inside_turns, mut inside_moves) =
+                            (0_u64, 0_u64, 0_u64, 0_u64);
                         let start = std::time::Instant::now();
                         for _ in 0..20000 {
                             let before: BTreeMap<_, _> = w
@@ -51,7 +59,23 @@ fn main() {
                                     {
                                         if let Some(&(px, py)) = previous.get(&v.id) {
                                             moves += 1;
-                                            turns += (px * d.0 + py * d.1 < 0.0) as u64;
+                                            let sharp = (px * d.0 + py * d.1 < 0.0) as u64;
+                                            turns += sharp;
+                                            if v.mind.social.territory_avoid.is_some() {
+                                                territory_moves += 1;
+                                                territory_turns += sharp;
+                                            }
+                                            if v.mind.social.territory_side.is_some() {
+                                                route_moves += 1;
+                                                route_turns += sharp;
+                                            }
+                                            if v.mind.social.territory_avoid.is_some_and(|a| {
+                                                (v.x - a.x).hypot(v.y - a.y)
+                                                    < a.radius + v.pheno.half + 4.0
+                                            }) {
+                                                inside_moves += 1;
+                                                inside_turns += sharp;
+                                            }
                                         }
                                         next.insert(v.id, d);
                                     }
@@ -65,7 +89,7 @@ fn main() {
                             );
                         }
                         format!(
-                            "{cost},{combat},{seed},{},{},{turns},{moves},{:.0}",
+                            "{cost},{combat},{seed},{},{},{turns},{moves},{territory_turns},{territory_moves},{route_turns},{route_moves},{inside_turns},{inside_moves},{:.0}",
                             w.tick,
                             w.creatures.len(),
                             start.elapsed().as_secs_f64() * 1000.0
