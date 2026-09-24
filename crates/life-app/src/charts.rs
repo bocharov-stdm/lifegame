@@ -188,13 +188,18 @@ pub fn genome(
         if row_i > 0 {
             painter.line_segment([row.left_top(), row.right_top()], Stroke::new(1.0, LINE));
         }
-        painter.text(
-            Pos2::new(row.left(), row.center().y),
-            Align2::LEFT_CENTER,
-            spec.label,
-            font.clone(),
-            MUTED,
-        );
+        let mut label = LayoutJob::simple_singleline(spec.label.into(), font.clone(), MUTED);
+        label.wrap = TextWrapping {
+            max_width: label_w - 6.0,
+            max_rows: 1,
+            break_anywhere: true,
+            overflow_character: Some('…'),
+        };
+        let galley = painter.layout_job(label);
+        painter.galley(Pos2::new(row.left(), row.center().y - galley.size().y / 2.0), galley, MUTED);
+        let label_rect = Rect::from_min_size(row.left_top(), Vec2::new(label_w, row_h));
+        ui.interact(label_rect, ui.id().with(("ген", row_i)), Sense::hover())
+            .on_hover_text(format!("{} — {}", spec.label, spec.about));
         let spark = Rect::from_min_max(
             Pos2::new(spark_rect.left(), top + 3.0),
             Pos2::new(spark_rect.right(), top + row_h - 3.0),

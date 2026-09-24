@@ -65,7 +65,9 @@ impl Prey {
     fn of(s: &Seen, me: &Me) -> Self {
         let travel =
             ((s.x - me.x).hypot(s.y - me.y) - s.half - me.pheno.half).max(0.0) / me.pheno.speed.max(0.01);
-        let hits = (s.health / (me.pheno.size * 0.05).min(s.max_health * 0.25).max(0.001)).ceil();
+        let hits = (s.health
+            / (me.pheno.size * me.pheno.melee_damage_share).min(s.max_health * 0.25).max(0.001))
+        .ceil();
         let portion = (me.pheno.plant_energy / f64::from(crate::plant::PORTIONS)).max(s.nutrition / 12.0);
         let feeding = (s.nutrition / portion.max(0.001)).ceil();
         Self {

@@ -1,6 +1,7 @@
 //! Приложение: экраны, переходы, настройки. Окно только рисует последний кадр
 //! и шлёт команды; всё тяжёлое — в потоке симуляции (`sim.rs`).
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use eframe::egui;
@@ -67,6 +68,8 @@ pub struct LifeApp {
     pub lab: Settings,
     /// Вкладка лаборатории: правила (`Tab::Lab`) или еда (`Tab::Food`).
     pub lab_tab: Tab,
+    /// Отмеченные правила для совместного сброса в лаборатории.
+    pub lab_reset_selected: HashSet<settings::Key>,
     /// Окно «Статистика» и его вкладка.
     pub stats_open: bool,
     pub stats_tab: StatsTab,
@@ -123,6 +126,7 @@ impl LifeApp {
             whole: false,
             lab_open: false,
             lab_tab: Tab::Lab,
+            lab_reset_selected: HashSet::new(),
             stats_open: false,
             stats_tab: StatsTab::Energy,
             region: None,
@@ -145,6 +149,7 @@ impl LifeApp {
             self.history = History::default();
             self.log.clear();
             self.lab.take_rules(&f.rules);
+            self.lab_reset_selected.clear();
             // область — от прошлого мира; поток её уже забыл
             self.region = None;
             self.view.area = None;

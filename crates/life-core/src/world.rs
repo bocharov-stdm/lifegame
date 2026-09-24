@@ -331,8 +331,7 @@ impl World {
                 let prefers = c.portion(rules.plant_energy)
                     * v.pheno.meat_efficiency
                     * crate::config::CORPSE_BITE_YIELD
-                    > rules.plant_energy * crate::config::PLANT_BITE_YIELD
-                        / f64::from(crate::plant::PORTIONS)
+                    > rules.plant_energy * rules.plant_bite_yield / f64::from(crate::plant::PORTIONS)
                         * v.pheno.plant_efficiency;
                 if prefers {
                     reserved[j].bite(now, rules.plant_energy);

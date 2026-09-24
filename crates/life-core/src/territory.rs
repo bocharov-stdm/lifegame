@@ -315,7 +315,7 @@ pub fn steer(v: &mut Creature, mut intent: Intent) -> Intent {
         let d = (guard.x - v.x).hypot(guard.y - v.y);
         let range = v.pheno.vision.min(v.pheno.size * 4.0);
         let contact = v.pheno.half + guard.half;
-        let shot_cost = v.pheno.size * crate::config::SHOT_ENERGY_SHARE;
+        let shot_cost = v.pheno.size * v.pheno.shot_energy_share;
         let can_pay =
             v.energy > shot_cost && v.energy - shot_cost >= v.pheno.max_energy * v.pheno.fire_reserve;
         let ready = if v.pheno.shooter && can_pay {

@@ -28,7 +28,7 @@ pub enum Tab {
     Lab,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Key {
     Creatures,
     PlantGrowth,
@@ -52,6 +52,12 @@ pub enum Key {
     PlantWidthAmplitude,
     Cannibalism,
     CannibalRatio,
+    ReproCost,
+    MeleeDamage,
+    ShotDamage,
+    ShotCost,
+    ShotPeriod,
+    PlantBiteYield,
 }
 
 pub struct Field {
@@ -127,7 +133,7 @@ fn percent(v: f64) -> String {
     format!("{v:.0}%")
 }
 
-pub const FIELDS: [Field; 22] = [
+pub const FIELDS: [Field; 28] = [
     // ── Мир ──────────────────────────────────────────────────────────────────
     Field {
         key: Key::Creatures,
@@ -418,6 +424,78 @@ pub const FIELDS: [Field; 22] = [
         tab: Tab::Lab,
         rule: Some("cannibal_ratio"),
         shown: |s| s.get(Key::Cannibalism) != 0.0,
+        ..SLIDER
+    },
+    Field {
+        key: Key::ReproCost,
+        label: "Цена рождения",
+        hint: "Энергия, которую родитель тратит сверх доли, отданной ребёнку.",
+        lo: 0.0,
+        hi: 50.0,
+        step: 1.0,
+        format: int,
+        tab: Tab::Lab,
+        rule: Some("repro_cost"),
+        ..SLIDER
+    },
+    Field {
+        key: Key::MeleeDamage,
+        label: "Сила ближнего удара",
+        hint: "Урон и цена удара в процентах от собственного диаметра. Урон ограничен четвертью здоровья цели.",
+        lo: 0.01,
+        hi: 0.25,
+        step: 0.01,
+        format: |v| format!("{:.0}%", v * 100.0),
+        tab: Tab::Lab,
+        rule: Some("melee_damage_share"),
+        ..SLIDER
+    },
+    Field {
+        key: Key::ShotDamage,
+        label: "Сила выстрела",
+        hint: "Урон в процентах от собственного диаметра. Урон ограничен четвертью здоровья цели.",
+        lo: 0.005,
+        hi: 0.10,
+        step: 0.005,
+        format: |v| format!("{:.1}%", v * 100.0),
+        tab: Tab::Lab,
+        rule: Some("shot_damage_share"),
+        ..SLIDER
+    },
+    Field {
+        key: Key::ShotCost,
+        label: "Цена выстрела",
+        hint: "Расход энергии на один выстрел в процентах от собственного диаметра.",
+        lo: 0.005,
+        hi: 0.20,
+        step: 0.005,
+        format: |v| format!("{:.1}%", v * 100.0),
+        tab: Tab::Lab,
+        rule: Some("shot_energy_share"),
+        ..SLIDER
+    },
+    Field {
+        key: Key::ShotPeriod,
+        label: "Пауза между выстрелами",
+        hint: "Минимальное число тиков между двумя выстрелами одного существа.",
+        lo: 1.0,
+        hi: 30.0,
+        step: 1.0,
+        format: |v| format!("{v:.0} тиков"),
+        tab: Tab::Lab,
+        rule: Some("shot_period"),
+        ..SLIDER
+    },
+    Field {
+        key: Key::PlantBiteYield,
+        label: "Усвоение растений",
+        hint: "Какая доля энергии растения достанется существу за все пять порций.",
+        lo: 0.05,
+        hi: 1.0,
+        step: 0.01,
+        format: |v| format!("{:.0}%", v * 100.0),
+        tab: Tab::Lab,
+        rule: Some("plant_bite_yield"),
         ..SLIDER
     },
 ];
@@ -743,6 +821,8 @@ mod tests {
         let path = dir.join("settings.json");
         let mut s = Settings { seed: 777, scale: 100.0, shape: Shape::Square, ..Default::default() };
         s.set(Key::PlantEnergy, 80.0);
+        s.set(Key::ShotDamage, 0.05);
+        s.set(Key::ShotCost, 0.10);
         s.save(&path).expect("запись");
         assert_eq!(Settings::load(&path), s);
         std::fs::write(&path, "{ битый").unwrap();
@@ -751,6 +831,19 @@ mod tests {
             std::fs::read_dir(&dir).unwrap().filter(|e| e.as_ref().unwrap().file_name() != "settings.json");
         assert_eq!(leftovers.count(), 0, "временных файлов не осталось");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn старые_настройки_получают_исходные_цены_а_выборочный_сброс_не_трогает_остальное() {
+        let mut s = Settings::from_json(&serde_json::json!({"plant_energy": 80}));
+        assert_eq!(s.get(Key::ShotDamage), life_core::config::SHOT_DAMAGE_SHARE);
+        assert_eq!(s.get(Key::ShotCost), life_core::config::SHOT_ENERGY_SHARE);
+        s.set(Key::ShotDamage, 0.06);
+        s.set(Key::ShotCost, 0.10);
+        s.set(Key::ShotDamage, Settings::default().get(Key::ShotDamage));
+        assert_eq!(s.get(Key::ShotDamage), life_core::config::SHOT_DAMAGE_SHARE);
+        assert_eq!(s.get(Key::ShotCost), 0.10);
+        assert_eq!(s.get(Key::PlantEnergy), 80.0);
     }
 
     #[test]

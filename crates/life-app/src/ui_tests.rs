@@ -306,6 +306,37 @@ fn справка_и_настройки_помещаются_в_окно() {
 }
 
 #[test]
+fn лаборатория_сбрасывает_отмеченные_цены_и_показывается_без_окна() {
+    let _gpu = gpu();
+    each_size(|h, size, tag| {
+        h.state_mut().lab_open = true;
+        h.state_mut().lab_tab = Tab::Lab;
+        h.state_mut().lab.set(Key::ShotDamage, 0.05);
+        h.state_mut().lab.set(Key::ShotCost, 0.10);
+        h.state_mut().lab_reset_selected.extend([Key::ShotDamage, Key::ShotCost]);
+        settle(h);
+        let screen = Rect::from_min_size(Pos2::ZERO, size).expand(0.5);
+        for label in ["Применить", "Отменить", "Сбросить отмеченные"] {
+            let node = h.get_by_label(label);
+            assert!(
+                screen.contains_rect(node.rect()),
+                "лаборатория, {tag}: {label} за окном: {:?}",
+                node.rect()
+            );
+        }
+        shot(h, &format!("лаборатория-{tag}"));
+        h.get_by_label("Сбросить отмеченные").click();
+        settle(h);
+        assert_eq!(
+            h.state().lab.get(Key::ShotDamage),
+            crate::settings::Settings::default().get(Key::ShotDamage)
+        );
+        assert_eq!(h.state().lab.get(Key::ShotCost), crate::settings::Settings::default().get(Key::ShotCost));
+        assert!(h.state().lab_reset_selected.is_empty());
+    });
+}
+
+#[test]
 fn новый_мир_из_экрана_настроек_запускает_партию() {
     let _gpu = gpu();
     let mut h = harness(NORMAL);

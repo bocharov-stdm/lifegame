@@ -117,6 +117,8 @@ pub const GRID_CELL: f64 = 256.0;
 pub const STRATEGY_SWITCH_CHANCE: f64 = 0.001;
 /// Такой же редкий переход способности к дальнему бою.
 pub const SHOOTER_SWITCH_CHANCE: f64 = 0.001;
+/// Ближний удар: доля диаметра, одновременно базовый урон и цена энергии.
+pub const MELEE_DAMAGE_SHARE: f64 = 0.05;
 /// Выстрел слабее ближнего удара, но требует собственного запаса энергии.
 pub const SHOT_DAMAGE_SHARE: f64 = 0.01;
 pub const SHOT_ENERGY_SHARE: f64 = 0.02;

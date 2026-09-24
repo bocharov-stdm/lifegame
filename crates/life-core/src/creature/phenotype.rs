@@ -29,6 +29,9 @@ pub struct Phenotype {
     pub fire_preference: f64,
     pub fire_reserve: f64,
     pub plant_energy: f64,
+    pub plant_bite_yield: f64,
+    pub melee_damage_share: f64,
+    pub shot_energy_share: f64,
     pub vision: f64,
 
     // ── слой обитания и границы ─────────────────────────────────────────────
@@ -113,6 +116,9 @@ impl Phenotype {
             fire_preference: genome[Gene::FirePreference].clamp(0.0, 100.0) / 100.0,
             fire_reserve: genome[Gene::FireReserve].clamp(0.0, 100.0) / 100.0,
             plant_energy: rules.plant_energy,
+            plant_bite_yield: rules.plant_bite_yield,
+            melee_damage_share: rules.melee_damage_share,
+            shot_energy_share: rules.shot_energy_share,
             retreat: 0.8 - 0.6 * genome[Gene::Bravery].clamp(0.0, 100.0) / 100.0,
             vision,
             layer_lo,

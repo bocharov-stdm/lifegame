@@ -255,7 +255,7 @@ impl Creature {
             return;
         }
         self.nourish(
-            rules.plant_energy * crate::config::PLANT_BITE_YIELD / f64::from(crate::plant::PORTIONS)
+            rules.plant_energy * rules.plant_bite_yield / f64::from(crate::plant::PORTIONS)
                 * eaten as f64
                 * self.pheno.plant_efficiency,
             rules,
@@ -321,7 +321,7 @@ impl Creature {
         // Резерв проверяется и ПОСЛЕ дележа: доля ребёнка считается от всей
         // энергии, и без этого родитель отдавал всё до нуля и умирал.
         let child_energy = self.energy * (self.genome[Gene::ReproShare] / 100.0);
-        let left = self.energy - child_energy - REPRO_COST;
+        let left = self.energy - child_energy - rules.repro_cost;
         if left < REPRO_RESERVE {
             return None;
         }

@@ -1,5 +1,5 @@
 //! Одновременные ближние удары и слабые выстрелы. Трупы создаёт мир после боя.
-use crate::config::{SHOT_DAMAGE_SHARE, SHOT_ENERGY_SHARE, SHOT_PERIOD, SHOT_RANGE_SIZES};
+use crate::config::SHOT_RANGE_SIZES;
 use crate::creature::{Creature, Death};
 use crate::grid::Grid;
 use crate::{Counters, Rules, Space};
@@ -52,7 +52,7 @@ pub(crate) fn resolve(
     let max_half = creatures.iter().filter(|v| v.alive).fold(0.0_f64, |m, v| m.max(v.pheno.half));
     let mut hits = Vec::new();
     for (i, v) in creatures.iter().enumerate() {
-        let cost = v.pheno.size * 0.05;
+        let cost = v.pheno.size * rules.melee_damage_share;
         if !v.alive || v.fleeing() {
             continue;
         }
@@ -102,11 +102,12 @@ pub(crate) fn resolve(
             }
         }
         if !v.pheno.shooter
-            || (v.mind.social.last_shot != 0 && tick.saturating_sub(v.mind.social.last_shot) < SHOT_PERIOD)
+            || (v.mind.social.last_shot != 0
+                && tick.saturating_sub(v.mind.social.last_shot) < rules.shot_period as u64)
         {
             continue;
         }
-        let shot_cost = v.pheno.size * SHOT_ENERGY_SHARE;
+        let shot_cost = v.pheno.size * rules.shot_energy_share;
         if v.energy <= shot_cost || v.energy - shot_cost < v.pheno.max_energy * v.pheno.fire_reserve {
             continue;
         }
@@ -142,7 +143,7 @@ pub(crate) fn resolve(
             hits.push(Hit {
                 attacker: i,
                 victim: j,
-                damage: (v.pheno.size * SHOT_DAMAGE_SHARE).min(u.max_health() * 0.25),
+                damage: (v.pheno.size * rules.shot_damage_share).min(u.max_health() * 0.25),
                 cost: shot_cost,
                 ranged: true,
                 territorial,
@@ -522,5 +523,48 @@ mod tests {
             resolve(&w.space, &w.rules, &mut w.creatures, &mut grid, &mut w.counters, 2, &[None, None]);
         assert_eq!(after.shots.len(), 1);
         assert!((w.creatures[0].energy - 50.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn новые_цена_и_сила_выстрела_действуют_на_живых_без_изменения_генов() {
+        let mut w = world();
+        let shooter = CreatureGenome::BASE
+            .with(Gene::Shooter, 1.0)
+            .with(Gene::FirePreference, 100.0)
+            .with(Gene::FireReserve, 0.0);
+        w.spawn(shooter, 1000.0, 1000.0, Some(100.0));
+        let prey = w.spawn(CreatureGenome::BASE.with(Gene::Size, 15.0), 1100.0, 1000.0, Some(30.0));
+        let genes = w.creatures.iter().map(|v| v.genome).collect::<Vec<_>>();
+        let rules = w
+            .rules
+            .with("shot_damage_share", 0.05)
+            .unwrap()
+            .with("shot_energy_share", 0.01)
+            .unwrap()
+            .with("shot_period", 2.0)
+            .unwrap();
+        w.set_rules(rules);
+        w.creatures[0].mind.attack = Some(prey);
+        let mut grid = Grid::new(crate::config::GRID_CELL);
+        let first =
+            resolve(&w.space, &w.rules, &mut w.creatures, &mut grid, &mut w.counters, 1, &[None, None]);
+        assert_eq!(first.shots.len(), 1);
+        assert!((w.creatures[0].energy - 99.6).abs() < 1e-9);
+        assert!((w.creatures[1].health - 13.0).abs() < 1e-9);
+        let second =
+            resolve(&w.space, &w.rules, &mut w.creatures, &mut grid, &mut w.counters, 2, &[None, None]);
+        assert!(second.shots.is_empty());
+        assert_eq!(w.creatures.iter().map(|v| v.genome).collect::<Vec<_>>(), genes);
+        let restored = w
+            .rules
+            .with("shot_damage_share", crate::config::SHOT_DAMAGE_SHARE)
+            .unwrap()
+            .with("shot_energy_share", crate::config::SHOT_ENERGY_SHARE)
+            .unwrap()
+            .with("shot_period", crate::config::SHOT_PERIOD as f64)
+            .unwrap();
+        w.set_rules(restored);
+        assert_eq!(w.creatures[0].genome, shooter);
+        assert_eq!(w.creatures[0].pheno.shot_energy_share, crate::config::SHOT_ENERGY_SHARE);
     }
 }

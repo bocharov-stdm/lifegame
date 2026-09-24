@@ -88,7 +88,7 @@ gene shifts, creatures squeezing into a thin layer); ASCII maps (top = surface, 
 creatures, `:`/`.` plants). The JSON has the same plus every snapshot
 (`life_sim::observe::Snapshot`: per-gene `GeneStat` — a spread for numeric genes, variant
 shares for choice genes —, depth and width histograms, cumulative counters). Format
-`life-report/6` (социальные счётчики, территории, трупы, питание и выстрелы): top-level `genes` describes the gene table (key,
+`life-report/7` (социальные счётчики, территории, трупы, питание, выстрелы и настраиваемые цены действий): top-level `genes` describes the gene table (key,
 label, kind, variants);
 keys are English (event `kind`), texts Russian. Long runs may stop on the work budget
 ("перегрузка") — raise it with `--max-work`.
@@ -102,7 +102,7 @@ and the event chronicle for its in-game event feed.
 60 ticks). It started as the last Python version's (`python/fingerprint.py` at `python-final`)
 and is re-taken from Rust after each deliberate balance change. It is a world of creatures
 and plants (0 of 8 seeds extinct, 323–1107 creatures without combat); metrics: creatures and plants mean,
-size max and final. Текущий эталон имеет `model: "life-behavior/3"`; эталоны без этой версии отклоняются. `--compare` reruns the same seeds in Rust and checks each metric's mean
+size max and final. Текущий эталон имеет `model: "life-behavior/4"`; эталоны без этой версии отклоняются. `--compare` reruns the same seeds in Rust and checks each metric's mean
 against the reference's per-seed range; any mismatch exits with code 1 (CI relies on it). It
 refuses (code 2) when the world differs from the one the reference was taken on (world size —
 compared as `Space`, not shape name, since at ×1 strip and 3:2 are the same 6000x4000 —,

@@ -13,7 +13,7 @@ const BASE_VISION: f64 = GENES[Gene::Vision as usize].base;
 
 /// Имена настраиваемых правил — для отчёта (`--rule имя=число`) и настроек.
 /// Профили еды — по шесть на ось, по порядку `flora::AXIS_PARAMS`.
-pub const RULE_KEYS: [&str; 21] = [
+pub const RULE_KEYS: [&str; 27] = [
     "plant_rate",
     "plant_energy",
     "mutation_sigma",
@@ -35,6 +35,12 @@ pub const RULE_KEYS: [&str; 21] = [
     "plant_width_amplitude",
     "cannibalism",
     "cannibal_ratio",
+    "repro_cost",
+    "melee_damage_share",
+    "shot_damage_share",
+    "shot_energy_share",
+    "shot_period",
+    "plant_bite_yield",
 ];
 
 /// Параметры профилей еды, пока их не выбрали (config.rs).
@@ -70,6 +76,14 @@ pub struct Rules {
     pub cannibalism: f64,
     /// Во сколько раз жертва-сородич мельче едока (по размеру).
     pub cannibal_ratio: f64,
+    /// Цена рождения и сила/стоимость боя; умолчания берутся из config.rs.
+    pub repro_cost: f64,
+    pub melee_damage_share: f64,
+    pub shot_damage_share: f64,
+    pub shot_energy_share: f64,
+    pub shot_period: f64,
+    /// Доля питательной ценности растения, усваиваемая за пять порций.
+    pub plant_bite_yield: f64,
     // производные коэффициенты — считает `renormalize`
     size_coef: f64,
     speed_coef: f64,
@@ -94,6 +108,12 @@ impl Default for Rules {
             plant_width: FoodAxis { profile: Profile::Uniform.index(), ..FOOD_AXIS },
             cannibalism: CANNIBALISM,
             cannibal_ratio: CANNIBAL_RATIO,
+            repro_cost: REPRO_COST,
+            melee_damage_share: MELEE_DAMAGE_SHARE,
+            shot_damage_share: SHOT_DAMAGE_SHARE,
+            shot_energy_share: SHOT_ENERGY_SHARE,
+            shot_period: SHOT_PERIOD as f64,
+            plant_bite_yield: PLANT_BITE_YIELD,
             size_coef: 0.0,
             speed_coef: 0.0,
             sight_coef: 0.0,
@@ -128,6 +148,12 @@ impl Rules {
             "sight_power" => r.sight_power = value,
             "cannibalism" => r.cannibalism = value,
             "cannibal_ratio" => r.cannibal_ratio = value,
+            "repro_cost" => r.repro_cost = value,
+            "melee_damage_share" => r.melee_damage_share = value,
+            "shot_damage_share" => r.shot_damage_share = value,
+            "shot_energy_share" => r.shot_energy_share = value,
+            "shot_period" => r.shot_period = value,
+            "plant_bite_yield" => r.plant_bite_yield = value,
             _ => return Err(format!("нет такого правила: {key}; есть {}", RULE_KEYS.join(", "))),
         }
         // Пределы — только те, за которыми правило теряет смысл, а не «разумные»:
@@ -137,12 +163,16 @@ impl Rules {
             "cannibalism" => value == 0.0 || value == 1.0,
             // при отношении 1 и меньше едят равных и даже крупных
             "cannibal_ratio" => value > 1.0,
+            "shot_period" => value >= 1.0 && value.fract() == 0.0,
+            "plant_bite_yield" => (0.0..=1.0).contains(&value),
             _ => value >= 0.0,
         };
         if !allowed {
             let need = match key {
                 "cannibalism" => "0 (нет) или 1 (да)",
                 "cannibal_ratio" => "число больше 1",
+                "shot_period" => "целое число не меньше 1",
+                "plant_bite_yield" => "число от 0 до 1",
                 _ => "число не меньше 0",
             };
             return Err(format!("правило {key}: нужно {need}, а не {value}"));
@@ -186,6 +216,12 @@ impl Rules {
             "sight_power" => self.sight_power,
             "cannibalism" => self.cannibalism,
             "cannibal_ratio" => self.cannibal_ratio,
+            "repro_cost" => self.repro_cost,
+            "melee_damage_share" => self.melee_damage_share,
+            "shot_damage_share" => self.shot_damage_share,
+            "shot_energy_share" => self.shot_energy_share,
+            "shot_period" => self.shot_period,
+            "plant_bite_yield" => self.plant_bite_yield,
             _ => return None,
         })
     }
@@ -244,6 +280,21 @@ mod tests {
             assert_eq!(r.with(key, v).expect(key), r, "{key}: записать то же — ничего не поменять");
         }
         assert_eq!(r.get("нет_такого"), None);
+    }
+
+    #[test]
+    fn новые_цены_и_интервалы_не_принимают_бессмысленные_значения() {
+        let rules = Rules::default();
+        for (key, value) in [
+            ("repro_cost", -1.0),
+            ("melee_damage_share", -0.1),
+            ("shot_energy_share", -0.1),
+            ("shot_period", 0.0),
+            ("shot_period", 1.5),
+            ("plant_bite_yield", 1.1),
+        ] {
+            assert!(rules.with(key, value).is_err(), "{key}={value}");
+        }
     }
 
     #[test]

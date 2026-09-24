@@ -79,7 +79,7 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
     if let Some(t) = threat
         && t.gap <= me.pheno.half
         && me.health_share >= me.pheno.retreat
-        && me.energy > me.pheno.size * 0.05
+        && me.energy > me.pheno.size * me.pheno.melee_damage_share
     {
         mind.flee_ticks = 0;
         mind.social.shared_flee = false;
@@ -134,7 +134,7 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
         None
     };
     let plant_score = plant.map_or(0.0, |(px, py)| {
-        me.pheno.plant_energy * crate::config::PLANT_BITE_YIELD * me.pheno.plant_efficiency
+        me.pheno.plant_energy * me.pheno.plant_bite_yield * me.pheno.plant_efficiency
             / (((px - x).hypot(py - y) - me.pheno.size).max(0.0) / speed.max(0.01)
                 + f64::from(crate::plant::PORTIONS))
     });

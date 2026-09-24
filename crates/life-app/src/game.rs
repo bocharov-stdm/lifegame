@@ -27,6 +27,23 @@ fn speed_label(index: usize) -> String {
     }
 }
 
+fn lab_group(field: &settings::Field) -> &'static str {
+    use settings::Key;
+    if field.tab == Tab::Food {
+        return "Распределение растений";
+    }
+    match field.key {
+        Key::Cannibalism
+        | Key::CannibalRatio
+        | Key::MeleeDamage
+        | Key::ShotDamage
+        | Key::ShotCost
+        | Key::ShotPeriod => "Бой",
+        Key::MutationSigma => "Эволюция",
+        _ => "Питание и энергия",
+    }
+}
+
 /// Команда `life-report`, которая повторяет партию без окна.
 pub fn report_command(cfg: &WorldConfig, ticks: u64) -> String {
     let mut cmd =
@@ -83,8 +100,8 @@ impl LifeApp {
         egui::Panel::bottom("низ").show(ui, |ui| self.bottom_bar(ui));
         if self.side_open {
             egui::Panel::right("сбоку")
-                .default_size(400.0)
-                .size_range(320.0..=720.0)
+                .default_size(340.0)
+                .size_range(310.0..=620.0)
                 .show(ui, |ui| self.side_panel(ui));
         }
         egui::CentralPanel::no_frame().show(ui, |ui| {
@@ -316,12 +333,13 @@ impl LifeApp {
     }
 
     fn side_panel(&mut self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.y = 4.0;
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.side_tab, SideTab::Charts, "Графики");
             ui.selectable_value(&mut self.side_tab, SideTab::Log, "Хроника");
             ui.selectable_value(&mut self.side_tab, SideTab::Creature, "Существо");
         });
-        ui.separator();
+        ui.add_space(3.0);
         match self.side_tab {
             SideTab::Charts => self.charts_tab(ui),
             SideTab::Log => self.log_tab(ui),
@@ -335,9 +353,9 @@ impl LifeApp {
                 ui.selectable_value(&mut self.whole, false, "Недавнее");
                 ui.selectable_value(&mut self.whole, true, "Вся партия");
             });
-            ui.label(RichText::new("Численность").strong());
-            charts::populations(ui, &self.history, self.whole, 150.0);
-            ui.add_space(8.0);
+            ui.label(RichText::new("Численность").strong().color(ACCENT));
+            charts::populations(ui, &self.history, self.whole, 112.0);
+            ui.add_space(4.0);
             ui.label(RichText::new("Геном существ").strong());
             let snaps = self.history.snapshots.points(self.whole);
             let points: Vec<charts::GenePoint> =
@@ -346,9 +364,9 @@ impl LifeApp {
                 ui.colored_label(MUTED, "существ нет — нет и генома");
             } else {
                 let origin = self.history.gene_origin.as_ref().map(|o| &o[..]);
-                charts::genome(ui, &creature::GENES, &points, origin, rgb(CREATURE_COLOR), 30.0);
+                charts::genome(ui, &creature::GENES, &points, origin, rgb(CREATURE_COLOR), 23.0);
             }
-            ui.add_space(8.0);
+            ui.add_space(4.0);
             self.research(ui);
         });
     }
@@ -465,42 +483,79 @@ impl LifeApp {
         let mut open = true;
         egui::Window::new("Лаборатория")
             .open(&mut open)
-            .resizable(false)
-            .default_pos(ctx.content_rect().right_top() + Vec2::new(-460.0, 60.0))
+            .resizable(true)
+            .default_width(410.0)
+            .default_pos(ctx.content_rect().right_top() + Vec2::new(-440.0, 55.0))
             .show(ctx, |ui| {
+                ui.set_width(410.0);
+                ui.spacing_mut().slider_width = 140.0;
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.lab_tab, Tab::Lab, "Правила");
                     ui.selectable_value(&mut self.lab_tab, Tab::Food, "Еда");
                 });
                 let food = self.lab_tab == Tab::Food;
-                ui.colored_label(
-                    MUTED,
-                    if food {
-                        "Где растут растения. Выросшие остаются на местах, новые растут по-новому."
-                    } else {
-                        "Правила мира прямо в партии. Живые существа сразу платят по новым ценам."
-                    },
+                ui.add(
+                    egui::Label::new(
+                        RichText::new("Правила действуют после «Применить». Гены существ не меняются.")
+                            .color(MUTED),
+                    )
+                    .wrap(),
                 );
-                ui.add_space(4.0);
-                // «Рост растений» живёт на вкладке «Мир» нового мира, а здесь — среди правил
-                let here = |f: &&settings::Field| f.live() && (f.tab == Tab::Food) == food;
-                egui::Grid::new("лаборатория").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-                    for f in FIELDS.iter().filter(here) {
-                        if !(f.shown)(&self.lab) {
-                            continue;
-                        }
-                        ui.label(f.label).on_hover_text(f.hint);
-                        let mut v = self.lab.get(f.key);
-                        if crate::screens::field_input(ui, f, &mut v) {
-                            self.lab.set(f.key, v);
-                        }
-                        ui.end_row();
+                let default = settings::Settings::default();
+                let height = (ctx.content_rect().height() - 210.0).clamp(220.0, 520.0);
+                egui::ScrollArea::vertical().max_height(height).show(ui, |ui| {
+                    let groups: &[&str] = if food {
+                        &["Распределение растений"]
+                    } else {
+                        &["Питание и энергия", "Бой", "Эволюция"]
+                    };
+                    for &group in groups {
+                        ui.add_space(5.0);
+                        ui.label(RichText::new(group).strong().color(ACCENT));
+                        egui::Grid::new(("правила лаборатории", group))
+                            .num_columns(4)
+                            .spacing([7.0, 4.0])
+                            .show(ui, |ui| {
+                                for f in FIELDS.iter().filter(|f| f.live() && lab_group(f) == group) {
+                                    if !(f.shown)(&self.lab) {
+                                        continue;
+                                    }
+                                    let mut marked = self.lab_reset_selected.contains(&f.key);
+                                    if ui
+                                        .checkbox(&mut marked, "")
+                                        .on_hover_text("Отметить для общего сброса")
+                                        .changed()
+                                    {
+                                        if marked {
+                                            self.lab_reset_selected.insert(f.key);
+                                        } else {
+                                            self.lab_reset_selected.remove(&f.key);
+                                        }
+                                    }
+                                    ui.label(f.label).on_hover_text(f.hint);
+                                    let mut v = self.lab.get(f.key);
+                                    if crate::screens::field_input(ui, f, &mut v) {
+                                        self.lab.set(f.key, v);
+                                    }
+                                    if self.lab.is_default(f.key) {
+                                        ui.label("");
+                                    } else if ui
+                                        .small_button("↺")
+                                        .on_hover_text("Вернуть исходное значение")
+                                        .clicked()
+                                    {
+                                        self.lab.set(f.key, default.get(f.key));
+                                        self.lab_reset_selected.remove(&f.key);
+                                    }
+                                    ui.end_row();
+                                }
+                            });
+                    }
+                    if food {
+                        ui.add_space(6.0);
+                        crate::screens::food_preview(ui, &self.lab.rules(), space);
                     }
                 });
-                if food {
-                    ui.add_space(6.0);
-                    crate::screens::food_preview(ui, &self.lab.rules(), space);
-                }
                 let mut now = self.lab.clone();
                 now.take_rules(&current);
                 let change = settings::describe_change(&now, &self.lab);
@@ -517,9 +572,16 @@ impl LifeApp {
                     if ui.add_enabled(change.is_some(), egui::Button::new("Отменить")).clicked() {
                         self.lab.take_rules(&current);
                     }
-                    // умолчания игры, а не движка: в игре каннибализм включён
-                    if ui.button("По умолчанию").clicked() {
-                        self.lab.take_rules(&settings::Settings::default().rules());
+                    if ui
+                        .add_enabled(
+                            !self.lab_reset_selected.is_empty(),
+                            egui::Button::new("Сбросить отмеченные"),
+                        )
+                        .clicked()
+                    {
+                        for key in self.lab_reset_selected.drain() {
+                            self.lab.set(key, default.get(key));
+                        }
                     }
                 });
             });
