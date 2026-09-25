@@ -23,9 +23,6 @@ use crate::rng::Rng;
 use crate::rules::Rules;
 use crate::space::Space;
 
-/// Depth bands used to keep a rich surface from sharing one plant cap with the deep sea.
-pub const DEPTH_BANDS: usize = 10;
-
 /// Закон плотности вдоль оси.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Profile {
@@ -270,20 +267,6 @@ impl Axis {
             }
         }
     }
-
-    fn fraction_before(&self, at: f64) -> f64 {
-        let at = at.clamp(self.lo, self.hi);
-        match &self.law {
-            Law::Uniform => (at - self.lo) / (self.hi - self.lo),
-            Law::Exp { lambda, e_lo, e_hi } => (e_lo - (-lambda * at).exp()) / (e_lo - e_hi),
-            Law::Table(cdf) => {
-                let pos = (at - self.lo) / (self.hi - self.lo) * (cdf.len() - 1) as f64;
-                let i = (pos as usize).min(cdf.len() - 2);
-                cdf[i] + (cdf[i + 1] - cdf[i]) * (pos - i as f64)
-            }
-        }
-        .clamp(0.0, 1.0)
-    }
 }
 
 /// Функция распределения по корзинам (плотность — в серединах корзин). None,
@@ -331,21 +314,6 @@ impl Flora {
         let x = self.x.sample(rng);
         let y = self.y.sample(rng);
         Plant::at(x, y)
-    }
-
-    /// Divide the world's plant capacity by the same depth distribution used for births.
-    /// Rounding cumulative shares keeps the sum exactly equal to `cap`.
-    pub fn depth_caps(&self, cap: usize, height: f64) -> [usize; DEPTH_BANDS] {
-        let mut caps = [0; DEPTH_BANDS];
-        let mut previous = 0;
-        for (i, band_cap) in caps.iter_mut().enumerate() {
-            let edge = height * (i + 1) as f64 / DEPTH_BANDS as f64;
-            let cumulative = (cap as f64 * self.y.fraction_before(edge)).round() as usize;
-            let cumulative = cumulative.min(cap).max(previous);
-            *band_cap = cumulative - previous;
-            previous = cumulative;
-        }
-        caps
     }
 }
 

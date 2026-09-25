@@ -13,10 +13,10 @@ use eframe::egui::{Event, Modifiers, PointerButton, Pos2, Rect, Vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use life_core::flora::Profile;
-use life_core::{Shape, World, WorldConfig};
+use life_core::{Shape, WorldConfig};
 
 use crate::app::{LifeApp, Screen, SideTab, Tool};
-use crate::frame::{Frame, Instance};
+use crate::frame::Instance;
 use crate::settings::{Key, Tab};
 use crate::sim::Command;
 use crate::stats::StatsTab;
@@ -116,141 +116,6 @@ fn each_size(check: impl Fn(&mut Harness<'static, LifeApp>, Vec2, &str)) {
     for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
         let mut h = harness(size);
         check(&mut h, size, tag);
-    }
-}
-
-/// Capture the actual game renderer with a plant-only world before and after
-/// clearing one depth band. Run explicitly with TINYLIFE_SHOTS set.
-#[test]
-#[ignore]
-fn plant_depth_distribution_without_creatures() {
-    let _gpu = gpu();
-    use life_core::config::{PLANT_DEPTH_DECAY, PLANT_MAX, PLANT_RADIUS, PLANT_TOP_MARGIN_PCT};
-    use life_core::flora::DEPTH_BANDS;
-
-    let counts = |w: &World| {
-        let mut bands = [0usize; DEPTH_BANDS];
-        for p in &w.plants {
-            let i = ((p.y / w.space.height * DEPTH_BANDS as f64) as usize).min(DEPTH_BANDS - 1);
-            bands[i] += 1;
-        }
-        bands
-    };
-    let cfg = WorldConfig { seed: 3, n_creatures: Some(0), ..Default::default() };
-    let mut world = World::new(&cfg);
-    for _ in 0..3000 {
-        world.step();
-    }
-    let full = counts(&world);
-    let lo = PLANT_TOP_MARGIN_PCT / 100.0 + PLANT_RADIUS / world.space.height;
-    let hi = 1.0 - PLANT_RADIUS / world.space.height;
-    let (e_lo, e_hi) = ((-PLANT_DEPTH_DECAY * lo).exp(), (-PLANT_DEPTH_DECAY * hi).exp());
-    let mut expected = [0; DEPTH_BANDS];
-    let mut previous = 0;
-    for (i, band) in expected.iter_mut().enumerate() {
-        let edge = ((i + 1) as f64 / DEPTH_BANDS as f64).clamp(lo, hi);
-        let cumulative =
-            (PLANT_MAX as f64 * (e_lo - (-PLANT_DEPTH_DECAY * edge).exp()) / (e_lo - e_hi)).round() as usize;
-        *band = cumulative - previous;
-        previous = cumulative;
-    }
-    assert_eq!(full, expected, "the full world follows the integrated exponential profile");
-
-    for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
-        let mut h = Harness::builder()
-            .with_size(size)
-            .wgpu()
-            .build_eframe(|cc| LifeApp::new(cc, Some(cfg.clone()), None));
-        h.state_mut().sim.send(Command::SetPaused(true));
-        h.state_mut().side_open = false;
-        for _ in 0..100 {
-            h.step();
-            if h.state().view.frame.is_some() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        assert!(h.state().view.frame.is_some());
-        h.state_mut().freeze_sim_frame = true;
-
-        let mut show = |world: &World, stage: &str| {
-            let mut instances = Vec::new();
-            assert!(crate::frame::dots_colored(
-                world,
-                (0.0, 0.0, world.space.width, world.space.height),
-                &mut instances,
-                true,
-            ));
-            let frame = Frame {
-                world_gen: 1,
-                scale: 1.0,
-                rules: world.rules.clone(),
-                tick: world.tick,
-                plants: world.plants.len(),
-                world_w: world.space.width,
-                world_h: world.space.height,
-                status: crate::frame::Status { paused: true, ..Default::default() },
-                render_world: true,
-                dots: true,
-                instances,
-                ..Default::default()
-            };
-            let app = h.state_mut();
-            app.view.accept(&eframe::egui::Context::default(), &app.sim, frame);
-            h.step();
-            assert_eq!(h.state().view.frame.as_ref().map(|f| f.tick), Some(world.tick));
-            shot(&mut h, &format!("plants-{stage}-{tag}"));
-        };
-
-        show(&world, "full");
-        let mut cleared = world.clone();
-        cleared.plants.retain(|p| !(0.2..0.3).contains(&(p.y / cleared.space.height)));
-        let empty = counts(&cleared);
-        assert_eq!(empty[2], 0);
-        assert!(empty.iter().enumerate().all(|(i, n)| i == 2 || *n == full[i]));
-        show(&cleared, "cleared");
-        for _ in 0..150 {
-            cleared.step();
-        }
-        let growing = counts(&cleared);
-        assert!(growing[2] > 0 && growing[2] < full[2]);
-        assert!(growing.iter().enumerate().all(|(i, n)| i == 2 || *n == full[i]));
-        show(&cleared, "regrowing");
-        for _ in 0..1000 {
-            cleared.step();
-        }
-        let restored = counts(&cleared);
-        assert_eq!(restored, full, "the cleared band returns to its exact old capacity");
-        show(&cleared, "restored");
-
-        if tag == "1600x900"
-            && let Ok(dir) = std::env::var("TINYLIFE_SHOTS")
-        {
-            let mut table = String::from(
-                "# Plant depth distribution (no creatures)\n\nBaseline tick 3000. Removed all plants at 20–30% depth; partial recovery after 150 ticks, full recovery after another 1000 ticks.\n\n| Depth | Exponential target | Full | Cleared | +150 ticks | +1150 ticks |\n| --- | ---: | ---: | ---: | ---: | ---: |\n",
-            );
-            for i in 0..DEPTH_BANDS {
-                table.push_str(&format!(
-                    "| {}–{}% | {} | {} | {} | {} | {} |\n",
-                    i * 10,
-                    (i + 1) * 10,
-                    expected[i],
-                    full[i],
-                    empty[i],
-                    growing[i],
-                    restored[i]
-                ));
-            }
-            table.push_str(&format!(
-                "| Total | {} | {} | {} | {} | {} |\n",
-                expected.iter().sum::<usize>(),
-                full.iter().sum::<usize>(),
-                empty.iter().sum::<usize>(),
-                growing.iter().sum::<usize>(),
-                restored.iter().sum::<usize>()
-            ));
-            std::fs::write(format!("{dir}/bands.md"), table).expect("depth counts saved");
-        }
     }
 }
 

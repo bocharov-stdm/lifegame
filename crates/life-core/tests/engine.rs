@@ -5,7 +5,6 @@
 use life_core::config::*;
 use life_core::creature::Creature;
 use life_core::creature::Kinship;
-use life_core::flora::{DEPTH_BANDS, Flora};
 use life_core::genome::creature::{GENES, Gene};
 use life_core::grid::Grid;
 use life_core::plant::Plant;
@@ -44,60 +43,14 @@ fn темп_растений_это_ожидаемое_число() {
     assert!((rate - PLANT_SPAWN_CHANCE).abs() < 0.15, "прирост {rate:.3} растений/тик");
 }
 
-/// With no consumers, all depth bands eventually reach their own capacities.
+/// Без существ растения упираются в потолок, а не растут вечно.
 #[test]
-fn plants_reach_the_distributed_cap() {
+fn растения_упираются_в_потолок() {
     let mut w = empty_world(Rules::default());
-    for _ in 0..3000 {
+    for _ in 0..1000 {
         w.step();
     }
     assert_eq!(w.plants.len(), PLANT_MAX);
-}
-
-#[test]
-fn deep_plants_do_not_take_over_capacity_when_surface_is_eaten() {
-    let mut w = empty_world(Rules::default());
-    let caps = Flora::new(&w.rules, &w.space).depth_caps(PLANT_MAX, w.space.height);
-    for _ in 0..3000 {
-        w.step();
-        w.plants.retain(|p| p.y >= w.space.height * 0.3);
-    }
-    let mut occupied = [0; DEPTH_BANDS];
-    for p in &w.plants {
-        let band = ((p.y / w.space.height * DEPTH_BANDS as f64) as usize).min(DEPTH_BANDS - 1);
-        occupied[band] += 1;
-    }
-    assert!(caps[DEPTH_BANDS - 1] <= 2);
-    assert_eq!(occupied[DEPTH_BANDS - 1], caps[DEPTH_BANDS - 1]);
-    assert!(occupied.iter().zip(caps).all(|(n, cap)| *n <= cap));
-    assert!(w.plants.len() < PLANT_MAX / 2);
-}
-
-#[test]
-fn depth_budget_uses_remaining_plant_energy() {
-    let rules = Rules::default().with("plant_energy", ENERGY_FROM_PLANT * 2.0).unwrap();
-    let mut w = empty_world(rules);
-    for _ in 0..3000 {
-        w.step();
-    }
-    let before = w.plants.len();
-    assert!(before <= PLANT_MAX / 2, "large plants use more of the energy budget");
-
-    for p in &mut w.plants {
-        p.portions = 1;
-    }
-    for _ in 0..300 {
-        w.step();
-    }
-    assert!(w.plants.len() > before, "eating portions frees capacity before a plant disappears");
-
-    let caps = Flora::new(&w.rules, &w.space).depth_caps(PLANT_MAX, w.space.height);
-    let mut energy = [0.0; DEPTH_BANDS];
-    for p in &w.plants {
-        let band = ((p.y / w.space.height * DEPTH_BANDS as f64) as usize).min(DEPTH_BANDS - 1);
-        energy[band] += f64::from(p.portions) * w.rules.plant_energy / f64::from(life_core::plant::PORTIONS);
-    }
-    assert!(energy.iter().zip(caps).all(|(used, cap)| *used <= cap as f64 * ENERGY_FROM_PLANT));
 }
 
 // ── каннибализм ────────────────────────────────────────────────────────────

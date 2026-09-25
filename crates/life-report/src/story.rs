@@ -32,8 +32,8 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     let space = res.world.space;
     println!("Мир {:.0}x{:.0}; еда {}.", space.width, space.height, flora::describe(&res.world.rules));
     println!(
-        "Итог на тике {}: растений {}, энергии растений {:.0} из {:.0}, трупов {}, существ {}.",
-        last.tick, last.plants, last.plant_biomass, last.plant_biomass_cap, last.corpses, last.creatures
+        "Итог на тике {}: растений {} из {}, трупов {}, существ {}.",
+        last.tick, last.plants, last.plant_cap, last.corpses, last.creatures
     );
     println!(
         "Существа за прогон: {} (из умерших погибли в бою {}).",
