@@ -18,6 +18,7 @@
 use crate::config::GRID_CELL;
 use crate::corpse::Corpse;
 use crate::creature::{Creature, Kinship, Me};
+use crate::flock::Circle;
 use crate::grid::Grid;
 use crate::kin_grace::Grace;
 use crate::plant::Plant;
@@ -30,6 +31,12 @@ pub trait Senses {
     }
     /// Ближайшее живое растение строго ближе √r2.
     fn nearest_plant(&self, x: f64, y: f64, r2: f64) -> Option<(f64, f64)>;
+
+    /// The nearest live plant strictly closer than √r2 whose position touches `circle`
+    /// widened by `margin`. The default filters `nearest_plant`, enough for test senses.
+    fn nearest_plant_in(&self, x: f64, y: f64, r2: f64, circle: Circle, margin: f64) -> Option<(f64, f64)> {
+        self.nearest_plant(x, y, r2).filter(|&(px, py)| circle.holds(px, py, margin))
+    }
 
     /// Лучшая лично видимая падаль с учётом дороги и времени питания.
     fn best_corpse(&self, _me: &Me) -> Option<CorpseFood> {
@@ -179,6 +186,11 @@ impl Senses for GridSenses<'_> {
     }
 
     #[inline(always)]
+    fn nearest_plant_in(&self, x: f64, y: f64, r2: f64, circle: Circle, margin: f64) -> Option<(f64, f64)> {
+        nearest_plant_in(self.food, self.plants, x, y, r2, circle, margin)
+    }
+
+    #[inline(always)]
     fn nearest_threat(&self, me: &Me, within: f64) -> Option<Threat> {
         nearest_threat(self.herd?, me.kinship, me.flock, me.x, me.y, me.pheno.size, within)
     }
@@ -309,7 +321,7 @@ impl Herd {
             health: v.health,
             max_health: v.max_health(),
             nutrition: v.energy
-                + (v.pheno.size - v.birth_size).max(0.0) * crate::config::ENERGY_PER_SIZE
+                + (v.pheno.size - v.birth_size).max(0.0) * crate::config::GROWTH_ENERGY_PER_SIZE
                 + v.birth_size * crate::config::ENERGY_PER_SIZE * 0.25,
             kinship: v.kinship(),
             flock: v.flock,
@@ -412,6 +424,31 @@ pub(crate) fn nearest_plant(grid: &Grid, plants: &[Plant], x: f64, y: f64, r2: f
     best.map(|(px, py, _)| (px, py))
 }
 
+/// The nearest live plant strictly closer than √r2 inside `circle` widened by `margin`.
+#[inline(always)]
+pub(crate) fn nearest_plant_in(
+    grid: &Grid,
+    plants: &[Plant],
+    x: f64,
+    y: f64,
+    r2: f64,
+    circle: Circle,
+    margin: f64,
+) -> Option<(f64, f64)> {
+    let mut best: Option<(f64, f64, f64)> = None;
+    grid.for_each_near(x, y, r2.sqrt(), |j, px, py| {
+        if !plants[j].alive || plants[j].portions == 0 || !circle.holds(px, py, margin) {
+            return;
+        }
+        let (dx, dy) = (px - x, py - y);
+        let d2 = dx * dx + dy * dy;
+        if d2 < best.map_or(r2, |b| b.2) {
+            best = Some((px, py, d2));
+        }
+    });
+    best.map(|(px, py, _)| (px, py))
+}
+
 /// Взять одну порцию ближайшего растения в радиусе питания.
 /// Возвращает `Some(true)` на пятой, последней порции.
 pub(crate) fn bite_plant(
@@ -503,7 +540,7 @@ mod tests {
             energy: v.energy,
             kinship: v.kinship(),
             flock: v.flock,
-            flock_goal: v.flock_goal,
+            circle: v.circle,
             health_share: 1.0,
             pheno: &v.pheno,
         };
@@ -558,7 +595,7 @@ mod tests {
             energy: predator.energy,
             kinship: predator.kinship(),
             flock: predator.flock,
-            flock_goal: None,
+            circle: None,
             pheno: &predator.pheno,
             health_share: 1.0,
         };
@@ -568,7 +605,7 @@ mod tests {
             energy: prey.energy,
             kinship: prey.kinship(),
             flock: prey.flock,
-            flock_goal: None,
+            circle: None,
             pheno: &prey.pheno,
             health_share: 1.0,
         };
@@ -624,6 +661,17 @@ mod tests {
                         .map(|p| dist2(p.x, p.y, v.x, v.y))
                         .filter(|&d2| d2 < v.pheno.vision2));
                     assert_eq!(got, want, "сид {seed}, тик {tick}: ближайшее растение");
+                    // the same query limited to a circle: the creature's own, or one beside it
+                    let circle = v.circle.unwrap_or(Circle { x: v.x + 150.0, y: v.y, radius: 200.0 });
+                    let got =
+                        nearest_plant_in(&food, &plants, v.x, v.y, v.pheno.vision2, circle, v.pheno.half)
+                            .map(|(px, py)| dist2(px, py, v.x, v.y));
+                    let want = min(plants
+                        .iter()
+                        .filter(|p| p.alive && circle.holds(p.x, p.y, v.pheno.half))
+                        .map(|p| dist2(p.x, p.y, v.x, v.y))
+                        .filter(|&d2| d2 < v.pheno.vision2));
+                    assert_eq!(got, want, "сид {seed}, тик {tick}: ближайшее растение в круге");
 
                     let expected = plants
                         .iter()

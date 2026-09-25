@@ -46,7 +46,15 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
         c.plant_bites, c.meat_bites, c.ranged_shots, c.territorial_fights
     );
 
-    println!("Молодых {} из {}, стай {}.", last.juveniles, last.creatures, last.flocks);
+    println!(
+        "Молодых {} из {}; стайный ген {} ({:.0}%), участников стай {}, стай {}.",
+        last.juveniles,
+        last.creatures,
+        last.pack_carriers,
+        last.pack_share * 100.0,
+        last.pack_members,
+        last.flocks
+    );
     let social = last.social_counts;
     println!(
         "Стаи: тревог {}, завершено {}, вмешательств {}, отделений {}, ушедших взрослых {}.",
@@ -57,6 +65,27 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     }
     if let Some(s) = last.flock_spread {
         println!("Разброс стай: {}.", spread(&s));
+    }
+    if let Some(r) = last.flock_radius {
+        let kinds: Vec<String> = life_core::flock::FlockKind::ALL
+            .iter()
+            .map(|k| format!("{} {}", k.label(), last.flock_kinds[*k as usize]))
+            .collect();
+        println!(
+            "Flock circles: radius {}; inside their circle {}; by kind: {}.",
+            spread(&r),
+            last.inside_share.map_or("-".into(), |s| format!("{:.0}%", s * 100.0)),
+            kinds.join(", ")
+        );
+        let o = last.overlaps;
+        println!(
+            "Overlaps: strict {} (depth {:.0}), soft {} (depth {:.0}); strays {}, relocations {}.",
+            o.strict_pairs, o.strict_depth, o.soft_pairs, o.soft_depth, social.strays, social.relocations
+        );
+        println!(
+            "Battles for room: {} started, {} flocks beaten and moved away; now {} with {} flocks.",
+            social.battles, social.battle_retreats, last.battles, last.fighting_flocks
+        );
     }
     print_intervals(snaps, rows);
     print_genome(first, last);

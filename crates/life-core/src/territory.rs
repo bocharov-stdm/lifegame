@@ -1,10 +1,14 @@
-//! Подвижные территории стай: предупреждение вторженца и локальный обход границы.
+//! Flock circles as territories: others walk around them, and with combat on a territorial
+//! flock warns and strikes intruders. Kinship and the grace after a split forbid only strikes:
+//! everyone walks around a hard circle, and around a moderate one while it sees a member of
+//! that flock (a leaky border: a sparse or too wide circle is not respected everywhere).
+//! Fighters of a battle (`battle.rs`) get their targets here too.
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     Space,
     creature::{Creature, Intent},
-    flock::Flock,
+    flock::{Flock, Territoriality},
     grid::Grid,
     kin_grace::Grace,
     rng::mix,
@@ -31,7 +35,11 @@ pub struct State {
     pub encounters: BTreeMap<(u64, u64), u64>,
     pub attacks: BTreeSet<(u64, u64, u64)>,
     areas: Vec<Area>,
+    /// Whether the area of the same index is hard: always walked around.
+    hard: Vec<bool>,
     grid: Grid,
+    /// The largest area radius: how far a query must look.
+    max_radius: f64,
 }
 
 impl Default for State {
@@ -40,7 +48,9 @@ impl Default for State {
             encounters: BTreeMap::new(),
             attacks: BTreeSet::new(),
             areas: Vec::new(),
+            hard: Vec::new(),
             grid: Grid::new(256.0),
+            max_radius: 0.0,
         }
     }
 }
@@ -62,7 +72,7 @@ impl State {
             return None;
         }
         let mut best: Option<(f64, u64, Area)> = None;
-        self.grid.for_each_near(x, y, 320.0, |i, _, _| {
+        self.grid.for_each_near(x, y, self.max_radius, |i, _, _| {
             let area = self.areas[i];
             if !allowed(area) {
                 return;
@@ -95,20 +105,47 @@ impl State {
         tick: u64,
         grace: &Grace,
     ) -> Vec<Option<u64>> {
+        let mut herd = Grid::new(crate::config::GRID_CELL);
+        herd.rebuild(space, creatures.iter().map(|v| (v.x, v.y)));
+        self.prepare_full(flocks, creatures, space, tick, grace, true, &herd)
+    }
+
+    /// Areas of this tick and every creature's reaction to them. Without `combat` creatures
+    /// still walk around circles, but nobody is warned or struck. `herd` is a grid over the
+    /// creatures, in their order.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_full(
+        &mut self,
+        flocks: &mut BTreeMap<u64, Flock>,
+        creatures: &mut [Creature],
+        space: &Space,
+        tick: u64,
+        grace: &Grace,
+        combat: bool,
+        herd: &Grid,
+    ) -> Vec<Option<u64>> {
         self.areas.clear();
-        self.areas.extend(flocks.iter().filter_map(|(&tag, f)| {
-            (f.members >= 2 && f.territory_radius > 0.0).then_some(Area {
-                flock: tag,
-                x: f.goal.x,
-                y: f.goal.y,
-                radius: f.territory_radius,
-            })
-        }));
+        self.hard.clear();
+        for (&tag, f) in flocks.iter() {
+            if let Some(c) = f.circle.filter(|_| f.members >= 2 && f.territoriality != Territoriality::None) {
+                self.areas.push(Area { flock: tag, x: c.x, y: c.y, radius: c.radius });
+                self.hard.push(f.territoriality == Territoriality::Hard);
+            }
+        }
+        self.max_radius = self.areas.iter().fold(0.0, |m, a| m.max(a.radius));
         self.grid.rebuild(space, self.areas.iter().map(|a| (a.x, a.y)));
-        let owners: Vec<_> = creatures
-            .iter()
-            .map(|v| self.owner_where(v.x, v.y, |a| !grace.contains(a.flock, v.flock, tick)))
-            .collect();
+        let owners: Vec<_> = if combat {
+            creatures
+                .iter()
+                .map(|v| self.owner_where(v.x, v.y, |a| !grace.contains(a.flock, v.flock, tick)))
+                .collect()
+        } else {
+            vec![None; creatures.len()]
+        };
+        if !combat {
+            self.encounters.clear();
+            self.attacks.clear();
+        }
         let by_id: BTreeMap<_, _> = creatures.iter().enumerate().map(|(i, v)| (v.id, i)).collect();
         let mut active = BTreeSet::new();
         let mut immediate = BTreeSet::new();
@@ -118,7 +155,7 @@ impl State {
                 immediate.insert((tag, enemy));
             }
         }
-        for victim in creatures.iter() {
+        for victim in creatures.iter().filter(|_| combat) {
             if let Some(hit) = victim.mind.social.hit.filter(|h| h.tick == tick)
                 && let Some(&j) = by_id.get(&hit.enemy)
                 && !grace.contains(victim.flock, creatures[j].flock, tick)
@@ -138,7 +175,7 @@ impl State {
             if let Some(area) = owners[i].filter(|a| a.flock != v.flock) {
                 let key = (area.flock, v.id);
                 let mode = flocks[&area.flock].territoriality;
-                if mode == crate::flock::Territoriality::Hard
+                if mode == Territoriality::Hard
                     || tick.saturating_sub(self.encounters[&key]) >= 30
                     || immediate.contains(&key)
                 {
@@ -152,8 +189,8 @@ impl State {
             };
             if let Some(&i) = by_id.get(&enemy) {
                 if grace.contains(tag, creatures[i].flock, tick)
-                    || flock.territoriality == crate::flock::Territoriality::None
-                    || (flock.territoriality == crate::flock::Territoriality::Hard
+                    || flock.territoriality == Territoriality::None
+                    || (flock.territoriality == Territoriality::Hard
                         && owners[i].is_none_or(|area| area.flock != tag))
                 {
                     continue;
@@ -168,10 +205,16 @@ impl State {
             f.warned = warned.get(&tag).map_or(0, Vec::len);
         }
         let mut targets = vec![None; creatures.len()];
+        let mut near = Vec::new();
+        let mut seen = Vec::new();
         for i in 0..creatures.len() {
             let v = &creatures[i];
             let mut guard = None;
-            if v.adult()
+            if combat && let Some(enemy) = battle_enemy(i, creatures, flocks, herd, grace, tick) {
+                let u = &creatures[enemy];
+                targets[i] = Some(u.id);
+                guard = Some(Guard { enemy: u.id, x: u.x, y: u.y, half: u.pheno.half });
+            } else if v.adult()
                 && v.energy > v.pheno.max_energy * 0.5
                 && v.health / v.max_health() > v.pheno.retreat + 0.1
                 && let Some(enemies) = warned.get(&v.flock)
@@ -206,29 +249,48 @@ impl State {
                     });
                 }
             }
-            // Чужую границу замечают локально, не зная всей карты мира.
-            let mut nearest: Option<(f64, u64, Area)> = None;
-            let mut intrusions = Vec::new();
-            self.grid.for_each_near(v.x, v.y, v.pheno.vision + 320.0, |j, _, _| {
+            // A border is noticed locally, without a map of the world: areas within sight.
+            near.clear();
+            self.grid.for_each_near(v.x, v.y, v.pheno.vision + self.max_radius, |j, _, _| {
                 let area = self.areas[j];
-                if area.flock == v.flock || grace.contains(area.flock, v.flock, tick) {
-                    return;
+                if (v.x - area.x).hypot(v.y - area.y) - area.radius <= v.pheno.vision {
+                    near.push(j);
                 }
+            });
+            // A moderate circle is respected only while a member of it is in sight.
+            seen.clear();
+            if near.iter().any(|&j| !self.hard[j] && self.areas[j].flock != v.flock) {
+                seen_flocks(v, creatures, herd, &mut seen);
+            }
+            let respected = |j: usize| self.hard[j] || seen.contains(&self.areas[j].flock);
+            let mut nearest: Option<(f64, u64, Area)> = None;
+            let mut place: Option<(f64, u64, Area)> = None;
+            let mut intrusions = Vec::new();
+            for &j in &near {
+                let area = self.areas[j];
                 let distance = (v.x - area.x).hypot(v.y - area.y);
-                let gap = distance - area.radius;
-                if gap > v.pheno.vision {
-                    return;
+                // In an overlap the point belongs to the nearest normalised centre; the own
+                // circle always counts.
+                let score = distance.powi(2) / area.radius.powi(2);
+                if score <= 1.0
+                    && (area.flock == v.flock || respected(j))
+                    && place.is_none_or(|(old, tag, _)| score < old || (score == old && area.flock < tag))
+                {
+                    place = Some((score, area.flock, area));
                 }
+                if area.flock == v.flock || !respected(j) {
+                    continue;
+                }
+                let gap = distance - area.radius;
                 if distance < area.radius + v.pheno.half + 4.0 {
                     intrusions.push(area);
                 }
                 if nearest.is_none_or(|(old, tag, _)| gap < old || (gap == old && area.flock < tag)) {
                     nearest = Some((gap, area.flock, area));
                 }
-            });
-            // Своя территория имеет приоритет в перекрытии.
-            let avoid = match owners[i] {
-                Some(a) if a.flock != v.flock => Some(a),
+            }
+            let avoid = match place {
+                Some((_, _, a)) if a.flock != v.flock => Some(a),
                 Some(_) => None,
                 None => nearest.map(|(_, _, a)| a),
             };
@@ -277,6 +339,62 @@ impl State {
         }
         targets
     }
+}
+
+/// Below this share of its tank a creature ignores borders: hunger outweighs the risk.
+const STARVING_SHARE: f64 = 0.25;
+
+/// Flocks with a member within the creature's sight.
+fn seen_flocks(v: &Creature, creatures: &[Creature], herd: &Grid, out: &mut Vec<u64>) {
+    herd.for_each_near(v.x, v.y, v.pheno.vision, |j, x, y| {
+        let u = &creatures[j];
+        if u.alive
+            && u.flock != v.flock
+            && (x - v.x).powi(2) + (y - v.y).powi(2) <= v.pheno.vision2
+            && !out.contains(&u.flock)
+        {
+            out.push(u.flock);
+        }
+    });
+}
+
+/// The nearest adult of another flock of the same battle that creature `i` sees, if `i` is a
+/// fighter: an adult, fed enough and not wounded, of a territorial flock (a flock without
+/// territoriality only strikes back).
+fn battle_enemy(
+    i: usize,
+    creatures: &[Creature],
+    flocks: &BTreeMap<u64, Flock>,
+    herd: &Grid,
+    grace: &Grace,
+    tick: u64,
+) -> Option<usize> {
+    let v = &creatures[i];
+    let battle = flocks.get(&v.flock).filter(|f| f.territoriality != Territoriality::None)?.battle?;
+    if !v.adult()
+        || v.energy <= v.pheno.max_energy * crate::battle::FIGHTER_FULLNESS
+        || v.health / v.max_health() <= v.pheno.retreat + 0.1
+    {
+        return None;
+    }
+    let mut best: Option<(f64, u64, usize)> = None;
+    herd.for_each_near(v.x, v.y, v.pheno.vision, |j, x, y| {
+        let u = &creatures[j];
+        if !u.alive
+            || !u.adult()
+            || u.flock == v.flock
+            || flocks.get(&u.flock).and_then(|f| f.battle) != Some(battle)
+            || v.kinship().kin(u.kinship())
+            || grace.contains(v.flock, u.flock, tick)
+        {
+            return;
+        }
+        let d2 = (x - v.x).powi(2) + (y - v.y).powi(2);
+        if d2 <= v.pheno.vision2 && best.is_none_or(|(old, id, _)| d2 < old || (d2 == old && u.id < id)) {
+            best = Some((d2, u.id, j));
+        }
+    });
+    best.map(|(_, _, j)| j)
 }
 
 /// Если радиальный выход зажат границей мира, держим одну достижимую точку
@@ -341,8 +459,8 @@ pub fn steer(v: &mut Creature, mut intent: Intent) -> Intent {
         v.mind.social.territory_side = None;
         return intent;
     }
-    // Очень голодный охотник может рискнуть и нарушить границу ради добычи.
-    if intent.attack.is_some() && v.energy < v.pheno.max_energy * 0.25 {
+    // A starving creature risks crossing a border for food or prey.
+    if v.energy < v.pheno.max_energy * STARVING_SHARE {
         v.mind.social.territory_side = None;
         return intent;
     }
@@ -368,6 +486,12 @@ pub fn steer(v: &mut Creature, mut intent: Intent) -> Intent {
     let Some(area) = v.mind.social.territory_avoid else {
         return intent;
     };
+    // At home: inside its own circle and going somewhere inside it. A neighbour's circle that
+    // still overlaps while the two part does not push a member out of its own.
+    if v.circle.is_some_and(|c| c.holds(v.x, v.y, 0.0) && c.holds(intent.tx, intent.ty, 0.0)) {
+        v.mind.social.territory_side = None;
+        return intent;
+    }
     let (dx, dy) = (v.x - area.x, v.y - area.y);
     let d = dx.hypot(dy);
     let margin = v.pheno.half + 4.0;

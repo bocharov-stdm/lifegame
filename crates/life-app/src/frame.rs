@@ -193,7 +193,7 @@ pub struct LogEntry {
     pub text: String,
 }
 
-/// Область стаи: средний центр и среднеквадратичный разброс тел вокруг него.
+/// A flock's circle: where its members feed and what it guards.
 #[derive(Clone, Debug)]
 pub struct FlockArea {
     pub details: life_core::flock::Summary,
@@ -201,7 +201,6 @@ pub struct FlockArea {
     pub x: f64,
     pub y: f64,
     pub radius: f64,
-    pub territory_radius: f64,
     pub members: usize,
     pub color: [u8; 3],
 }
@@ -214,8 +213,8 @@ pub fn flock_areas(world: &World) -> Vec<FlockArea> {
             x: s.x,
             y: s.y,
             members: s.members,
-            radius: s.radius,
-            territory_radius: s.territory_radius,
+            // a flock gets its circle at the next update; until then the members' spread
+            radius: if s.radius > 0.0 { s.radius } else { s.spread },
             color: creature_color(world, s.id, true),
             details: s,
         })
@@ -447,27 +446,25 @@ mod tests {
     }
 
     #[test]
-    fn область_стаи_следует_за_составом_и_разбросом() {
+    fn a_flock_area_is_its_circle_and_goes_with_the_flock() {
         let mut world = World::new(&WorldConfig { seed: 7, n_creatures: Some(3), ..Default::default() });
         let tag = world.creatures[0].flock;
         world.creatures[1].flock = tag;
-        for (v, x) in world.creatures.iter_mut().zip([100.0, 300.0, 900.0]) {
+        for (v, x) in world.creatures.iter_mut().zip([1000.0, 1200.0, 3000.0]) {
             v.x = x;
-            v.y = 200.0;
+            v.y = 1000.0;
         }
+        life_core::flock::update(&mut world.flocks, &mut world.creatures, &world.space, 1, false);
         let areas = flock_areas(&world);
-        assert_eq!(areas.len(), 1, "одиночка не образует область");
+        assert_eq!(areas.len(), 1, "a loner has no area");
         let a = &areas[0];
-        assert_eq!((a.id, a.members, a.x, a.y), (tag, 2, 200.0, 200.0));
-        let half = world.creatures[0].pheno.half;
-        assert!((a.radius - (10000.0 + half * half).sqrt()).abs() < 1e-9);
-        assert_eq!(a.territory_radius, 0.0, "нет территориального режима — нет опасной границы");
+        let circle = world.flocks[&tag].circle.unwrap();
+        assert_eq!((a.id, a.members, a.x, a.y, a.radius), (tag, 2, circle.x, circle.y, circle.radius));
+        assert!((a.details.spread - 100.0).abs() < 1e-9, "the members' spread stays in the card");
         assert_eq!(a.details.warned, 0);
-        world.creatures[1].x = 100.0;
-        assert!((flock_areas(&world)[0].radius - half).abs() < 1e-9);
         world.creatures[1].alive = false;
-        assert!(flock_areas(&world).is_empty(), "исчезнувшая стая не оставляет область");
-        assert_eq!(world.tick, 0, "отрисовка не двигает симуляцию");
+        assert!(flock_areas(&world).is_empty(), "a flock gone leaves no area");
+        assert_eq!(world.tick, 0, "drawing does not move the simulation");
     }
 
     /// Страж скорости кадра: 200 тыс. видимых существ собираются в кадр

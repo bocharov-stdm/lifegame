@@ -7,6 +7,7 @@
 
 use super::strategy::{Intent, Me, Mind};
 use crate::config::FLEE_TICKS;
+use crate::flock::Circle;
 use crate::rng::Rng;
 use crate::senses::Senses;
 
@@ -16,6 +17,19 @@ pub(super) enum Mode {
     Flee,
     Food,
     Wander,
+    /// Back into the flock's circle, at full pace: the circle does not wait for ever.
+    Return,
+}
+
+/// Below this share of its store a flock member forages anywhere, and keeps foraging until it
+/// has `FED_SHARE` again: it does not dart back to its circle after every bite.
+pub(crate) const DESPERATE_SHARE: f64 = 0.4;
+const FED_SHARE: f64 = 0.7;
+
+/// The circle that limits where this creature takes food: its flock's, unless it forages.
+#[inline(always)]
+fn feeding_circle(me: &Me, mind: &Mind) -> Option<Circle> {
+    me.circle.filter(|_| !mind.social.foraging)
 }
 
 #[inline(always)]
@@ -33,12 +47,29 @@ pub(super) fn plan(
     senses: &impl Senses,
     step: f64,
 ) -> (Intent, Mode) {
+    let fullness = me.energy / me.pheno.max_energy;
+    if me.circle.is_none() || fullness >= FED_SHARE {
+        mind.social.foraging = false;
+    } else if fullness < DESPERATE_SHARE {
+        mind.social.foraging = true;
+    }
     let plant = senses.nearest_plant(me.x, me.y, me.pheno.vision2);
-    personal_plant(me, mind, senses);
+    personal_plant(me, mind, senses, plant);
     if let Some((x, y)) = plant {
         mind.social.observed_food =
             Some(crate::social::Food { x, y, tick: mind.social.tick, observer: me.kinship.id });
     }
+    mind.social.outside_since = match me.circle {
+        // a guard, a fighter or a forager away from the circle is not straying
+        Some(c)
+            if !c.holds(me.x, me.y, me.pheno.half)
+                && mind.social.territory_guard.is_none()
+                && !mind.social.foraging =>
+        {
+            mind.social.outside_since.or(Some(mind.social.tick))
+        }
+        _ => None,
+    };
     if let Some(f) = mind.social.food
         && (!f.fresh(mind.social.tick)
             || (plant.is_none() && (f.x - me.x).hypot(f.y - me.y) <= me.pheno.size))
@@ -53,7 +84,8 @@ pub(super) fn plan(
         mind.social.course = None;
         return (intent, mode);
     }
-    let intent = crate::social::adjust(me, mind, intent, mode == Mode::Food, mode == Mode::Flee);
+    let intent =
+        crate::social::adjust(me, mind, intent, mode == Mode::Food, mode == Mode::Flee, mode == Mode::Return);
     (intent, mode)
 }
 
@@ -117,19 +149,13 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
         return (intent, Mode::Flee);
     }
 
+    // A flock member feeds inside its circle; a chase it already started may lead out of it.
+    let bound = feeding_circle(me, mind);
+    let inside = |px: f64, py: f64| bound.is_none_or(|c| c.holds(px, py, me.pheno.half));
     let plant = mind.social.personal_food;
-    let corpse = senses.best_corpse(me);
-    if plant.is_none()
-        && corpse.is_none()
-        && mind.attack.is_none()
-        && crate::social::group_duty(me, mind)
-        && let Some(g) = me.flock_goal
-    {
-        let (tx, ty) = mind.social.context.center.unwrap_or((g.x, g.y));
-        return (Intent { tx, ty, slow: false, attack: None }, Mode::Wander);
-    }
+    let corpse = senses.best_corpse(me).filter(|c| inside(c.x, c.y));
     let prey = if mind.attack.is_some() || me.energy <= me.pheno.max_energy * 0.9 {
-        senses.prey(me, mind.attack)
+        senses.prey(me, mind.attack).filter(|p| mind.attack == Some(p.id) || inside(p.x, p.y))
     } else {
         None
     };
@@ -155,42 +181,51 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
         return (Intent { tx, ty, slow: false, attack: None }, Mode::Food);
     }
 
-    if crate::social::follows_reports(me, mind)
+    // Reports of food elsewhere guide loners (and desperate members); a flock member's
+    // reports move the circle instead (`flock::food_goals`).
+    if bound.is_none()
+        && crate::social::follows_reports(me, mind)
         && let Some(f) = mind.social.food
     {
         return (Intent { tx: f.x, ty: f.y, slow: false, attack: None }, Mode::Wander);
     }
-
-    if let Some(g) = me.flock_goal.filter(|_| me.pheno.sociability > 0.0) {
-        let (tx, ty) = if (x - g.x).hypot(y - g.y) > me.pheno.vision { (g.x, g.y) } else { (g.tx, g.ty) };
-        return (Intent { tx, ty, slow: false, attack: None }, Mode::Wander);
+    if let Some(c) = me.circle
+        && !c.holds(x, y, 0.0)
+    {
+        let (tx, ty) = c.toward(x, y, 0.7);
+        mind.target = None;
+        return (Intent { tx, ty, slow: false, attack: None }, Mode::Return);
     }
-    match mind.target {
-        None => pick_random_target(me, mind, rng),
+    let stale = match mind.target {
+        None => true,
         Some((tx, ty)) => {
             let (dx, dy) = (x - tx, y - ty);
-            if dx * dx + dy * dy < step * step {
-                pick_random_target(me, mind, rng);
-            }
+            dx * dx + dy * dy < step * step || me.circle.is_some_and(|c| !c.holds(tx, ty, 0.0))
         }
+    };
+    if stale {
+        pick_random_target(me, mind, rng);
     }
     let (tx, ty) = mind.target.unwrap();
     (Intent { tx, ty, slow: false, attack: None }, Mode::Wander)
 }
 
-fn personal_plant(me: &Me, mind: &mut Mind, senses: &impl Senses) -> Option<(f64, f64)> {
+/// The plant this creature feeds on: the one it already goes to while it lives, is seen and
+/// lies in its feeding circle; else the nearest such one. `nearest` is the nearest visible
+/// plant at all: when it lies in the circle it is the answer, and no second query is needed.
+fn personal_plant(me: &Me, mind: &mut Mind, senses: &impl Senses, nearest: Option<(f64, f64)>) {
+    let bound = feeding_circle(me, mind);
+    let inside = |(x, y): (f64, f64)| bound.is_none_or(|c| c.holds(x, y, me.pheno.half));
     let old = mind.social.personal_food.filter(|&(x, y)| {
-        (x - me.x).hypot(y - me.y) <= me.pheno.vision && senses.nearest_plant(x, y, 1e-8).is_some()
+        (x - me.x).hypot(y - me.y) <= me.pheno.vision
+            && inside((x, y))
+            && senses.nearest_plant(x, y, 1e-8).is_some()
     });
-    let plant = old.or_else(|| {
-        if crate::social::group_duty(me, mind) {
-            None
-        } else {
-            senses.nearest_plant(me.x, me.y, me.pheno.vision2)
-        }
+    mind.social.personal_food = old.or_else(|| match (nearest, bound) {
+        (Some(p), _) if inside(p) => Some(p),
+        (Some(_), Some(c)) => senses.nearest_plant_in(me.x, me.y, me.pheno.vision2, c, me.pheno.half),
+        _ => None,
     });
-    mind.social.personal_food = plant;
-    plant
 }
 
 /// Поело — сразу новая цель, чтобы не топтаться (и во время бегства тоже).
@@ -199,10 +234,19 @@ pub(crate) fn after_eating(me: &Me, mind: &mut Mind, rng: &mut Rng) {
     pick_random_target(me, mind, rng);
 }
 
-/// Новая цель блуждания — всегда в домашней полосе. Вне полосы — ближайшая её
-/// точка по вертикали: существо возвращается в свой слой. В полосе — случайная
-/// точка в пределах зрения; 10 попыток, иначе стоим.
+/// A new wander target. A flock member wanders inside its circle. Anyone else stays in its
+/// home band: outside the band, the nearest band point by depth (it walks back to its layer);
+/// inside, a random point within sight; 10 tries, else stand.
 fn pick_random_target(me: &Me, mind: &mut Mind, rng: &mut Rng) {
+    if let Some(c) = me.circle {
+        let angle = rng.uniform(0.0, std::f64::consts::TAU);
+        let d = c.radius * 0.8 * rng.random().sqrt();
+        mind.target = Some((
+            (c.x + angle.cos() * d).clamp(me.pheno.x_lo, me.pheno.x_hi),
+            (c.y + angle.sin() * d).clamp(me.pheno.y_lo, me.pheno.y_hi),
+        ));
+        return;
+    }
     let (lo, hi) = (me.pheno.body_lo, me.pheno.body_hi);
     if me.y < lo || me.y > hi {
         mind.target = Some((me.x, me.y.clamp(lo, hi)));
@@ -254,6 +298,62 @@ mod tests {
         }
     }
 
+    /// One plant east of the circle, within sight.
+    struct PlantOutside;
+
+    impl Senses for PlantOutside {
+        fn nearest_plant(&self, x: f64, y: f64, r2: f64) -> Option<(f64, f64)> {
+            ((1300.0 - x).powi(2) + (1000.0 - y).powi(2) <= r2).then_some((1300.0, 1000.0))
+        }
+
+        fn best_corpse(&self, _: &Me) -> Option<CorpseFood> {
+            None
+        }
+
+        fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
+            None
+        }
+
+        fn prey(&self, _: &Me, _: Option<u64>) -> Option<Prey> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_hungry_member_forages_outside_its_circle_until_it_is_fed() {
+        let v = Creature::new(
+            &Space::default(),
+            &Rules::default(),
+            CreatureGenome::BASE,
+            Some(1000.0),
+            Some(1000.0),
+            Some(30.0),
+            Rng::new(1),
+        );
+        let circle = Circle { x: 1000.0, y: 1000.0, radius: 150.0 };
+        let mut mind = Mind::default();
+        let mut rng = Rng::new(3);
+        for (share, forages) in [(0.8, false), (0.3, true), (0.6, true), (0.75, false), (0.5, false)] {
+            let me = Me {
+                x: v.x,
+                y: v.y,
+                energy: v.pheno.max_energy * share,
+                kinship: v.kinship(),
+                flock: v.flock,
+                circle: Some(circle),
+                pheno: &v.pheno,
+                health_share: 1.0,
+            };
+            let (_, mode) = plan(&me, &mut mind, &mut rng, &PlantOutside, v.pheno.speed);
+            assert_eq!(mind.social.foraging, forages, "fullness {share}");
+            assert_eq!(
+                mode == Mode::Food,
+                forages,
+                "fullness {share}: the plant outside is taken only when foraging"
+            );
+        }
+    }
+
     #[test]
     fn плотоядный_идёт_к_падали_травоядный_к_растению_начатый_бой_сохраняется() {
         for (carnivory, target) in [(100.0, 990.0), (0.0, 1010.0)] {
@@ -272,7 +372,7 @@ mod tests {
                 energy: v.energy,
                 kinship: v.kinship(),
                 flock: v.flock,
-                flock_goal: None,
+                circle: None,
                 pheno: &v.pheno,
                 health_share: 1.0,
             };

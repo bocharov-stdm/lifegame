@@ -30,13 +30,51 @@ fn пища_оплачивает_рост_и_размножение_ждёт_в�
     let energy = child.energy;
     child.nourish(2.0, &r);
     let cost = 2.0 * child.pheno.life_pace / (1.0 + child.pheno.life_pace);
-    assert!((child.pheno.size - size - cost / 2.5).abs() < 1e-9);
+    assert!((child.pheno.size - size - cost / life_core::config::GROWTH_ENERGY_PER_SIZE).abs() < 1e-9);
     assert!((child.energy - energy - (2.0 - cost)).abs() < 1e-9);
     let size = child.pheno.size;
     child.nourish(0.0, &r);
     assert_eq!(child.pheno.size, size);
     child.nourish(10000.0, &r);
     assert!(child.adult());
+}
+
+#[test]
+fn рождение_передаёт_энергию_из_резерва_без_потери_при_полном_баке_ребёнка() {
+    let r = Rules::default().with("mutation_sigma", 0.0).unwrap();
+    let mut p = parent();
+    let child = p.maybe_divide(&Space::default(), &r).unwrap();
+    assert_eq!(CreatureGenome::BASE[Gene::ReproShare], 40.0);
+    assert_eq!(child.energy, 40.0);
+    assert_eq!(p.energy, 50.0);
+
+    let mut p = parent();
+    p.genome = p.genome.with(Gene::ReproShare, 80.0);
+    p.apply_rules(&r, &Space::default());
+    let before = p.energy;
+    let child = p.maybe_divide(&Space::default(), &r).unwrap();
+    assert_eq!(child.energy, child.pheno.max_energy);
+    assert!((before - p.energy - child.energy - r.repro_cost).abs() < 1e-9);
+    assert!(p.energy >= life_core::config::REPRO_RESERVE);
+}
+
+#[test]
+fn родитель_больше_не_кормит_подросшего_ребёнка_каждый_тик() {
+    use life_core::{World, WorldConfig, creature::Phenotype};
+    let mut w = World::new(&WorldConfig {
+        n_creatures: Some(0),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
+        ..Default::default()
+    });
+    let parent_id = w.spawn(CreatureGenome::BASE.with(Gene::Care, 100.0), 1000.0, 1000.0, Some(100.0));
+    w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(20.0));
+    w.creatures[0].reproduction_wait = 1000;
+    w.creatures[1].parent = parent_id;
+    w.creatures[1].birth_size = 20.0;
+    w.creatures[1].pheno = Phenotype::at_size(&w.creatures[1].genome, &w.rules, &w.space, 20.0);
+    w.step();
+    assert_eq!(w.creatures[1].pheno.size, 20.0);
+    assert!(w.creatures[1].energy < 20.0);
 }
 
 #[test]
@@ -136,7 +174,7 @@ fn стая_защищает_неродных_и_исчезает_без_уча�
     w.step();
     assert_eq!(w.creatures.len(), 2);
     assert_eq!(w.counters.combat, 0);
-    assert!(w.creatures.iter().all(|v| v.health == v.max_health() && v.flock_goal.is_some()));
+    assert!(w.creatures.iter().all(|v| v.health == v.max_health() && v.circle.is_some()));
     assert_eq!(w.flocks[&a].members, 2);
     for v in &mut w.creatures {
         v.age = life_core::config::LIFESPAN;
@@ -306,22 +344,25 @@ fn после_чужого_укуса_растения_резерв_трупа_�
 }
 
 #[test]
-fn цель_стаи_обновляется_а_одиночке_не_навязывается() {
+fn a_pair_gets_a_family_circle_a_loner_none() {
     use life_core::{World, WorldConfig};
     let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
     let id = w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, None);
     w.step();
-    assert!(w.creatures[0].flock_goal.is_none());
+    assert!(w.creatures[0].circle.is_none());
     w.spawn(CreatureGenome::BASE, 1100.0, 1000.0, None);
     w.creatures[1].flock = id;
     w.step();
-    let first = w.flocks[&id].goal;
-    w.flocks.get_mut(&id).unwrap().remaining = 1;
-    w.step();
-    let next = w.flocks[&id].goal;
-    assert_ne!((first.tx, first.ty), (next.tx, next.ty));
-    assert!((0.0..=w.space.width).contains(&next.tx));
-    assert!((w.creatures[0].pheno.layer_lo..=w.creatures[0].pheno.layer_hi).contains(&next.ty));
+    let circle = w.flocks[&id].circle.expect("у пары есть круг");
+    assert!(w.creatures.iter().all(|v| v.circle == Some(circle)));
+    // A pair is a young family: its circle is at least as wide as the members see.
+    let v = &w.creatures[0];
+    let want = (v.pheno.flock_spacing * 2f64.sqrt())
+        .max(v.pheno.vision)
+        .clamp(life_core::flock::MIN_RADIUS, life_core::flock::MAX_RADIUS);
+    assert!((circle.radius - want).abs() < 1e-9, "{} vs {want}", circle.radius);
+    assert!(circle.x >= circle.radius && circle.x <= w.space.width - circle.radius);
+    assert!((w.creatures[0].pheno.layer_lo..=w.creatures[0].pheno.layer_hi).contains(&circle.y));
 }
 
 #[test]

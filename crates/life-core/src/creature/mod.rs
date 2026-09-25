@@ -58,7 +58,8 @@ pub struct Creature {
     /// быть в живых: братья и сёстры узнают друг друга и без него.
     pub parent: u64,
     pub flock: u64,
-    pub flock_goal: Option<crate::flock::FlockGoal>,
+    /// The circle of the family flock: where it feeds. None for loners.
+    pub circle: Option<crate::flock::Circle>,
     pub x: f64,
     pub y: f64,
     pub energy: f64,
@@ -108,7 +109,7 @@ impl Creature {
             id: 0,
             parent: 0,
             flock: 0,
-            flock_goal: None,
+            circle: None,
             x,
             y,
             energy,
@@ -171,7 +172,7 @@ impl Creature {
             energy: self.energy,
             kinship: self.kinship(),
             flock: self.flock,
-            flock_goal: self.flock_goal,
+            circle: self.circle,
             health_share: self.health / self.max_health(),
             pheno: &self.pheno,
         };
@@ -266,7 +267,7 @@ impl Creature {
             energy: self.energy,
             kinship: self.kinship(),
             flock: self.flock,
-            flock_goal: self.flock_goal,
+            circle: self.circle,
             health_share: self.health / self.max_health(),
             pheno: &self.pheno,
         };
@@ -278,19 +279,31 @@ impl Creature {
         let gain = gain.max(0.0);
         let room = self.x.min(self.space.width - self.x).min(self.y.min(self.space.height - self.y));
         let limit = self.genome[Gene::Size].min(room).max(self.pheno.size);
-        let growth = (gain * self.pheno.life_pace / (1.0 + self.pheno.life_pace) / ENERGY_PER_SIZE)
+        let growth = (gain * self.pheno.life_pace / (1.0 + self.pheno.life_pace) / GROWTH_ENERGY_PER_SIZE)
             .min(limit - self.pheno.size);
         let health_share = self.health / self.max_health();
         if growth > 0.0 {
             self.pheno = Phenotype::at_size(&self.genome, rules, &self.space, self.pheno.size + growth);
         }
         self.health = self.max_health() * health_share;
-        self.energy = self.pheno.max_energy.min(self.energy + gain - growth * ENERGY_PER_SIZE);
+        self.energy = self.pheno.max_energy.min(self.energy + gain - growth * GROWTH_ENERGY_PER_SIZE);
     }
 
     /// Старение в последней пятой жизни уменьшает здоровье до половины.
     pub fn max_health(&self) -> f64 {
         self.pheno.size * (1.0 - ((self.age / LIFESPAN - 0.8) / 0.2).clamp(0.0, 1.0) * 0.5)
+    }
+
+    /// The inherited flock mode is the same: flocking, territoriality, strategy, shooting,
+    /// flock kind and layer switch. A child with another mode leaves the family flock.
+    pub fn same_mode(&self, other: &Creature) -> bool {
+        let (a, b) = (&self.pheno, &other.pheno);
+        a.pack_instinct == b.pack_instinct
+            && a.territoriality == b.territoriality
+            && a.strategy == b.strategy
+            && a.shooter == b.shooter
+            && a.flock_kind == b.flock_kind
+            && a.layer_bound == b.layer_bound
     }
 
     /// Достигнут наследственный размер.
@@ -320,14 +333,18 @@ impl Creature {
         }
         // Резерв проверяется и ПОСЛЕ дележа: доля ребёнка считается от всей
         // энергии, и без этого родитель отдавал всё до нуля и умирал.
-        let child_energy = self.energy * (self.genome[Gene::ReproShare] / 100.0);
+        // Пробуем наследование на копии генератора: неудачная попытка рождения
+        // не тратит случайные числа, а вместимость ребёнка уже известна.
+        let mut next_rng = self.rng.clone();
+        let genome = self.genome.mutate(rules.mutation_sigma, &mut next_rng);
+        let child_energy = (self.energy * (self.genome[Gene::ReproShare] / 100.0))
+            .min(genome[Gene::Size] * 0.5 * ENERGY_PER_SIZE);
         let left = self.energy - child_energy - rules.repro_cost;
         if left < REPRO_RESERVE {
             return None;
         }
-        self.energy = left;
+        self.rng = next_rng;
         self.reproduction_wait = (DIVIDE_PERIOD as f64 / self.pheno.life_pace).ceil() as u64;
-        let genome = self.genome.mutate(rules.mutation_sigma, &mut self.rng);
 
         // Смещения по осям независимые: с одним общим дети ложились на диагональ.
         let span = self.pheno.size * 2.0;
@@ -338,17 +355,14 @@ impl Creature {
         let mut child = Creature::new(space, rules, baby_genome, Some(cx), Some(cy), Some(child_energy), rng);
         child.genome = genome;
         child.parent = self.id;
-        let same_mode = self.pheno.pack_instinct
-            && child.pheno.pack_instinct
-            && self.pheno.territoriality == child.pheno.territoriality
-            && self.pheno.strategy == child.pheno.strategy
-            && self.pheno.shooter == child.pheno.shooter;
+        let same_mode = self.pheno.pack_instinct && child.pheno.pack_instinct && self.same_mode(&child);
         child.flock = if same_mode && self.rng.random() < 0.99 { self.flock } else { 0 };
         child.reproduction_wait = (DIVIDE_PERIOD as f64 / child.pheno.life_pace).ceil() as u64;
         child.birth_size = child.genome[Gene::Size] * 0.5;
         child.pheno = Phenotype::at_size(&child.genome, rules, space, child.birth_size);
         child.health = child.max_health();
-        child.energy = child.energy.min(child.pheno.max_energy);
+        child.energy = child_energy.min(child.pheno.max_energy);
+        self.energy -= child.energy + rules.repro_cost;
         Some(child)
     }
 }

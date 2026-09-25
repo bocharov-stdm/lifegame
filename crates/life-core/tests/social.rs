@@ -27,6 +27,104 @@ fn отдых_стоит_энергии_и_кончается_при_голод�
 }
 
 #[test]
+fn участник_в_своём_круге_отдыхает_на_тех_же_условиях() {
+    let mut w = world();
+    for x in [1000.0, 1100.0] {
+        w.spawn(CreatureGenome::BASE, x, 1000.0, Some(100.0));
+    }
+    w.creatures[1].flock = w.creatures[0].flock;
+    for v in &mut w.creatures {
+        v.reproduction_wait = 1000;
+    }
+    let upkeep = w.creatures[0].pheno.slow_upkeep;
+    w.step();
+    assert_eq!(w.creatures[0].mind.social.activity, Activity::Resting);
+    assert!((w.creatures[0].energy - (100.0 - upkeep)).abs() < 1e-9);
+}
+
+#[test]
+fn стайный_видит_растение_даже_при_полной_общительности() {
+    let mut w = world();
+    let g = CreatureGenome::BASE.with(Gene::Sociability, 100.0);
+    w.spawn(g, 1000.0, 1000.0, Some(50.0));
+    w.spawn(g, 1000.0, 1040.0, Some(50.0));
+    w.creatures[1].flock = w.creatures[0].flock;
+    // inside the pair's circle (centre (1000, 1020), radius 85)
+    w.plants.push(life_core::plant::Plant::at(1060.0, 1000.0));
+    w.step();
+    assert!(w.creatures[0].x > 1000.0);
+    assert_eq!(w.creatures[0].mind.social.activity, Activity::Feeding);
+}
+
+#[test]
+fn участник_вдали_от_круга_возвращается_а_в_крайнем_голоде_ест_рядом() {
+    for (energy, feeds) in [(80.0, false), (50.0, false), (20.0, true)] {
+        let mut w = world();
+        let far = w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(energy));
+        for x in [2600.0, 2620.0, 2640.0] {
+            w.spawn(CreatureGenome::BASE, x, 1000.0, Some(80.0));
+        }
+        let tag = w.creatures[1].flock;
+        for v in &mut w.creatures {
+            v.flock = tag;
+            v.reproduction_wait = 1000;
+        }
+        w.plants.push(life_core::plant::Plant::at(1000.0, 1150.0));
+        w.step();
+        let v = w.creature(far).unwrap();
+        let circle = v.circle.expect("участник знает круг стаи");
+        assert!(!circle.holds(1000.0, 1000.0, v.pheno.half), "участник вне круга");
+        if feeds {
+            assert_eq!(v.mind.social.activity, Activity::Feeding, "запас {energy}");
+            assert!(v.y > 1000.0);
+        } else {
+            assert_eq!(v.mind.social.activity, Activity::Gathering, "запас {energy}");
+            assert!(v.x > 1000.0, "идёт к кругу");
+        }
+    }
+}
+
+#[test]
+fn растение_за_кругом_не_уводит_сытого_участника() {
+    let mut w = world();
+    for x in [1000.0, 1020.0, 1040.0] {
+        w.spawn(CreatureGenome::BASE, x, 1000.0, Some(60.0));
+    }
+    let tag = w.creatures[0].flock;
+    for v in &mut w.creatures {
+        v.flock = tag;
+        v.reproduction_wait = 1000;
+    }
+    w.step();
+    let circle = w.creatures[0].circle.unwrap();
+    // just outside the circle but well within sight
+    let (px, py) = (circle.x + circle.radius + 60.0, circle.y);
+    w.plants.push(life_core::plant::Plant::at(px, py));
+    for _ in 0..30 {
+        w.step();
+        for v in &w.creatures {
+            assert!(v.mind.social.personal_food.is_none(), "растение за кругом стало личной целью");
+            assert!(circle.holds(v.x, v.y, v.pheno.half + v.pheno.speed * 2.0));
+        }
+    }
+    assert!(w.plants[0].alive && w.plants[0].portions == life_core::plant::PORTIONS);
+}
+
+#[test]
+fn мягкое_расхождение_не_отталкивает_от_видимой_еды() {
+    let mut w = world();
+    w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(50.0));
+    let tag = w.creatures[0].flock;
+    for y in [1000.0, 1002.0, 1004.0, 1006.0, 1008.0, 1010.0, 1012.0] {
+        w.spawn(CreatureGenome::BASE, 1050.0, y, Some(50.0));
+        w.creatures.last_mut().unwrap().flock = tag;
+    }
+    w.plants.push(life_core::plant::Plant::at(1200.0, 1000.0));
+    w.step();
+    assert!(w.creatures[0].x > 1000.0);
+}
+
+#[test]
 fn теснота_совпадение_и_край_не_дают_прыжка() {
     let mut a = world();
     for speed in [5.0, 10.0, 15.0] {
@@ -199,13 +297,41 @@ fn соединение_и_смерть_якоря_сбрасывают_ожид
     w.creatures.remove(4);
     g.rebuild(&w.space, w.creatures.iter().map(|v| (v.x, v.y)));
     assert_eq!(split(&mut w.creatures, &g, &mut watches, &mut next, 660), 0);
-    assert_eq!(watches[0].since, 660);
+    assert_eq!(watches.iter().filter(|watch| watch.since == 660).count(), 1);
     for v in &mut w.creatures {
         v.x = 1000.0;
     }
     g.rebuild(&w.space, w.creatures.iter().map(|v| (v.x, v.y)));
     split(&mut w.creatures, &g, &mut watches, &mut next, 720);
     assert!(watches.is_empty());
+}
+
+#[test]
+fn смена_крупнейшей_компоненты_не_обнуляет_отделение() {
+    use life_core::{flock::split, grid::Grid};
+    let mut w = world();
+    for x in [1000.0, 1010.0, 1020.0, 1030.0, 3000.0, 3010.0, 3020.0] {
+        w.spawn(CreatureGenome::BASE, x, 1000.0, None);
+    }
+    let tag = w.creatures[0].flock;
+    for v in &mut w.creatures {
+        v.flock = tag;
+    }
+    let mut g = Grid::new(100.0);
+    let mut watches = Vec::new();
+    let mut next = 100;
+    g.rebuild(&w.space, w.creatures.iter().map(|v| (v.x, v.y)));
+    assert_eq!(split(&mut w.creatures, &g, &mut watches, &mut next, 60), 0);
+    assert_eq!(watches.len(), 2);
+    for x in [3030.0, 3040.0] {
+        w.spawn(CreatureGenome::BASE, x, 1000.0, None);
+        w.creatures.last_mut().unwrap().flock = tag;
+    }
+    g.rebuild(&w.space, w.creatures.iter().map(|v| (v.x, v.y)));
+    assert_eq!(split(&mut w.creatures, &g, &mut watches, &mut next, 360), 0);
+    assert_eq!(split(&mut w.creatures, &g, &mut watches, &mut next, 660), 1);
+    assert!(w.creatures[..4].iter().all(|v| v.flock == 100));
+    assert!(w.creatures[4..].iter().all(|v| v.flock == tag));
 }
 
 #[test]
@@ -246,7 +372,7 @@ fn нулевая_общительность_не_принимает_сообщ�
             energy: v.energy,
             kinship: v.kinship(),
             flock: v.flock,
-            flock_goal: None,
+            circle: None,
             pheno: &v.pheno,
             health_share: 1.0,
         };

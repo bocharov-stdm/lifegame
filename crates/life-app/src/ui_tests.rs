@@ -480,7 +480,7 @@ fn раскраска_стай_и_спокойный_профиль_работа
 }
 
 #[test]
-fn стайные_сценарии_и_карточка_без_окна() {
+fn flock_scenes_and_card_without_a_window() {
     use life_core::{CreatureGenome, Rules, World, genome::creature::Gene, plant::Plant, social::Activity};
     let _gpu = gpu();
     let fixture = || {
@@ -513,23 +513,44 @@ fn стайные_сценарии_и_карточка_без_окна() {
     let mut w = fixture();
     w.spawn(CreatureGenome::BASE.with(Gene::Size, 120.0), 2950.0, 2000.0, Some(180.0));
     w.creatures.last_mut().unwrap().age = life_core::config::LIFESPAN - 12.0;
-    let (mut alarm, mut gathering) = (false, false);
+    let (mut alarm, mut back) = (false, false);
     for _ in 0..200 {
         w.step();
         if !alarm && w.creatures.iter().any(|v| v.mind.social.activity == Activity::Alarm) {
             scenes.push(("тревога", w.clone()));
             alarm = true;
         }
+        // after the alarm the members walk back into their circle
         if alarm
-            && !gathering
+            && !back
             && w.creatures.iter().all(|v| v.mind.social.activity != Activity::Alarm)
             && w.creatures.iter().any(|v| v.mind.social.activity == Activity::Gathering)
         {
-            scenes.push(("сбор", w.clone()));
-            gathering = true;
+            scenes.push(("возврат", w.clone()));
+            back = true;
         }
     }
-    assert!(alarm && gathering, "после ухода угрозы стая собирается");
+    assert!(alarm && back, "after the threat is gone the flock returns to its circle");
+    // two hard flocks side by side fight for room
+    let mut w = fixture();
+    w.creatures.clear();
+    let hard = CreatureGenome::BASE.with(Gene::Territoriality, 2.0);
+    for (i, x) in [2500.0, 2540.0, 2580.0, 2620.0, 3380.0, 3420.0, 3460.0, 3500.0].into_iter().enumerate() {
+        w.spawn(hard, x, 1970.0 + (i % 2) as f64 * 60.0, Some(65.0));
+    }
+    let n = w.creatures.len();
+    let (left, right) = (w.creatures[n - 8].flock, w.creatures[n - 4].flock);
+    for (k, v) in w.creatures[n - 8..].iter_mut().enumerate() {
+        v.flock = if k < 4 { left } else { right };
+        v.reproduction_wait = 10000;
+    }
+    life_core::flock::update(&mut w.flocks, &mut w.creatures, &w.space, 42, false);
+    let sides: std::collections::BTreeMap<u64, usize> = [(left, 4), (right, 4)].into();
+    w.battles.active.push(life_core::battle::Battle { id: 0, since: w.tick, sides });
+    for tag in [left, right] {
+        w.flocks.get_mut(&tag).unwrap().battle = Some(0);
+    }
+    scenes.push(("бой-стай", w));
     for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
         let mut h = harness(size);
         h.state_mut().side_open = false;
@@ -610,20 +631,15 @@ fn стайные_сценарии_и_карточка_без_окна() {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+        // the circle is the territory: a click near its edge, away from bodies, picks the flock
         let area = h.state().view.frame.as_ref().unwrap().flock_areas[0].clone();
-        assert!(area.territory_radius > area.radius);
         let outside_group = (0..72)
             .map(|i| {
                 let angle = i as f64 * std::f64::consts::TAU / 72.0;
-                (
-                    area.x + area.territory_radius * 0.9 * angle.cos(),
-                    area.y + area.territory_radius * 0.9 * angle.sin(),
-                )
+                (area.x + area.radius * 0.9 * angle.cos(), area.y + area.radius * 0.9 * angle.sin())
             })
-            .find(|&(x, y)| {
-                (x - area.x).hypot(y - area.y) > area.radius && territory.pick(x, y, 0.0).is_none()
-            })
-            .expect("виден участок территории вне стаи");
+            .find(|&(x, y)| territory.pick(x, y, 0.0).is_none())
+            .expect("a part of the circle without bodies");
         h.state_mut().sim.send(Command::Pick { x: outside_group.0, y: outside_group.1, radius: 0.0 });
         for _ in 0..100 {
             h.step();

@@ -51,8 +51,11 @@ impl LifeApp {
         let snaps = self.history.snapshots.points();
         if let Some(s) = snaps.last() {
             ui.label(format!(
-                "Молодых {:.0}% · стай {}",
+                "Молодых {:.0}% · стайный ген {} ({:.0}%) · в стаях {} · стай {}",
                 100.0 * s.juveniles as f64 / s.creatures.max(1) as f64,
+                s.pack_carriers,
+                s.pack_share * 100.0,
+                s.pack_members,
                 s.flocks
             ));
             if let Some(first) = snaps.first() {

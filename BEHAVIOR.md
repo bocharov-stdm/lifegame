@@ -1,6 +1,138 @@
 # Реформа поведения Tiny Life
 
-## Стайность, забота и режимы территорий
+## Flocks as feeding circles, battles for room (this stage)
+
+Formats: `life-report/9`, model `life-behavior/6`. This section is in English; the rest of the file
+is translated in a separate commit.
+
+**The circle.** A family flock of two or more members is a circle that moves as one object, and
+its members feed inside it. Radius: `flock_spacing · √n`, clamped to 80–600 (`flock::MIN_RADIUS`,
+`MAX_RADIUS`); `flock_spacing` is a free inherited gene (effect 50–500, base 200). Members take
+plants, corpses and prey only inside the circle (its border plus half a body); a chase already
+started may lead out of it. With no food in sight they wander inside the circle, and outside it
+they walk back (`Mode::Return`, shown as «собираются»). A member below 40% of its store forages
+anywhere it sees food and keeps foraging until it has 70% again, so it does not dart back to its
+circle after every bite. A member that stays outside its circle for 300 ticks without being on
+guard, fighting or foraging leaves the flock with a new label (`strays`). Removed: the old «below
+85% search on your own» rule and the pull towards the neighbours' centre.
+
+**A young family** (fewer than 4 members) roams: its circle follows the members' mean position,
+never faster than they walk, and is at least as wide as they see. A new family thus forages
+almost like loners; from four members on the circle is an object that moves by the flock kind.
+Without this rule flocks died out early in about half of the calm worlds: a small circle feeds
+worse than free search while the world is empty.
+
+**Flock kinds** (`flock_kind`, dealt in turn among the flocking founders, 25% each):
+- settled: the circle stays; it moves when mean fullness stays below 0.4 for 600 ticks or no
+  member sees a plant inside for 300 ticks;
+- nomadic: a slow drift along x, turning at the world's edge or after 30 ticks pushed back;
+- scouts: the best fresh food report of a member (every 60 ticks, held 180); without reports a
+  wander 0.5–3 vision away;
+- vertical migrants: a period of 1200 ticks, half up and half down; within the layer when bound,
+  between 5% and 50% of depth when free.
+
+A circle moves at `SLOW_PACE` of its members' mean speed and waits while fewer than 60% of them
+are inside. `layer_bound` (a quarter of the founders is free, by a hash, not a draw): a bound
+flock's circle stays in the members' mean layer; a free creature's home band is the whole depth.
+Flock kind and the layer switch are part of the family mode: a child with another one leaves.
+
+**Overlaps.** Two circles without territoriality overlap freely. With a moderate one involved the
+pair is soft: 5% of the overlap is pushed apart per tick on each side, and both shrink by 2.5% of
+it. With a hard one involved the pair is strict: the non-hard circle yields fully, two hard ones
+half each; whatever overlap six passes of pushing leave (a wall of the world or of the layer, a
+crowd) is removed by shrinking, on every flock update, so no strict pair ever overlaps. A
+squeezed circle grows back by 0.5% of its nominal radius per tick. Kinship and the grace after a
+split forbid only strikes: kin circles are separated like any others.
+
+**No room.** A circle squeezed to at most half of its radius for 60 ticks looks for room for its
+full circle nearby (four rings of candidates, 2r to 8r away, in the flock's layer). If there is
+some, the flock moves there, even to a poorer, deeper place.
+
+**Borders.** The areas are the circles of moderate and hard flocks. Everyone walks around a hard
+circle; a moderate one only while it sees a member of that flock (a leaky border: a sparse or too
+wide circle is not respected everywhere). A member inside its own circle and going somewhere
+inside it is not pushed out by a neighbour's overlapping circle. Below 25% of its store any
+creature ignores borders: hunger outweighs the risk. With combat on the warning and strike rules
+of the previous stages apply to intruders.
+
+**Battles for room** (combat on only). A cornered flock, squeezed with no room nearby, fights
+instead of moving: a hard one at once, a moderate one only after one such move did not help; a
+flock without territoriality never starts one. The battle gathers every flock whose circle
+touches the cornered one (unless under grace with it); battles that share a flock merge. Adult
+fighters of territorial flocks (fuller than 25%, not wounded) strike the nearest adult of another
+flock of the battle they see; a flock without territoriality only strikes back; kin and freshly
+split groups never strike each other. A flock that has lost half of the adults it brought leaves
+the battle and moves away; the others keep the place. A battle lasts at most 300 ticks, and a
+flock that left one neither starts nor joins another for 600 ticks (`battle.rs`).
+
+**Care and growth** (unchanged from the start of this stage). A parent no longer feeds its child
+every tick: the inherited `care` gene only controls protection. The base inherited share of
+energy at birth is 40%. A child gets no more than its tank holds; the parent pays only the energy
+passed and the fixed penalty. Growth costs 2.25 energy per unit of diameter with the tank still
+`2.5 × diameter`; the food value of a corpse's grown part uses the new price. The countdown of a
+lasting split holds for every separated component of three or more members; a change of the
+largest component does not reset its 600 ticks.
+
+**Observability.** Snapshots and JSON: flock circle radius (p50/p90), flocks by kind, the share of
+members inside their circle, strict and soft overlaps, squeezed flocks, battles and the flocks in
+them; social counters `strays`, `relocations`, `battles`, `battle_retreats`. The chronicle adds
+flock moves, battles and retreats, aggregated per interval like alarms. On screen: one circle per
+flock, its stroke thin, normal or thick by territoriality, orange with a warned intruder, red in a
+battle; circles glide between frames like the bodies; labels «№ · members · kind» go biggest flock
+first and never over another, and a circle under 14 points gets none. The flock card shows kind,
+layer, circle radius and squeeze, spacing, spread, members inside and the battle.
+
+### Acceptance
+
+The user left the criterion to us; combat is on by default. Proposed and used: survival ≥ 7/8 in
+all four modes; in each profile with combat, flocks persist (≥ 2 flocks and flocking carriers ≥
+10% at the end) in ≥ 75% of the worlds; no strict overlap in any snapshot; circle radius p90 ≤
+600; members inside their circle, median ≥ 80%. Loners may vanish: a flock takeover is a
+legitimate outcome of combat.
+
+Seeds 1–8, 20 000 ticks, `--max-work 1e15`, every run finished by itself:
+
+| Mode | Alive | Flocks persist | Both lines ≥ 10% | Median | vs old reference | Inside, median (min) |
+|---|---:|---:|---:|---:|---:|---:|
+| base, no combat | 8/8 | 7/8 | 5/8 | 1346 | −8% (1464) | 0.93 (0.82) |
+| base, combat | 8/8 | 5/8 | 5/8 | 755 | −11% (848.5) | 0.82 (0.44) |
+| calm, no combat | 8/8 | 5/8 | 4/8 | 981.5 | −5% (1032) | 0.99 (0.81) |
+| calm, combat | 8/8 | 6/8 | 4/8 | 780.5 | +27% (614) | 0.85 (0.69) |
+
+Eight seeds cannot tell 5/8 from 7/8 apart, so the combat profiles were also run on seeds 1–16:
+base — flocks persist in 12/16, both lines in 11/16, median 900.5; calm — flocks persist in
+14/16, both lines in 6/16 (flocks took over 8 worlds), median 731.5. Strict overlaps: 0 in every
+snapshot of every run. Circle radius p90: at most 600. Battles for room: 87 in 5 of 8 base worlds
+with combat (12 retreats), 116 in 4 of 8 calm ones (21 retreats); none without combat, as
+designed. The `flock_spacing` median drifts to 45–270, in one calm world to 664 (the effect stays
+clamped at 500).
+
+**`repro_cost`.** The plan asked for the smallest value in 10–20 that lowers the median by 15–25%
+in all four modes. None does (seeds 1–8, 20 000 ticks, change vs the old references):
+
+| repro_cost | base, no combat | base, combat | calm, no combat | calm, combat |
+|---:|---:|---:|---:|---:|
+| 10 | −20% | −7% | −13% | +32% |
+| 12 | +2% | −7% | −21% | 0% |
+| 14 | −21% | −15% | −31% | −5% |
+| 16 | −26% | −20% | −34% | −10% |
+| 18 | −29% | +2% | −37% | −15% |
+| 20 | −31% | −16% | −47% | −29% |
+
+(all rows come from the model just before two last small fixes: flock kinds dealt in turn, and
+circles on one centre parted along x). The medians of eight chaotic worlds
+are not even monotone in the price, and a higher price made flocks persist less often in the calm
+profile with combat. `repro_cost` stays 10.
+
+Balance tried and rejected (16–32 seeds × 12 000 ticks unless noted): a narrower territory rule
+where loners walk around only hard circles (flocks died out in 6–7 of 8 worlds), always respected
+moderate borders (flocks took over 5–8 of 8), foraging members searching like loners (flocks
+survive, but only 25–50% of members stay inside their circle), a leash of circle + vision for
+foragers, a faster circle (0.6 of the members' speed), other hunger thresholds, founders dealt
+20/60/20 by territoriality, splitting a flock that outgrew the largest circle (flocks persisted in
+72% of base worlds with combat instead of 91%).
+
+## Стайность, забота и режимы территорий (предыдущий этап)
 
 У половины основателей есть стайность. Среди стайных 50% не охраняют границу,
 40% защищают её после 30 тиков вторжения, 10% атакуют допустимого чужака сразу.
@@ -26,7 +158,7 @@
 диаметр тела при смерти, а расход пищи меняет только прозрачность. Кольцо
 контактного ближнего боя показано лишь у выбранного существа.
 
-### Проверка текущей модели
+### Проверка модели `life-behavior/5` до этих изменений
 
 Профили без ручной настройки прошли seed 1–8 по 20 000 тиков с боями и без.
 Все 32 прогона завершились по числу тиков, без остановки по лимиту; во всех
@@ -253,7 +385,7 @@ Claude над родством и бегством. Она сохранена и
   сбрасывает бегство и цель атаки.
 - Ген размера задаёт взрослый диаметр. Ребёнок рождается с половиной диаметра;
   основатели и добавленные вручную существа взрослые. Только усвоенная пища растит
-  тело: доля `p/(1+p)`, цена единицы диаметра `ENERGY_PER_SIZE = 2.5`.
+  тело: доля `p/(1+p)`, текущая цена единицы диаметра `GROWTH_ENERGY_PER_SIZE = 2.25`.
   Остальное пополняет энергию. Рост ограничен взрослым размером и пространством
   у стен без смещения центра; неиспользованная доля переходит в энергию.
   Голод и рождение ребёнка не уменьшают тело.
@@ -275,13 +407,9 @@ Claude над родством и бегством. Она сохранена и
   `prey_ratio`: база 2.5, диапазон 1–5; мировой `cannibal_ratio` ограничивает
   его снизу. Цель выбирается по усваиваемой энергии за время пути и боя.
   При запасе выше 90% новая охота не начинается. `cannibalism` выключает все бои.
-- Метка стаи отделена от таблицы генов: уникальна у основателей, наследуется
-  с вероятностью 99%. Два живых носителя образуют стаю. Общая цель выбирается
-  отдельным генератором внутри среднего предпочтительного слоя; обновляется
-  через 600 тиков или при приближении центра на 100 единиц. Без личной цели
-  участник возвращается к центру из-за пределов зрения, иначе идёт к общей цели.
-  Это исходная механика реформы; социальные дополнения описаны выше.
-  Совместной охоты нет. Пустые стаи удаляются.
+- The flock label is kept apart from the gene table: unique for founders, inherited with a 99%
+  chance. Two living carriers make a flock, and a flock has a circle (see the first section).
+  There is no cooperative hunting. Empty flocks are removed.
 
 Порядок тика: растения → снимок и решения → движение и жизненные расходы →
 питание растениями → одновременный бой → питание победителей → размножение →
@@ -292,8 +420,8 @@ Claude над родством и бегством. Она сохранена и
 
 Карточка показывает текущий и взрослый размер, возраст, здоровье, состояние и стаю.
 Статистика показывает молодых, стаи и причины смерти. Рисование и выбор мышью
-используют фактический размер. JSON — `life-report/5`, эталон баланса имеет
-`model: life-behavior/2`. Несовместимый эталон отклоняется с кодом 2 и объяснением.
+используют фактический размер. JSON is `life-report/9`, the balance reference has
+`model: life-behavior/6`. Несовместимый эталон отклоняется с кодом 2 и объяснением.
 Старые настройки получают новые значения по умолчанию.
 
 Golden переснят намеренно: старое мгновенное поедание заменено боем, рост и

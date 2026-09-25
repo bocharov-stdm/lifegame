@@ -284,7 +284,9 @@ fn умерший_от_голода_не_ест() {
 /// После деления у родителя остаётся резерв (было: отдавал всё и умирал).
 #[test]
 fn родитель_сохраняет_резерв() {
-    let (s, r) = (Space::default(), Rules::default());
+    // Without mutation the child's capacity is known (half of 40 by 2.5), so a large share
+    // really takes the parent below its reserve and the division is refused.
+    let (s, r) = (Space::default(), Rules::default().with("mutation_sigma", 0.0).unwrap());
     let (mut divided, mut blocked) = (0, 0);
     for share in [10.0, 30.0, 50.0, 70.0, 90.0] {
         let g = BASE.with(Gene::ReproThreshold, 30.0).with(Gene::ReproShare, share);

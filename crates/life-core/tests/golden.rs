@@ -122,9 +122,9 @@ fn digest(w: &World) -> u64 {
             h.f64(x);
             h.f64(y);
         }
-        h.u64(v.flock_goal.is_some() as u64);
-        if let Some(g) = v.flock_goal {
-            for n in [g.x, g.y, g.tx, g.ty] {
+        h.u64(v.circle.is_some() as u64);
+        if let Some(c) = v.circle {
+            for n in [c.x, c.y, c.radius] {
                 h.f64(n);
             }
         }
@@ -147,8 +147,10 @@ fn digest(w: &World) -> u64 {
         h.u64(*id);
         h.u64(f.members as u64);
         h.u64(f.remaining as u64);
-        for n in [f.goal.x, f.goal.y, f.goal.tx, f.goal.ty] {
-            h.f64(n);
+        if let Some(c) = f.circle {
+            for n in [c.x, c.y, c.radius, f.target.0, f.target.1] {
+                h.f64(n);
+            }
         }
         h.u64(f.rng.clone().next_u64());
     }
@@ -289,14 +291,22 @@ fn run(case: &Case) -> (Vec<(u64, u64)>, World, Seen) {
 #[cfg(windows)]
 #[rustfmt::skip]
 const GOLDEN: &[&[(u64, u64)]] = &[
-    &[(1, 0x9583afe93ad14fd0), (2, 0xe73e4661c625bef9), (10, 0x48276e5ddc0da59d), (31, 0xf5b0fa93d71b2539), (100, 0xeefe9acca9e1b356), (250, 0xfa084d428d26e220), (500, 0x36c3167f0acc5aca), (1000, 0xfa7bfa7d46817401), (2000, 0xa17cd31bc60b639c), (3000, 0x71101ed69b6b7d91), ],
-    &[(1, 0xe389c72a633eba4e), (2, 0xc97c97341e7e0a3d), (10, 0x9e0ec67291e9fbac), (31, 0x7e1c16e121cd68d1), (100, 0x81ee2fdf9960f7dc), (250, 0xc10f320c26e82329), (500, 0x7acb60ff320b52bc), (1000, 0xd00c40db5672280e), (2000, 0xe2bcccc9bdcda4c4), ],
-    &[(1, 0xa720529d554e2c74), (2, 0x8a325e9ff94e3635), (10, 0x3d346633736fc28a), (31, 0x4773c959148f05ae), (100, 0xc4a7be2d215489ce), (250, 0x14f8f95bd710d3b9), (500, 0xb5d20a6f2ac690a4), (1000, 0x5a0312d2998d6fa2), (2000, 0x32b0016feb7c88a7), (3000, 0x0a44a4ff3fcea0a6), ],
-    &[(1, 0x459c8c5a673c6750), (2, 0x3c4c16da5700b2bf), (10, 0xa4946af3ebada69f), (31, 0x4c07893b75ccf947), (100, 0xb83e12497b2bac07), (250, 0x36e4ad7667d6364d), (500, 0x8710bb9f53e642bd), ],
-    &[(1, 0x0bf2e69e3268f2d5), (2, 0x89d8b8cf4b086982), (10, 0x486bd92fd6cec277), (31, 0x1274dbfefe6ecb68), (100, 0xb100f749dbd219d5), (250, 0xed0dcc726d997b16), (500, 0x13185ff029e6d2ed), (1000, 0xf48b4f9b105b0af0), ],
-    &[(1, 0x968d76cccae9f411), (2, 0xeea0d48d8c329599), (10, 0x9cb0c82878be08cc), (31, 0x0f8682de9e13e1a3), (100, 0x54d6e38b16b4f429), (250, 0x04ff2cc881dfbb23), (500, 0x2acffc3a166458cf), (1000, 0xdd2f3095d6df35ab), (2000, 0x29b68f6cf80c797c), ],
-    &[(1, 0x3dd20ff56a046b60), (2, 0xb26219bfdde4d700), (10, 0xa12e401505cdace4), (31, 0x795a2492586c1410), (100, 0x11312565c973d0f2), (250, 0x6adc3e41977ff22e), (500, 0xbdd1f4accce9ea82), (1000, 0x3df75edf78440e9b), ],
-    &[(1, 0x4f3fd3d6d679ec3b), (2, 0xc6c0e17df749578d), (10, 0xa280da7870282b24), (31, 0x342299f1c6ca9a69), (100, 0x9eb31f29c434b3f3), (250, 0x7bed64815349ea6b), (500, 0xdd63de7fa6729957), (1000, 0xe1a5e07c23a1bd1a), (2000, 0xb17beb31e7c5f86b), ],
+    // A: сид 1, по умолчанию
+    &[(1, 0x74058e39246d2dcc), (2, 0x600c891c2be45103), (10, 0x7a0fe7dcf5b7c9fa), (31, 0x2b2e892588e5aeb4), (100, 0x7c2497ac8405d31e), (250, 0xedff3741e8a94369), (500, 0xfd4914f2512312fa), (1000, 0x8e2b8c0c51dcd87f), (2000, 0xce72372d5e3fa6bf), (3000, 0x982eaea21a65e393), ],
+    // B: сид 4, гиганты
+    &[(1, 0x7299d640208c30a7), (2, 0x7e069f39ecd539dc), (10, 0xcbacbabd7b81033b), (31, 0xa44e2b3c957dd5c2), (100, 0xfdd89dbd39d8fe19), (250, 0x9cdc205737b51300), (500, 0xe1addce636bb08c0), (1000, 0xb8ea77acc6cc7cca), (2000, 0x93b2259987860e1a), ],
+    // C: сид 7, лаборатория
+    &[(1, 0xdc41c4b87b42dc2e), (2, 0xd098d162910b8c67), (10, 0x08aa0da46c4a02ea), (31, 0xc92ae1b5ce56b515), (100, 0x4c32ec5245678e8a), (250, 0xce10d4d00bd4368a), (500, 0x200006f26fa58562), (1000, 0x78c158df3c7d1a3c), (2000, 0x54c08cc5a18fa97e), (3000, 0xa36aaa61c99befb7), ],
+    // D: сид 2, масштаб 10
+    &[(1, 0xc8350c0a2cb09aea), (2, 0x5be47857a03b2b53), (10, 0xc574b979424083fd), (31, 0x74654cdb117bd5b5), (100, 0x925543ce2cd3d580), (250, 0x643f520434dc46dd), (500, 0xfbda55c7484a346a), ],
+    // E: сид 3, правила на ходу и подсадка
+    &[(1, 0xaa5cdb8e17c637aa), (2, 0x790a796fada45412), (10, 0x79637d1e1a7740af), (31, 0xb3bca56ca7d129ae), (100, 0x3c080b358c15baae), (250, 0x91eb33574a7b2d50), (500, 0xb516935f5956d9b1), (1000, 0xd0aa06497ee6175f), ],
+    // F: сид 5, смесь стратегий
+    &[(1, 0x8dd4fe61bef31727), (2, 0xcfa1208c80d81785), (10, 0xb3d084959b354cab), (31, 0x6cccc5fc67930702), (100, 0xa3191396655e139a), (250, 0x98b668c9ae713eef), (500, 0x53c335bb7fe4b26b), (1000, 0xf9e0f5ce7e817a7d), (2000, 0x663acf1c3ca29ea0), ],
+    // G: сид 6, квадрат x10, еда линейно и волнами
+    &[(1, 0xebf89355ed0a5a44), (2, 0xc6502f3f506e4a0c), (10, 0x4788a23fe65eb2d4), (31, 0x1163afeb88fd4184), (100, 0x5a891316c9d80691), (250, 0xe7e14fa1835526b9), (500, 0x73e0598193895db6), (1000, 0xdfc7ac0d4007b780), ],
+    // H: сид 8, каннибализм
+    &[(1, 0x46ce92b6fb0d87dd), (2, 0x4cb5f0d4435f1a54), (10, 0x280f6040bf5218da), (31, 0x20c2aaf4f3daab22), (100, 0xa686e1234f05be93), (250, 0xd00fa3e9b3afb223), (500, 0xfeefb6e8cdab7a01), (1000, 0x3d6ee9a5a5b793cc), (2000, 0xaa1befd779d63499), ],
 ];
 
 #[cfg(not(windows))]

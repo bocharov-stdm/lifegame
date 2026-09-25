@@ -83,7 +83,8 @@ pub struct Me<'a> {
     /// Номер и родитель: чувства не показывают родню угрозой.
     pub kinship: Kinship,
     pub flock: u64,
-    pub flock_goal: Option<crate::flock::FlockGoal>,
+    /// The flock's circle: food is taken inside it.
+    pub circle: Option<crate::flock::Circle>,
     pub pheno: &'a Phenotype,
     pub health_share: f64,
 }

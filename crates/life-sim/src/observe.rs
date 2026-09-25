@@ -108,7 +108,22 @@ pub fn gene_stats<'a, G: Genome, const N: usize>(
 pub struct Snapshot {
     pub activities: [usize; 5],
     pub social_counts: life_core::social::Counters,
+    /// Root mean square distance of flock members from their mean position.
     pub flock_spread: Option<Spread>,
+    /// Radius of the flock circles.
+    pub flock_radius: Option<Spread>,
+    /// Flocks (two and more) by kind, in `FlockKind::ALL` order.
+    pub flock_kinds: [usize; 4],
+    /// Share of flock members whose body touches their circle.
+    pub inside_share: Option<f64>,
+    /// Overlap of circles that must not overlap.
+    pub overlaps: life_core::flock::OverlapStats,
+    /// Flocks squeezed to at most `MIN_COMPRESS` of their radius, and to at most 80%.
+    pub squeezed_flocks: usize,
+    pub pressed_flocks: usize,
+    /// Battles of flocks going on, and the flocks in them.
+    pub battles: usize,
+    pub fighting_flocks: usize,
     pub tick: u64,
     /// Во сколько раз мир больше базового: пороги событий растут с площадью.
     pub area: f64,
@@ -118,6 +133,9 @@ pub struct Snapshot {
     pub plant_cap: usize,
     pub creatures: usize,
     pub juveniles: usize,
+    pub pack_carriers: usize,
+    pub pack_share: f64,
+    pub pack_members: usize,
     pub flocks: usize,
     /// Накопленные с начала мира; потоки за промежуток — `b.counters.since(&a.counters)`.
     pub counters: Counters,
@@ -152,10 +170,23 @@ impl Snapshot {
         let mut depth: Vec<f64> = herd.iter().map(|v| v.y / h * 100.0).collect();
 
         let (mut creatures_by_depth, mut creatures_by_width) = ([0; DEPTH_BANDS], [0; WIDTH_BANDS]);
+        let mut pack_carriers = 0;
         for v in herd {
             creatures_by_depth[band(v.y, h, DEPTH_BANDS)] += 1;
             creatures_by_width[band(v.x, w, WIDTH_BANDS)] += 1;
+            pack_carriers += usize::from(v.pheno.pack_instinct);
         }
+        let (flocks, pack_members) = world
+            .flocks
+            .values()
+            .filter(|f| f.members >= 2)
+            .fold((0, 0), |(groups, members), f| (groups + 1, members + f.members));
+        let flocks_now = life_core::flock::summaries(world);
+        let mut flock_kinds = [0; 4];
+        for f in &flocks_now {
+            flock_kinds[f.kind as usize] += 1;
+        }
+        let inside: usize = flocks_now.iter().map(|f| f.inside).sum();
         let (mut plants_by_depth, mut plants_by_width) = ([0; DEPTH_BANDS], [0; WIDTH_BANDS]);
         for p in &world.plants {
             plants_by_depth[band(p.y, h, DEPTH_BANDS)] += 1;
@@ -171,9 +202,18 @@ impl Snapshot {
                 counts
             },
             social_counts: world.social_counts,
-            flock_spread: Spread::of(
-                &mut life_core::flock::summaries(world).iter().map(|s| s.radius).collect::<Vec<_>>(),
-            ),
+            flock_spread: Spread::of(&mut flocks_now.iter().map(|s| s.spread).collect::<Vec<_>>()),
+            flock_radius: Spread::of(&mut flocks_now.iter().map(|s| s.radius).collect::<Vec<_>>()),
+            flock_kinds,
+            inside_share: (pack_members > 0).then(|| inside as f64 / pack_members as f64),
+            overlaps: life_core::flock::overlap_stats(&world.flocks, &world.space),
+            squeezed_flocks: flocks_now
+                .iter()
+                .filter(|f| f.compress <= life_core::flock::MIN_COMPRESS + 1e-9)
+                .count(),
+            pressed_flocks: flocks_now.iter().filter(|f| f.compress <= 0.8).count(),
+            battles: world.battles.active.len(),
+            fighting_flocks: world.battles.active.iter().map(|b| b.sides.len()).sum(),
             tick: world.tick,
             area: world.space.area_ratio(),
             plants: world.plants.len(),
@@ -181,7 +221,10 @@ impl Snapshot {
             plant_cap: world.space.per_area(PLANT_MAX),
             creatures: herd.len(),
             juveniles: herd.iter().filter(|v| !v.adult()).count(),
-            flocks: world.flocks.values().filter(|f| f.members >= 2).count(),
+            pack_carriers,
+            pack_share: pack_carriers as f64 / herd.len().max(1) as f64,
+            pack_members,
+            flocks,
             counters: world.counters,
             genes,
             depth: Spread::of(&mut depth),
@@ -211,6 +254,9 @@ pub enum EventKind {
     LayerNarrow,
     LayerWide,
     StrategyShift,
+    FlockMove,
+    FlockBattle,
+    FlockRetreat,
 }
 
 impl EventKind {
@@ -228,6 +274,9 @@ impl EventKind {
             EventKind::LayerNarrow => "layer_narrow",
             EventKind::LayerWide => "layer_wide",
             EventKind::StrategyShift => "strategy_shift",
+            EventKind::FlockMove => "flock_move",
+            EventKind::FlockBattle => "flock_battle",
+            EventKind::FlockRetreat => "flock_retreat",
         }
     }
 }
@@ -386,6 +435,21 @@ impl EventTracker {
                 EventKind::FlockSplit,
                 cur.social_counts.splits.saturating_sub(prev.social_counts.splits),
                 "отделение новой стаи",
+            ),
+            (
+                EventKind::FlockMove,
+                cur.social_counts.relocations.saturating_sub(prev.social_counts.relocations),
+                "переезд на новое место",
+            ),
+            (
+                EventKind::FlockBattle,
+                cur.social_counts.battles.saturating_sub(prev.social_counts.battles),
+                "бой за место",
+            ),
+            (
+                EventKind::FlockRetreat,
+                cur.social_counts.battle_retreats.saturating_sub(prev.social_counts.battle_retreats),
+                "отступление после боя",
             ),
         ] {
             if n > 0 {
@@ -549,6 +613,7 @@ pub fn ascii_map(world: &World, cols: usize) -> Vec<String> {
 mod tests {
     use super::*;
     use life_core::genome::{GeneKind, Mutation, Variant};
+    use life_core::{CreatureGenome, WorldConfig, genome::creature::Gene};
 
     const THREE: [Variant; 3] = [
         Variant { key: "a", label: "первый", about: "" },
@@ -584,5 +649,19 @@ mod tests {
 
         let (_, c) = gene_shifts(&STRATEGY, shares([0.7, 0.3, 0.0]), &mut base, 180);
         assert_eq!(c, ["стратегия первый 95→70%, второй 5→30% (с тика 60)"]);
+    }
+
+    #[test]
+    fn носители_стайности_отличаются_от_участников_настоящих_стай() {
+        let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
+        for x in [1000.0, 1100.0, 2000.0] {
+            w.spawn(CreatureGenome::BASE, x, 1000.0, None);
+        }
+        w.spawn(CreatureGenome::BASE.with(Gene::PackInstinct, 0.0), 3000.0, 1000.0, None);
+        w.creatures[1].flock = w.creatures[0].flock;
+        life_core::flock::update(&mut w.flocks, &mut w.creatures, &w.space, 42, false);
+        let s = Snapshot::of(&w);
+        assert_eq!((s.creatures, s.pack_carriers, s.pack_members, s.flocks), (4, 3, 2, 1));
+        assert_eq!(s.pack_share, 0.75);
     }
 }

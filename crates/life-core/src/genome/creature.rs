@@ -29,6 +29,9 @@ pub enum Gene {
     PackInstinct,
     Territoriality,
     Care,
+    FlockKind,
+    LayerBound,
+    FlockSpacing,
 }
 
 impl Gene {
@@ -53,10 +56,13 @@ impl Gene {
         Gene::PackInstinct,
         Gene::Territoriality,
         Gene::Care,
+        Gene::FlockKind,
+        Gene::LayerBound,
+        Gene::FlockSpacing,
     ];
 }
 
-pub const N: usize = 20;
+pub const N: usize = 23;
 
 pub const PACK_VARIANTS: [Variant; 2] = [
     Variant {
@@ -84,6 +90,36 @@ pub const SHOOTER_VARIANTS: [Variant; 2] = [
     },
     Variant {
         key: "yes", label: "стреляет", about: "Может потратить энергию на слабый дальний удар."
+    },
+];
+
+/// How a family flock's circle moves (`flock.rs`). Labels are game UI and stay Russian.
+pub const FLOCK_KIND_VARIANTS: [Variant; 4] = [
+    Variant {
+        key: "settled",
+        label: "оседлые",
+        about: "Круг стоит на месте и переезжает, когда еда в нём кончается.",
+    },
+    Variant {
+        key: "nomadic",
+        label: "кочевые",
+        about: "Круг медленно идёт по курсу вдоль слоя и разворачивается у преград.",
+    },
+    Variant {
+        key: "scout", label: "разведчики", about: "Круг идёт к еде, которую заметили участники."
+    },
+    Variant {
+        key: "migrant", label: "мигранты", about: "Круг циклично ходит вверх и вниз по глубине."
+    },
+];
+
+/// Whether the depth layer genes hold the creature (and its flock's circle).
+pub const LAYER_VARIANTS: [Variant; 2] = [
+    Variant {
+        key: "bound", label: "держится слоя", about: "Без еды возвращается в свой слой."
+    },
+    Variant {
+        key: "free", label: "свободно", about: "Не привязан к слою: бродит по всей глубине."
     },
 ];
 
@@ -134,7 +170,7 @@ pub const GENES: [GeneSpec; N] = [
         label: "доля_потомку",
         about: "Сколько энергии отдаёт потомку, %.",
         kind: GeneKind::Percent,
-        base: 30.0,
+        base: 40.0,
         mutation: SCALE,
     },
     GeneSpec {
@@ -251,10 +287,34 @@ pub const GENES: [GeneSpec; N] = [
     },
     GeneSpec {
         key: "care",
-        label: "забота_о_детях",
-        about: "Готовность защищать и кормить собственных детёнышей, %.",
+        label: "защита_детей",
+        about: "Готовность защищать собственных невзрослых детей, %.",
         kind: GeneKind::Percent,
         base: 50.0,
+        mutation: SCALE,
+    },
+    GeneSpec {
+        key: "flock_kind",
+        label: "тип_стаи",
+        about: "Как перемещается круг семейной стаи.",
+        kind: GeneKind::Choice(&FLOCK_KIND_VARIANTS),
+        base: 0.0,
+        mutation: Mutation::Switch { chance: SHOOTER_SWITCH_CHANCE },
+    },
+    GeneSpec {
+        key: "layer_bound",
+        label: "слой",
+        about: "Держится ли своего слоя глубины или бродит по всей глубине.",
+        kind: GeneKind::Choice(&LAYER_VARIANTS),
+        base: 0.0,
+        mutation: Mutation::Switch { chance: SHOOTER_SWITCH_CHANCE },
+    },
+    GeneSpec {
+        key: "flock_spacing",
+        label: "простор_стаи",
+        about: "Радиус круга стаи на корень из числа участников (50–500).",
+        kind: GeneKind::Absolute,
+        base: 200.0,
         mutation: SCALE,
     },
 ];

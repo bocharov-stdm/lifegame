@@ -1,18 +1,18 @@
-# Правила работы с репозиторием
+# Working in this repository
 
-Tiny Life — эволюционная симуляция на Rust с нативным окном wgpu/egui.
-Python-версия сохранена в теге `python-final`; подробные инварианты — в `CLAUDE.md`.
+Tiny Life is an evolutionary simulation in Rust with a native wgpu/egui window.
+The Python version is kept at the `python-final` tag; detailed invariants are in `CLAUDE.md`.
 
-## Структура
+## Structure
 
-- `crates/life-core`: существа, геном, жизненный цикл, бои, стаи, растения и пространственные запросы. Без графики, потоков и ввода-вывода.
-- `crates/life-sim`: ограниченные прогоны, снимки статистики и хроника.
-- `crates/life-report`: CLI, JSON-отчёты и сверка баланса с эталоном.
-- `crates/life-app`: окно, рендеринг, настройки и поток симуляции.
-- `reference/fingerprint.json`: эталон текущей модели поведения.
-- `Relict/`: замороженный архив; ничего в нём не менять.
+- `crates/life-core`: creatures, genome, life cycle, combat, flocks, plants and spatial queries. No graphics, threads or I/O.
+- `crates/life-sim`: bounded runs, statistics snapshots and the chronicle.
+- `crates/life-report`: CLI, JSON reports and balance comparison against the reference.
+- `crates/life-app`: window, rendering, settings and the simulation thread.
+- `reference/fingerprint.json`: reference of the current behaviour model.
+- `Relict/`: frozen archive; never change anything in it.
 
-## Команды
+## Commands
 
 ```text
 cargo test --workspace
@@ -23,44 +23,54 @@ cargo run -p life-report --release -- --compare reference/fingerprint.json --max
 cargo run -p life-app --release
 ```
 
-`play.bat` и `play.sh` собирают и запускают игру. Не открывать GUI для автоматических проверок:
-использовать `ui_tests` и `TINYLIFE_SHOTS`, проверять изображения при 960×600 и 1600×900.
-Тесты настроек записывают файлы только во временные каталоги.
+`play.bat` and `play.sh` build and run the game. Don't open the GUI for automated checks:
+use `ui_tests` and `TINYLIFE_SHOTS`, check images at 960×600 and 1600×900.
+Settings tests write files only to temporary directories.
 
-## Стиль и инварианты
+## Style and invariants
 
-Комментарии, документация, сообщения и интерфейс — по-русски. Rustfmt, отступ четыре пробела,
-`snake_case` для функций, `PascalCase` для типов. Гены читать через `Gene`, новые строки
-добавлять только в конец таблицы. Жизненное состояние не смешивать с геномом.
+Language: code, comments, docs, CLI/report output, test names and commit messages are in
+English. Only the game UI stays Russian (window texts, settings labels, gene labels, chronicle
+texts). Translate existing Russian comments and test names gradually, only where you edit.
+Rustfmt, four-space indent, `snake_case` functions, `PascalCase` types. Read genes through
+`Gene`, append new rows only at the end of the table. Don't mix life state into the genome.
 
-Чувства читают снимок соседей; стратегии возвращают намерения. Боевые удары применяются
-одновременно. Мёртвые не питаются и не размножаются; дети не действуют в тик рождения.
-Счётчики всех причин смерти должны сходиться с численностью. Окно не ждёт движок.
+Senses read the neighbour snapshot; strategies return intents. Combat strikes apply
+simultaneously. The dead don't eat or reproduce; children don't act on their birth tick.
+Death counters for every cause must add up with the population. The window never waits for
+the engine.
 
-## Проверки изменений
+## Checking changes
 
-Добавлять регрессии изменённого поведения с фиксированными seed и конечным числом тиков.
-Не ослаблять проверки ради прохождения: изменение golden требует объяснения изменения
-механики и проверки баланса. Обновлять эталон командой `--save-reference`.
+Add regressions for changed behaviour with fixed seeds and a finite tick count.
+Don't weaken checks to make them pass: changing golden requires explaining the mechanic change
+and checking the balance. Update the reference with `--save-reference`.
 
-Для изменения модели проверять seed 1–8 по 20 000 тиков с `cannibalism=0` и `=1`,
-явно проверять завершение без остановки по лимиту. Порог приёмки — минимум семь
-выживших миров в каждом режиме. Нагрузочный тест 4000/4000 должен укладываться в 20 мс/тик.
-При изменении структуры JSON или модели версионировать формат и проверять несовместимые эталоны.
+For a model change, run seeds 1–8 for 20 000 ticks with `cannibalism=0` and `=1`, and check
+explicitly that runs finish without stopping on a limit. Acceptance: at least seven surviving
+worlds in each mode. The 4000/4000 load test must stay under 20 ms/tick.
+When the JSON structure or the model changes, version the format and check incompatible references.
 
-Коммиты — короткие русские повелительные заголовки, только относящиеся к задаче файлы.
-В описании изменений указывать поведение, команды проверки и снимки для UI.
-Личные настройки не коммитить. Коммит и push выполнять только по поручению пользователя.
+Commits: short imperative English subjects, only files relevant to the task.
+Describe behaviour, verification commands and UI screenshots in the change description.
+Don't commit personal settings. Commit and push only when the user asks.
 
-## Особенности текущей модели
+## Current model specifics
 
-Графики и сводки ограничены последними 10 000 тиками. Состояние мирового правила
-боёв и наследуемая хищная адаптация показаны отдельно. Рендер мира можно
-выключить; это не меняет ход симуляции, статистику и выбранную карточку.
+Graphs and summaries are limited to the last 10 000 ticks. The world combat rule and the
+inherited predatory adaptation are shown separately. World rendering can be turned off; this
+doesn't change the simulation, statistics or the selected card.
 
-Стайность, территориальность, стратегия и способность стрелять однородны внутри
-семейной стаи. Одиночки живут с отдельными метками. После отделения две группы
-600 тиков не атакуют друг друга; близкая родня защищена бессрочно. Родитель
-может защищать и кормить невзрослого ребёнка за счёт собственной энергии.
-Территории бывают без защиты, умеренными и жёсткими. Ближний удар требует
-соприкосновения тел; трупы доступны всем после следующего тика.
+Flocking, territoriality, strategy, shooting, flock kind and the layer switch are uniform within
+a family flock. A flock of two or more is a circle (radius `flock_spacing · √n`, 80–600) that
+moves by its kind (settled, nomadic, scouts, vertical migrants); members feed inside it unless
+below 40% of their store (then they forage until 70%). A young family (fewer than 4) roams: its
+circle follows the members and is at least as wide as they see. Circles without territoriality
+overlap freely, moderate ones push softly and are respected only in sight of a member, hard
+ones never overlap anything; no strict overlap may ever remain. With combat on, a territorial
+flock squeezed with no room nearby fights every flock touching its circle; a flock that lost
+half of its adults moves away. Loners live with separate labels. After a split, two groups don't
+attack each other for 600 ticks; close kin are protected indefinitely. A parent may defend a
+non-adult child; energy is passed to it at birth. A melee strike requires bodies to touch;
+corpses are available to everyone from the next tick. Behaviour genes are free: restrain them by
+behaviour and effect limits, never by upkeep.

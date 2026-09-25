@@ -33,6 +33,7 @@ impl Activity {
 pub struct Context {
     pub center: Option<(f64, f64)>,
     pub separation: (f64, f64),
+    pub contact_separation: (f64, f64),
     pub food: Option<Food>,
     pub alarm: Option<Alarm>,
 }
@@ -59,6 +60,14 @@ pub struct Counters {
     pub interventions: u64,
     pub splits: u64,
     pub departures: u64,
+    /// Members that stayed outside their circle too long and left.
+    pub strays: u64,
+    /// Flocks that started a move to a new place: out of food, or no room.
+    pub relocations: u64,
+    /// Battles of flocks for room that started.
+    pub battles: u64,
+    /// Flocks that lost half of their fighters in a battle and moved away.
+    pub battle_retreats: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -100,7 +109,10 @@ pub struct Memory {
     pub tick: u64,
     pub activity: Activity,
     pub context: Context,
-    pub last_group: Option<(f64, f64)>,
+    /// Since when the creature is outside its flock's circle (None: inside, or no circle).
+    pub outside_since: Option<u64>,
+    /// A hungry flock member forages outside its circle until it is fed again.
+    pub foraging: bool,
     pub rest_until: u64,
     pub rest_count: u64,
     pub course: Option<(f64, f64)>,
@@ -167,6 +179,11 @@ pub fn prepare(creatures: &mut [Creature], grid: &Grid, tick: u64) {
                     };
                     c.separation.0 += ux * (1.0 - d / wanted.max(0.001));
                     c.separation.1 += uy * (1.0 - d / wanted.max(0.001));
+                    let contact = me.pheno.half + v.pheno.half;
+                    if d < contact {
+                        c.contact_separation.0 += ux * (1.0 - d / contact.max(0.001));
+                        c.contact_separation.1 += uy * (1.0 - d / contact.max(0.001));
+                    }
                 }
             }
             if !near.is_empty() {
@@ -183,9 +200,6 @@ pub fn prepare(creatures: &mut [Creature], grid: &Grid, tick: u64) {
             .or(v.mind.social.food)
             .filter(|f| f.fresh(tick) && Some(*f) != v.mind.social.rejected_food);
         v.mind.social.alarm = c.alarm.or(v.mind.social.alarm).filter(|a| tick.saturating_sub(a.tick) < 60);
-        if c.center.is_some() {
-            v.mind.social.last_group = c.center;
-        }
     }
 }
 
@@ -200,15 +214,16 @@ pub fn follows_reports(me: &Me, mind: &Mind) -> bool {
     ((mix(me.kinship.id ^ (mind.social.tick / 180)) % 10000) as f64) < me.pheno.sociability * 10000.0
 }
 
-/// Время на сбор со своими перед новым личным поиском, без платы «из воздуха».
-pub fn group_duty(me: &Me, mind: &Mind) -> bool {
-    me.flock_goal.is_some()
-        && me.energy > me.pheno.max_energy * 0.25
-        && (mind.social.tick.wrapping_add(mix(me.kinship.id)) % 180) < (me.pheno.sociability * 180.0) as u64
-}
-
-pub fn adjust(me: &Me, mind: &mut Mind, mut intent: Intent, feeding: bool, fleeing: bool) -> Intent {
-    let gathering_duty = !feeding && group_duty(me, mind);
+/// Social corrections of the chosen intent: flight together, aid, rest, gathering, separation
+/// and a smooth turn. `returning`: the creature walks back into its flock's circle.
+pub fn adjust(
+    me: &Me,
+    mind: &mut Mind,
+    mut intent: Intent,
+    feeding: bool,
+    fleeing: bool,
+    returning: bool,
+) -> Intent {
     let m = &mut mind.social;
     m.shared_flee = false;
     let was_alarm = m.activity == Activity::Alarm;
@@ -262,13 +277,13 @@ pub fn adjust(me: &Me, mind: &mut Mind, mut intent: Intent, feeding: bool, fleei
     if was_alarm {
         m.heading = None;
     }
-    let near_group = (me.flock_goal.is_none() || m.context.center.is_some())
-        && me.y >= me.pheno.body_lo
-        && me.y <= me.pheno.body_hi;
-    if full < 0.85 || !near_group {
+    let in_layer = me.y >= me.pheno.body_lo && me.y <= me.pheno.body_hi;
+    // Home is the flock's circle for a member, the layer for anyone else.
+    let at_home = me.circle.map_or(in_layer, |c| c.holds(me.x, me.y, 0.0));
+    if full < 0.85 || !at_home {
         m.rest_until = 0;
     }
-    if m.rest_until <= m.tick && m.tick >= m.rest_ready && full > 0.95 && near_group {
+    if m.rest_until <= m.tick && m.tick >= m.rest_ready && full > 0.95 && at_home {
         m.rest_count += 1;
         m.rest_until = m.tick + 60 + mix(me.kinship.id ^ mix(m.rest_count)) % 61;
         m.rest_ready = m.rest_until + 180;
@@ -279,38 +294,18 @@ pub fn adjust(me: &Me, mind: &mut Mind, mut intent: Intent, feeding: bool, fleei
         return Intent { tx: me.x, ty: me.y, slow: true, attack: None };
     }
     m.activity = if feeding { Activity::Feeding } else { Activity::Travelling };
-    if gathering_duty {
-        m.activity = Activity::Gathering;
-    }
     if !feeding && m.gathering {
         m.activity = Activity::Gathering;
         if m.context.center.is_some() {
             m.gathering = false;
         }
     }
-    let s = me.pheno.sociability;
-    if !feeding
-        && s > 0.0
-        && me.flock_goal.is_some()
-        && m.context.center.is_none()
-        && let Some((x, y)) = m.last_group
-    {
-        if (x - me.x).hypot(y - me.y) > me.pheno.speed {
-            intent.tx = x;
-            intent.ty = y;
-            m.activity = Activity::Gathering;
-        } else {
-            m.last_group = None;
-        }
+    if returning {
+        m.activity = Activity::Gathering;
     }
+    // The circle keeps a flock together; there is no extra pull to the neighbours' centre.
     let mut dir = unit(intent.tx - me.x, intent.ty - me.y);
     if !feeding {
-        if let Some((x, y)) = m.context.center {
-            let toward = unit(x - me.x, y - me.y);
-            let weight = 12.0 * s * ((x - me.x).hypot(y - me.y) / me.pheno.vision.max(0.01)).min(1.0);
-            dir.0 += toward.0 * weight;
-            dir.1 += toward.1 * weight;
-        }
         if m.course_until > m.tick
             && m.course_target == Some((intent.tx, intent.ty))
             && let Some(course) = m.course
@@ -325,7 +320,7 @@ pub fn adjust(me: &Me, mind: &mut Mind, mut intent: Intent, feeding: bool, fleei
     } else {
         m.course = None;
     }
-    let sep = m.context.separation;
+    let sep = if feeding { m.context.contact_separation } else { m.context.separation };
     if sep != (0.0, 0.0) || !feeding {
         let dir = unit(dir.0 + sep.0, dir.1 + sep.1);
         let distance = (intent.tx - me.x).hypot(intent.ty - me.y).min(me.pheno.speed);
@@ -338,7 +333,7 @@ pub fn adjust(me: &Me, mind: &mut Mind, mut intent: Intent, feeding: bool, fleei
     if let Some((hx, hy)) = m.heading
         && distance > 0.0
         && !feeding
-        && (feeding || me.flock_goal.is_some() || (me.y >= me.pheno.body_lo && me.y <= me.pheno.body_hi))
+        && (me.circle.is_some() || in_layer)
     {
         let old = hy.atan2(hx);
         let delta = (dy.atan2(dx) - old + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU)
@@ -346,7 +341,7 @@ pub fn adjust(me: &Me, mind: &mut Mind, mut intent: Intent, feeding: bool, fleei
         let angle = old + delta.clamp(-1.2, 1.2);
         intent.tx = me.x + angle.cos() * distance.min(me.pheno.speed);
         intent.ty = me.y + angle.sin() * distance.min(me.pheno.speed);
-        if !feeding && me.flock_goal.is_none() {
+        if me.circle.is_none() {
             intent.ty = intent.ty.clamp(me.pheno.body_lo, me.pheno.body_hi);
         }
     }

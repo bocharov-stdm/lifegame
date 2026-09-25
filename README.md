@@ -3,12 +3,14 @@
 **Текущая модель поведения:** детёныши растут на пище, взрослые стареют; существа
 защищаются, охотятся и наследуют стаи. Подробные правила и результаты проверки —
 [BEHAVIOR.md](BEHAVIOR.md). Размер в геноме — взрослый предел, на экране — фактическое
-тело. Близкая родня и участники одной стаи не атакуют друг друга. JSON: `life-report/8`.
-Стаи обмениваются локальными сведениями, собираются, отдыхают, прикрывают своих
-и по-разному защищают территорию: от спокойных до жёстких. Чужаки обходят опасные области; стрелки могут
-отогнать крупного противника. Растения и трупы поедаются постепенно.
-Кнопка «Стаи» показывает разброс группы и границу территории; клик открывает карточку.
-Родители могут защищать и кормить невзрослых детей; после отделения семьи бывшие
+тело. Близкая родня и участники одной стаи не атакуют друг друга. JSON: `life-report/9`.
+A flock is a circle that moves as one object — settled, nomadic, scouts or vertical migrants —
+and its members feed inside it; the circle is also its territory. Circles without territoriality
+overlap freely, moderate ones push each other softly, hard ones never overlap. When there is no
+room left, territorial flocks fight for it, all against all, and the beaten move away. Shooters
+can drive off a large enemy. Plants and corpses are eaten in portions. The «Стаи» button shows
+the circles (the stroke tells the territoriality, red is a battle); a click opens the flock card.
+Родители защищают невзрослых детей и передают им энергию при рождении; после отделения семьи бывшие
 участники 600 тиков не враждуют. Графики показывают последние 10 000 тиков.
 
 

@@ -392,9 +392,7 @@ impl Sim {
                 self.selected_flock = if self.selected.is_none() && self.motion.flock_colors {
                     frame::flock_areas(&self.world)
                         .into_iter()
-                        .filter(|s| {
-                            (s.x - x).hypot(s.y - y) <= s.radius.max(s.territory_radius).max(radius * 1.2)
-                        })
+                        .filter(|s| (s.x - x).hypot(s.y - y) <= s.radius.max(radius * 1.2))
                         .min_by(|a, b| {
                             (a.x - x)
                                 .hypot(a.y - y)
@@ -719,8 +717,7 @@ impl Sim {
         if let Some(view) = self.view.filter(|_| self.motion.flock_colors) {
             let (x0, y0, x1, y1) = view.padded();
             flock_areas.retain(|s| {
-                let radius = s.radius.max(s.territory_radius);
-                s.x + radius >= x0 && s.x - radius <= x1 && s.y + radius >= y0 && s.y - radius <= y1
+                s.x + s.radius >= x0 && s.x - s.radius <= x1 && s.y + s.radius >= y0 && s.y - s.radius <= y1
             });
         } else {
             flock_areas.clear();

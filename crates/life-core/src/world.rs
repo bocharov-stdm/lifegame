@@ -17,7 +17,7 @@ use crate::flora::Flora;
 use crate::genome::{CreatureGenome, creature, variant_for};
 use crate::grid::Grid;
 use crate::plant::Plant;
-use crate::rng::Rng;
+use crate::rng::{Rng, mix};
 use crate::rules::Rules;
 use crate::senses::{GridSenses, Herd, bite_plant};
 use crate::space::{Shape, Space};
@@ -117,6 +117,7 @@ pub struct World {
     pub corpses: Vec<crate::corpse::Corpse>,
     pub shots: Vec<crate::Shot>,
     pub territory: crate::territory::State,
+    pub battles: crate::battle::Battles,
     pub grace: crate::kin_grace::Grace,
     pub next_flock: u64,
     pub split_watches: Vec<crate::flock::SplitWatch>,
@@ -155,6 +156,7 @@ impl World {
             corpses: Vec::new(),
             shots: Vec::new(),
             territory: Default::default(),
+            battles: Default::default(),
             grace: Default::default(),
             next_flock: 1,
             split_watches: Vec::new(),
@@ -177,6 +179,10 @@ impl World {
             bitten_plants: Vec::new(),
         };
         let variants = creature_strategy::VARIANTS.len();
+        let kinds = creature::FLOCK_KIND_VARIANTS.len();
+        // Flock kinds are dealt in turn among the flocking founders: any first part of them
+        // has every kind in equal shares.
+        let mut flocking = 0;
         for i in 0..n_start {
             let k = variant_for(i, n_start, &cfg.strategies, variants);
             // Независимые от потока мира жребии не меняют места рождения и растения.
@@ -191,11 +197,22 @@ impl World {
             } else {
                 2.0
             };
+            let kind = if pack {
+                flocking += 1;
+                (flocking - 1) % kinds
+            } else {
+                0
+            };
+            // A quarter of the founders is not held by its layer: by a hash, not a draw, and
+            // independent of the kind.
+            let free = mix(cfg.seed ^ mix(0x1A7E_0000_0000_0000 ^ i as u64)).is_multiple_of(4);
             let genome = CreatureGenome::BASE
                 .with(creature::Gene::Strategy, k as f64)
                 .with(creature::Gene::PackInstinct, f64::from(pack as u8))
                 .with(creature::Gene::Territoriality, mode)
-                .with(creature::Gene::Shooter, f64::from(shooter as u8));
+                .with(creature::Gene::Shooter, f64::from(shooter as u8))
+                .with(creature::Gene::FlockKind, kind as f64)
+                .with(creature::Gene::LayerBound, f64::from(free as u8));
             let v = Creature::new(&w.space, &w.rules, genome, None, None, None, rng.fork());
             w.add_creature(v);
         }
@@ -262,26 +279,36 @@ impl World {
         } else {
             self.corpses.clear();
         }
-        crate::care::feed_children(&mut self.creatures, &self.rules);
-        crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.flock_seed, true);
-        crate::flock::food_goals(&mut self.flocks, &mut self.creatures, self.tick);
+        crate::flock::food_goals(&mut self.flocks, &self.creatures, self.tick);
+        let combat = self.rules.cannibals();
+        self.social_counts.relocations += crate::flock::update_full(
+            &mut self.flocks,
+            &mut self.creatures,
+            &self.space,
+            self.flock_seed,
+            true,
+            combat,
+        );
+        if combat {
+            let outcome =
+                self.battles.update(&mut self.flocks, &self.creatures, &self.space, self.tick, &self.grace);
+            self.social_counts.battles += outcome.started;
+            self.social_counts.battle_retreats += outcome.retreats;
+        } else {
+            self.battles.clear(&mut self.flocks);
+        }
         self.prey_grid.rebuild(&self.space, self.creatures.iter().map(|v| (v.x, v.y)));
         crate::social::prepare(&mut self.creatures, &self.prey_grid, self.tick);
-        let territorial_targets = if self.rules.cannibals() {
-            self.territory.prepare_with_grace(
-                &mut self.flocks,
-                &mut self.creatures,
-                &self.space,
-                self.tick,
-                &self.grace,
-            )
-        } else {
-            self.territory.clear();
-            for f in self.flocks.values_mut() {
-                f.warned = 0;
-            }
-            vec![None; self.creatures.len()]
-        };
+        // Circles are walked around with or without combat; only strikes need it.
+        let territorial_targets = self.territory.prepare_full(
+            &mut self.flocks,
+            &mut self.creatures,
+            &self.space,
+            self.tick,
+            &self.grace,
+            combat,
+            &self.prey_grid,
+        );
         if self.rules.cannibals() {
             self.social_counts.interventions += crate::social::prepare_aid_with_grace(
                 &mut self.creatures,
@@ -432,11 +459,7 @@ impl World {
                 // У неизменной одиночной линии каждая метка принадлежит одному
                 // существу. Родитель и ребёнок уже защищены родством; хранить
                 // ещё 600-тиковую пару для каждого такого рождения незачем.
-                let protect = v.pheno.pack_instinct
-                    || v.pheno.pack_instinct != child.pheno.pack_instinct
-                    || v.pheno.territoriality != child.pheno.territoriality
-                    || v.pheno.strategy != child.pheno.strategy
-                    || v.pheno.shooter != child.pheno.shooter;
+                let protect = v.pheno.pack_instinct || !v.same_mode(&child);
                 offspring.push((child, v.flock, protect));
             }
         }
@@ -466,6 +489,8 @@ impl World {
                 self.tick + 1,
                 &mut transitions,
             );
+            self.social_counts.strays +=
+                crate::flock::stragglers(&mut self.creatures, &mut self.next_flock, now, &mut transitions);
         }
         self.social_counts.departures += crate::flock::departures_with_transitions(
             &mut self.creatures,
@@ -568,6 +593,37 @@ impl World {
 mod trait_tests {
     use super::*;
     use crate::genome::creature::Gene;
+
+    #[test]
+    fn founders_deal_flock_kinds_evenly_and_free_a_quarter_of_layers() {
+        let cfg = WorldConfig { seed: 17, n_creatures: Some(400), ..Default::default() };
+        let (first, again) = (World::new(&cfg), World::new(&cfg));
+        let mut kinds = [0usize; 4];
+        let mut free = 0;
+        for (a, b) in first.creatures.iter().zip(&again.creatures) {
+            assert_eq!(a.genome, b.genome);
+            if a.pheno.pack_instinct {
+                kinds[a.pheno.flock_kind as usize] += 1;
+            }
+            free += !a.pheno.layer_bound as usize;
+        }
+        let (lo, hi) = (kinds.iter().min().unwrap(), kinds.iter().max().unwrap());
+        assert!(hi - lo <= 1, "kinds are dealt evenly: {kinds:?}");
+        assert!((70..=130).contains(&free), "a quarter of the founders is free of its layer: {free}");
+    }
+
+    #[test]
+    fn a_child_of_another_flock_kind_or_layer_switch_is_of_another_mode() {
+        let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
+        let base = CreatureGenome::BASE.with(Gene::PackInstinct, 1.0);
+        for genome in [base, base.with(Gene::FlockKind, 2.0), base.with(Gene::LayerBound, 1.0)] {
+            w.spawn(genome, 1000.0, 1000.0, None);
+        }
+        let v = &w.creatures;
+        assert!(v[0].same_mode(&v[0].clone()));
+        assert!(!v[0].same_mode(&v[1]), "another flock kind");
+        assert!(!v[0].same_mode(&v[2]), "another layer switch");
+    }
 
     #[test]
     fn основатели_получают_воспроизводимые_режимы_без_смены_мест_рождения() {

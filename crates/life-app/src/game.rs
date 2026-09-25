@@ -410,6 +410,18 @@ impl LifeApp {
             ui.colored_label(MUTED, "Последние 10 000 тиков");
             ui.label(RichText::new("Численность").strong().color(ACCENT));
             charts::populations(ui, &self.history, 112.0);
+            if let Some(s) = self.history.snapshots.points().last() {
+                ui.colored_label(
+                    MUTED,
+                    format!(
+                        "Стайный ген: {} ({:.0}%) · в стаях: {} · стай: {}",
+                        spaced(s.pack_carriers as u64),
+                        s.pack_share * 100.0,
+                        spaced(s.pack_members as u64),
+                        s.flocks
+                    ),
+                );
+            }
             ui.add_space(4.0);
             ui.label(RichText::new("Геном существ").strong());
             let snaps = self.history.snapshots.points();
@@ -458,7 +470,9 @@ impl LifeApp {
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             for e in self.log.iter().rev() {
                 let color = match e.kind {
-                    Some(EventKind::CreaturesCrash | EventKind::CreaturesExtinct) => DANGER,
+                    Some(
+                        EventKind::CreaturesCrash | EventKind::CreaturesExtinct | EventKind::FlockBattle,
+                    ) => DANGER,
                     Some(EventKind::CreaturesRise) => GOOD,
                     Some(EventKind::GeneShift | EventKind::StrategyShift) => rgb(CREATURE_COLOR),
                     Some(_) => TEXT,
@@ -491,11 +505,24 @@ impl LifeApp {
                 if s.pack_instinct { "есть" } else { "нет" },
                 s.territoriality.label()
             ));
+            ui.label(format!(
+                "Тип: {} · слой: {}",
+                s.kind.label(),
+                life_core::genome::creature::LAYER_VARIANTS[usize::from(!s.layer_bound)].label
+            ));
             ui.label(format!("Сейчас: {}", s.activity.label()));
             ui.label(format!("Общительность: {:.0}%", s.sociability * 100.0));
             ui.label(format!("Сытость: {:.0}%", s.fullness * 100.0));
-            ui.label(format!("Разброс вокруг центра: {:.0}", s.radius));
-            ui.label(format!("Территория: радиус {:.0}", s.territory_radius));
+            ui.label(if s.compress < 0.99 {
+                format!("Круг: радиус {:.0}, сжат до {:.0}%", s.radius, s.compress * 100.0)
+            } else {
+                format!("Круг: радиус {:.0}", s.radius)
+            });
+            ui.label(format!("Простор: {:.0} · разброс: {:.0}", s.spacing, s.spread));
+            ui.label(format!("В круге: {} из {}", s.inside, s.members));
+            if s.battle.is_some() {
+                ui.colored_label(DANGER, "Бьётся за место");
+            }
             ui.label(if s.warned > 0 {
                 format!("Предупреждённых вторженцев: {}", s.warned)
             } else {

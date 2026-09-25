@@ -8,7 +8,7 @@
 
 use super::Strategy;
 use crate::config::{ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, SLOW_PACE};
-use crate::flock::Territoriality;
+use crate::flock::{FlockKind, Territoriality};
 use crate::genome::CreatureGenome;
 use crate::genome::creature::Gene;
 use crate::rules::Rules;
@@ -22,6 +22,12 @@ pub struct Phenotype {
     pub sociability: f64,
     pub pack_instinct: bool,
     pub territoriality: Territoriality,
+    /// How the family flock's circle moves; part of the flock mode.
+    pub flock_kind: FlockKind,
+    /// False: the layer genes do not hold the creature, its band is the whole depth.
+    pub layer_bound: bool,
+    /// Circle radius per square root of the member count, clamped to 50-500.
+    pub flock_spacing: f64,
     pub care: f64,
     pub life_pace: f64,
     pub retreat: f64,
@@ -85,8 +91,13 @@ impl Phenotype {
         if min_pct > max_pct {
             std::mem::swap(&mut min_pct, &mut max_pct);
         }
-        let layer_lo = min_pct / 100.0 * space.height;
-        let layer_hi = max_pct / 100.0 * space.height;
+        let layer_bound = genome[Gene::LayerBound] < 0.5;
+        // A free creature has no layer: its home band is the whole depth.
+        let (layer_lo, layer_hi) = if layer_bound {
+            (min_pct / 100.0 * space.height, max_pct / 100.0 * space.height)
+        } else {
+            (0.0, space.height)
+        };
 
         // Запас на тело — не больше половины мира. Размер — ген, и при дешёвом
         // размере (лаборатория) тело бывает больше мира: с полным запасом
@@ -114,6 +125,9 @@ impl Phenotype {
             sociability: genome[Gene::Sociability].clamp(0.0, 100.0) / 100.0,
             pack_instinct: genome[Gene::PackInstinct] >= 0.5,
             territoriality: Territoriality::from_gene(genome[Gene::Territoriality]),
+            flock_kind: FlockKind::from_gene(genome[Gene::FlockKind]),
+            layer_bound,
+            flock_spacing: genome[Gene::FlockSpacing].clamp(50.0, 500.0),
             care: genome[Gene::Care].clamp(0.0, 100.0) / 100.0,
             life_pace,
             plant_efficiency: 1.0 - 0.8 * genome[Gene::Carnivory].clamp(0.0, 100.0) / 100.0,

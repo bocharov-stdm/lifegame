@@ -1,6 +1,6 @@
 //! Трупы: конечный запас мясной пищи, доступный со следующего тика после смерти.
 
-use crate::config::ENERGY_PER_SIZE;
+use crate::config::{ENERGY_PER_SIZE, GROWTH_ENERGY_PER_SIZE};
 use crate::creature::Creature;
 use crate::grid::Grid;
 use crate::plant::PORTIONS;
@@ -25,7 +25,7 @@ pub struct Corpse {
 
 impl Corpse {
     pub fn from_creature(v: &Creature, born: u64) -> Self {
-        let grown = (v.pheno.size - v.birth_size).max(0.0) * ENERGY_PER_SIZE;
+        let grown = (v.pheno.size - v.birth_size).max(0.0) * GROWTH_ENERGY_PER_SIZE;
         let birth = v.birth_size * ENERGY_PER_SIZE * 0.25;
         let initial = v.energy.max(0.0) + grown + birth;
         Self {
@@ -159,7 +159,7 @@ mod tests {
         let mut v = body();
         v.birth_size = 20.0;
         let c = Corpse::from_creature(&v, 12);
-        let expected = 40.0 + 20.0 * ENERGY_PER_SIZE + 20.0 * ENERGY_PER_SIZE * 0.25;
+        let expected = 40.0 + 20.0 * GROWTH_ENERGY_PER_SIZE + 20.0 * ENERGY_PER_SIZE * 0.25;
         assert_eq!(c.initial, expected);
         assert_eq!((c.owner, c.flock, c.born), (7, 3, 12));
     }
