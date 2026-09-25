@@ -59,7 +59,7 @@ impl Reference {
     pub fn load(path: &Path) -> Result<Reference, String> {
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         let data: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-        if data["model"].as_str() != Some("life-behavior/8") {
+        if data["model"].as_str() != Some("life-behavior/9") {
             return Err("Эталон другой модели поведения. Пересоздайте его через --save-reference после проверки баланса.".into());
         }
         let field = |v: &Value, k: &str| v.get(k).cloned().ok_or(format!("нет поля {k}"));
@@ -254,7 +254,7 @@ pub fn save_reference(
         .collect();
     let data = json!({
         "source": "rust",
-        "model": "life-behavior/8",
+        "model": "life-behavior/9",
         "sample_every": sample_every,
         "ticks": ticks,
         "genes": GENES.iter().map(|g| g.key).collect::<Vec<_>>(),

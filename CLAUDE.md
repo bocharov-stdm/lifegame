@@ -121,7 +121,7 @@ events (crashes and rises with their causes, extinction, plants hitting the cap,
 creatures squeezing into a thin layer); ASCII maps (top = surface, `O`/`o` creatures, `:`/`.`
 plants). The JSON has the same plus every snapshot (`life_sim::observe::Snapshot`: per-gene
 `GeneStat` — a spread for numeric genes, variant shares for choice genes —, depth and width
-histograms, cumulative counters). Format `life-report/9` (social counters, flocking-gene
+histograms, cumulative counters, remaining plant biomass and its cap). Format `life-report/10` (social counters, flocking-gene
 carriers, territories, corpses, feeding, shots, configurable action costs): top-level `genes`
 describes the gene table (key, label, kind, variants); keys are English (event `kind`), texts
 Russian. Long runs may stop on the work budget ("перегрузка") — raise it with `--max-work`.
@@ -134,9 +134,9 @@ and the event chronicle for its in-game event feed.
 `reference/fingerprint.json` is the balance fingerprint (8 seeds x 20 000 ticks, series every
 60 ticks). It started as the last Python version's (`python/fingerprint.py` at `python-final`)
 and is re-taken from Rust after each deliberate balance change. It is a world of creatures
-and plants (0 of 8 seeds extinct, 954–1963 creatures at the end without combat in the current
-base profile); metrics: creatures and plants mean, size max and final. The current reference has
-`model: "life-behavior/8"`; references without this version are rejected with an explanation.
+and plants; metrics: creatures and plants mean, size max and final. The checked-in reference is
+still `life-behavior/8`. The depth biomass limit is `life-behavior/9`, so comparison rejects the
+old reference until it is re-recorded. This change was visually checked without re-recording it.
 `--compare` reruns the same seeds in Rust and checks each metric's mean against the reference's
 per-seed range; any mismatch exits with code 1 (CI relies on it). It refuses (code 2) when the
 world differs from the one the reference was taken on (world size — compared as `Space`, not
@@ -327,7 +327,7 @@ layer genes don't adapt to it.
 `Flora` is derived from rules + space like a phenotype from a genome: built in `World::new` and
 in `set_rules` (plants already grown stay put). Exactly **two random numbers per plant** for any
 profile (x then y); uniform and exp keep the pre-profile expressions (`rng.uniform`, the
-analytic inverse CDF), so the default world is bit for bit the old one — a unit test compares
+analytic inverse CDF), so each default plant position is bit for bit the old one — a unit test compares
 10 000 plants against a copy of the old formula. Linear, log and waves sample a tabulated
 inverse CDF (4096 bins; empty bins never picked). `flora::density(rules, tx, ty)` is the
 preview the game paints; `flora::describe(rules)` is the story's line. Limits in `with`: profile
@@ -335,6 +335,13 @@ an integer index, waves an integer 1‒100 (table resolution), steepness ≤ 100
 percents 0‒100. Profiles are not balanced: at ×1 with each non-default profile at its default
 parameters (6 seeds × 20 000 ticks), 6 of 48 runs died out (depth log 2, width linear 2, width
 exp 1, width log 1); the default profile — 0 of 12.
+
+Plant capacity follows the depth profile in ten bands. Each band's capacity is its share of
+`PLANT_MAX * ENERGY_FROM_PLANT` in raw plant energy; occupied capacity is the remaining portions
+times the current `plant_energy / PORTIONS`. Eating portions frees room before a plant disappears,
+and larger `plant_energy` means fewer whole plants fit. `PLANT_MAX` remains a hard count bound for
+memory. On a live profile change, existing plants stay in place; births wait in any band already
+above its new capacity. The energy chart and report show remaining biomass against the world cap.
 
 ### Balance: exponents, not coefficients
 
@@ -354,7 +361,7 @@ fitter on average), variation dries up and they lost to predators. Without preda
 12, ~2000 creatures, mutability settles near 0.4. The user chose deliberately: mutability has
 no energy cost.
 
-The current model (`life-behavior/8`): 16/16 worlds survived in each of the four modes over
+The previous model (`life-behavior/8`): 16/16 worlds survived in each of the four modes over
 20 000 ticks (seeds 1–16). Median population: base profile — 1214.5 without fights, 816 with
 fights; calm — 848 and 632 (`life-behavior/7`, same seeds with fights: 707.5 and 586). Balance
 criterion (combat is on by default): flocks persist — at least two flocks and 10% flocking

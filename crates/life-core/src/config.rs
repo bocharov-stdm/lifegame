@@ -54,10 +54,10 @@ pub const DENSITY_PER_PIXEL: f64 = 1.0417e-7;
 /// Для базового мира это 2.50008 растения за тик.
 pub const PLANT_SPAWN_CHANCE: f64 = DENSITY_PER_PIXEL * WORLD_WIDTH * WORLD_HEIGHT;
 
-/// Потолок растений на базовый мир. Растение исчезает, только когда его съели,
-/// и без существ их становилось на 2.5 больше каждый тик. В здоровых прогонах
-/// пик — 219‒289, потолок с пятикратным запасом на обычную игру не влияет.
-/// В большом мире потолок растёт вместе с площадью.
+/// Hard count limit per base world. Plant biomass has the same numeric budget
+/// multiplied by ENERGY_FROM_PLANT, distributed among depth bands by the food
+/// profile. The count limit also bounds memory when plants are partly eaten.
+/// Both limits grow with the world's area.
 pub const PLANT_MAX: usize = 1500;
 
 // ── Существа ──────────────────────────────────────────────────────────────

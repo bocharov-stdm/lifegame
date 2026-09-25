@@ -14,7 +14,7 @@ use life_core::genome::{GeneSpec, Genome, creature};
 use life_core::{Counters, World};
 
 /// На сколько полос делится глубина в срезе (0 — поверхность).
-pub const DEPTH_BANDS: usize = 10;
+pub const DEPTH_BANDS: usize = life_core::flora::DEPTH_BANDS;
 /// На сколько полос делится ширина (0 — левый край): видно, куда стянулась
 /// жизнь, когда еда распределена по ширине неравномерно.
 pub const WIDTH_BANDS: usize = 10;
@@ -129,8 +129,11 @@ pub struct Snapshot {
     pub area: f64,
     pub plants: usize,
     pub corpses: usize,
-    /// Потолок растений этого мира.
+    /// Hard count limit for memory and work.
     pub plant_cap: usize,
+    /// Remaining raw plant energy and its world capacity, before bite yield.
+    pub plant_biomass: f64,
+    pub plant_biomass_cap: f64,
     pub creatures: usize,
     pub juveniles: usize,
     pub pack_carriers: usize,
@@ -219,6 +222,14 @@ impl Snapshot {
             plants: world.plants.len(),
             corpses: world.corpses.len(),
             plant_cap: world.space.per_area(PLANT_MAX),
+            plant_biomass: world
+                .plants
+                .iter()
+                .map(|p| {
+                    f64::from(p.portions) * world.rules.plant_energy / f64::from(life_core::plant::PORTIONS)
+                })
+                .sum(),
+            plant_biomass_cap: world.space.per_area(PLANT_MAX) as f64 * life_core::config::ENERGY_FROM_PLANT,
             creatures: herd.len(),
             juveniles: herd.iter().filter(|v| !v.adult()).count(),
             pack_carriers,
@@ -415,7 +426,7 @@ impl EventTracker {
             self.swing = Some(Swing { peak: cur.clone(), trough: cur.clone() });
             self.gene_base = cur.genes.map(|g| g.map(|s| (s, cur.tick)));
             self.narrow = cur.depth.is_some_and(|d| d.p90 - d.p10 < LAYER_NARROW);
-            self.capped = cur.plants as f64 >= cur.plant_cap as f64 * CAP_HIGH;
+            self.capped = cur.plant_biomass >= cur.plant_biomass_cap * CAP_HIGH;
             return;
         };
         let t = cur.tick;
@@ -505,19 +516,22 @@ impl EventTracker {
         }
 
         // ── растения у потолка: их растёт больше, чем успевают съесть
-        let fill = cur.plants as f64 / cur.plant_cap as f64;
+        let fill = cur.plant_biomass / cur.plant_biomass_cap;
         if !self.capped && fill >= CAP_HIGH {
             self.capped = true;
             let text = format!(
-                "растения упёрлись в потолок ({} из {}): существ {} — есть их некому или не там",
-                cur.plants, cur.plant_cap, cur.creatures
+                "растения упёрлись в предел энергии ({:.0} из {:.0}): существ {} — есть их некому или не там",
+                cur.plant_biomass, cur.plant_biomass_cap, cur.creatures
             );
             push(EventKind::PlantsAtCap, text);
         } else if self.capped && fill < CAP_LOW {
             self.capped = false;
             push(
                 EventKind::PlantsEatenAgain,
-                format!("растения снова поедаются: {} из {}", cur.plants, cur.plant_cap),
+                format!(
+                    "растения снова поедаются: {:.0} из {:.0} энергии",
+                    cur.plant_biomass, cur.plant_biomass_cap
+                ),
             );
         }
 

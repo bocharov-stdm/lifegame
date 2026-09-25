@@ -13,10 +13,10 @@
 use crate::config::*;
 use crate::creature::Creature;
 use crate::creature::strategy as creature_strategy;
-use crate::flora::Flora;
+use crate::flora::{DEPTH_BANDS, Flora};
 use crate::genome::{CreatureGenome, creature, variant_for};
 use crate::grid::Grid;
-use crate::plant::Plant;
+use crate::plant::{PORTIONS, Plant};
 use crate::rng::{Rng, mix};
 use crate::rules::Rules;
 use crate::senses::{GridSenses, Herd, bite_plant};
@@ -61,6 +61,10 @@ impl WorldConfig {
     pub fn creatures_at_start(&self) -> usize {
         self.n_creatures.unwrap_or_else(|| self.space().per_area(CREATURES_AT_START))
     }
+}
+
+fn depth_band(y: f64, height: f64) -> usize {
+    ((y / height * DEPTH_BANDS as f64) as usize).min(DEPTH_BANDS - 1)
 }
 
 /// Сводка по популяции; `avg_genom` и `avg_energy` — None, если существ нет.
@@ -135,6 +139,7 @@ pub struct World {
     /// Где растёт еда — выведено из правил и размеров мира, пересчитывается
     /// вместе с правилами (`set_rules`).
     flora: Flora,
+    plant_depth_caps: [usize; DEPTH_BANDS],
     /// Поток мира: растения и подсадка. У каждого существа поток свой.
     rng: Rng,
     /// Снимок стада на начало фазы существ: по нему видят сородичей.
@@ -152,6 +157,8 @@ impl World {
         let mut rng = Rng::keyed(cfg.seed, 0);
         let n_start = cfg.creatures_at_start();
 
+        let flora = Flora::new(&rules, &space);
+        let plant_depth_caps = flora.depth_caps(space.per_area(PLANT_MAX), space.height);
         let mut w = World {
             corpses: Vec::new(),
             shots: Vec::new(),
@@ -161,7 +168,8 @@ impl World {
             next_flock: 1,
             split_watches: Vec::new(),
             social_counts: Default::default(),
-            flora: Flora::new(&rules, &space),
+            flora,
+            plant_depth_caps,
             space,
             rules,
             tick: 0,
@@ -258,8 +266,8 @@ impl World {
         self.tick += 1;
     }
 
-    /// Растений за тик — ожидаемое число (не вероятность): целую часть спауним
-    /// всегда, дробную — с соответствующим шансом. Выше потолка не растём.
+    /// Plant births per tick are an expected count. Each depth band has a
+    /// biomass budget following the current depth profile.
     fn spawn_plants(&mut self) {
         let rate = self.rules.plant_rate * self.space.area_ratio();
         let mut count = rate as usize;
@@ -268,11 +276,22 @@ impl World {
         }
         let cap = self.space.per_area(PLANT_MAX);
         let count = count.min(cap.saturating_sub(self.plants.len()));
-        self.counters.plants_grown += count as u64;
+        let mut occupied = [0.0; DEPTH_BANDS];
+        let portion_energy = self.rules.plant_energy / f64::from(PORTIONS);
+        for p in &self.plants {
+            occupied[depth_band(p.y, self.space.height)] += f64::from(p.portions) * portion_energy;
+        }
         for _ in 0..count {
             let mut p = self.flora.plant(&mut self.rng);
+            let band = depth_band(p.y, self.space.height);
+            let budget = self.plant_depth_caps[band] as f64 * ENERGY_FROM_PLANT;
+            if budget == 0.0 || occupied[band] + self.rules.plant_energy > budget {
+                continue;
+            }
             p.born = self.tick.min(u32::MAX as u64) as u32;
             self.plants.push(p);
+            occupied[band] += self.rules.plant_energy;
+            self.counters.plants_grown += 1;
         }
     }
 
@@ -558,6 +577,7 @@ impl World {
         }
         // уже выросшие растения остаются на местах, новые — по новому профилю
         self.flora = Flora::new(&rules, &self.space);
+        self.plant_depth_caps = self.flora.depth_caps(self.space.per_area(PLANT_MAX), self.space.height);
         self.rules = rules;
     }
 

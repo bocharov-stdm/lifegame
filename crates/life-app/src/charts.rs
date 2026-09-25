@@ -142,9 +142,9 @@ pub fn energy(ui: &mut egui::Ui, snaps: &[&Snapshot], height: f32) {
             label: "сытость существ", color: rgb(CREATURE_COLOR), value: |s: &Snapshot| s.fullness
         },
         Line {
-            label: "растений от потолка",
+            label: "энергия растений от предела",
             color: rgb(PLANT_COLOR),
-            value: |s: &Snapshot| (s.plant_cap > 0).then(|| s.plants as f64 / s.plant_cap as f64),
+            value: |s: &Snapshot| (s.plant_biomass_cap > 0.0).then(|| s.plant_biomass / s.plant_biomass_cap),
         },
     ];
     lines(ui, snaps, |s| s.tick, &all, Scale::Share, height);
