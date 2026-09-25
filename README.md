@@ -8,10 +8,12 @@
 A flock is a circle that moves as one object — settled, nomadic, scouts or vertical migrants —
 and its members feed inside it; the circle is also its territory. Circles without territoriality
 overlap freely, moderate ones push each other softly, hard ones never overlap. When there is no
-room left, territorial flocks fight for it, all against all, and the beaten move away. Shooters
+room left, territorial flocks fight for it, all against all, and the beaten move away. Borders are
+walked around, and what lies behind a respected one is not aimed at. How hungry a member leaves
+its circle, and how close a passer-by may come before it flees, are inherited. Shooters
 can drive off a large enemy. Plants and corpses are eaten in portions. The «Стаи» button shows
 the circles (the stroke tells the territoriality, red is a battle); a click opens the flock card.
-Родители защищают невзрослых детей и передают им энергию при рождении; после отделения семьи бывшие
+Родители защищают детей, пока помнят их, и передают им энергию при рождении; после отделения семьи бывшие
 участники 600 тиков не враждуют. Графики показывают последние 10 000 тиков.
 
 

@@ -31,12 +31,18 @@ pub struct Phenotype {
     pub care: f64,
     pub life_pace: f64,
     pub retreat: f64,
+    /// Bravery 0..1: a stranger that could eat it but hunts nobody is feared only within
+    /// `1 − bravery` of the usual flight distance; a hunting one within all of it.
+    pub bravery: f64,
     pub plant_efficiency: f64,
     pub meat_efficiency: f64,
     pub prey_ratio: f64,
     /// How much a hunter weighs the strikes it expects from its prey and the prey's visible
     /// allies: 0 ignores them, 1 is the base, 2 is twice as careful.
     pub caution: f64,
+    /// Below this share of its store a flock member forages outside its circle, and it keeps
+    /// foraging until it has `FORAGE_FED` times as much (at most a full store).
+    pub forage: f64,
     /// Возможность и личный стиль дальнего боя.
     pub shooter: bool,
     pub fire_preference: f64,
@@ -137,6 +143,7 @@ impl Phenotype {
             meat_efficiency: 0.2 + 0.8 * genome[Gene::Carnivory].clamp(0.0, 100.0) / 100.0,
             prey_ratio: genome[Gene::PreyRatio].clamp(1.0, 5.0),
             caution: genome[Gene::Caution].clamp(0.0, 100.0) / 50.0,
+            forage: genome[Gene::Forage].clamp(0.0, 100.0) / 100.0,
             shooter: genome[Gene::Shooter] >= 0.5,
             fire_preference: genome[Gene::FirePreference].clamp(0.0, 100.0) / 100.0,
             fire_reserve: genome[Gene::FireReserve].clamp(0.0, 100.0) / 100.0,
@@ -145,6 +152,7 @@ impl Phenotype {
             melee_damage_share: rules.melee_damage_share,
             shot_energy_share: rules.shot_energy_share,
             retreat: 0.8 - 0.6 * genome[Gene::Bravery].clamp(0.0, 100.0) / 100.0,
+            bravery: genome[Gene::Bravery].clamp(0.0, 100.0) / 100.0,
             vision,
             layer_lo,
             layer_hi,

@@ -18,7 +18,6 @@
 use crate::config::GRID_CELL;
 use crate::corpse::Corpse;
 use crate::creature::{Creature, Kinship, Me};
-use crate::flock::Circle;
 use crate::grid::Grid;
 use crate::kin_grace::Grace;
 use crate::plant::Plant;
@@ -32,10 +31,16 @@ pub trait Senses {
     /// Ближайшее живое растение строго ближе √r2.
     fn nearest_plant(&self, x: f64, y: f64, r2: f64) -> Option<(f64, f64)>;
 
-    /// The nearest live plant strictly closer than √r2 whose position touches `circle`
-    /// widened by `margin`. The default filters `nearest_plant`, enough for test senses.
-    fn nearest_plant_in(&self, x: f64, y: f64, r2: f64, circle: Circle, margin: f64) -> Option<(f64, f64)> {
-        self.nearest_plant(x, y, r2).filter(|&(px, py)| circle.holds(px, py, margin))
+    /// The nearest live plant strictly closer than √r2 whose position `keep` accepts. The default
+    /// filters `nearest_plant`, enough for test senses.
+    fn nearest_plant_where(
+        &self,
+        x: f64,
+        y: f64,
+        r2: f64,
+        keep: impl Fn(f64, f64) -> bool,
+    ) -> Option<(f64, f64)> {
+        self.nearest_plant(x, y, r2).filter(|&(px, py)| keep(px, py))
     }
 
     /// Лучшая лично видимая падаль с учётом дороги и времени питания.
@@ -99,7 +104,9 @@ impl Prey {
 }
 
 /// How many flocks and prey candidates a hunter keeps in mind at once. The buffers live on the
-/// stack; what does not fit is not seen (deterministically: the grid order decides).
+/// stack. A full prey buffer keeps the nearest candidates (ties by id) and the current target, so
+/// what the hunter weighs does not depend on the grid's scan order. Flocks past the first
+/// `SEEN_FLOCKS` in sight are not summed (rarely reached: at most 28 were seen in a ×1 world).
 const SEEN_FLOCKS: usize = 32;
 const SEEN_PREY: usize = 64;
 
@@ -174,11 +181,13 @@ impl Senses for GridSenses<'_> {
         // Loners have a label each and cover nobody, so only members of real flocks are summed.
         let mut flocks = [(0_u64, 0.0_f64); SEEN_FLOCKS];
         let mut n_flocks = 0;
-        let mut candidates = [0_usize; SEEN_PREY];
+        // (kept first, distance², id, index): the order in which a full buffer keeps candidates
+        let mut candidates = [(false, 0.0_f64, 0_u64, 0_usize); SEEN_PREY];
         let mut n_candidates = 0;
         herd.grid.for_each_near(me.x, me.y, me.pheno.vision, |j, _, _| {
             let s = &herd.seen[j];
-            if (s.x - me.x).hypot(s.y - me.y) > me.pheno.vision || s.kinship.id == me.kinship.id {
+            let d2 = (s.x - me.x).powi(2) + (s.y - me.y).powi(2);
+            if d2.sqrt() > me.pheno.vision || s.kinship.id == me.kinship.id {
                 return;
             }
             if s.grouped && s.flock != me.flock {
@@ -198,15 +207,26 @@ impl Senses for GridSenses<'_> {
             {
                 return;
             }
+            let key = (Some(s.kinship.id) != previous, d2, s.kinship.id, j);
             if n_candidates < SEEN_PREY {
-                candidates[n_candidates] = j;
+                candidates[n_candidates] = key;
                 n_candidates += 1;
-            } else if Some(s.kinship.id) == previous {
-                candidates[SEEN_PREY - 1] = j;
+            } else {
+                let rank = |c: &(bool, f64, u64, usize)| (c.0, c.1, c.2);
+                let worst = (0..SEEN_PREY)
+                    .max_by(|&a, &b| {
+                        let (x, y) = (rank(&candidates[a]), rank(&candidates[b]));
+                        x.0.cmp(&y.0).then(x.1.total_cmp(&y.1)).then(x.2.cmp(&y.2))
+                    })
+                    .unwrap();
+                let (x, y) = (rank(&key), rank(&candidates[worst]));
+                if x.0.cmp(&y.0).then(x.1.total_cmp(&y.1)).then(x.2.cmp(&y.2)).is_lt() {
+                    candidates[worst] = key;
+                }
             }
         });
         let mut best: Option<Prey> = None;
-        for &j in &candidates[..n_candidates] {
+        for &(_, _, _, j) in &candidates[..n_candidates] {
             let s = &herd.seen[j];
             // Its flockmates in sight, and a parent in sight that still knows it and would cover it.
             let mut allies = if s.grouped {
@@ -240,13 +260,19 @@ impl Senses for GridSenses<'_> {
     }
 
     #[inline(always)]
-    fn nearest_plant_in(&self, x: f64, y: f64, r2: f64, circle: Circle, margin: f64) -> Option<(f64, f64)> {
-        nearest_plant_in(self.food, self.plants, x, y, r2, circle, margin)
+    fn nearest_plant_where(
+        &self,
+        x: f64,
+        y: f64,
+        r2: f64,
+        keep: impl Fn(f64, f64) -> bool,
+    ) -> Option<(f64, f64)> {
+        nearest_plant_where(self.food, self.plants, x, y, r2, keep)
     }
 
     #[inline(always)]
     fn nearest_threat(&self, me: &Me, within: f64) -> Option<Threat> {
-        nearest_threat(self.herd?, me.kinship, me.flock, me.x, me.y, me.pheno.size, within)
+        nearest_threat(self.herd?, me.kinship, me.flock, me.x, me.y, me.pheno.size, within, me.pheno.bravery)
     }
 }
 
@@ -318,6 +344,8 @@ pub(crate) struct Seen {
     flock: u64,
     /// In a flock of two or more (it has a circle): its flockmates may cover it.
     grouped: bool,
+    /// It chose a target on its last move: it is hunting (or fighting) someone.
+    hunting: bool,
 }
 
 /// Снимок всех существ на начало фазы: мелкие нужны как добыча, крупные — как угрозы.
@@ -375,6 +403,7 @@ impl Herd {
             kinship: v.kinship(),
             flock: v.flock,
             grouped: v.circle.is_some(),
+            hunting: v.mind.attack.is_some(),
         }));
         self.grid.rebuild(space, self.seen.iter().map(|s| (s.x, s.y)));
         let (mut max_eats, mut max_half) = (0.0_f64, 0.0_f64);
@@ -391,8 +420,11 @@ impl Herd {
 // ошибка в радиусе запроса не роняет ничего, а тихо меняет баланс — существа
 // перестают замечать соседей под носом.
 
-/// Ближайший по краю тела чужак (не родня `who`) из снимка, который может
-/// съесть тело размера `size` и до края тела которого меньше `within`.
+/// The nearest stranger (not family of `who`) from the snapshot, measured to the edge of its
+/// body, that could eat a body of `size` and is closer than `within` — or, when it hunts nobody
+/// (it chose no target on its last move), closer than `within × (1 − bravery)`. A brave creature
+/// lets a passer-by come near; a timid one flees from anyone who could eat it.
+#[allow(clippy::too_many_arguments)]
 #[inline(always)]
 pub(crate) fn nearest_threat(
     herd: &Herd,
@@ -402,6 +434,7 @@ pub(crate) fn nearest_threat(
     y: f64,
     size: f64,
     within: f64,
+    bravery: f64,
 ) -> Option<Threat> {
     if size > herd.max_eats {
         return None; // такое тело не может съесть никто в мире
@@ -418,7 +451,7 @@ pub(crate) fn nearest_threat(
         }
         let (dx, dy) = (sx - x, sy - y);
         let d2 = dx * dx + dy * dy;
-        let reach = within + s.half;
+        let reach = if s.hunting { within } else { within * (1.0 - bravery) } + s.half;
         if d2 >= reach * reach {
             return;
         }
@@ -447,20 +480,19 @@ pub(crate) fn nearest_plant(grid: &Grid, plants: &[Plant], x: f64, y: f64, r2: f
     best.map(|(px, py, _)| (px, py))
 }
 
-/// The nearest live plant strictly closer than √r2 inside `circle` widened by `margin`.
+/// The nearest live plant strictly closer than √r2 whose position `keep` accepts.
 #[inline(always)]
-pub(crate) fn nearest_plant_in(
+pub(crate) fn nearest_plant_where(
     grid: &Grid,
     plants: &[Plant],
     x: f64,
     y: f64,
     r2: f64,
-    circle: Circle,
-    margin: f64,
+    keep: impl Fn(f64, f64) -> bool,
 ) -> Option<(f64, f64)> {
     let mut best: Option<(f64, f64, f64)> = None;
     grid.for_each_near(x, y, r2.sqrt(), |j, px, py| {
-        if !plants[j].alive || plants[j].portions == 0 || !circle.holds(px, py, margin) {
+        if !plants[j].alive || plants[j].portions == 0 || !keep(px, py) {
             return;
         }
         let (dx, dy) = (px - x, py - y);
@@ -506,6 +538,7 @@ pub(crate) fn bite_plant(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::flock::Circle;
     use crate::rules::Rules;
     use crate::world::{World, WorldConfig};
 
@@ -685,9 +718,10 @@ mod tests {
                     assert_eq!(got, want, "сид {seed}, тик {tick}: ближайшее растение");
                     // the same query limited to a circle: the creature's own, or one beside it
                     let circle = v.circle.unwrap_or(Circle { x: v.x + 150.0, y: v.y, radius: 200.0 });
-                    let got =
-                        nearest_plant_in(&food, &plants, v.x, v.y, v.pheno.vision2, circle, v.pheno.half)
-                            .map(|(px, py)| dist2(px, py, v.x, v.y));
+                    let got = nearest_plant_where(&food, &plants, v.x, v.y, v.pheno.vision2, |x, y| {
+                        circle.holds(x, y, v.pheno.half)
+                    })
+                    .map(|(px, py)| dist2(px, py, v.x, v.y));
                     let want = min(plants
                         .iter()
                         .filter(|p| p.alive && circle.holds(p.x, p.y, v.pheno.half))
@@ -722,10 +756,21 @@ mod tests {
                 let lookers = w.creatures.iter().flat_map(|v| [(v, v.pheno.vision), (v, v.pheno.flee)]);
                 for (v, within) in lookers {
                     let size = v.pheno.size;
-                    let got = nearest_threat(&snapshot, v.kinship(), v.flock, v.x, v.y, size, within);
+                    let got = nearest_threat(
+                        &snapshot,
+                        v.kinship(),
+                        v.flock,
+                        v.x,
+                        v.y,
+                        size,
+                        within,
+                        v.pheno.bravery,
+                    );
                     let can_eat_me = |u: &&Creature| {
+                        let reach =
+                            if u.mind.attack.is_some() { within } else { within * (1.0 - v.pheno.bravery) };
                         size <= u.pheno.size / u.pheno.prey_ratio
-                            && dist2(u.x, u.y, v.x, v.y) < (within + u.pheno.half).powi(2)
+                            && dist2(u.x, u.y, v.x, v.y) < (reach + u.pheno.half).powi(2)
                     };
                     let gap = |u: &Creature| dist2(u.x, u.y, v.x, v.y).sqrt() - u.pheno.half;
                     let want = min(w
@@ -767,7 +812,7 @@ mod tests {
                     };
                     let sees = |u: &Creature| (u.x - v.x).hypot(u.y - v.y) <= v.pheno.vision && u.id != v.id;
                     let strike = |u: &Creature| u.pheno.size * u.pheno.melee_damage_share;
-                    let candidates: Vec<usize> = (0..w.creatures.len())
+                    let mut candidates: Vec<usize> = (0..w.creatures.len())
                         .filter(|&j| {
                             let u = &w.creatures[j];
                             sees(u)
@@ -782,10 +827,16 @@ mod tests {
                         .filter(|u| sees(u) && u.circle.is_some() && u.flock != v.flock)
                         .map(|u| u.flock)
                         .collect();
-                    if candidates.len() > SEEN_PREY || flocks.len() > SEEN_FLOCKS {
+                    if flocks.len() > SEEN_FLOCKS {
                         crowded += 1;
                         continue;
                     }
+                    // a full buffer keeps the nearest candidates, ties by id
+                    let d2 = |j: usize| (w.creatures[j].x - v.x).powi(2) + (w.creatures[j].y - v.y).powi(2);
+                    candidates.sort_by(|&a, &b| {
+                        d2(a).total_cmp(&d2(b)).then(w.creatures[a].id.cmp(&w.creatures[b].id))
+                    });
+                    candidates.truncate(SEEN_PREY);
                     let want = candidates
                         .iter()
                         .map(|&j| {
@@ -844,7 +895,10 @@ mod tests {
             assert!(spared > 10, "сид {seed}: родни среди угроз всего {spared}");
             assert!(hunts > 100, "seed {seed}: only {hunts} worthwhile hunts");
             assert!(guarded > 100, "seed {seed}: only {guarded} guarded candidates");
-            assert!(crowded * 20 < checked, "seed {seed}: {crowded} hunters saw more than the buffers hold");
+            assert!(
+                crowded * 20 < checked,
+                "seed {seed}: {crowded} hunters saw more flocks than the buffer holds"
+            );
             if seed == 4 {
                 let biggest = w.creatures.iter().fold(0.0_f64, |m, v| m.max(v.pheno.size));
                 assert!(
@@ -969,5 +1023,47 @@ mod tests {
         let forgotten = best_prey(50.0, 0.3, with_parent(10.0)).unwrap();
         assert!(covered.score < alone.score, "a parent in sight did not count");
         assert_eq!(forgotten.score, alone.score, "a parent that forgot its child still covers it");
+    }
+
+    /// A full candidate buffer keeps the nearest prey: a crowd in the grid rows above the hunter
+    /// (scanned first) does not hide the prey next to it.
+    #[test]
+    fn a_crowd_higher_up_does_not_hide_the_nearest_prey() {
+        let near = std::cell::Cell::new(0);
+        let best = best_prey(50.0, 0.3, |w: &mut World| {
+            // a row of small loners in the grid row above the hunter's, 300..360 away
+            let small_genome = crate::CreatureGenome::BASE.with(crate::genome::creature::Gene::Size, 20.0);
+            for i in 0..SEEN_PREY {
+                w.spawn(small_genome, 810.0 + 6.0 * i as f64, 700.0, None);
+            }
+            near.set(small(w, 1030.0, None));
+        })
+        .unwrap();
+        assert_eq!(best.id, near.get(), "the nearest prey was never looked at");
+    }
+
+    #[test]
+    fn a_brave_creature_lets_a_passer_by_come_near_but_not_a_hunter() {
+        use crate::genome::creature::Gene;
+        for (bravery, hunting, feared) in [(0.0, false, true), (50.0, false, false), (50.0, true, true)] {
+            let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
+            w.spawn(crate::CreatureGenome::BASE.with(Gene::Size, 80.0), 1000.0, 1000.0, None);
+            // 60 from the edge of the big body: inside a flight distance of 100, outside half of it
+            w.spawn(
+                crate::CreatureGenome::BASE.with(Gene::Size, 15.0).with(Gene::Bravery, bravery),
+                1100.0,
+                1000.0,
+                None,
+            );
+            if hunting {
+                w.creatures[0].mind.attack = Some(999);
+            }
+            let mut herd = Herd::new();
+            herd.rebuild(&w.space, &w.creatures);
+            let v = &w.creatures[1];
+            let got =
+                nearest_threat(&herd, v.kinship(), v.flock, v.x, v.y, v.pheno.size, 100.0, v.pheno.bravery);
+            assert_eq!(got.is_some(), feared, "bravery {bravery}, hunting {hunting}");
+        }
     }
 }

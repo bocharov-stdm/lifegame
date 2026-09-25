@@ -360,7 +360,7 @@ impl State {
 }
 
 /// Below this share of its tank a creature ignores borders: hunger outweighs the risk.
-const STARVING_SHARE: f64 = 0.25;
+pub(crate) const STARVING_SHARE: f64 = 0.25;
 
 /// Flocks with a member within the creature's sight.
 fn seen_flocks(v: &Creature, creatures: &[Creature], herd: &Grid, out: &mut Vec<u64>) {
@@ -518,6 +518,30 @@ pub fn steer(v: &mut Creature, mut intent: Intent) -> Intent {
         if let Some((ux, uy)) = v.mind.social.territory_escape {
             intent.tx = (v.x + ux * v.pheno.speed).clamp(v.pheno.x_lo, v.pheno.x_hi);
             intent.ty = (v.y + uy * v.pheno.speed).clamp(v.pheno.y_lo, v.pheno.y_hi);
+            // A wall of the world blocks the way out (a circle pressed against the edge leaves a
+            // corridor narrower than the body): slide along the wall on the side that leaves the
+            // border, and keep it as the course out of every area it is in (like `follow_exit`),
+            // instead of stepping back and forth across the margin.
+            if d > 1e-9 && (intent.tx - v.x).hypot(intent.ty - v.y) < v.pheno.speed * 0.5 {
+                let slide = |side: f64| {
+                    (
+                        (v.x - dy / d * side * v.pheno.speed).clamp(v.pheno.x_lo, v.pheno.x_hi),
+                        (v.y + dx / d * side * v.pheno.speed).clamp(v.pheno.y_lo, v.pheno.y_hi),
+                    )
+                };
+                let away = |p: (f64, f64)| (p.0 - area.x).hypot(p.1 - area.y);
+                let stored = match v.mind.social.territory_side {
+                    Some((tag, side)) if tag == area.flock => side,
+                    _ => 1,
+                };
+                let (kept, other) = (slide(f64::from(stored)), slide(-f64::from(stored)));
+                let (side, target) =
+                    if away(other) > away(kept) + 1e-9 { (-stored, other) } else { (stored, kept) };
+                if away(target) > d + 1e-9 {
+                    v.mind.social.territory_side = Some((area.flock, side));
+                    follow_exit(v, &mut intent, target);
+                }
+            }
             if (intent.tx - v.x).hypot(intent.ty - v.y) < v.pheno.speed * 0.1
                 && let Some((tx, ty)) = edge_exit(v, area, r)
             {
@@ -584,6 +608,15 @@ pub fn steer(v: &mut Creature, mut intent: Intent) -> Intent {
                 side = -side;
                 target = route(side);
             }
+            // A side that a wall squeezes into the border is closed: go around the other way.
+            let closed = |p: (f64, f64)| (p.0 - area.x).hypot(p.1 - area.y) < r;
+            if closed(target) {
+                let other = route(-side);
+                if !closed(other) {
+                    side = -side;
+                    target = other;
+                }
+            }
             v.mind.social.territory_side = Some((area.flock, side));
             intent.tx = target.0;
             intent.ty = target.1;
@@ -627,7 +660,10 @@ pub fn steer(v: &mut Creature, mut intent: Intent) -> Intent {
                     )
                 };
                 let mut target = tangent(side);
-                if (target.0 - v.x).hypot(target.1 - v.y) <= 1e-9 {
+                let closed = |p: (f64, f64)| (p.0 - area.x).hypot(p.1 - area.y) < r;
+                if (target.0 - v.x).hypot(target.1 - v.y) <= 1e-9
+                    || (closed(target) && !closed(tangent(-side)))
+                {
                     side = -side;
                     target = tangent(side);
                     v.mind.social.territory_side = Some((area.flock, side as i8));

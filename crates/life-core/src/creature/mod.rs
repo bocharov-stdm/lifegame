@@ -31,7 +31,8 @@ pub struct Kinship {
     /// Body diameter over the inherited adult size: 1 is adult.
     pub growth: f64,
     /// A parent knows its child while the child's `growth` is below this: `2 × care`, at most 1.
-    /// The base parent knows it until it is adult, a careless one only while it is tiny.
+    /// The base parent knows it until it is adult, a careless one only while it is small; below
+    /// 25% care not even at birth, since children are born at half of their adult size.
     pub knows_until: f64,
 }
 

@@ -392,7 +392,8 @@ pub fn prepare_aid_with_grace(creatures: &mut [Creature], tick: u64, grace: &Gra
             let old = v.mind.social.aid;
             let continuing = old.is_some_and(|a| a.victim == victim.id && a.enemy == enemy.id);
             let care = (v.genome[Gene::Care] / 100.0).clamp(0.0, 1.0);
-            let parent = !victim.adult() && victim.parent == v.id && care > 0.0;
+            // a parent covers its child only while it still knows it (`Kinship`, set by `care`)
+            let parent = victim.parent == v.id && v.kinship().kin(victim.kinship());
             let flockmate = direct_hit.is_some_and(|h| h.enemy == hit.enemy)
                 && v.flock == victim.flock
                 && v.pheno.sociability >= 0.5;

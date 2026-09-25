@@ -21,10 +21,28 @@ pub(super) enum Mode {
     Return,
 }
 
-/// Below this share of its store a flock member forages anywhere, and keeps foraging until it
-/// has `FED_SHARE` again: it does not dart back to its circle after every bite.
-pub(crate) const DESPERATE_SHARE: f64 = 0.4;
-const FED_SHARE: f64 = 0.7;
+/// A flock member below its inherited `forage` share of its store takes food anywhere, and keeps
+/// foraging until it has this many times as much: it does not dart back to its circle after
+/// every bite. At the base gene (40%) that is 70%, the former fixed thresholds.
+pub(crate) const FORAGE_FED: f64 = 1.75;
+
+/// Whether a point lies behind the border this creature respects now (the circle it walks
+/// around, `territory::steer`): going there is futile, so it is no target for food, a return or
+/// a wander. A starving creature ignores borders; a member inside its own circle may use all of
+/// it, as `steer` lets it be there. A moderate border is respected only in sight of a member, so
+/// what lies behind it becomes a target again once no member is seen (the border stays leaky).
+#[inline(always)]
+fn behind_border(me: &Me, mind: &Mind, x: f64, y: f64) -> bool {
+    if me.energy < me.pheno.max_energy * crate::territory::STARVING_SHARE {
+        return false;
+    }
+    let Some(a) = mind.social.territory_avoid.filter(|a| a.flock != me.flock) else { return false };
+    if me.circle.is_some_and(|c| c.holds(me.x, me.y, 0.0) && c.holds(x, y, 0.0)) {
+        return false;
+    }
+    let r = a.radius + me.pheno.half + 4.0;
+    (x - a.x).powi(2) + (y - a.y).powi(2) < r * r
+}
 
 /// The circle that limits where this creature takes food: its flock's, unless it forages.
 #[inline(always)]
@@ -48,9 +66,9 @@ pub(super) fn plan(
     step: f64,
 ) -> (Intent, Mode) {
     let fullness = me.energy / me.pheno.max_energy;
-    if me.circle.is_none() || fullness >= FED_SHARE {
+    if me.circle.is_none() || fullness >= (me.pheno.forage * FORAGE_FED).min(1.0) {
         mind.social.foraging = false;
-    } else if fullness < DESPERATE_SHARE {
+    } else if fullness < me.pheno.forage {
         mind.social.foraging = true;
     }
     let plant = senses.nearest_plant(me.x, me.y, me.pheno.vision2);
@@ -151,16 +169,20 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
 
     // A flock member feeds inside its circle; a chase it already started may lead out of it.
     let bound = feeding_circle(me, mind);
-    let inside = |px: f64, py: f64| bound.is_none_or(|c| c.holds(px, py, me.pheno.half));
+    let inside = |px: f64, py: f64| {
+        bound.is_none_or(|c| c.holds(px, py, me.pheno.half)) && !behind_border(me, mind, px, py)
+    };
     let plant = mind.social.personal_food;
     let corpse = senses.best_corpse(me).filter(|c| inside(c.x, c.y));
     // A hunt is worth what the meat adds to the tank less the expected strikes (`Prey::of`); a
     // full tank takes nothing, and a hunt that stopped paying (allies came, the tank filled)
     // is dropped.
     let prey = if me.energy < me.pheno.max_energy {
-        senses
-            .prey(me, mind.attack)
-            .filter(|p| p.score > 0.0 && (mind.attack == Some(p.id) || inside(p.x, p.y)))
+        senses.prey(me, mind.attack).filter(|p| {
+            p.score > 0.0
+                && (mind.attack == Some(p.id) || inside(p.x, p.y))
+                && !behind_border(me, mind, p.x, p.y)
+        })
     } else {
         None
     };
@@ -190,14 +212,23 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
     // reports move the circle instead (`flock::food_goals`).
     if bound.is_none()
         && crate::social::follows_reports(me, mind)
-        && let Some(f) = mind.social.food
+        && let Some(f) = mind.social.food.filter(|f| !behind_border(me, mind, f.x, f.y))
     {
         return (Intent { tx: f.x, ty: f.y, slow: false, attack: None }, Mode::Wander);
     }
     if let Some(c) = me.circle
         && !c.holds(x, y, 0.0)
     {
-        let (tx, ty) = c.toward(x, y, 0.7);
+        let (mut tx, mut ty) = c.toward(x, y, 0.7);
+        if behind_border(me, mind, tx, ty)
+            && let Some(a) = mind.social.territory_avoid
+        {
+            // the part of its own circle away from the neighbour
+            let away = c.toward(2.0 * c.x - a.x, 2.0 * c.y - a.y, 0.7);
+            if !behind_border(me, mind, away.0, away.1) {
+                (tx, ty) = away;
+            }
+        }
         mind.target = None;
         return (Intent { tx, ty, slow: false, attack: None }, Mode::Return);
     }
@@ -205,11 +236,19 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
         None => true,
         Some((tx, ty)) => {
             let (dx, dy) = (x - tx, y - ty);
-            dx * dx + dy * dy < step * step || me.circle.is_some_and(|c| !c.holds(tx, ty, 0.0))
+            dx * dx + dy * dy < step * step
+                || me.circle.is_some_and(|c| !c.holds(tx, ty, 0.0))
+                || behind_border(me, mind, tx, ty)
         }
     };
     if stale {
-        pick_random_target(me, mind, rng);
+        // a few more draws when the target falls behind a border
+        for _ in 0..4 {
+            pick_random_target(me, mind, rng);
+            if mind.target.is_none_or(|(tx, ty)| !behind_border(me, mind, tx, ty)) {
+                break;
+            }
+        }
     }
     let (tx, ty) = mind.target.unwrap();
     (Intent { tx, ty, slow: false, attack: None }, Mode::Wander)
@@ -220,16 +259,18 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
 /// plant at all: when it lies in the circle it is the answer, and no second query is needed.
 fn personal_plant(me: &Me, mind: &mut Mind, senses: &impl Senses, nearest: Option<(f64, f64)>) {
     let bound = feeding_circle(me, mind);
-    let inside = |(x, y): (f64, f64)| bound.is_none_or(|c| c.holds(x, y, me.pheno.half));
+    let inside = |(x, y): (f64, f64)| {
+        bound.is_none_or(|c| c.holds(x, y, me.pheno.half)) && !behind_border(me, mind, x, y)
+    };
     let old = mind.social.personal_food.filter(|&(x, y)| {
         (x - me.x).hypot(y - me.y) <= me.pheno.vision
             && inside((x, y))
             && senses.nearest_plant(x, y, 1e-8).is_some()
     });
-    mind.social.personal_food = old.or_else(|| match (nearest, bound) {
-        (Some(p), _) if inside(p) => Some(p),
-        (Some(_), Some(c)) => senses.nearest_plant_in(me.x, me.y, me.pheno.vision2, c, me.pheno.half),
-        _ => None,
+    mind.social.personal_food = old.or_else(|| match nearest {
+        Some(p) if inside(p) => Some(p),
+        Some(_) => senses.nearest_plant_where(me.x, me.y, me.pheno.vision2, |x, y| inside((x, y))),
+        None => None,
     });
 }
 
@@ -321,6 +362,96 @@ mod tests {
 
         fn prey(&self, _: &Me, _: Option<u64>) -> Option<Prey> {
             None
+        }
+    }
+
+    /// Two plants: a near one at (1100, 1000) and a farther one at (800, 1000).
+    struct TwoPlants;
+
+    impl Senses for TwoPlants {
+        fn nearest_plant(&self, x: f64, y: f64, r2: f64) -> Option<(f64, f64)> {
+            self.nearest_plant_where(x, y, r2, |_, _| true)
+        }
+
+        fn nearest_plant_where(
+            &self,
+            x: f64,
+            y: f64,
+            r2: f64,
+            keep: impl Fn(f64, f64) -> bool,
+        ) -> Option<(f64, f64)> {
+            [(1100.0, 1000.0), (800.0, 1000.0)]
+                .into_iter()
+                .filter(|&(px, py)| keep(px, py) && (px - x).powi(2) + (py - y).powi(2) < r2)
+                .min_by(|a, b| ((a.0 - x).abs()).total_cmp(&(b.0 - x).abs()))
+        }
+
+        fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
+            None
+        }
+    }
+
+    #[test]
+    fn food_behind_a_respected_border_is_no_target_unless_starving() {
+        let v = Creature::new(
+            &Space::default(),
+            &Rules::default(),
+            CreatureGenome::BASE,
+            Some(1000.0),
+            Some(1000.0),
+            None,
+            Rng::new(1),
+        );
+        for (share, want) in [(0.5, 800.0), (0.2, 1100.0)] {
+            let me = Me {
+                x: v.x,
+                y: v.y,
+                energy: v.pheno.max_energy * share,
+                kinship: v.kinship(),
+                flock: v.flock,
+                circle: None,
+                pheno: &v.pheno,
+                health_share: 1.0,
+                health: v.pheno.size,
+            };
+            let mut mind = Mind::default();
+            // the near plant lies in a neighbour's area it walks around
+            mind.social.territory_avoid =
+                Some(crate::territory::Area { flock: 99, x: 1150.0, y: 1000.0, radius: 80.0 });
+            let (intent, mode) = plan(&me, &mut mind, &mut Rng::new(3), &TwoPlants, v.pheno.speed);
+            assert_eq!(mode, Mode::Food, "fullness {share}");
+            assert_eq!(intent.tx, want, "fullness {share}: which plant it goes for");
+        }
+    }
+
+    #[test]
+    fn how_hungry_a_member_leaves_its_circle_is_inherited() {
+        for (forage, leaves) in [(20.0, false), (60.0, true)] {
+            let genome = CreatureGenome::BASE.with(Gene::Forage, forage);
+            let v = Creature::new(
+                &Space::default(),
+                &Rules::default(),
+                genome,
+                Some(1000.0),
+                Some(1000.0),
+                None,
+                Rng::new(1),
+            );
+            let me = Me {
+                x: v.x,
+                y: v.y,
+                energy: v.pheno.max_energy * 0.3,
+                kinship: v.kinship(),
+                flock: v.flock,
+                circle: Some(Circle { x: 1000.0, y: 1000.0, radius: 150.0 }),
+                pheno: &v.pheno,
+                health_share: 1.0,
+                health: v.pheno.size,
+            };
+            let mut mind = Mind::default();
+            let (_, mode) = plan(&me, &mut mind, &mut Rng::new(3), &PlantOutside, v.pheno.speed);
+            assert_eq!(mind.social.foraging, leaves, "forage {forage}% at 30% of the store");
+            assert_eq!(mode == Mode::Food, leaves, "forage {forage}%: the plant outside");
         }
     }
 

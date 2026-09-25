@@ -64,15 +64,21 @@ doesn't change the simulation, statistics or the selected card.
 Flocking, territoriality, strategy, shooting, flock kind and the layer switch are uniform within
 a family flock. A flock of two or more is a circle (radius `flock_spacing · √n`, 80–600) that
 moves by its kind (settled, nomadic, scouts, vertical migrants); members feed inside it unless
-below 40% of their store (then they forage until 70%). A young family (fewer than 4) roams: its
+below their inherited `forage` share of their store (base 40%; then they forage until 1.75 times
+as much). A young family (fewer than 4) roams: its
 circle follows the members and is at least as wide as they see. Circles without territoriality
 overlap freely, moderate ones push softly and are respected only in sight of a member, hard
-ones never overlap anything; no strict overlap may ever remain. With combat on, a territorial
-flock squeezed with no room nearby fights every flock touching its circle; a flock that lost
-half of its adults moves away. Loners live with separate labels. After a split, two groups don't
+ones never overlap anything; no strict overlap may ever remain. Nobody targets food, a return
+or a wander point behind a border it respects, and a circle pressed against the world's edge is
+walked around on its open side. With combat on, a territorial flock squeezed with no room nearby
+fights every flock with adults touching its circle; a flock that lost more than half of its
+adults moves away (a young family too); a battle ends when no two of its flocks may strike each
+other. Loners live with separate labels. After a split, two groups don't
 attack each other for 600 ticks. Family is only a parent and its growing child while the parent
 still knows it (`care` sets until what growth); siblings and grandchildren are strangers. A
-parent may defend a non-adult child; energy is passed to it at birth. A hunter weighs the meat
+parent defends its child only while it knows it; energy is passed to it at birth. A stranger
+that could eat a creature but hunts nobody is feared only within `1 − bravery` of the flight
+distance. A hunter weighs the meat
 its tank can take in against the expected strikes of the prey and its visible allies
 (`caution`); strikes need a chosen target, a defence or a territorial assignment. Every other
 founder is flocking. A melee strike requires bodies to touch;

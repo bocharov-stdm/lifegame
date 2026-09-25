@@ -36,14 +36,19 @@ parallelised. A family flock is a circle that moves as one object (settled, noma
 vertical migrants — the inherited `flock_kind`), and its members feed inside it; a young family
 (fewer than 4) roams with its members. The circle is also the territory: circles without
 territoriality overlap freely, moderate ones push softly and are respected only in sight of a
-member, hard ones never overlap anything. With combat on, a territorial flock squeezed with no
-room nearby fights every flock touching its circle; the beaten move away (`battle.rs`). Flocks
+member, hard ones never overlap anything. Nobody aims at what lies behind a border it respects
+(food, a return or wander point), and a circle pressed against the world's edge is walked around
+on its open side. With combat on, a territorial flock squeezed with no room nearby fights every
+flock touching its circle that has adults; the beaten move away, young families included, and a
+battle ends as soon as no two of its flocks may strike each other (`battle.rs`). Flocks
 share local knowledge of food and alarm, rest and to a limited extent cover their own. Every
 other founder is flocking; territoriality (undefended, moderate or strict) is drawn for every
 founder, loners included. Adult defenders may shoot at intruders; 5% of founders already can
 shoot. After a family splits, 600 ticks of mutual protection apply; parents pass energy to a
-child at birth and cover their non-adult children. Family is only a parent and its growing
-child while the parent still knows it (the inherited `care` sets until what growth). A hunter
+child at birth and cover it while they still know it. Family is only a parent and its growing
+child while the parent still knows it (the inherited `care` sets until what growth). How hungry a
+member leaves its circle to forage (`forage`) and how near a stranger that hunts nobody may come
+before it flees (`bravery`) are inherited too. A hunter
 weighs the meat its tank can take in against the strikes it expects from the prey and the
 prey's visible allies (the inherited `caution` sets how much); a creature strikes only a chosen
 target, in defence or on a territorial assignment. Plants and corpses are eaten in portions;
@@ -129,9 +134,9 @@ and the event chronicle for its in-game event feed.
 `reference/fingerprint.json` is the balance fingerprint (8 seeds x 20 000 ticks, series every
 60 ticks). It started as the last Python version's (`python/fingerprint.py` at `python-final`)
 and is re-taken from Rust after each deliberate balance change. It is a world of creatures
-and plants (0 of 8 seeds extinct, 918–1543 creatures at the end without combat in the current
+and plants (0 of 8 seeds extinct, 954–1963 creatures at the end without combat in the current
 base profile); metrics: creatures and plants mean, size max and final. The current reference has
-`model: "life-behavior/7"`; references without this version are rejected with an explanation.
+`model: "life-behavior/8"`; references without this version are rejected with an explanation.
 `--compare` reruns the same seeds in Rust and checks each metric's mean against the reference's
 per-seed range; any mismatch exits with code 1 (CI relies on it). It refuses (code 2) when the
 world differs from the one the reference was taken on (world size — compared as `Space`, not
@@ -349,16 +354,17 @@ fitter on average), variation dries up and they lost to predators. Without preda
 12, ~2000 creatures, mutability settles near 0.4. The user chose deliberately: mutability has
 no energy cost.
 
-The current model (flock circles): 8/8 worlds survived in each of the four modes over 20 000
-ticks. Median population, seeds 1–8: base profile — 1329.5 without fights, 748.5 with fights;
-calm — 922.5 and 511 (the previous reference: 1464, 848.5, 1032, 614). Balance criterion (combat
-is on by default): flocks persist — at least two flocks and 10% flocking carriers — in ≥ 75% of
-the worlds of each profile with combat (base 13/16, calm 16/16 over seeds 1–16; 42/48 and 40/48
-over seeds 1–48); loners may vanish, a flock takeover is a legitimate outcome. Judge it on 16+
-seeds: on 8 the lottery of a few worlds decides. Open: members inside their circle with combat
-are 0.74–0.77 (median of seeds 1–8), below the 80% target. No `repro_cost` in 10–20 lowers all four medians by
-15–25%; it stays 10. Old size-race results refer to instant eating and no longer describe the
-model. See `BEHAVIOR.md`.
+The current model (`life-behavior/8`): 16/16 worlds survived in each of the four modes over
+20 000 ticks (seeds 1–16). Median population: base profile — 1214.5 without fights, 816 with
+fights; calm — 848 and 632 (`life-behavior/7`, same seeds with fights: 707.5 and 586). Balance
+criterion (combat is on by default): flocks persist — at least two flocks and 10% flocking
+carriers — in ≥ 75% of the worlds of each profile with combat (base 14/16, calm 13/16; before:
+13/16 and 16/16); loners may vanish, a flock takeover is a legitimate outcome. Judge it on 16+
+seeds: on 8 the lottery of a few worlds decides, and the share of members inside their circle
+swings by ±0.1 between two RNG realisations of one model — compare it on 16+ seeds, averaged over
+time. Members inside their circle with combat, median of the final snapshots: base 0.83, calm
+0.80. No `repro_cost` in 10–20 lowers all four medians by 15–25%; it stays 10. Old size-race
+results refer to instant eating and no longer describe the model. See `BEHAVIOR.md`.
 
 Behaviour genes are free (the user's rule): no upkeep for a gene that gives no physical stat
 boost. What restrains one is behaviour and the limits of its effect — e.g. `flock_spacing` is

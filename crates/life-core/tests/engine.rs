@@ -170,13 +170,16 @@ fn a_careless_parent_knows_only_its_tiny_children() {
     }
 }
 
-/// Мир с крупным существом размера `big` и мелким (30) на `dx` правее;
-/// `kin` задаёт им родство руками.
+/// A world with a big creature of size `big`, hunting, and a small one (30) `dx` to the right;
+/// `kin` sets their kinship by hand. The big one is on the hunt: a passer-by that hunts nobody
+/// is feared only closer (`bravery`).
 fn threat_world(cannibals: bool, big: f64, dx: f64, kin: impl Fn(&mut World)) -> World {
     let mut w = cannibal_world(cannibals, 30.0, dx);
+    let small = w.creatures[1].id;
     let v = &mut w.creatures[0];
     v.genome = genom(big);
     v.pheno = life_core::creature::Phenotype::of(&v.genome, &w.rules, &w.space);
+    v.mind.attack = Some(small);
     kin(&mut w);
     w
 }

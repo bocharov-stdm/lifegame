@@ -33,6 +33,7 @@ pub enum Gene {
     LayerBound,
     FlockSpacing,
     Caution,
+    Forage,
 }
 
 impl Gene {
@@ -61,10 +62,11 @@ impl Gene {
         Gene::LayerBound,
         Gene::FlockSpacing,
         Gene::Caution,
+        Gene::Forage,
     ];
 }
 
-pub const N: usize = 24;
+pub const N: usize = 25;
 
 pub const PACK_VARIANTS: [Variant; 2] = [
     Variant {
@@ -218,7 +220,7 @@ pub const GENES: [GeneSpec; N] = [
     GeneSpec {
         key: "bravery",
         label: "храбрость",
-        about: "До какой потери здоровья продолжает защищаться, %.",
+        about: "До какой потери здоровья защищается; чем храбрее, тем ближе подпускает чужака, который ни на кого не охотится, %.",
         kind: GeneKind::Percent,
         base: 50.0,
         mutation: SCALE,
@@ -325,6 +327,14 @@ pub const GENES: [GeneSpec; N] = [
         about: "Насколько охотник боится ответных ударов добычи и её видимых союзников, %.",
         kind: GeneKind::Percent,
         base: 50.0,
+        mutation: SCALE,
+    },
+    GeneSpec {
+        key: "forage",
+        label: "вылазки",
+        about: "Ниже этой доли запаса член стаи кормится и вне своего круга, пока не наберёт в 1,75 раза больше, %.",
+        kind: GeneKind::Percent,
+        base: 40.0,
         mutation: SCALE,
     },
 ];

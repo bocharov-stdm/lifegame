@@ -258,7 +258,7 @@ fn сторона_обхода_не_меняется_из_за_смены_лич
 }
 
 #[test]
-fn перекрытые_зоны_у_края_не_меняют_курс_выхода_при_смене_владельца() {
+fn overlapping_areas_at_the_edge_keep_one_course_out() {
     let mut w = world();
     for x in [100.0, 100.0, 250.0, 250.0, 175.0] {
         w.spawn(CreatureGenome::BASE, x, 40.0, Some(100.0));
@@ -276,31 +276,32 @@ fn перекрытые_зоны_у_края_не_меняют_курс_выхо
     let traveler = 4;
     let bottom = w.creatures[traveler].pheno.y_lo;
     assert_eq!(w.creatures[traveler].y, bottom);
+    // its way out points into the wall of the world
     w.creatures[traveler].mind.social.territory_escape = Some((0.0, -1.0));
-    let mut crossed_owner = false;
+    let mut last: Option<(f64, f64)> = None;
     for tick in 0..80 {
         territory.prepare(&mut w.flocks, &mut w.creatures, &w.space, tick);
         let v = &mut w.creatures[traveler];
-        let owner = territory.owner(v.x, v.y);
-        crossed_owner |= owner.is_some_and(|a| a.flock == right);
         let safe = [left, right].into_iter().all(|tag| {
             let c = w.flocks[&tag].circle.unwrap();
             (v.x - c.x).hypot(v.y - c.y) >= c.radius + v.pheno.half + 4.0
         });
         if safe {
-            assert!(crossed_owner, "выход должен пройти через вторую область");
             return;
         }
         let next = steer(v, Intent { tx: 175.0, ty: 40.0, slow: false, attack: None });
         let (dx, dy) = (next.tx - v.x, next.ty - v.y);
         let distance = dx.hypot(dy);
-        if distance > 0.0 {
-            let step = distance.min(v.pheno.speed);
-            v.x = (v.x + dx / distance * step).clamp(v.pheno.x_lo, v.pheno.x_hi);
-            v.y = (v.y + dy / distance * step).clamp(v.pheno.y_lo, v.pheno.y_hi);
+        assert!(distance > 0.0, "tick {tick}: stuck at the wall");
+        if let Some((px, py)) = last {
+            assert!(px * dx + py * dy > 0.0, "tick {tick}: the course out turned back");
         }
+        last = Some((dx, dy));
+        let step = distance.min(v.pheno.speed);
+        v.x = (v.x + dx / distance * step).clamp(v.pheno.x_lo, v.pheno.x_hi);
+        v.y = (v.y + dy / distance * step).clamp(v.pheno.y_lo, v.pheno.y_hi);
     }
-    panic!("пришелец не вышел из перекрытых областей за 80 шагов");
+    panic!("did not leave the overlapping areas in 80 steps");
 }
 
 #[test]
@@ -505,4 +506,190 @@ fn a_battle_skips_a_flock_under_grace() {
     let out = battles.update(&mut w.flocks, &w.creatures, &w.space, 10, &grace);
     assert_eq!(out.started, 0);
     assert!(w.flocks[&a].calm > 0, "with nobody to fight, the flock moves next time");
+}
+
+// ── Battles, retreats, parental cover and moving out of an empty circle ─────────────────────────
+// Regressions for the review of add7f96–8e94b91: each of these failed before its fix.
+
+/// A flock of `n` adults of `genome` in a row from (x, y); returns the tag.
+fn flock_at(w: &mut World, genome: CreatureGenome, n: usize, x: f64, y: f64) -> u64 {
+    let first = w.creatures.len();
+    for i in 0..n {
+        w.spawn(genome, x + 10.0 * i as f64, y, Some(100.0));
+    }
+    let tag = w.creatures[first].flock;
+    for v in &mut w.creatures[first..] {
+        v.flock = tag;
+        v.reproduction_wait = 1_000_000;
+    }
+    tag
+}
+
+/// Circles of radius 200 centred on the given x at y = 1000.
+fn circles_at(w: &mut World, row: &[(u64, f64)]) {
+    flock::update(&mut w.flocks, &mut w.creatures, &w.space, 1, false);
+    for &(tag, x) in row {
+        w.flocks.get_mut(&tag).unwrap().circle = Some(Circle { x, y: 1000.0, radius: 200.0 });
+    }
+}
+
+#[test]
+fn a_beaten_flock_left_as_a_young_family_still_moves_away() {
+    use life_core::battle::Battles;
+    let mut w = world();
+    let hard = CreatureGenome::BASE.with(Gene::Territoriality, 2.0);
+    let winner = flock_at(&mut w, hard, 4, 1000.0, 1000.0);
+    let beaten = flock_at(&mut w, hard, 5, 1400.0, 1000.0);
+    circles_at(&mut w, &[(winner, 1000.0), (beaten, 1400.0)]);
+    w.flocks.get_mut(&winner).unwrap().cornered = true;
+    let mut battles = Battles::default();
+    let grace = Grace::default();
+    assert_eq!(battles.update(&mut w.flocks, &w.creatures, &w.space, 0, &grace).started, 1);
+    // the beaten flock loses three of its five adults: the two left are a young family
+    for v in w.creatures.iter_mut().filter(|v| v.flock == beaten).take(3) {
+        v.alive = false;
+    }
+    w.creatures.retain(|v| v.alive);
+    w.flocks.get_mut(&winner).unwrap().cornered = false;
+    assert_eq!(battles.update(&mut w.flocks, &w.creatures, &w.space, 1, &grace).retreats, 1);
+    assert!(w.flocks[&beaten].moving_to.is_some(), "a retreat is planned");
+    for _ in 0..600 {
+        flock::update(&mut w.flocks, &mut w.creatures, &w.space, 1, true);
+        for v in &mut w.creatures {
+            // the members keep with their circles, and the winners see food at home
+            let c = v.circle.unwrap();
+            (v.x, v.y) = (c.x, c.y);
+            v.mind.social.personal_food = Some((v.x, v.y));
+        }
+    }
+    let (home, away) = (w.flocks[&winner].circle.unwrap(), w.flocks[&beaten].circle.unwrap());
+    let gap = (away.x - home.x).hypot(away.y - home.y) - away.radius - home.radius;
+    assert!(gap > 200.0, "the beaten family stayed at the winners' border: gap {gap:.0}");
+}
+
+#[test]
+fn a_battle_ends_when_the_remaining_sides_may_not_strike_each_other() {
+    use life_core::battle::Battles;
+    let mut w = world();
+    let hard = CreatureGenome::BASE.with(Gene::Territoriality, 2.0);
+    let a = flock_at(&mut w, hard, 4, 1000.0, 1000.0);
+    let b = flock_at(&mut w, hard, 4, 1400.0, 1000.0);
+    let c = flock_at(&mut w, hard, 4, 1800.0, 1000.0);
+    circles_at(&mut w, &[(a, 1000.0), (b, 1400.0), (c, 1800.0)]);
+    // a and c split from one family a moment ago; b is cornered between them
+    let mut grace = Grace::default();
+    grace.register(a, c, 0);
+    w.flocks.get_mut(&b).unwrap().cornered = true;
+    let mut battles = Battles::default();
+    battles.update(&mut w.flocks, &w.creatures, &w.space, 0, &grace);
+    assert_eq!(battles.active[0].sides.len(), 3, "the battle gathers both neighbours of b");
+    // b loses three of its four adults and leaves
+    for v in w.creatures.iter_mut().filter(|v| v.flock == b).take(3) {
+        v.alive = false;
+    }
+    w.creatures.retain(|v| v.alive);
+    w.flocks.get_mut(&b).unwrap().cornered = false;
+    assert_eq!(battles.update(&mut w.flocks, &w.creatures, &w.space, 1, &grace).retreats, 1);
+    battles.update(&mut w.flocks, &w.creatures, &w.space, 2, &grace);
+    // a and c may not strike each other, yet both stay held: no move, however hungry or squeezed
+    assert!(battles.active.is_empty(), "a and c still hold a battle they cannot fight");
+    assert!([a, c].iter().all(|t| w.flocks[t].battle.is_none()));
+}
+
+#[test]
+fn a_flock_without_adults_is_not_held_in_a_battle() {
+    use life_core::battle::Battles;
+    let mut w = world();
+    let hard = CreatureGenome::BASE.with(Gene::Territoriality, 2.0);
+    let cornered = flock_at(&mut w, hard, 4, 1000.0, 1000.0);
+    // three growing children: fighters strike adults only, and they brought none to lose
+    let young = flock_at(&mut w, hard, 3, 1400.0, 1000.0);
+    for v in w.creatures.iter_mut().filter(|v| v.flock == young) {
+        v.genome = v.genome.with(Gene::Size, 200.0);
+    }
+    assert!(w.creatures.iter().filter(|v| v.flock == young).all(|v| !v.adult()));
+    circles_at(&mut w, &[(cornered, 1000.0), (young, 1400.0)]);
+    w.flocks.get_mut(&cornered).unwrap().cornered = true;
+    let mut battles = Battles::default();
+    let grace = Grace::default();
+    for tick in 0..2 {
+        battles.update(&mut w.flocks, &w.creatures, &w.space, tick, &grace);
+        assert_eq!(w.flocks[&young].battle, None, "tick {tick}: held in a battle nobody can fight");
+    }
+}
+
+#[test]
+fn a_parent_defends_only_a_child_it_still_knows() {
+    use life_core::social::{Alarm, prepare_aid};
+    let mut w = world();
+    // care 20%: a parent knows its child while the child is below 40% of its adult size
+    let parent = w.spawn(CreatureGenome::BASE.with(Gene::Care, 20.0), 1000.0, 1000.0, Some(100.0));
+    w.spawn(CreatureGenome::BASE, 1030.0, 1000.0, Some(60.0));
+    let child = &mut w.creatures[1];
+    child.parent = parent;
+    child.genome = child.genome.with(Gene::Size, 60.0); // at 40 of 60: growing, two thirds grown
+    let enemy = w.spawn(CreatureGenome::BASE.with(Gene::Size, 80.0), 1080.0, 1000.0, Some(100.0));
+    w.creatures[1].mind.social.observed_alarm = Some(Alarm { enemy, x: 1080.0, y: 1000.0, tick: 1 });
+    assert!(!w.creatures[1].adult());
+    assert!(!w.creatures[0].kinship().kin(w.creatures[1].kinship()), "the parent no longer knows it");
+    prepare_aid(&mut w.creatures, 1);
+    assert!(w.creatures[0].mind.social.aid.is_none(), "defends a child it does not know");
+}
+
+#[test]
+fn a_settled_flock_whose_members_see_food_only_outside_moves() {
+    let mut w = world();
+    let tag = flock_at(&mut w, CreatureGenome::BASE, 4, 3000.0, 1500.0);
+    flock::update(&mut w.flocks, &mut w.creatures, &w.space, 1, false);
+    let home = w.flocks[&tag].circle.unwrap();
+    let mut moves = 0;
+    for _ in 0..400 {
+        for v in &mut w.creatures {
+            // fed and at home, but the only plant any member sees lies far outside the circle
+            let c = v.circle.unwrap();
+            (v.x, v.y) = (c.x, c.y);
+            v.mind.social.personal_food = Some((c.x + c.radius + 300.0, c.y));
+        }
+        moves += flock::update(&mut w.flocks, &mut w.creatures, &w.space, 1, true);
+    }
+    // BEHAVIOR.md: a settled circle moves when no member sees a plant inside it for 300 ticks
+    assert!(moves >= 1, "no plant inside for 400 ticks, yet the circle stays at {home:?}");
+}
+
+#[test]
+fn a_circle_pressed_against_the_wall_is_walked_around_without_zigzags() {
+    let mut w = world();
+    let hard = CreatureGenome::BASE.with(Gene::Territoriality, 2.0);
+    let tag = pair(&mut w, hard, 1000.0, 400.0);
+    w.spawn(CreatureGenome::BASE, 1500.0, 40.0, Some(100.0));
+    flock::update(&mut w.flocks, &mut w.creatures, &w.space, 1, false);
+    // the circle touches the top of the world: the corridor along the wall is closed
+    w.flocks.get_mut(&tag).unwrap().circle = Some(Circle { x: 1000.0, y: 300.0, radius: 300.0 });
+    let traveler = 2;
+    let top = w.creatures[traveler].pheno.y_lo;
+    w.creatures[traveler].y = top;
+    let mut territory = State::default();
+    let (mut last, mut turns) = (None::<(f64, f64)>, 0);
+    for tick in 0..200 {
+        territory.prepare(&mut w.flocks, &mut w.creatures, &w.space, tick);
+        let v = &mut w.creatures[traveler];
+        // it wants to get along the wall past the circle
+        let next = steer(v, Intent { tx: 400.0, ty: top, slow: false, attack: None });
+        let (dx, dy) = (next.tx - v.x, next.ty - v.y);
+        let distance = dx.hypot(dy);
+        if distance <= 1e-9 {
+            continue;
+        }
+        if let Some((px, py)) = last {
+            turns += (px * dx + py * dy < 0.0) as usize;
+        }
+        last = Some((dx, dy));
+        let step = distance.min(v.pheno.speed);
+        let (x0, y0) = (v.x, v.y);
+        v.x = (v.x + dx / distance * step).clamp(v.pheno.x_lo, v.pheno.x_hi);
+        v.y = (v.y + dy / distance * step).clamp(v.pheno.y_lo, v.pheno.y_hi);
+        v.mind.social.heading = Some((v.x - x0, v.y - y0));
+    }
+    // at most one turn back: when it finds the corridor closed and goes around the open side
+    assert!(turns <= 1, "{turns} turns back at the wall");
 }

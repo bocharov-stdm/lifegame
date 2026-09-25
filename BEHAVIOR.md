@@ -1,6 +1,91 @@
 # Реформа поведения Tiny Life
 
-## Flocks as feeding circles, battles for room (this stage)
+## Review fixes, borders and inherited hunger and fear (this stage)
+
+Model `life-behavior/8`, format `life-report/9` (unchanged).
+
+**Found in the review of `add7f96`–`8e94b91` and fixed** (each has a regression test that failed
+before its fix, in `tests/territory.rs` unless noted):
+- A beaten flock left with fewer than four members did not move away: a young family's circle
+  follows its members and dropped the retreat. That was 43 of 80 retreats in base and 12 of 26 in
+  calm worlds (seeds 1–8). Now a young family moves to its retreat place first, then roams again.
+- A battle whose remaining flocks may not strike each other (under grace after a split, both
+  without territoriality, or one without adults) held them for its full 300 ticks, so none of
+  them could relocate. It now ends as soon as no two of its flocks may strike each other.
+- A flock without adults was drawn into a battle it could neither fight nor lose. It is left out;
+  a cornered flock without adults of its own fights nobody and moves next time.
+- A parent covered a growing child it no longer knew (and might hunt), while a hunter counted such
+  a parent as the prey's ally only while it knew the child. Covering now follows kinship: a parent
+  defends its child only while it knows it (`care`).
+- A settled flock counted plants its foragers saw outside the circle as food inside, so an empty
+  circle did not move while its hungry members fed elsewhere. Only plants inside count now.
+- A full prey buffer (`SEEN_PREY` = 64) kept the first candidates in the grid's scan order (rows
+  from the top of the view): a crowd higher up hid the prey next to the hunter. It keeps the
+  nearest candidates now, so the result does not depend on the scan order (`senses.rs` test).
+  Overflow is rare: at most 0.13% of hunters in base worlds with combat, none in calm ones.
+- Performance, bit for bit the same world: `prepare_aid` scanned the grid with the widest vision
+  in the world for every victim (9–25% of a tick at ×100); it now looks up the victim's parent and
+  flockmates directly. Checked on 50 seeds × 4 worlds, two of them with combat.
+- Wording: a flock is beaten when it has lost *more than* half of the adults it brought; a parent
+  with `care` below 25% does not know its child even at birth (children are born at half of their
+  adult size).
+
+**Borders without zigzags.** Walking around another flock's circle, creatures turned back on 16–26%
+of their moves (`social_probe`, seeds 1–8), 1.1–1.5% elsewhere. Three causes:
+1. 76% of those turns: a circle pressed against the world's edge leaves a corridor narrower than
+   the body. The walk around (clamped by the wall) stepped into the border's margin, the way out
+   (radially outwards, clamped by the wall) stepped back, and so on every other tick. Now a side
+   that the wall squeezes into the border is closed and the creature goes around the open side,
+   and one pinned inside the margin slides along the wall on the side that leaves it, keeping that
+   course out of every area it is in.
+2. 96% of the moves around a border chased a target behind it: food, a return point in the own
+   circle within the neighbour's margin, a wander point. Nobody aims at what lies behind a border
+   it respects now; a member returns to the part of its circle away from the neighbour. A starving
+   creature (below 25%) still ignores borders, a member inside its own circle may use all of it,
+   and a moderate border is still respected only in sight of a member, so what lies behind it is a
+   target again once no member is seen.
+3. 23.5%: exact right angles when a walk around starts; the probe counts them as sharp through
+   rounding (cos ≈ −1e−16). Left as is.
+
+Hard circles still never overlap anything; moderate borders stay leaky.
+
+**Members outside their circle.** With combat, 24–29% of the members were outside their circle.
+Of them 50–56% foraged (97.5% saw no plant in their own circle; half were more than 400 beyond
+its edge), 28–38% fled (in base worlds 77% of the members' flights were from strangers that never
+chose them as a target), 5–9% chased prey, 1.5–5% walked around a border. Two inherited choices
+replace world constants:
+- **`forage`** (new gene, the last row, 0–100%, base 40%): below this share of its store a member
+  takes food anywhere, and keeps foraging until it has 1.75 times as much (70% at the base: the
+  former fixed thresholds). Its catch: a member outside is out of its flockmates' cover.
+- **Fear by `bravery`** (existing gene): a stranger that could eat a creature but chose no target
+  on its last move is feared only within `1 − bravery` of the flight distance; one that is hunting,
+  within all of it. A brave creature lets a passer-by come near; the catch is a passer-by that
+  turns to hunt when it is already close.
+
+Both drift freely: final medians of `forage` 5–86% and of `bravery` 8–88% over the worlds, with no
+runaway to either end.
+
+### Acceptance
+
+Seeds 1–16, 20 000 ticks, every run finished by itself (in brackets: `life-behavior/7`, same
+seeds; its no-combat persistence is from the previous section):
+
+| Mode | Alive | Flocks persist | Median | Inside, median |
+|---|---:|---:|---:|---:|
+| base, no combat | 16/16 | 14/16 (15/16) | 1214.5 | 0.87 |
+| base, combat | 16/16 | 14/16 (13/16) | 816 (707.5) | 0.83 (0.77) |
+| calm, no combat | 16/16 | 13/16 (10/16) | 848 | 0.97 |
+| calm, combat | 16/16 | 13/16 (16/16) | 632 (586) | 0.80 (0.74) |
+
+The share inside is noisy: one model with its RNG stream shifted gave 0.88 instead of 0.74 on the
+same 8 seeds. Averaged over the second half of the runs it moved from 0.69 to 0.71 (base) and
+from 0.78 to 0.79 (calm) with combat — a small, real gain; the final medians overstate it.
+
+Sharp turns (`social_probe`, seeds 1–8; before → after): around a border 26.4 → 10.6% and
+16.5 → 9.7% (base, without / with combat), 17.0 → 10.3% and 15.7 → 9.4% (calm); all moves 2.90 →
+2.46%, 2.50 → 2.31%, 1.61 → 1.62%, 2.44 → 2.03%. Moves elsewhere are unchanged (1.2–1.6%).
+
+## Flocks as feeding circles, battles for room (previous stage)
 
 Formats: `life-report/9`, model `life-behavior/7`. This section is in English; the rest of the file
 is translated in a separate commit.
@@ -61,7 +146,7 @@ flock without territoriality never starts one. The battle gathers every flock wh
 touches the cornered one (unless under grace with it); battles that share a flock merge. Adult
 fighters of territorial flocks (fuller than 25%, not wounded) strike the nearest adult of another
 flock of the battle they see; a flock without territoriality only strikes back; kin and freshly
-split groups never strike each other. A flock that has lost half of the adults it brought leaves
+split groups never strike each other. A flock that has lost more than half of the adults it brought leaves
 the battle and moves away; the others keep the place. A battle lasts at most 300 ticks, and a
 flock that left one neither starts nor joins another for 600 ticks (`battle.rs`).
 
@@ -82,7 +167,7 @@ prey's allies: that is the catch of this free behaviour gene.
 
 **Kinship.** Family is only a parent and its growing child while the parent still knows it. A
 parent knows its child until the child's body reaches `min(1, 2 × care)` of its adult size: the
-base parent (care 50%) until the child is adult, a careless one only while it is tiny. Siblings,
+base parent (care 50%) until the child is adult, a careless one only while it is small (below care 25% not even at birth: children are born at half of their adult size). Siblings,
 grandchildren and grown children are strangers. Family neither strikes nor flees from each
 other; members of one flock and groups under the 600-tick grace are still protected. Whom to
 spare is thus inherited, not a rule of the world: with combat, care drifts to a median of
@@ -477,7 +562,7 @@ Claude над родством и бегством. Она сохранена и
 Карточка показывает текущий и взрослый размер, возраст, здоровье, состояние и стаю.
 Статистика показывает молодых, стаи и причины смерти. Рисование и выбор мышью
 используют фактический размер. JSON is `life-report/9`, the balance reference has
-`model: life-behavior/7`. Несовместимый эталон отклоняется с кодом 2 и объяснением.
+`model: life-behavior/8`. Несовместимый эталон отклоняется с кодом 2 и объяснением.
 Старые настройки получают новые значения по умолчанию.
 
 Golden переснят намеренно: старое мгновенное поедание заменено боем, рост и

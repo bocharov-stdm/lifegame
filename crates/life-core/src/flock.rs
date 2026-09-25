@@ -462,6 +462,7 @@ pub struct Flock {
     pub vision: f64,
     pub fullness: f64,
     pub spacing: f64,
+    /// Members that see a plant inside the circle this tick.
     fed: usize,
 }
 
@@ -768,7 +769,13 @@ pub fn update_full(
         f.vision += v.pheno.vision;
         f.fullness += v.energy / v.pheno.max_energy;
         f.spacing += v.pheno.flock_spacing;
-        f.fed += v.mind.social.personal_food.is_some() as usize;
+        // a plant a forager sees outside the circle does not keep a settled flock in place
+        f.fed += v
+            .mind
+            .social
+            .personal_food
+            .is_some_and(|(x, y)| f.circle.is_some_and(|c| c.holds(x, y, v.pheno.half)))
+            as usize;
         f.inside += f.circle.is_some_and(|c| c.holds(v.x, v.y, v.pheno.half)) as usize;
     }
     flocks.retain(|_, f| f.members > 0);
@@ -918,12 +925,15 @@ fn move_circles(flocks: &mut BTreeMap<u64, Flock>, space: &Space) {
         let bounds = f.bounds(c.radius, space);
         if f.young() {
             // A young family roams: the circle goes after its members, no faster than they walk.
-            f.moving_to = None;
-            f.target = bounds.clamp(f.center);
+            // A family beaten in a battle moves away first (`retreat`), then roams again.
+            f.target = bounds.clamp(f.moving_to.unwrap_or(f.center));
             let (dx, dy) = (f.target.0 - c.x, f.target.1 - c.y);
             let d = dx.hypot(dy);
             let k = if d <= f.speed { 1.0 } else { f.speed / d };
             (c.x, c.y) = bounds.clamp((c.x + dx * k, c.y + dy * k));
+            if d <= f.speed && f.moving_to.take().is_some() {
+                (f.hungry, f.empty) = (0, 0);
+            }
             f.circle = Some(c);
             continue;
         }

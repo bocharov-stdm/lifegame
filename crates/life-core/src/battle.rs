@@ -5,9 +5,12 @@
 //! (`territory::State::prepare_full` assigns the targets). A flock without territoriality only
 //! strikes back. Kin and freshly split groups never strike each other.
 //!
-//! A flock that has lost half of the adults it brought leaves the battle and moves away; the
-//! others keep the place. A battle lasts at most `BATTLE_TICKS`. Battles exist only with
-//! combat on. Everything runs in id order: the result depends on the seed only.
+//! A flock that has lost more than half of the adults it brought leaves the battle and moves
+//! away; the others keep the place. A battle lasts at most `BATTLE_TICKS`, and ends at once when
+//! no two of its flocks may strike each other (under grace, both without territoriality, or one
+//! without adults). A flock without adults is never drawn in: it can neither fight nor lose.
+//! Battles exist only with combat on. Everything runs in id order: the result depends on the
+//! seed only.
 use std::collections::BTreeMap;
 
 use crate::{
@@ -87,7 +90,23 @@ impl Battles {
                 }
                 present && !lost
             });
-            if b.sides.len() <= 1 || tick.saturating_sub(b.since) >= BATTLE_TICKS {
+            // A flock whose adults are all gone (grown-ups died or left) has nobody to fight with.
+            b.sides.retain(|id, _| {
+                let fights = adults.get(id).is_some_and(|&n| n > 0);
+                if !fights {
+                    leaving.push(*id);
+                }
+                fights
+            });
+            let can_fight = |a: u64, b: u64| {
+                let territorial = |id: u64| {
+                    flocks.get(&id).is_some_and(|f| f.territoriality != crate::flock::Territoriality::None)
+                };
+                !grace.contains(a, b, tick) && (territorial(a) || territorial(b))
+            };
+            let ids: Vec<u64> = b.sides.keys().copied().collect();
+            let anyone = ids.iter().enumerate().any(|(i, &a)| ids[i + 1..].iter().any(|&c| can_fight(a, c)));
+            if !anyone || tick.saturating_sub(b.since) >= BATTLE_TICKS {
                 leaving.extend(b.sides.keys().copied());
                 b.sides.clear();
             }
@@ -110,6 +129,7 @@ impl Battles {
 
         let cornered: Vec<u64> =
             flocks.iter().filter(|(_, f)| f.cornered && f.battle.is_none()).map(|(&id, _)| id).collect();
+        let has_adults = |id: u64| adults.get(&id).is_some_and(|&n| n > 0);
         for id in cornered {
             let Some(own) = flocks[&id].circle.filter(|_| flocks[&id].battle.is_none()) else { continue };
             let zone: Vec<u64> = flocks
@@ -118,13 +138,15 @@ impl Battles {
                     other != id
                         && g.members >= 2
                         && g.calm == 0
+                        && has_adults(other)
                         && g.circle.is_some_and(|c| touching(own, c))
                         && !grace.contains(id, other, tick)
                 })
                 .map(|(&other, _)| other)
                 .collect();
-            if zone.is_empty() {
-                // only kin around: nobody to fight, so the flock moves next time
+            if zone.is_empty() || !has_adults(id) {
+                // only kin or children around, or no adults of its own: nobody to fight, so the
+                // flock moves next time
                 flocks.get_mut(&id).unwrap().calm = CALM_TICKS;
                 continue;
             }
