@@ -340,7 +340,7 @@ impl World {
         // зависит от порядка ходов. Пока съесть друг друга нельзя (каннибализм
         // выключен), бояться некого — снимок не строится, и мир бит в бит прежний.
         let herd = if rules.cannibals() {
-            herd.rebuild_with_grace(space, creatures, rules.cannibal_ratio, &self.grace, now);
+            herd.rebuild_with_grace(space, creatures, &self.grace, now);
             Some(&*herd)
         } else {
             None

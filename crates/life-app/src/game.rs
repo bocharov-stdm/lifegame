@@ -34,12 +34,7 @@ fn lab_group(field: &settings::Field) -> &'static str {
         return "Распределение растений";
     }
     match field.key {
-        Key::Cannibalism
-        | Key::CannibalRatio
-        | Key::MeleeDamage
-        | Key::ShotDamage
-        | Key::ShotCost
-        | Key::ShotPeriod => "Бой",
+        Key::Cannibalism | Key::MeleeDamage | Key::ShotDamage | Key::ShotCost | Key::ShotPeriod => "Бой",
         Key::MutationSigma => "Эволюция",
         _ => "Питание и энергия",
     }

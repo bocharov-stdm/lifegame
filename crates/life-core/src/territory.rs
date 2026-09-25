@@ -262,7 +262,21 @@ impl State {
             if near.iter().any(|&j| !self.hard[j] && self.areas[j].flock != v.flock) {
                 seen_flocks(v, creatures, herd, &mut seen);
             }
-            let respected = |j: usize| self.hard[j] || seen.contains(&self.areas[j].flock);
+            // The circle it is walking around stays the one to avoid while it is in sight:
+            // switching to a nearer neighbour on the way sent it straight back at the first one.
+            let routed = v.mind.social.territory_side.map(|(tag, _)| tag);
+            // Once it avoids a moderate circle it finishes the way out or around, even when the
+            // member it saw drops out of sight: otherwise it turned back in and out every tick.
+            let previous = v.mind.social.territory_avoid.map(|a| a.flock);
+            let respected = |j: usize| {
+                let area = self.areas[j];
+                self.hard[j]
+                    || seen.contains(&area.flock)
+                    || previous == Some(area.flock)
+                        && (routed == Some(area.flock)
+                            || (v.x - area.x).hypot(v.y - area.y) < area.radius + v.pheno.half + 4.0)
+            };
+            let mut kept = None;
             let mut nearest: Option<(f64, u64, Area)> = None;
             let mut place: Option<(f64, u64, Area)> = None;
             let mut intrusions = Vec::new();
@@ -285,14 +299,18 @@ impl State {
                 if distance < area.radius + v.pheno.half + 4.0 {
                     intrusions.push(area);
                 }
+                if routed == Some(area.flock) {
+                    kept = Some(area);
+                }
                 if nearest.is_none_or(|(old, tag, _)| gap < old || (gap == old && area.flock < tag)) {
                     nearest = Some((gap, area.flock, area));
                 }
             }
+            // At home the neighbour still counts: a member going out of its circle walks around
+            // it (`steer` lets one moving inside its own circle be).
             let avoid = match place {
                 Some((_, _, a)) if a.flock != v.flock => Some(a),
-                Some(_) => None,
-                None => nearest.map(|(_, _, a)| a),
+                _ => kept.or(nearest.map(|(_, _, a)| a)),
             };
             let old_escape = v.mind.social.territory_escape;
             let escape = if avoid.is_some() && !intrusions.is_empty() {
@@ -525,9 +543,9 @@ pub fn steer(v: &mut Creature, mut intent: Intent) -> Intent {
     } else {
         let (tx, ty) = (intent.tx - v.x, intent.ty - v.y);
         if (intent.tx - area.x).hypot(intent.ty - area.y) < r {
-            // Недоступную цель обходим по устойчивой стороне с уклоном наружу.
-            // Прямой отход заставлял существо метаться между движущейся границей
-            // и прежней целью. Уклон наружу не даёт зациклиться на окружности.
+            // An unreachable target is walked around on a stable side with an outward bias. A
+            // straight retreat made it dart between the moving border and the old target; the
+            // bias keeps it from circling the border forever.
             let radial = (dx / d, dy / d);
             let mut side = match v.mind.social.territory_side {
                 Some((tag, side)) if tag == area.flock => side,
@@ -541,9 +559,20 @@ pub fn steer(v: &mut Creature, mut intent: Intent) -> Intent {
                     }
                 }
             };
+            let heading = v.mind.social.heading;
             let route = |side: i8| {
                 let side = f64::from(side);
-                let (ux, uy) = (radial.0 - radial.1 * side, radial.1 + radial.0 * side);
+                let tangent = (-radial.1 * side, radial.0 * side);
+                // Coming in towards the circle, the outward bias grows only as far as the step
+                // does not turn back against the last one: a full bias at once was a sharp turn.
+                let bias = match heading {
+                    Some((hx, hy)) if hx * radial.0 + hy * radial.1 < 0.0 => {
+                        let along = (hx * tangent.0 + hy * tangent.1).max(0.0);
+                        (along / -(hx * radial.0 + hy * radial.1)).min(1.0)
+                    }
+                    _ => 1.0,
+                };
+                let (ux, uy) = (tangent.0 + radial.0 * bias, tangent.1 + radial.1 * bias);
                 let length = ux.hypot(uy);
                 (
                     (v.x + ux / length * v.pheno.speed).clamp(v.pheno.x_lo, v.pheno.x_hi),

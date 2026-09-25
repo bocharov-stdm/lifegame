@@ -13,7 +13,7 @@ const BASE_VISION: f64 = GENES[Gene::Vision as usize].base;
 
 /// Имена настраиваемых правил — для отчёта (`--rule имя=число`) и настроек.
 /// Профили еды — по шесть на ось, по порядку `flora::AXIS_PARAMS`.
-pub const RULE_KEYS: [&str; 27] = [
+pub const RULE_KEYS: [&str; 26] = [
     "plant_rate",
     "plant_energy",
     "mutation_sigma",
@@ -34,7 +34,6 @@ pub const RULE_KEYS: [&str; 27] = [
     "plant_width_waves",
     "plant_width_amplitude",
     "cannibalism",
-    "cannibal_ratio",
     "repro_cost",
     "melee_damage_share",
     "shot_damage_share",
@@ -72,10 +71,8 @@ pub struct Rules {
     /// Где растёт еда: профиль по глубине и по ширине (`flora.rs`).
     pub plant_depth: FoodAxis,
     pub plant_width: FoodAxis,
-    /// Едят ли существа мелких сородичей: 0 — нет, 1 — да.
+    /// Combat and hunting: 0 off, 1 on. Whom one attacks first is its own `prey_ratio` gene.
     pub cannibalism: f64,
-    /// Во сколько раз жертва-сородич мельче едока (по размеру).
-    pub cannibal_ratio: f64,
     /// Цена рождения и сила/стоимость боя; умолчания берутся из config.rs.
     pub repro_cost: f64,
     pub melee_damage_share: f64,
@@ -107,7 +104,6 @@ impl Default for Rules {
             },
             plant_width: FoodAxis { profile: Profile::Uniform.index(), ..FOOD_AXIS },
             cannibalism: CANNIBALISM,
-            cannibal_ratio: CANNIBAL_RATIO,
             repro_cost: REPRO_COST,
             melee_damage_share: MELEE_DAMAGE_SHARE,
             shot_damage_share: SHOT_DAMAGE_SHARE,
@@ -147,7 +143,6 @@ impl Rules {
             "speed_power" => r.speed_power = value,
             "sight_power" => r.sight_power = value,
             "cannibalism" => r.cannibalism = value,
-            "cannibal_ratio" => r.cannibal_ratio = value,
             "repro_cost" => r.repro_cost = value,
             "melee_damage_share" => r.melee_damage_share = value,
             "shot_damage_share" => r.shot_damage_share = value,
@@ -161,8 +156,6 @@ impl Rules {
         // статов кормила бы существ за то, что они живут.
         let allowed = match key {
             "cannibalism" => value == 0.0 || value == 1.0,
-            // при отношении 1 и меньше едят равных и даже крупных
-            "cannibal_ratio" => value > 1.0,
             "shot_period" => value >= 1.0 && value.fract() == 0.0,
             "plant_bite_yield" => (0.0..=1.0).contains(&value),
             _ => value >= 0.0,
@@ -170,7 +163,6 @@ impl Rules {
         if !allowed {
             let need = match key {
                 "cannibalism" => "0 (нет) или 1 (да)",
-                "cannibal_ratio" => "число больше 1",
                 "shot_period" => "целое число не меньше 1",
                 "plant_bite_yield" => "число от 0 до 1",
                 _ => "число не меньше 0",
@@ -215,7 +207,6 @@ impl Rules {
             "speed_power" => self.speed_power,
             "sight_power" => self.sight_power,
             "cannibalism" => self.cannibalism,
-            "cannibal_ratio" => self.cannibal_ratio,
             "repro_cost" => self.repro_cost,
             "melee_damage_share" => self.melee_damage_share,
             "shot_damage_share" => self.shot_damage_share,
@@ -328,16 +319,15 @@ mod tests {
     }
 
     #[test]
-    fn каннибализм_выключен_по_умолчанию_и_отвергает_бессмыслицу() {
+    fn combat_is_off_by_default_and_rejects_nonsense() {
         let r = Rules::default();
         assert!(!r.cannibals());
         assert!(r.with("cannibalism", 1.0).unwrap().cannibals());
-        for (key, v) in
-            [("cannibalism", 0.5), ("cannibalism", 2.0), ("cannibal_ratio", 1.0), ("cannibal_ratio", 0.5)]
-        {
-            assert!(r.with(key, v).is_err(), "{key}={v} должно быть отвергнуто");
+        for v in [0.5, 2.0] {
+            assert!(r.with("cannibalism", v).is_err(), "cannibalism={v} must be rejected");
         }
-        assert_eq!(r.with("cannibal_ratio", 1.5).unwrap().cannibal_ratio, 1.5);
+        // the prey size ratio is the `prey_ratio` gene now, not a world rule
+        assert!(r.with("cannibal_ratio", 2.5).is_err());
     }
 
     #[test]

@@ -78,7 +78,7 @@ fn каннибал_съедает_мелкого_рядом() {
 #[test]
 fn каннибал_не_ест_крупного_дальнего_и_при_выключенном_правиле() {
     for (on, small, dx, why) in [
-        (true, 50.0, 10.0, "всего вдвое мельче — при отношении 2.5 не еда"),
+        (true, 50.0, 10.0, "only half the size: not prey for the base prey_ratio 2.5"),
         (true, 30.0, 400.0, "далеко — каннибал не ищет, а ест того, кто рядом"),
         (false, 30.0, 10.0, "правило выключено"),
     ] {
@@ -100,13 +100,13 @@ fn каннибализм_выключен_бит_в_бит_и_счётчики_
         }
         w
     };
-    let off = Rules::default().with("cannibalism", 0.0).unwrap().with("cannibal_ratio", 1.5).unwrap();
+    let off = Rules::default().with("cannibalism", 0.0).unwrap().with("melee_damage_share", 0.2).unwrap();
     assert_eq!(run(off).stats(), run(Rules::default()).stats());
 
-    let on = Rules::default().with("cannibalism", 1.0).unwrap().with("cannibal_ratio", 1.2).unwrap();
+    let on = Rules::default().with("cannibalism", 1.0).unwrap();
     let w = run(on);
     let c = w.counters;
-    assert!(c.combat > 0, "за 3000 тиков при отношении 1.2 хоть кого-то съели: {c:?}");
+    assert!(c.combat > 0, "someone died in combat within 3000 ticks: {c:?}");
     let n0 = CREATURES_AT_START as u64;
     assert_eq!(w.creatures.len() as u64, n0 + c.born - c.starved - c.cannibalized - c.old_age - c.combat);
 }
@@ -251,7 +251,7 @@ fn каннибал_не_ест_родню() {
 /// Мир с бегством детерминирован: сородичей видят по снимку на начало фазы.
 #[test]
 fn мир_с_бегством_детерминирован() {
-    let rules = Rules::default().with("cannibalism", 1.0).unwrap().with("cannibal_ratio", 1.5).unwrap();
+    let rules = Rules::default().with("cannibalism", 1.0).unwrap();
     let run = || {
         let mut w = World::new(&WorldConfig { seed: 9, rules: rules.clone(), ..Default::default() });
         let mut fled = 0;
@@ -555,18 +555,12 @@ fn не_конечные_правила_отвергаются() {
 #[test]
 fn бессмысленные_правила_отвергаются() {
     let r = Rules::default();
-    for (key, bad) in [
-        ("cost_scale", -1.0),
-        ("plant_energy", -5.0),
-        ("mutation_sigma", -0.1),
-        ("cannibalism", 0.5),
-        ("cannibal_ratio", 1.0),
-    ] {
+    for (key, bad) in
+        [("cost_scale", -1.0), ("plant_energy", -5.0), ("mutation_sigma", -0.1), ("cannibalism", 0.5)]
+    {
         assert!(r.with(key, bad).is_err(), "{key}={bad} принято");
     }
-    for (key, ok) in
-        [("cost_scale", 0.0), ("plant_rate", 0.0), ("cannibalism", 1.0), ("cannibal_ratio", 1.01)]
-    {
+    for (key, ok) in [("cost_scale", 0.0), ("plant_rate", 0.0), ("cannibalism", 1.0)] {
         assert!(r.with(key, ok).is_ok(), "{key}={ok} отвергнуто");
     }
 }
@@ -651,7 +645,7 @@ fn один_сид_один_мир() {
 /// отчёт стал бы объяснять численность неверными причинами.
 #[test]
 fn счётчики_сходятся_с_численностью() {
-    let rules = Rules::default().with("cannibalism", 1.0).unwrap().with("cannibal_ratio", 1.5).unwrap();
+    let rules = Rules::default().with("cannibalism", 1.0).unwrap();
     let mut w = World::new(&WorldConfig { seed: 3, rules, ..Default::default() });
     let (n0, plants0) = (w.creatures.len() as u64, w.plants.len() as u64);
     for _ in 0..3000 {

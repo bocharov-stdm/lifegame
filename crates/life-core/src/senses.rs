@@ -154,7 +154,7 @@ impl Senses for GridSenses<'_> {
     }
     fn prey(&self, me: &Me, previous: Option<u64>) -> Option<Prey> {
         let herd = self.herd?;
-        let max_size = me.pheno.size / me.pheno.prey_ratio.max(herd.ratio);
+        let max_size = me.pheno.size / me.pheno.prey_ratio;
         let mut best: Option<Prey> = None;
         herd.grid.for_each_near(me.x, me.y, me.pheno.vision, |j, _, _| {
             let s = &herd.seen[j];
@@ -271,7 +271,6 @@ pub(crate) struct Herd {
     /// Самое крупное тело, какое может съесть хоть кто-то. Кто крупнее, тому
     /// бояться некого, и в сетку он не смотрит.
     max_eats: f64,
-    ratio: f64,
     /// Самый большой радиус тела в снимке: на него шире запрос.
     max_half: f64,
     grace: Grace,
@@ -285,31 +284,22 @@ impl Herd {
             seen: Vec::new(),
             max_eats: 0.0,
             max_half: 0.0,
-            ratio: 2.5,
             grace: Grace::default(),
             tick: 0,
         }
     }
 
-    /// Снимок существ, как они стоят сейчас. В начале фазы все живы: умерших
-    /// выметают в конце прошлой. Смотрят в снимок те же, кто в нём: дети
-    /// рождаются после ходов. `ratio` — во сколько раз жертва мельче едока
-    /// (правило каннибализма).
+    /// A snapshot of the creatures as they stand now. At the start of the phase all are alive:
+    /// the dead are swept at the end of the previous one. The ones looking into the snapshot are
+    /// the ones in it: children are born after the moves. Whom one may attack first is its own
+    /// `prey_ratio` (how many times smaller the prey is).
     #[cfg(test)]
-    pub fn rebuild(&mut self, space: &Space, creatures: &[Creature], ratio: f64) {
-        self.rebuild_with_grace(space, creatures, ratio, &Grace::default(), 0);
+    pub fn rebuild(&mut self, space: &Space, creatures: &[Creature]) {
+        self.rebuild_with_grace(space, creatures, &Grace::default(), 0);
     }
 
-    pub fn rebuild_with_grace(
-        &mut self,
-        space: &Space,
-        creatures: &[Creature],
-        ratio: f64,
-        grace: &Grace,
-        tick: u64,
-    ) {
+    pub fn rebuild_with_grace(&mut self, space: &Space, creatures: &[Creature], grace: &Grace, tick: u64) {
         debug_assert!(creatures.iter().all(|v| v.alive), "в снимке стада мёртвые");
-        self.ratio = ratio;
         self.grace.clone_from(grace);
         self.tick = tick;
         self.seen.clear();
@@ -317,7 +307,7 @@ impl Herd {
             x: v.x,
             y: v.y,
             half: v.pheno.half,
-            eats_up_to: v.pheno.size / ratio.max(v.pheno.prey_ratio),
+            eats_up_to: v.pheno.size / v.pheno.prey_ratio,
             health: v.health,
             max_health: v.max_health(),
             nutrition: v.energy
@@ -378,33 +368,6 @@ pub(crate) fn nearest_threat(
         }
     });
     best
-}
-
-/// Каннибализм: первый живой чужой (не родня едоку `who`) сородич не крупнее
-/// `max_size`, чьё тело касается круга радиуса `reach` вокруг (x, y).
-#[cfg(test)]
-pub(crate) fn smaller_prey_in_contact(
-    grid: &Grid,
-    creatures: &[Creature],
-    max_half: f64,
-    who: Kinship,
-    (x, y): (f64, f64),
-    reach: f64,
-    max_size: f64,
-) -> Option<usize> {
-    let mut caught = None;
-    grid.for_each_near(x, y, reach + max_half, |j, vx, vy| {
-        let v = &creatures[j];
-        if caught.is_some() || v.pheno.size > max_size || !v.alive || who.kin(v.kinship()) {
-            return;
-        }
-        let (dx, dy) = (x - vx, y - vy);
-        let r = reach + v.pheno.half;
-        if dx * dx + dy * dy < r * r {
-            caught = Some(j);
-        }
-    });
-    caught
 }
 
 /// Ближайшее живое растение строго ближе √r2.
@@ -483,7 +446,6 @@ pub(crate) fn bite_plant(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::*;
     use crate::rules::Rules;
     use crate::world::{World, WorldConfig};
 
@@ -610,7 +572,7 @@ mod tests {
             health_share: 1.0,
         };
         for (tick, safe) in [(600, true), (601, false)] {
-            herd.rebuild_with_grace(&world.space, &world.creatures, 2.5, &grace, tick);
+            herd.rebuild_with_grace(&world.space, &world.creatures, &grace, tick);
             let view = GridSenses {
                 food: &food,
                 plants: &[],
@@ -635,7 +597,7 @@ mod tests {
         let giants = Rules::default().with("size_power", 1.0).unwrap().with("plant_energy", 120.0).unwrap();
         for (seed, rules) in [(1, Rules::default()), (4, giants)] {
             let mut w = World::new(&WorldConfig { seed, rules, ..Default::default() });
-            let (mut prey, mut food) = (Grid::new(GRID_CELL), Grid::new(GRID_CELL));
+            let mut food = Grid::new(GRID_CELL);
             let mut snapshot = Herd::new();
             let (mut checked, mut threats, mut spared) = (0, 0, 0);
             for tick in 0..1500 {
@@ -643,14 +605,10 @@ mod tests {
                 if tick % 50 != 0 {
                     continue;
                 }
-                // часть существ и растений «съедена в этом тике» — их запросы обязаны пропускать
-                let mut herd = w.creatures.clone();
-                herd.iter_mut().step_by(7).for_each(|v| v.alive = false);
+                // some plants were "eaten this tick": the queries must skip them
                 let mut plants = w.plants.clone();
                 plants.iter_mut().step_by(5).for_each(|p| p.alive = false);
-                prey.rebuild(&w.space, herd.iter().map(|v| (v.x, v.y)));
                 food.rebuild(&w.space, plants.iter().map(|p| (p.x, p.y)));
-                let max_half = herd.iter().fold(0.0_f64, |m, v| m.max(v.pheno.half));
 
                 for v in &w.creatures {
                     let got = nearest_plant(&food, &plants, v.x, v.y, v.pheno.vision2)
@@ -694,60 +652,33 @@ mod tests {
                     }
                     checked += 1;
                 }
-                for v in &herd {
-                    for ratio in [CANNIBAL_RATIO, 1.1] {
-                        let max_size = v.pheno.size / ratio;
-                        let fits = |u: &Creature| {
-                            !v.kinship().kin(u.kinship())
-                                && u.alive
-                                && u.pheno.size <= max_size
-                                && dist2(v.x, v.y, u.x, u.y) < (v.pheno.size + u.pheno.half).powi(2)
-                        };
-                        let got = smaller_prey_in_contact(
-                            &prey,
-                            &herd,
-                            max_half,
-                            v.kinship(),
-                            (v.x, v.y),
-                            v.pheno.size,
-                            max_size,
-                        );
-                        let any = herd.iter().any(fits);
-                        assert_eq!(got.is_some(), any, "сид {seed}, тик {tick}: каннибал");
-                        if let Some(j) = got {
-                            assert!(fits(&herd[j]), "сид {seed}: съеден не тот сородич");
-                        }
-                    }
-                }
-
-                // угрозы — по снимку живого мира, как в начале фазы
-                for ratio in [CANNIBAL_RATIO, 1.1] {
-                    snapshot.rebuild(&w.space, &w.creatures, ratio);
-                    let lookers = w.creatures.iter().flat_map(|v| [(v, v.pheno.vision), (v, v.pheno.flee)]);
-                    for (v, within) in lookers {
-                        let size = v.pheno.size;
-                        let got = nearest_threat(&snapshot, v.kinship(), v.flock, v.x, v.y, size, within);
-                        let can_eat_me = |u: &&Creature| {
-                            size <= u.pheno.size / ratio.max(u.pheno.prey_ratio)
-                                && dist2(u.x, u.y, v.x, v.y) < (within + u.pheno.half).powi(2)
-                        };
-                        let gap = |u: &Creature| dist2(u.x, u.y, v.x, v.y).sqrt() - u.pheno.half;
-                        let want = min(w
-                            .creatures
-                            .iter()
-                            .filter(can_eat_me)
-                            .filter(|u| !v.kinship().kin(u.kinship()) && v.flock != u.flock)
-                            .map(gap));
-                        assert_eq!(got.map(|t| t.gap), want, "сид {seed}, тик {tick}: угроза");
-                        threats += got.is_some() as usize;
-                        // родня, которая иначе была бы угрозой: без неё проверка родства пуста
-                        spared += w
-                            .creatures
-                            .iter()
-                            .filter(can_eat_me)
-                            .filter(|u| u.id != v.id && v.kinship().kin(u.kinship()))
-                            .count();
-                    }
+                // threats, from a snapshot of the live world as at the start of the phase; each
+                // attacker's own `prey_ratio` decides whom it can threaten
+                snapshot.rebuild(&w.space, &w.creatures);
+                let lookers = w.creatures.iter().flat_map(|v| [(v, v.pheno.vision), (v, v.pheno.flee)]);
+                for (v, within) in lookers {
+                    let size = v.pheno.size;
+                    let got = nearest_threat(&snapshot, v.kinship(), v.flock, v.x, v.y, size, within);
+                    let can_eat_me = |u: &&Creature| {
+                        size <= u.pheno.size / u.pheno.prey_ratio
+                            && dist2(u.x, u.y, v.x, v.y) < (within + u.pheno.half).powi(2)
+                    };
+                    let gap = |u: &Creature| dist2(u.x, u.y, v.x, v.y).sqrt() - u.pheno.half;
+                    let want = min(w
+                        .creatures
+                        .iter()
+                        .filter(can_eat_me)
+                        .filter(|u| !v.kinship().kin(u.kinship()) && v.flock != u.flock)
+                        .map(gap));
+                    assert_eq!(got.map(|t| t.gap), want, "сид {seed}, тик {tick}: угроза");
+                    threats += got.is_some() as usize;
+                    // kin that would otherwise be a threat: without it the kinship check is empty
+                    spared += w
+                        .creatures
+                        .iter()
+                        .filter(can_eat_me)
+                        .filter(|u| u.id != v.id && v.kinship().kin(u.kinship()))
+                        .count();
                 }
             }
             assert!(checked > 1000, "сид {seed}: проверено всего {checked} запросов — мир вымер?");

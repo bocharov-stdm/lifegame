@@ -252,15 +252,10 @@ fn cases() -> Vec<Case> {
             ticks: 1000,
             before: |_| {},
         },
-        // Каннибализм, как в игре по умолчанию. Отношение ниже стандартного,
-        // чтобы поедание случалось и в коротком прогоне.
+        // Combat, as in the game by default.
         Case {
             name: "H: сид 8, каннибализм",
-            cfg: WorldConfig {
-                seed: 8,
-                rules: rules(&[("cannibalism", 1.0), ("cannibal_ratio", 1.5)]),
-                ..Default::default()
-            },
+            cfg: WorldConfig { seed: 8, rules: rules(&[("cannibalism", 1.0)]), ..Default::default() },
             ticks: 2000,
             before: |_| {},
         },

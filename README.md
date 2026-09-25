@@ -31,11 +31,11 @@ the circles (the stroke tells the territoriality, red is a battle); a click open
 Хищники были отдельным видом до тега `predators-final`: их заменили мутации и
 каннибализм.
 
-**Каннибализм** включает охоту, защиту территории, выстрелы, одновременные
-бои и поедание трупов. Родня и участники одной стаи защищены. Размер допустимой
-добычи задаётся геном и мировым нижним пределом `cannibal_ratio`; защита от
-нападения и территории допускает удар по более крупному врагу. В игре правило
-включено по умолчанию, в отчёте — через `--rule cannibalism=1`.
+**Cannibalism** turns on hunting, territory defence, shots, simultaneous fights and eating
+corpses. Kin and members of the same flock are protected. How much smaller a prey must be is
+the inherited `prey_ratio` gene alone (there is no world limit any more); defending oneself or
+a territory may strike a bigger enemy. The game has it on by default, the report takes
+`--rule cannibalism=1`.
 
 Проект переписан на Rust, чтобы миры могли быть в сотни раз больше: есть
 игра с окном, прогоны без окна и отчёт о балансе. Прежняя версия на Python и

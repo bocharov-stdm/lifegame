@@ -126,7 +126,7 @@ and the event chronicle for its in-game event feed.
 and is re-taken from Rust after each deliberate balance change. It is a world of creatures
 and plants (0 of 8 seeds extinct, 1288–1679 creatures without combat in the current base
 profile); metrics: creatures and plants mean, size max and final. The current reference has
-`model: "life-behavior/6"`; references without this version are rejected with an explanation.
+`model: "life-behavior/7"`; references without this version are rejected with an explanation.
 `--compare` reruns the same seeds in Rust and checks each metric's mean against the reference's
 per-seed range; any mismatch exits with code 1 (CI relies on it). It refuses (code 2) when the
 world differs from the one the reference was taken on (world size — compared as `Space`, not
@@ -157,13 +157,14 @@ even on threads or I/O), `life-sim` adds only the bounded runner and the observe
 - `config.rs` — every tunable constant, each with a comment explaining *why* it has that value.
 - `rules.rs` — `Rules`, the world rules the game's «Лаборатория» exposes, at setup and live via
   `World::set_rules` (plant rate and energy, mutation sigma, stat cost scale and exponents,
-  the food profiles — see "Where food grows" —, cannibalism and its ratio). `World`
+  the food profiles — see "Where food grows" —, combat and its costs; the prey size ratio is
+  the `prey_ratio` gene, not a rule). `World`
   owns one and every creature gets it at birth. Changing an exponent
   renormalises its coefficient so the *base* genome still pays the same — only the steepness
   changes. `Rules::default()` is `config.rs` bit for bit (the factor is exactly
   `base ** 0.0`); tests guard that. `with()` rejects unknown keys, non-finite values (a NaN
   sigma would hang mutation's rejection loop) and values where a rule stops making sense
-  (negative costs, cannibalism not 0/1, ratio ≤ 1) — but not merely
+  (negative costs, cannibalism not 0/1, a shot period below 1) — but not merely
   "unbalanced" ones: breaking the balance is what the lab is for.
 - `world.rs` — `WorldConfig`, `World` (populations, `step()` — the phase order only,
   `stats()`, `counters`, `spawn_*` for tests and the app).

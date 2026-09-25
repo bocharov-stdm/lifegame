@@ -107,7 +107,7 @@ pub(crate) fn resolve_with_grace(
                 if !selected && !defense && (v.fleeing() || v.energy > v.pheno.max_energy * 0.9) {
                     return;
                 }
-                if !defense && u.pheno.size > v.pheno.size / rules.cannibal_ratio.max(v.pheno.prey_ratio) {
+                if !defense && u.pheno.size > v.pheno.size / v.pheno.prey_ratio {
                     return;
                 }
                 if target.is_none_or(|k: usize| {
@@ -169,7 +169,7 @@ pub(crate) fn resolve_with_grace(
             }
             let territorial = assigned == Some(u.id);
             if !defending(v, u.id, territorial, tick)
-                && (v.fleeing() || u.pheno.size > v.pheno.size / rules.cannibal_ratio.max(v.pheno.prey_ratio))
+                && (v.fleeing() || u.pheno.size > v.pheno.size / v.pheno.prey_ratio)
             {
                 return;
             }

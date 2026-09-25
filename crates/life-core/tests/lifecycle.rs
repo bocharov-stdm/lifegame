@@ -220,7 +220,14 @@ fn границы_новых_генов_сохраняются_при_мутац
 #[test]
 fn охота_выбирает_добычу_но_сытый_не_начинает() {
     use life_core::{World, WorldConfig};
-    for (energy, ratio, expect) in [(100.0, 2.5, true), (250.0, 2.5, false), (100.0, 5.0, false)] {
+    // the hunter's own `prey_ratio` alone decides: there is no world floor under it
+    for (energy, ratio, size, expect) in [
+        (100.0, 2.5, 30.0, true),
+        (250.0, 2.5, 30.0, false),
+        (100.0, 5.0, 30.0, false),
+        (100.0, 1.5, 50.0, true),
+        (100.0, 2.5, 50.0, false),
+    ] {
         let mut w = World::new(&WorldConfig {
             n_creatures: Some(0),
             rules: Rules::default().with("cannibalism", 1.0).unwrap().with("plant_rate", 0.0).unwrap(),
@@ -232,7 +239,7 @@ fn охота_выбирает_добычу_но_сытый_не_начинае�
             1000.0,
             Some(energy),
         );
-        let prey = w.spawn(CreatureGenome::BASE.with(Gene::Size, 30.0), 1200.0, 1000.0, Some(50.0));
+        let prey = w.spawn(CreatureGenome::BASE.with(Gene::Size, size), 1200.0, 1000.0, Some(50.0));
         w.step();
         assert_eq!(w.creatures[0].mind.attack == Some(prey), expect);
         if expect {

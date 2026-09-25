@@ -2,7 +2,7 @@
 
 ## Flocks as feeding circles, battles for room (this stage)
 
-Formats: `life-report/9`, model `life-behavior/6`. This section is in English; the rest of the file
+Formats: `life-report/9`, model `life-behavior/7`. This section is in English; the rest of the file
 is translated in a separate commit.
 
 **The circle.** A family flock of two or more members is a circle that moves as one object, and
@@ -401,12 +401,16 @@ Claude над родством и бегством. Она сохранена и
   базовому урону. Все удары рассчитываются до нанесения повреждений и применяются
   одновременно; взаимная гибель допустима. Добычу получает живой участник с
   максимальным нанесённым уроном, при равенстве — с меньшим ID. Трупов нет.
-- Храбрость: база 50%, диапазон 0–100%; порог отступления `0.8 − 0.6b`.
-  Плотоядность: база 25%; усвоение растений `1 − 0.8c`, добычи `0.2 + 0.8c`.
-  Добыча содержит оставшуюся энергию и стоимость выращенной части тела.
-  `prey_ratio`: база 2.5, диапазон 1–5; мировой `cannibal_ratio` ограничивает
-  его снизу. Цель выбирается по усваиваемой энергии за время пути и боя.
-  При запасе выше 90% новая охота не начинается. `cannibalism` выключает все бои.
+- Bravery: base 50%, range 0–100%; retreat threshold `0.8 − 0.6b`.
+  Carnivory: base 25%; plants are digested at `1 − 0.8c`, prey at `0.2 + 0.8c`.
+  Prey holds its remaining energy and the cost of the body part it grew.
+  `prey_ratio`: base 2.5, range 1–5, a free behaviour gene. It alone decides whom a creature
+  attacks first (a body at most `size / prey_ratio`) and, in the eyes of others, whom it
+  threatens. The world rule `cannibal_ratio` (2.5) is gone: it came from swallowing prey whole
+  and only set a floor under the gene. What restrains a low ratio is behaviour: an equal fights
+  back. Defence and territory strike regardless of size. A target is chosen by the energy it
+  yields over the time of the chase and the fight. Above 90% of the tank no new hunt starts.
+  `cannibalism` turns all combat off.
 - The flock label is kept apart from the gene table: unique for founders, inherited with a 99%
   chance. Two living carriers make a flock, and a flock has a circle (see the first section).
   There is no cooperative hunting. Empty flocks are removed.
@@ -421,7 +425,7 @@ Claude над родством и бегством. Она сохранена и
 Карточка показывает текущий и взрослый размер, возраст, здоровье, состояние и стаю.
 Статистика показывает молодых, стаи и причины смерти. Рисование и выбор мышью
 используют фактический размер. JSON is `life-report/9`, the balance reference has
-`model: life-behavior/6`. Несовместимый эталон отклоняется с кодом 2 и объяснением.
+`model: life-behavior/7`. Несовместимый эталон отклоняется с кодом 2 и объяснением.
 Старые настройки получают новые значения по умолчанию.
 
 Golden переснят намеренно: старое мгновенное поедание заменено боем, рост и

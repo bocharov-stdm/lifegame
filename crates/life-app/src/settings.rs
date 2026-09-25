@@ -51,7 +51,6 @@ pub enum Key {
     PlantWidthWaves,
     PlantWidthAmplitude,
     Cannibalism,
-    CannibalRatio,
     ReproCost,
     MeleeDamage,
     ShotDamage,
@@ -133,7 +132,7 @@ fn percent(v: f64) -> String {
     format!("{v:.0}%")
 }
 
-pub const FIELDS: [Field; 28] = [
+pub const FIELDS: [Field; 27] = [
     // ── Мир ──────────────────────────────────────────────────────────────────
     Field {
         key: Key::Creatures,
@@ -411,20 +410,6 @@ pub const FIELDS: [Field; 28] = [
         tab: Tab::Lab,
         rule: Some("cannibalism"),
         ..TOGGLE
-    },
-    Field {
-        key: Key::CannibalRatio,
-        label: "Во сколько раз мельче",
-        hint: "Нижний предел отношения размера охотника к добыче. \
-               Индивидуальный ген может ограничивать выбор ещё сильнее.",
-        lo: 1.5,
-        hi: 5.0,
-        step: 0.1,
-        format: |v| format!("в {v:.1} раза"),
-        tab: Tab::Lab,
-        rule: Some("cannibal_ratio"),
-        shown: |s| s.get(Key::Cannibalism) != 0.0,
-        ..SLIDER
     },
     Field {
         key: Key::ReproCost,
@@ -900,20 +885,15 @@ mod tests {
         assert_eq!(describe_change(&old, &old), None);
     }
 
-    /// Отношение видно только при включённом каннибализме. Старый файл (с
-    /// ключами хищников и «n_vegetarians») читается, каннибализм в нём включён.
+    /// Combat is a toggle. An old file (with predator keys, «n_vegetarians» and the removed
+    /// `cannibal_ratio` rule) is read, with combat on.
     #[test]
     fn галочка_каннибализма() {
-        let mut s = Settings::default();
-        let shown = |s: &Settings| (field(Key::CannibalRatio).shown)(s);
-        assert!(shown(&s));
-        s.set(Key::Cannibalism, 0.0);
-        assert!(!shown(&s));
         assert!(field(Key::Cannibalism).toggle);
 
-        let old = Settings::from_json(
-            &serde_json::json!({ "n_predators": 10, "plant_energy": 80, "n_vegetarians": 50 }),
-        );
+        let old = Settings::from_json(&serde_json::json!({
+            "n_predators": 10, "plant_energy": 80, "n_vegetarians": 50, "cannibal_ratio": 1.5
+        }));
         assert!(old.get(Key::Cannibalism) == 1.0 && old.get(Key::PlantEnergy) == 80.0);
         assert_eq!(old.get(Key::Creatures), 50.0, "старый ключ численности читается");
         let mut new = Settings::default();
