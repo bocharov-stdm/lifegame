@@ -135,8 +135,8 @@ pub struct World {
     /// Где растёт еда — выведено из правил и размеров мира, пересчитывается
     /// вместе с правилами (`set_rules`).
     flora: Flora,
-    /// Occupied fertility cells (a bitset), rebuilt from `plants` before births.
-    plant_cells: Vec<u64>,
+    /// Occupied fertility cells, kept in step with `plants`.
+    plant_cells: Occupancy,
     /// Поток мира: растения и подсадка. У каждого существа поток свой.
     rng: Rng,
     /// Снимок стада на начало фазы существ: по нему видят сородичей.
@@ -164,7 +164,7 @@ impl World {
             split_watches: Vec::new(),
             social_counts: Default::default(),
             flora: Flora::new(&rules, &space),
-            plant_cells: Vec::new(),
+            plant_cells: Occupancy::stale(),
             space,
             rules,
             tick: 0,
@@ -273,21 +273,12 @@ impl World {
         }
         let cap = self.space.per_area(PLANT_MAX);
         let count = count.min(cap.saturating_sub(self.plants.len()));
-        let cells = &mut self.plant_cells;
-        cells.clear();
-        cells.resize(self.flora.cells().div_ceil(64), 0);
-        for p in &self.plants {
-            let c = self.flora.cell(p.x, p.y);
-            cells[c / 64] |= 1 << (c % 64);
-        }
+        self.plant_cells.sync(&self.flora, &self.plants);
         for _ in 0..count {
             let mut p = self.flora.plant(&mut self.rng);
-            let c = self.flora.cell(p.x, p.y);
-            let (word, bit) = (c / 64, 1 << (c % 64));
-            if cells[word] & bit != 0 {
+            if !self.plant_cells.take(self.flora.cell(p.x, p.y)) {
                 continue;
             }
-            cells[word] |= bit;
             p.born = self.tick.min(u32::MAX as u64) as u32;
             self.plants.push(p);
             self.counters.plants_grown += 1;
@@ -350,6 +341,8 @@ impl World {
             bitten_plants,
             counters,
             shots,
+            flora,
+            plant_cells,
             ..
         } = self;
         food_grid.rebuild(space, plants.iter().map(|p| (p.x, p.y)));
@@ -489,7 +482,12 @@ impl World {
             );
         }
         creatures.retain(|v| v.alive);
-        plants.retain(|p| p.alive); // выметаем съеденное
+        plants.retain(|p| {
+            if !p.alive {
+                plant_cells.free(flora.cell(p.x, p.y));
+            }
+            p.alive
+        }); // выметаем съеденное
         counters.born += offspring.len() as u64;
         let mut transitions = Vec::new();
         for (child, former_flock, protect) in offspring {
@@ -576,6 +574,7 @@ impl World {
         }
         // уже выросшие растения остаются на местах, новые — по новому профилю
         self.flora = Flora::new(&rules, &self.space);
+        self.plant_cells.invalidate(); // the cells moved with the profile
         self.rules = rules;
     }
 
@@ -606,6 +605,82 @@ impl World {
     /// по id и поиск двоичный: следить за существом можно и среди миллиона.
     pub fn creature(&self, id: u64) -> Option<&Creature> {
         self.creatures.binary_search_by_key(&id, |v| v.id).ok().map(|i| &self.creatures[i])
+    }
+}
+
+/// Occupied fertility cells (`flora.rs`) as a bitset, updated per birth and per
+/// eaten plant rather than rebuilt from every plant each tick. Anything that
+/// edits `World::plants` from outside changes their count (tests, the app), and
+/// a count that does not match makes the next birth phase rebuild the set. So
+/// does a rules change, since the cells follow the profile.
+#[derive(Clone, Debug)]
+struct Occupancy {
+    bits: Vec<u64>,
+    /// How many plants the bits describe; `None` — out of date.
+    plants: Option<usize>,
+}
+
+impl Occupancy {
+    fn stale() -> Occupancy {
+        Occupancy { bits: Vec::new(), plants: None }
+    }
+
+    fn sync(&mut self, flora: &Flora, plants: &[Plant]) {
+        if self.plants == Some(plants.len()) {
+            return;
+        }
+        self.bits.clear();
+        self.bits.resize(flora.cells().div_ceil(64), 0);
+        for p in plants {
+            // after a profile change two old plants may share a cell
+            let c = flora.cell(p.x, p.y);
+            self.bits[c / 64] |= 1 << (c % 64);
+        }
+        self.plants = Some(plants.len());
+    }
+
+    /// Takes a free cell for a new plant; false if it is occupied.
+    fn take(&mut self, cell: usize) -> bool {
+        let (word, bit) = (cell / 64, 1 << (cell % 64));
+        if self.bits[word] & bit != 0 {
+            return false;
+        }
+        self.bits[word] |= bit;
+        self.plants = self.plants.map(|n| n + 1);
+        true
+    }
+
+    fn free(&mut self, cell: usize) {
+        if let Some(n) = self.plants {
+            self.bits[cell / 64] &= !(1 << (cell % 64));
+            self.plants = Some(n - 1);
+        }
+    }
+
+    fn invalidate(&mut self) {
+        self.plants = None;
+    }
+}
+
+#[cfg(test)]
+mod occupancy_tests {
+    use super::*;
+
+    /// Updating per birth and per eaten plant gives the same cells as a rebuild
+    /// from all plants, in a world where creatures eat.
+    #[test]
+    fn incremental_cells_match_a_rebuild() {
+        let mut w = World::new(&WorldConfig { seed: 2, ..Default::default() });
+        for _ in 0..6 {
+            for _ in 0..100 {
+                w.step();
+            }
+            assert_eq!(w.plant_cells.plants, Some(w.plants.len()), "tick {}", w.tick);
+            let mut fresh = Occupancy::stale();
+            fresh.sync(&w.flora, &w.plants);
+            assert_eq!(w.plant_cells.bits, fresh.bits, "tick {}", w.tick);
+        }
+        assert!(w.counters.plants_grown > w.plants.len() as u64, "nothing was eaten");
     }
 }
 

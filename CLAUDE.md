@@ -341,12 +341,17 @@ Capacity is shaped by the same profiles. `Flora` splits the world into `PLANT_MA
 **cells of equal fertility**: an `nx × ny` grid in the coordinates of each axis's distribution
 function (`Axis::cdf`, the inverse of sampling), rows by the world's proportions, `nx·ny ≥ cap`.
 Where food is rich the cells are narrow, where it is poor they are wide; every cell gets a seed
-with the same chance. A cell holds at most one plant: `spawn_plants` rebuilds a bitset of occupied
-cells from `plants` each tick (O(plants), robust to anyone editing `plants`) and a seed that lands
-in an occupied cell does not sprout (its two random numbers are still drawn). So a full world
-follows the profile exactly, growth is logistic (`cap·(1 − e^(−rate·t/cap))` in an empty world),
-and a grazed surface cannot hand its room to the deep sea. A live profile change needs nothing
-extra: occupancy is recomputed with the new cells. Plant energy does not affect capacity.
+with the same chance. A cell holds at most one plant, and a seed that lands in an occupied cell
+does not sprout (its two random numbers are still drawn). So a full world follows the profile
+exactly, growth is logistic (`cap·(1 − e^(−rate·t/cap))` in an empty world), and a grazed surface
+cannot hand its room to the deep sea. Plant energy does not affect capacity.
+
+Occupied cells are a bitset (`world::Occupancy`) updated per birth and per eaten plant, not
+rebuilt from every plant each tick: a full rebuild doubled the tick of a plant-saturated ×100
+world. It is rebuilt when the plant count stops matching it (tests and the app edit `plants`
+directly — keep such edits changing the count, or the stale set goes unnoticed) and after
+`set_rules`, since the cells follow the profile. After a profile change two old plants may share a
+cell; the first one eaten frees it. `incremental_cells_match_a_rebuild` guards the bookkeeping.
 
 ### Balance: exponents, not coefficients
 
