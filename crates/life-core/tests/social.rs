@@ -224,10 +224,7 @@ fn тревога_не_ретранслируется_и_выключается_
 
 #[test]
 fn прикрытие_ограничено_двумя_здоровыми_и_временем() {
-    use life_core::{
-        grid::Grid,
-        social::{Alarm, prepare_aid},
-    };
+    use life_core::social::{Alarm, prepare_aid};
     let mut w = world();
     for x in [1000.0, 1050.0, 1100.0, 1150.0, 1200.0, 1250.0] {
         w.spawn(CreatureGenome::BASE, x, 1000.0, Some(80.0));
@@ -238,19 +235,17 @@ fn прикрытие_ограничено_двумя_здоровыми_и_вр
     w.creatures[1].health = 1.0;
     let enemy = w.creatures[5].id;
     w.creatures[0].mind.social.hit = Some(Alarm { enemy, x: 1250.0, y: 1000.0, tick: 1 });
-    let mut g = Grid::new(100.0);
-    g.rebuild(&w.space, w.creatures.iter().map(|v| (v.x, v.y)));
-    assert_eq!(prepare_aid(&mut w.creatures, &g, 1), 2);
+    assert_eq!(prepare_aid(&mut w.creatures, 1), 2);
     assert!(w.creatures[1].mind.social.aid.is_none());
     assert!(w.creatures[2].mind.social.aid.is_some() && w.creatures[3].mind.social.aid.is_some());
     assert!(w.creatures[4].mind.social.aid.is_none());
-    prepare_aid(&mut w.creatures, &g, 31);
+    prepare_aid(&mut w.creatures, 31);
     assert!(w.creatures.iter().all(|v| v.mind.social.aid.is_none()));
     w.creatures[0].mind.social.hit.as_mut().unwrap().tick = 100;
-    prepare_aid(&mut w.creatures, &g, 100);
+    prepare_aid(&mut w.creatures, 100);
     for t in 101..=190 {
         w.creatures[0].mind.social.hit.as_mut().unwrap().tick = t;
-        prepare_aid(&mut w.creatures, &g, t);
+        prepare_aid(&mut w.creatures, t);
     }
     assert!(w.creatures[2].mind.social.aid.is_none() && w.creatures[3].mind.social.aid.is_none());
 }

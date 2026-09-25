@@ -316,12 +316,8 @@ impl World {
             &self.prey_grid,
         );
         if self.rules.cannibals() {
-            self.social_counts.interventions += crate::social::prepare_aid_with_grace(
-                &mut self.creatures,
-                &self.prey_grid,
-                self.tick,
-                &self.grace,
-            );
+            self.social_counts.interventions +=
+                crate::social::prepare_aid_with_grace(&mut self.creatures, self.tick, &self.grace);
         }
         let World {
             space,

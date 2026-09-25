@@ -348,18 +348,24 @@ pub fn adjust(
     intent
 }
 
-/// Подтверждённые удары прошлого тика; не больше двух видящих помощников на жертву.
-pub fn prepare_aid(creatures: &mut [Creature], grid: &Grid, tick: u64) -> u64 {
-    prepare_aid_with_grace(creatures, grid, tick, &Grace::default())
+/// Confirmed strikes of the last tick; at most two helpers in sight per victim.
+pub fn prepare_aid(creatures: &mut [Creature], tick: u64) -> u64 {
+    prepare_aid_with_grace(creatures, tick, &Grace::default())
 }
 
-/// Общая помощь после подтверждённого удара и забота родителя при лично
-/// замеченной ребёнком угрозе. Оба вида помощи занимают те же два места.
-pub fn prepare_aid_with_grace(creatures: &mut [Creature], grid: &Grid, tick: u64, grace: &Grace) -> u64 {
-    let ids: std::collections::BTreeMap<_, _> =
-        creatures.iter().enumerate().map(|(i, v)| (v.id, i)).collect();
+/// Help after a confirmed strike, and a parent's care when its child personally noticed a
+/// threat. Both kinds of help take the same two places.
+///
+/// The only possible helpers are the victim's parent and its flockmates, so they are looked up
+/// directly (creatures are sorted by id; flockmates come from a per-flock list) instead of
+/// scanning the grid with the widest vision in the world, which cost up to a quarter of a tick.
+pub fn prepare_aid_with_grace(creatures: &mut [Creature], tick: u64, grace: &Grace) -> u64 {
+    let index_of = |id: u64| creatures.binary_search_by_key(&id, |v| v.id).ok();
+    debug_assert!(creatures.windows(2).all(|p| p[0].id < p[1].id), "creatures are sorted by id");
     let mut assigned = vec![None; creatures.len()];
-    let radius = creatures.iter().fold(0.0_f64, |r, v| r.max(v.pheno.vision));
+    // Indices grouped by flock, in index order inside each flock; built at the first victim.
+    let mut by_flock: Vec<usize> = Vec::new();
+    let mut candidates = Vec::new();
     for victim in creatures.iter() {
         let direct_hit = victim.mind.social.hit.filter(|h| tick.saturating_sub(h.tick) < 30);
         let alarm = if victim.adult() {
@@ -368,15 +374,20 @@ pub fn prepare_aid_with_grace(creatures: &mut [Creature], grid: &Grid, tick: u64
             victim.mind.social.observed_alarm.filter(|a| tick.saturating_sub(a.tick) <= 1)
         };
         let Some(hit) = direct_hit.filter(|h| h.tick == tick).or(alarm).or(direct_hit) else { continue };
-        let Some(&enemy_i) = ids.get(&hit.enemy) else { continue };
+        let Some(enemy_i) = index_of(hit.enemy) else { continue };
         let enemy = &creatures[enemy_i];
         if !enemy.alive || grace.contains(victim.flock, enemy.flock, tick) {
             continue;
         }
-        let mut candidates = Vec::new();
-        // Радиус жертвы не ограничивает зрение помощника: перебираем её локальную
-        // окрестность по максимальному зрению, вычисленному один раз ниже вызывающим.
-        grid.for_each_near(victim.x, victim.y, radius, |j, _, _| {
+        if by_flock.is_empty() {
+            by_flock = (0..creatures.len()).collect();
+            by_flock.sort_by_key(|&i| (creatures[i].flock, i));
+        }
+        let from = by_flock.partition_point(|&i| creatures[i].flock < victim.flock);
+        let to = by_flock.partition_point(|&i| creatures[i].flock <= victim.flock);
+        let parent = index_of(victim.parent).filter(|&p| creatures[p].flock != victim.flock);
+        candidates.clear();
+        for j in by_flock[from..to].iter().copied().chain(parent) {
             let v = &creatures[j];
             let old = v.mind.social.aid;
             let continuing = old.is_some_and(|a| a.victim == victim.id && a.enemy == enemy.id);
@@ -399,16 +410,16 @@ pub fn prepare_aid_with_grace(creatures: &mut [Creature], grid: &Grid, tick: u64
                 || (continuing && tick.saturating_sub(old.unwrap().started) >= 90)
                 || (!continuing && tick != hit.tick)
             {
-                return;
+                continue;
             }
             let d = (v.x - victim.x).hypot(v.y - victim.y);
             let range = if parent { v.pheno.vision * care } else { v.pheno.vision };
             if d <= range && (v.x - enemy.x).hypot(v.y - enemy.y) <= v.pheno.vision {
                 candidates.push((d, v.id, j));
             }
-        });
+        }
         candidates.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        for (_, _, j) in candidates.into_iter().take(2) {
+        for &(_, _, j) in candidates.iter().take(2) {
             let old = creatures[j].mind.social.aid.filter(|a| a.victim == victim.id && a.enemy == enemy.id);
             assigned[j] = Some(Aid {
                 victim: victim.id,
@@ -439,7 +450,7 @@ mod care_tests {
     use super::*;
     use crate::{CreatureGenome, World, WorldConfig};
 
-    fn scenario(care: f64) -> (World, Grid, u64) {
+    fn scenario(care: f64) -> (World, u64) {
         let mut world = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
         let parent = world.spawn(CreatureGenome::BASE.with(Gene::Care, care), 1000.0, 1000.0, Some(100.0));
         world.spawn(CreatureGenome::BASE, 1030.0, 1000.0, Some(20.0));
@@ -449,26 +460,24 @@ mod care_tests {
         world.creatures[1].birth_size = 20.0;
         let enemy = world.spawn(CreatureGenome::BASE.with(Gene::Size, 80.0), 1080.0, 1000.0, Some(100.0));
         world.creatures[1].mind.social.observed_alarm = Some(Alarm { enemy, x: 1080.0, y: 1000.0, tick: 1 });
-        let mut grid = Grid::new(100.0);
-        grid.rebuild(&world.space, world.creatures.iter().map(|v| (v.x, v.y)));
-        (world, grid, enemy)
+        (world, enemy)
     }
 
     #[test]
     fn родитель_защищает_ребёнка_по_его_личной_тревоге_после_разделения_стай() {
-        let (mut world, grid, enemy) = scenario(100.0);
+        let (mut world, enemy) = scenario(100.0);
         assert_ne!(world.creatures[0].flock, world.creatures[1].flock);
-        assert_eq!(prepare_aid(&mut world.creatures, &grid, 1), 1);
+        assert_eq!(prepare_aid(&mut world.creatures, 1), 1);
         assert_eq!(world.creatures[0].mind.social.aid.unwrap().enemy, enemy);
         world.creatures[1].mind.social.observed_alarm = None;
-        assert_eq!(prepare_aid(&mut world.creatures, &grid, 2), 0);
+        assert_eq!(prepare_aid(&mut world.creatures, 2), 0);
         assert!(world.creatures[0].mind.social.aid.is_none());
     }
 
     #[test]
     fn забота_здоровье_энергия_и_мир_разделившихся_ограничивают_защиту() {
         for reason in 0..4 {
-            let (mut world, grid, _) = scenario(if reason == 0 { 0.0 } else { 100.0 });
+            let (mut world, _) = scenario(if reason == 0 { 0.0 } else { 100.0 });
             let mut grace = Grace::default();
             match reason {
                 1 => world.creatures[0].energy = world.creatures[0].pheno.max_energy * 0.5,
@@ -476,7 +485,7 @@ mod care_tests {
                 3 => grace.register(world.creatures[0].flock, world.creatures[2].flock, 0),
                 _ => {}
             }
-            assert_eq!(prepare_aid_with_grace(&mut world.creatures, &grid, 1, &grace), 0);
+            assert_eq!(prepare_aid_with_grace(&mut world.creatures, 1, &grace), 0);
             assert!(world.creatures[0].mind.social.aid.is_none());
         }
     }

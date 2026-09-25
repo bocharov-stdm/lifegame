@@ -372,8 +372,12 @@ fn мир_ведёт_себя_как_при_записи() {
 #[ignore]
 fn отпечатки_по_сидам() {
     for seed in 1..=50 {
-        for (name, r) in [("умолч", Rules::default()), ("гиганты", rules(&[("size_power", 1.0)]))]
-        {
+        for (name, r) in [
+            ("умолч", Rules::default()),
+            ("гиганты", rules(&[("size_power", 1.0)])),
+            ("combat", rules(&[("cannibalism", 1.0)])),
+            ("calm", rules(&[("cannibalism", 1.0), ("cost_scale", 3.0)])),
+        ] {
             let mut w = World::new(&WorldConfig { seed, rules: r, ..Default::default() });
             for _ in 0..1500 {
                 w.step();
