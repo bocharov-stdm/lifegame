@@ -35,6 +35,8 @@ texts). Translate existing Russian comments and test names gradually, only where
 Rustfmt, four-space indent, `snake_case` functions, `PascalCase` types. Read genes through
 `Gene`, append new rows only at the end of the table. Don't mix life state into the genome.
 
+Plant capacity lives in fertility cells (`flora.rs`): one plant per cell, cells shaped by the
+food profile; don't add a second, global plant limit that could override them.
 Senses read the neighbour snapshot; strategies return intents. Combat strikes apply
 simultaneously. The dead don't eat or reproduce; children don't act on their birth tick.
 Death counters for every cause must add up with the population. The window never waits for

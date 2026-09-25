@@ -134,9 +134,10 @@ and the event chronicle for its in-game event feed.
 `reference/fingerprint.json` is the balance fingerprint (8 seeds x 20 000 ticks, series every
 60 ticks). It started as the last Python version's (`python/fingerprint.py` at `python-final`)
 and is re-taken from Rust after each deliberate balance change. It is a world of creatures
-and plants (0 of 8 seeds extinct, 954–1963 creatures at the end without combat in the current
-base profile); metrics: creatures and plants mean, size max and final. The current reference has
-`model: "life-behavior/8"`; references without this version are rejected with an explanation.
+and plants; metrics: creatures and plants mean, size max and final. The model is
+`life-behavior/9` (plant capacity in fertility cells); references without this version are
+rejected with an explanation. The checked-in references are still `life-behavior/8` (0 of 8 seeds
+extinct, 954–1963 creatures at the end without combat in the base profile) until re-recorded.
 `--compare` reruns the same seeds in Rust and checks each metric's mean against the reference's
 per-seed range; any mismatch exits with code 1 (CI relies on it). It refuses (code 2) when the
 world differs from the one the reference was taken on (world size — compared as `Space`, not
@@ -335,6 +336,17 @@ an integer index, waves an integer 1‒100 (table resolution), steepness ≤ 100
 percents 0‒100. Profiles are not balanced: at ×1 with each non-default profile at its default
 parameters (6 seeds × 20 000 ticks), 6 of 48 runs died out (depth log 2, width linear 2, width
 exp 1, width log 1); the default profile — 0 of 12.
+
+Capacity is shaped by the same profiles. `Flora` splits the world into `PLANT_MAX` (per area)
+**cells of equal fertility**: an `nx × ny` grid in the coordinates of each axis's distribution
+function (`Axis::cdf`, the inverse of sampling), rows by the world's proportions, `nx·ny ≥ cap`.
+Where food is rich the cells are narrow, where it is poor they are wide; every cell gets a seed
+with the same chance. A cell holds at most one plant: `spawn_plants` rebuilds a bitset of occupied
+cells from `plants` each tick (O(plants), robust to anyone editing `plants`) and a seed that lands
+in an occupied cell does not sprout (its two random numbers are still drawn). So a full world
+follows the profile exactly, growth is logistic (`cap·(1 − e^(−rate·t/cap))` in an empty world),
+and a grazed surface cannot hand its room to the deep sea. A live profile change needs nothing
+extra: occupancy is recomputed with the new cells. Plant energy does not affect capacity.
 
 ### Balance: exponents, not coefficients
 

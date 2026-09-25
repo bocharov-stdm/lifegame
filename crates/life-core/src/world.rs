@@ -135,6 +135,8 @@ pub struct World {
     /// Где растёт еда — выведено из правил и размеров мира, пересчитывается
     /// вместе с правилами (`set_rules`).
     flora: Flora,
+    /// Occupied fertility cells (a bitset), rebuilt from `plants` before births.
+    plant_cells: Vec<u64>,
     /// Поток мира: растения и подсадка. У каждого существа поток свой.
     rng: Rng,
     /// Снимок стада на начало фазы существ: по нему видят сородичей.
@@ -162,6 +164,7 @@ impl World {
             split_watches: Vec::new(),
             social_counts: Default::default(),
             flora: Flora::new(&rules, &space),
+            plant_cells: Vec::new(),
             space,
             rules,
             tick: 0,
@@ -260,6 +263,8 @@ impl World {
 
     /// Растений за тик — ожидаемое число (не вероятность): целую часть спауним
     /// всегда, дробную — с соответствующим шансом. Выше потолка не растём.
+    /// A seed that lands in an occupied fertility cell (`flora.rs`) does not
+    /// sprout, so growth slows as the neighbourhood fills up.
     fn spawn_plants(&mut self) {
         let rate = self.rules.plant_rate * self.space.area_ratio();
         let mut count = rate as usize;
@@ -268,11 +273,24 @@ impl World {
         }
         let cap = self.space.per_area(PLANT_MAX);
         let count = count.min(cap.saturating_sub(self.plants.len()));
-        self.counters.plants_grown += count as u64;
+        let cells = &mut self.plant_cells;
+        cells.clear();
+        cells.resize(self.flora.cells().div_ceil(64), 0);
+        for p in &self.plants {
+            let c = self.flora.cell(p.x, p.y);
+            cells[c / 64] |= 1 << (c % 64);
+        }
         for _ in 0..count {
             let mut p = self.flora.plant(&mut self.rng);
+            let c = self.flora.cell(p.x, p.y);
+            let (word, bit) = (c / 64, 1 << (c % 64));
+            if cells[word] & bit != 0 {
+                continue;
+            }
+            cells[word] |= bit;
             p.born = self.tick.min(u32::MAX as u64) as u32;
             self.plants.push(p);
+            self.counters.plants_grown += 1;
         }
     }
 

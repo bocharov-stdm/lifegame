@@ -54,10 +54,12 @@ pub const DENSITY_PER_PIXEL: f64 = 1.0417e-7;
 /// Для базового мира это 2.50008 растения за тик.
 pub const PLANT_SPAWN_CHANCE: f64 = DENSITY_PER_PIXEL * WORLD_WIDTH * WORLD_HEIGHT;
 
-/// Потолок растений на базовый мир. Растение исчезает, только когда его съели,
-/// и без существ их становилось на 2.5 больше каждый тик. В здоровых прогонах
-/// пик — 219‒289, потолок с пятикратным запасом на обычную игру не влияет.
-/// В большом мире потолок растёт вместе с площадью.
+/// Plant cap per base world, and the number of fertility cells it is split
+/// into (`flora.rs`): one plant per cell, cells shaped by the food profile, so
+/// every part of the world has its own share of the cap. A plant disappears only
+/// when eaten; without creatures the world fills up to the cap. Healthy runs
+/// used to peak at 219‒289 plants, but seeds landing in occupied cells already
+/// slow growth well below the cap. Grows with the world's area.
 pub const PLANT_MAX: usize = 1500;
 
 // ── Существа ──────────────────────────────────────────────────────────────

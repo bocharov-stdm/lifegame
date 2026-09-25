@@ -1,6 +1,29 @@
 # Реформа поведения Tiny Life
 
-## Review fixes, borders and inherited hunger and fear (this stage)
+## Plant capacity in fertility cells (this stage)
+
+Model `life-behavior/9`, format `life-report/9` (unchanged).
+
+With the exponential depth profile the plant cap was one number for the whole world: creatures
+grazed the rich surface, the room they freed went to seeds that fell deep, and a forest grew where
+the profile promised almost nothing. Now `PLANT_MAX` (per area) is split into cells of equal
+fertility — equal steps of the profile's distribution function along each axis, so cells are narrow
+near the rich surface and wide in the poor deep. A cell holds at most one plant; a seed landing
+in an occupied cell does not sprout. Consequences:
+- a full world holds exactly the profile's shape, for any depth and width profile; a grazed band
+  regrows into its own cells while the others stay put;
+- growth is logistic: the more of a neighbourhood is taken, the more seeds are lost there. In
+  ordinary runs plants use a few percent of the cap, so the rate barely changes; an empty world
+  fills to 95% of the cap in about 1800 ticks instead of 570;
+- plant energy does not affect capacity (as before `life-behavior/9`); two random numbers per
+  seed as before, positions of sprouting plants unchanged.
+
+Not validated yet: golden digests and both references (`fingerprint.json`,
+`calm-fingerprint.json`) have to be re-recorded, and the balance checked on seeds 1–8 × 20 000
+ticks in all four modes. A short check (seeds 1–3 × 3000 ticks, base): 329/385/273 creatures
+against 339/317/295 with the old cap.
+
+## Review fixes, borders and inherited hunger and fear (previous stage)
 
 Model `life-behavior/8`, format `life-report/9` (unchanged).
 
