@@ -19,6 +19,7 @@ use crate::config::GRID_CELL;
 use crate::corpse::Corpse;
 use crate::creature::{Creature, Kinship, Me};
 use crate::grid::Grid;
+use crate::kin_grace::Grace;
 use crate::plant::Plant;
 use crate::space::Space;
 
@@ -135,7 +136,11 @@ impl Senses for GridSenses<'_> {
         let i = herd.seen.binary_search_by_key(&id, |s| s.kinship.id).ok()?;
         let s = &herd.seen[i];
         let distance = (s.x - me.x).hypot(s.y - me.y);
-        if me.kinship.kin(s.kinship) || me.flock == s.flock || distance > me.pheno.vision {
+        if me.kinship.kin(s.kinship)
+            || me.flock == s.flock
+            || herd.grace.contains(me.flock, s.flock, herd.tick)
+            || distance > me.pheno.vision
+        {
             return None;
         }
         Some(Threat { id, x: s.x, y: s.y, gap: distance - s.half })
@@ -149,6 +154,7 @@ impl Senses for GridSenses<'_> {
             if (me.flock != 0 && me.flock == s.flock)
                 || s.half * 2.0 > max_size
                 || me.kinship.kin(s.kinship)
+                || herd.grace.contains(me.flock, s.flock, herd.tick)
                 || (s.x - me.x).hypot(s.y - me.y) > me.pheno.vision
             {
                 return;
@@ -256,20 +262,44 @@ pub(crate) struct Herd {
     ratio: f64,
     /// Самый большой радиус тела в снимке: на него шире запрос.
     max_half: f64,
+    grace: Grace,
+    tick: u64,
 }
 
 impl Herd {
     pub fn new() -> Self {
-        Herd { grid: Grid::new(GRID_CELL), seen: Vec::new(), max_eats: 0.0, max_half: 0.0, ratio: 2.5 }
+        Herd {
+            grid: Grid::new(GRID_CELL),
+            seen: Vec::new(),
+            max_eats: 0.0,
+            max_half: 0.0,
+            ratio: 2.5,
+            grace: Grace::default(),
+            tick: 0,
+        }
     }
 
     /// Снимок существ, как они стоят сейчас. В начале фазы все живы: умерших
     /// выметают в конце прошлой. Смотрят в снимок те же, кто в нём: дети
     /// рождаются после ходов. `ratio` — во сколько раз жертва мельче едока
     /// (правило каннибализма).
+    #[cfg(test)]
     pub fn rebuild(&mut self, space: &Space, creatures: &[Creature], ratio: f64) {
+        self.rebuild_with_grace(space, creatures, ratio, &Grace::default(), 0);
+    }
+
+    pub fn rebuild_with_grace(
+        &mut self,
+        space: &Space,
+        creatures: &[Creature],
+        ratio: f64,
+        grace: &Grace,
+        tick: u64,
+    ) {
         debug_assert!(creatures.iter().all(|v| v.alive), "в снимке стада мёртвые");
         self.ratio = ratio;
+        self.grace.clone_from(grace);
+        self.tick = tick;
         self.seen.clear();
         self.seen.extend(creatures.iter().map(|v| Seen {
             x: v.x,
@@ -317,7 +347,11 @@ pub(crate) fn nearest_threat(
     let mut best: Option<Threat> = None;
     herd.grid.for_each_near(x, y, within + herd.max_half, |j, sx, sy| {
         let s = &herd.seen[j];
-        if size > s.eats_up_to || who.kin(s.kinship) || (flock != 0 && flock == s.flock) {
+        if size > s.eats_up_to
+            || who.kin(s.kinship)
+            || (flock != 0 && flock == s.flock)
+            || herd.grace.contains(flock, s.flock, herd.tick)
+        {
             return;
         }
         let (dx, dy) = (sx - x, sy - y);
@@ -495,6 +529,63 @@ mod tests {
         assert!(view.best_corpse(&me).is_none());
         view.now = 2;
         assert_eq!(view.best_corpse(&me).unwrap().owner, 3);
+    }
+
+    #[test]
+    fn разделившиеся_стаи_не_видят_друг_друга_целью_охоты_или_угрозой_до_срока() {
+        let mut world = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
+        world.spawn(
+            crate::CreatureGenome::BASE.with(crate::genome::creature::Gene::Size, 80.0),
+            1000.0,
+            1000.0,
+            None,
+        );
+        world.spawn(
+            crate::CreatureGenome::BASE.with(crate::genome::creature::Gene::Size, 15.0),
+            1050.0,
+            1000.0,
+            None,
+        );
+        let mut grace = Grace::default();
+        grace.register(world.creatures[0].flock, world.creatures[1].flock, 0);
+        let mut herd = Herd::new();
+        let food = Grid::new(GRID_CELL);
+        let predator = &world.creatures[0];
+        let prey = &world.creatures[1];
+        let hunter = Me {
+            x: predator.x,
+            y: predator.y,
+            energy: predator.energy,
+            kinship: predator.kinship(),
+            flock: predator.flock,
+            flock_goal: None,
+            pheno: &predator.pheno,
+            health_share: 1.0,
+        };
+        let hunted = Me {
+            x: prey.x,
+            y: prey.y,
+            energy: prey.energy,
+            kinship: prey.kinship(),
+            flock: prey.flock,
+            flock_goal: None,
+            pheno: &prey.pheno,
+            health_share: 1.0,
+        };
+        for (tick, safe) in [(600, true), (601, false)] {
+            herd.rebuild_with_grace(&world.space, &world.creatures, 2.5, &grace, tick);
+            let view = GridSenses {
+                food: &food,
+                plants: &[],
+                corpse_grid: None,
+                corpses: &[],
+                now: tick,
+                herd: Some(&herd),
+            };
+            assert_eq!(view.prey(&hunter, None).is_none(), safe);
+            assert_eq!(view.nearest_threat(&hunted, hunted.pheno.vision).is_none(), safe);
+            assert_eq!(view.visible_enemy(&hunter, prey.id).is_none(), safe);
+        }
     }
 
     /// Каждый запрос тика сверяется с перебором всех существ — на настоящих

@@ -26,6 +26,9 @@ pub enum Gene {
     Shooter,
     FirePreference,
     FireReserve,
+    PackInstinct,
+    Territoriality,
+    Care,
 }
 
 impl Gene {
@@ -47,12 +50,34 @@ impl Gene {
         Gene::Shooter,
         Gene::FirePreference,
         Gene::FireReserve,
+        Gene::PackInstinct,
+        Gene::Territoriality,
+        Gene::Care,
     ];
 }
 
-pub const N: usize = 17;
+pub const N: usize = 20;
 
-/// Наследуемая возможность стрелять. Основатели не стреляют.
+pub const PACK_VARIANTS: [Variant; 2] = [
+    Variant {
+        key: "solitary", label: "одиночка", about: "Не образует стаю с потомками."
+    },
+    Variant {
+        key: "social", label: "стайный", about: "Потомки могут оставаться в семейной стае."
+    },
+];
+
+pub const TERRITORIALITY_VARIANTS: [Variant; 3] = [
+    Variant { key: "none", label: "нет", about: "Не защищает территорию." },
+    Variant {
+        key: "moderate", label: "умеренная", about: "Предупреждает чужака перед защитой."
+    },
+    Variant {
+        key: "hard", label: "жёсткая", about: "Защищает территорию сразу после вторжения."
+    },
+];
+
+/// Наследуемая возможность стрелять. Пять процентов основателей — стрелки.
 pub const SHOOTER_VARIANTS: [Variant; 2] = [
     Variant {
         key: "no", label: "без выстрела", about: "Атакует только при соприкосновении."
@@ -208,6 +233,30 @@ pub const GENES: [GeneSpec; N] = [
         base: 50.0,
         mutation: SCALE,
     },
+    GeneSpec {
+        key: "pack_instinct",
+        label: "стайность",
+        about: "Живёт в семейной стае или отдельно от потомков.",
+        kind: GeneKind::Choice(&PACK_VARIANTS),
+        base: 1.0,
+        mutation: Mutation::Switch { chance: SHOOTER_SWITCH_CHANCE },
+    },
+    GeneSpec {
+        key: "territoriality",
+        label: "территориальность",
+        about: "Не защищает территорию, предупреждает чужака или нападает сразу.",
+        kind: GeneKind::Choice(&TERRITORIALITY_VARIANTS),
+        base: 1.0,
+        mutation: Mutation::Switch { chance: SHOOTER_SWITCH_CHANCE },
+    },
+    GeneSpec {
+        key: "care",
+        label: "забота_о_детях",
+        about: "Готовность защищать и кормить собственных детёнышей, %.",
+        kind: GeneKind::Percent,
+        base: 50.0,
+        mutation: SCALE,
+    },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -280,6 +329,9 @@ mod tests {
         assert_eq!(CreatureGenome::BASE[Gene::Shooter], 0.0);
         assert_eq!(CreatureGenome::BASE[Gene::FirePreference], 50.0);
         assert_eq!(CreatureGenome::BASE[Gene::FireReserve], 50.0);
+        assert_eq!(CreatureGenome::BASE[Gene::PackInstinct], 1.0);
+        assert_eq!(CreatureGenome::BASE[Gene::Territoriality], 1.0);
+        assert_eq!(CreatureGenome::BASE[Gene::Care], 50.0);
     }
 
     /// Мутагенность родителя растягивает разброс всех генов, и свой тоже, и

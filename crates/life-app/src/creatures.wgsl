@@ -32,6 +32,7 @@ struct VOut {
     // курс: единичный вектор
     @location(5) dir: vec2<f32>,
     @location(6) @interpolate(flat) kind: u32,
+    @location(7) @interpolate(flat) dot: u32,
 };
 
 @vertex
@@ -51,6 +52,7 @@ fn vs_main(
     let kind = (flags >> 16u) & 3u;
     let ghost = (flags & (1u << 18u)) != 0u;
     let starved = (flags & (1u << 19u)) != 0u;
+    let dot = (flags & (1u << 20u)) != 0u;
     let angle = f32(flags & 0xFFFFu) / 65536.0 * 6.2831853;
     let age = born + u.since;
 
@@ -73,12 +75,12 @@ fn vs_main(
         alpha = 1.0 - a;
     }
 
-    let p = mix(prev, pos, u.k);
-    let r_px = r * u.zoom * scale * u.pixels_per_point;
+    let p = select(mix(prev, pos, u.k), pos, dot);
+    let r_px = select(r * u.zoom * scale * u.pixels_per_point, 1.0, dot);
     // мельче пикселя: рисуем пиксель, но с яркостью по площади
     let drawn = max(r_px, 0.7);
-    alpha = alpha * min(1.0, r_px * r_px / (drawn * drawn));
-    let half_px = drawn + 1.0;
+    alpha = select(alpha * min(1.0, r_px * r_px / (drawn * drawn)), 1.0, dot);
+    let half_px = select(drawn + 1.0, 1.0, dot);
     let corner = corners[vi];
     let at = u.origin + p * u.zoom + corner * (half_px / u.pixels_per_point);
 
@@ -91,6 +93,7 @@ fn vs_main(
     out.grey = grey;
     out.dir = vec2(cos(angle), sin(angle));
     out.kind = kind;
+    out.dot = u32(dot);
     return out;
 }
 
@@ -101,6 +104,9 @@ fn inside(d: f32) -> f32 {
 
 @fragment
 fn fs_main(in: VOut) -> @location(0) vec4<f32> {
+    if in.dot != 0u {
+        return vec4(in.color.rgb, 1.0);
+    }
     let r = in.r_px;
     let q = in.local;
     let len = length(q);

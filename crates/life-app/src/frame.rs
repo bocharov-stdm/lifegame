@@ -254,6 +254,10 @@ pub struct Frame {
     pub world_w: f64,
     pub world_h: f64,
     pub status: Status,
+    /// При выключенном рендере поток не собирает содержимое мира.
+    pub render_world: bool,
+    /// Дальний масштаб: неподвижные двухпиксельные квадраты без анимации.
+    pub dots: bool,
     /// Начало координат кружков в мире (f64): при ×10 000 мир шириной 6·10⁷,
     /// и в f32 абсолютные координаты теряли бы единицы пикселей.
     pub origin: (f64, f64),
@@ -284,6 +288,53 @@ pub struct Frame {
     pub build_ms: f64,
     /// Средняя цена тика, мс.
     pub tick_ms: f64,
+    /// Цена последнего среза статистики, мс.
+    pub snapshot_ms: f64,
+}
+
+/// Лёгкие экземпляры для дальнего масштаба: нет сопоставления кадров,
+/// призраков, курсов и сортировки. Тела и растения сохраняют цвета.
+pub fn dots_colored(
+    world: &World,
+    rect: (f64, f64, f64, f64),
+    out: &mut Vec<Instance>,
+    colored: bool,
+) -> bool {
+    use crate::motion::{DOT_BIT, KIND_CREATURE, KIND_PLANT, OLD};
+
+    let (x0, y0, x1, y1) = rect;
+    out.clear();
+    let mut add = |x: f64, y: f64, color: u32, kind: u32| {
+        if x < x0 || x > x1 || y < y0 || y > y1 {
+            return true;
+        }
+        out.push(Instance {
+            x: (x - x0) as f32,
+            y: (y - y0) as f32,
+            px: (x - x0) as f32,
+            py: (y - y0) as f32,
+            r: 1.0,
+            color,
+            age: OLD,
+            meta: (kind << 16) | DOT_BIT,
+        });
+        out.len() <= MAX_INSTANCES
+    };
+    let plant = rgba(plant_color(), 255);
+    for p in &world.plants {
+        if !add(p.x, p.y, plant, KIND_PLANT) {
+            out.clear();
+            return false;
+        }
+    }
+    for v in &world.creatures {
+        let color = rgba(creature_color(world, v.flock, colored), 255);
+        if !add(v.x, v.y, color, KIND_CREATURE) {
+            out.clear();
+            return false;
+        }
+    }
+    true
 }
 
 // ── цвета (палитра app/theme.py) ────────────────────────────────────────────
@@ -410,7 +461,7 @@ mod tests {
         assert_eq!((a.id, a.members, a.x, a.y), (tag, 2, 200.0, 200.0));
         let half = world.creatures[0].pheno.half;
         assert!((a.radius - (10000.0 + half * half).sqrt()).abs() < 1e-9);
-        assert!((a.territory_radius - (1.4 * a.radius + 40.0).clamp(120.0, 320.0)).abs() < 1e-9);
+        assert_eq!(a.territory_radius, 0.0, "нет территориального режима — нет опасной границы");
         assert_eq!(a.details.warned, 0);
         world.creatures[1].x = 100.0;
         assert!((flock_areas(&world)[0].radius - half).abs() < 1e-9);

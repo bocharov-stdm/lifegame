@@ -2,6 +2,35 @@
 use crate::{Space, creature::Creature, rng::Rng};
 use std::collections::BTreeMap;
 
+/// Наследуемый способ защиты границ семейной стаи.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Territoriality {
+    #[default]
+    None,
+    Moderate,
+    Hard,
+}
+
+impl Territoriality {
+    pub fn from_gene(value: f64) -> Self {
+        if value >= 1.5 {
+            Self::Hard
+        } else if value >= 0.5 {
+            Self::Moderate
+        } else {
+            Self::None
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None => "нет",
+            Self::Moderate => "умеренная",
+            Self::Hard => "жёсткая",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Summary {
     pub id: u64,
@@ -9,6 +38,8 @@ pub struct Summary {
     pub y: f64,
     pub radius: f64,
     pub territory_radius: f64,
+    pub pack_instinct: bool,
+    pub territoriality: Territoriality,
     pub warned: usize,
     pub members: usize,
     pub juveniles: usize,
@@ -30,6 +61,8 @@ pub fn summaries(world: &crate::World) -> Vec<Summary> {
         s.sociability += v.pheno.sociability;
         s.fullness += v.energy / v.pheno.max_energy;
         s.activities[v.mind.social.activity as usize] += 1;
+        s.pack_instinct = v.pheno.pack_instinct;
+        s.territoriality = v.pheno.territoriality;
     }
     for s in groups.values_mut() {
         let n = s.members as f64;
@@ -54,10 +87,54 @@ pub fn summaries(world: &crate::World) -> Vec<Summary> {
         .filter(|s| s.members >= 2)
         .map(|mut s| {
             s.radius = (s.radius / s.members as f64).sqrt();
-            s.territory_radius = (1.4 * s.radius + 40.0).clamp(120.0, 320.0);
+            s.territory_radius = if s.pack_instinct && s.territoriality != Territoriality::None {
+                (1.4 * s.radius + 40.0).clamp(120.0, 320.0)
+            } else {
+                0.0
+            };
             s
         })
         .collect()
+}
+
+/// Карточка одной выбранной стаи без построения областей остальных групп.
+pub fn summary(world: &crate::World, id: u64) -> Option<Summary> {
+    let mut s = Summary { id, ..Default::default() };
+    for v in world.creatures.iter().filter(|v| v.alive && v.flock == id) {
+        s.members += 1;
+        s.x += v.x;
+        s.y += v.y;
+        s.juveniles += (!v.adult()) as usize;
+        s.sociability += v.pheno.sociability;
+        s.fullness += v.energy / v.pheno.max_energy;
+        s.activities[v.mind.social.activity as usize] += 1;
+        s.pack_instinct = v.pheno.pack_instinct;
+        s.territoriality = v.pheno.territoriality;
+    }
+    if s.members < 2 {
+        return None;
+    }
+    let n = s.members as f64;
+    s.x /= n;
+    s.y /= n;
+    s.sociability /= n;
+    s.fullness /= n;
+    let i = (0..5).max_by_key(|&i| (s.activities[i], std::cmp::Reverse(i))).unwrap();
+    s.activity = crate::social::Activity::ALL[i];
+    if let Some(f) = world.flocks.get(&id) {
+        s.goal = Some((f.goal.tx, f.goal.ty));
+        s.warned = f.warned;
+    }
+    for v in world.creatures.iter().filter(|v| v.alive && v.flock == id) {
+        s.radius += (v.x - s.x).powi(2) + (v.y - s.y).powi(2) + v.pheno.half.powi(2);
+    }
+    s.radius = (s.radius / n).sqrt();
+    s.territory_radius = if s.pack_instinct && s.territoriality != Territoriality::None {
+        (1.4 * s.radius + 40.0).clamp(120.0, 320.0)
+    } else {
+        0.0
+    };
+    Some(s)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,6 +150,17 @@ pub fn split(
     watches: &mut Vec<SplitWatch>,
     next: &mut u64,
     tick: u64,
+) -> u64 {
+    split_with_transitions(creatures, grid, watches, next, tick, &mut Vec::new())
+}
+
+pub fn split_with_transitions(
+    creatures: &mut [Creature],
+    grid: &crate::grid::Grid,
+    watches: &mut Vec<SplitWatch>,
+    next: &mut u64,
+    tick: u64,
+    transitions: &mut Vec<(u64, u64)>,
 ) -> u64 {
     fn root(parents: &mut [usize], mut i: usize) -> usize {
         for _ in 0..parents.len() {
@@ -128,11 +216,12 @@ pub fn split(
                 since: tick,
             });
         if tick.saturating_sub(watch.since) >= 600 {
-            let tag = *next;
+            let new_tag = *next;
             *next += 1;
             count += 1;
+            transitions.push((tag, new_tag));
             for i in group {
-                creatures[i].flock = tag;
+                creatures[i].flock = new_tag;
                 creatures[i].mind.social = Default::default();
                 creatures[i].mind.attack = None;
             }
@@ -155,6 +244,8 @@ pub struct FlockGoal {
 #[derive(Clone, Debug)]
 pub struct Flock {
     pub territory_radius: f64,
+    pub pack_instinct: bool,
+    pub territoriality: Territoriality,
     pub warned: usize,
     pub alarmed: bool,
     pub food_goal: bool,
@@ -187,6 +278,8 @@ pub fn update(
         let f = flocks.entry(v.flock).or_insert_with(|| Flock {
             alarmed: false,
             territory_radius: 0.0,
+            pack_instinct: v.pheno.pack_instinct,
+            territoriality: v.pheno.territoriality,
             warned: 0,
             food_goal: false,
             food_since: 0,
@@ -199,6 +292,8 @@ pub fn update(
             hi: 0.0,
         });
         f.members += 1;
+        f.pack_instinct = v.pheno.pack_instinct;
+        f.territoriality = v.pheno.territoriality;
         f.goal.x += v.x;
         f.goal.y += v.y;
         f.lo += v.pheno.layer_lo;
@@ -217,8 +312,12 @@ pub fn update(
         let n = f.members as f64;
         f.goal.x /= n;
         f.goal.y /= n;
-        f.territory_radius =
-            if f.members >= 2 { (1.4 * (spread[tag] / n).sqrt() + 40.0).clamp(120.0, 320.0) } else { 0.0 };
+        f.territory_radius = if f.members >= 2 && f.pack_instinct && f.territoriality != Territoriality::None
+        {
+            (1.4 * (spread[tag] / n).sqrt() + 40.0).clamp(120.0, 320.0)
+        } else {
+            0.0
+        };
         if advance {
             f.remaining = f.remaining.saturating_sub(1);
         }
@@ -238,6 +337,15 @@ pub fn update(
 
 /// Переполненная стая теряет одного взрослого за тик с растущим шансом.
 pub fn departures(creatures: &mut [Creature], next: &mut u64, tick: u64) -> u64 {
+    departures_with_transitions(creatures, next, tick, &mut Vec::new())
+}
+
+pub fn departures_with_transitions(
+    creatures: &mut [Creature],
+    next: &mut u64,
+    tick: u64,
+    transitions: &mut Vec<(u64, u64)>,
+) -> u64 {
     let mut groups = BTreeMap::<u64, (usize, f64, f64)>::new();
     for v in creatures.iter() {
         let g = groups.entry(v.flock).or_default();
@@ -263,6 +371,7 @@ pub fn departures(creatures: &mut [Creature], next: &mut u64, tick: u64) -> u64 
         let roll = (crate::rng::mix(tag ^ crate::rng::mix(tick)) >> 11) as f64 / (1u64 << 53) as f64;
         if roll < probability {
             creatures[i].flock = *next;
+            transitions.push((tag, *next));
             *next += 1;
             creatures[i].flock_goal = None;
             creatures[i].mind.social = Default::default();
@@ -307,5 +416,23 @@ pub(crate) fn food_goals(flocks: &mut BTreeMap<u64, Flock>, creatures: &mut [Cre
     }
     for v in creatures {
         v.flock_goal = flocks.get(&v.flock).filter(|f| f.members >= 2).map(|f| f.goal);
+    }
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+    use crate::{World, WorldConfig};
+
+    #[test]
+    fn выбранная_стая_совпадает_с_общим_срезом_и_исчезает_без_пары() {
+        let mut world = World::new(&WorldConfig { n_creatures: Some(3), ..Default::default() });
+        let id = world.creatures[0].flock;
+        world.creatures[1].flock = id;
+        let all = summaries(&world);
+        assert_eq!(all.len(), 1);
+        assert_eq!(summary(&world, id), Some(all[0].clone()));
+        world.creatures[1].alive = false;
+        assert_eq!(summary(&world, id), None);
     }
 }

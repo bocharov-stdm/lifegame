@@ -9,13 +9,13 @@
 //! чтобы посмотреть на них глазами.
 
 use eframe::egui::accesskit::Role;
-use eframe::egui::{Pos2, Rect, Vec2};
+use eframe::egui::{Event, Modifiers, PointerButton, Pos2, Rect, Vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use life_core::flora::Profile;
 use life_core::{Shape, WorldConfig};
 
-use crate::app::{LifeApp, Screen, SideTab};
+use crate::app::{LifeApp, Screen, SideTab, Tool};
 use crate::frame::Instance;
 use crate::settings::{Key, Tab};
 use crate::sim::Command;
@@ -382,6 +382,9 @@ fn статистика_помещается_в_окно() {
             h.state_mut().stats_tab = tab;
             settle(h);
             assert_eq!(h.state().view.area, Some((0.0, 0.0, w / 2.0, hh / 3.0)));
+            if tab != StatsTab::Region {
+                assert!(h.query_by_label("Последние 10 000 тиков").is_some());
+            }
             check_layout(h, size, &format!("статистика, {tab:?}, {tag}"), None);
             shot(h, &format!("статистика-{tab:?}-{tag}"));
         }
@@ -391,6 +394,17 @@ fn статистика_помещается_в_окно() {
             h.state_mut().side_tab = tab;
             settle(h);
             assert!(h.state().view.area.is_some(), "смена вкладки сохраняет область");
+            if tab == SideTab::Charts {
+                assert!(h.query_by_label("Последние 10 000 тиков").is_some());
+                let battle = if h.state().view.frame.as_ref().unwrap().rules.cannibals() {
+                    "Бои/каннибализм: включены"
+                } else {
+                    "Бои/каннибализм: выключены"
+                };
+                assert!(h.query_by_label(battle).is_some());
+                assert!(h.query_by_label("Недавнее").is_none());
+                assert!(h.query_by_label("Вся партия").is_none());
+            }
         }
         h.get_by_label("Убрать рамку").click();
         settle(h);
@@ -777,5 +791,169 @@ fn каннибализм_в_лаборатории() {
         settle(&mut h);
         assert!(h.query_by_label("Каннибализм").is_some(), "{tag}: галочка каннибализма в лаборатории");
         shot(&mut h, &format!("лаборатория-каннибализм-{tag}"));
+    }
+}
+
+/// При отдалении тела становятся двухпиксельными квадратами, а выключение рендера
+/// прекращает сбор всех слоёв мира, сохраняя карточку и статистику.
+#[test]
+fn режимы_рендера_и_размер_трупа_без_окна() {
+    use life_core::{CreatureGenome, Rules, World, corpse::Corpse, genome::creature::Gene};
+
+    let _gpu = gpu();
+    let cfg = WorldConfig {
+        seed: 44,
+        scale: 100.0,
+        n_creatures: Some(0),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
+        ..Default::default()
+    };
+    let mut scene = World::new(&cfg);
+    let body = CreatureGenome::BASE.with(Gene::Size, 80.0);
+    let live = scene.spawn(body, 29_900.0, 20_000.0, Some(100.0));
+    scene.spawn(body, 30_100.0, 20_000.0, Some(100.0));
+    let dead = scene.creatures.pop().unwrap();
+    scene.corpses.push(Corpse::from_creature(&dead, 0));
+
+    for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
+        let mut h = harness_with(size, cfg.clone());
+        h.state_mut().side_open = false;
+        let generation = h.state().view.frame.as_ref().unwrap().world_gen;
+        h.state_mut().sim.send(Command::TestWorld(Box::new(scene.clone())));
+        for _ in 0..100 {
+            h.step();
+            if h.state().view.frame.as_ref().is_some_and(|f| f.world_gen > generation && f.dots)
+                && h.state().view.camera.is_some()
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let f = h.state().view.frame.as_ref().unwrap();
+        assert!(f.world_gen > generation && f.dots, "{tag}: дальний масштаб — квадраты");
+        assert!(!h.state().view.instances().is_empty());
+        assert!(h.state().view.instances().iter().all(|i| i.meta & crate::motion::DOT_BIT != 0));
+        shot(&mut h, &format!("рендер-квадраты-{tag}"));
+
+        {
+            let cam = h.state_mut().view.camera.as_mut().unwrap();
+            cam.zoom = 1.25;
+            cam.center_on(30_000.0, 20_000.0);
+        }
+        for _ in 0..100 {
+            h.step();
+            if h.state().view.frame.as_ref().is_some_and(|f| !f.dots)
+                && h.state().view.instances().iter().any(|i| i.meta & crate::motion::DOT_BIT == 0)
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!h.state().view.frame.as_ref().unwrap().dots, "{tag}: вблизи вернулись тела");
+        std::thread::sleep(std::time::Duration::from_millis(750));
+        settle(&mut h);
+        let image = h.render().expect("снимок трупа");
+        let cam = h.state().view.camera.as_ref().unwrap();
+        let corpse = &h.state().view.frame.as_ref().unwrap().corpses[0];
+        let (x, y) = cam.to_screen(corpse.x, corpse.y);
+        let radius = corpse.size * 0.5 * cam.zoom;
+        let scale = image.width() as f64 / size.x as f64;
+        let sample = |offset: f64| {
+            let px = ((x + offset) * scale).round() as u32;
+            let py = (y * scale).round() as u32;
+            assert!(px < image.width() && py < image.height());
+            image.get_pixel(px, py).0
+        };
+        let inside = sample(radius * 0.7);
+        let outside = sample(radius * 1.15);
+        assert!(
+            inside[0] > 70 && inside[0] > inside[2],
+            "{tag}: труп виден внутри 70% радиуса тела: {inside:?}"
+        );
+        assert!(outside[0] < 70, "{tag}: вне тела трупа должен быть фон: {outside:?}");
+        let (live_x, live_y) = cam.to_screen(29_900.0, 20_000.0);
+        let ring_x = ((live_x + radius + 5.0) * scale).round() as u32;
+        let ring_y = (live_y * scale).round() as u32;
+        let without_selection = image.get_pixel(ring_x, ring_y).0;
+        assert!(without_selection[0] < 80, "{tag}: массового кольца контакта нет");
+        shot(&mut h, &format!("рендер-тело-и-труп-{tag}"));
+
+        h.state_mut().sim.send(Command::Pick { x: 29_900.0, y: 20_000.0, radius: 0.0 });
+        for _ in 0..100 {
+            h.step();
+            if h.state().view.frame.as_ref().and_then(|f| f.selected).is_some_and(|s| s.id == live) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(h.state().view.frame.as_ref().unwrap().selected.unwrap().id, live);
+        settle(&mut h);
+        let selected_image = h.render().expect("снимок выбранного существа");
+        let selected_ring = selected_image.get_pixel(ring_x, ring_y).0;
+        assert!(
+            selected_ring[0] > 140 && selected_ring[1] > 100 && selected_ring[2] < 110,
+            "{tag}: у выбранного существа кольцо контакта: {selected_ring:?}"
+        );
+        shot(&mut h, &format!("рендер-выбранный-контакт-{tag}"));
+
+        h.state_mut().render_world = false;
+        h.state_mut().sim.send(Command::RenderWorld(false));
+        for _ in 0..100 {
+            h.step();
+            if h.state().view.frame.as_ref().is_some_and(|f| !f.render_world) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let f = h.state().view.frame.as_ref().unwrap();
+        assert!(!f.render_world && !f.dots && f.selected.is_some());
+        assert!(h.state().view.instances().is_empty());
+        assert!(f.corpses.is_empty() && f.shots.is_empty() && f.flock_areas.is_empty());
+        assert!(f.density.is_none() && f.minimap.is_none());
+        h.state_mut().side_open = true;
+        h.state_mut().side_tab = SideTab::Creature;
+        settle(&mut h);
+        assert!(h.query_by_label("Снять выбор").is_some(), "{tag}: карточка работает без рендера");
+        shot(&mut h, &format!("рендер-выкл-{tag}"));
+
+        // Пустой фон остаётся интерактивной областью: подсадка работает и без рисунка мира.
+        let before = h.state().view.frame.as_ref().unwrap().creatures;
+        h.state_mut().tool = Tool::Spawn;
+        let pos = Pos2::new(size.x * 0.35, size.y * 0.5);
+        h.hover_at(pos);
+        for pressed in [true, false] {
+            h.event(Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        for _ in 0..100 {
+            h.step();
+            if h.state().view.frame.as_ref().is_some_and(|f| f.creatures == before + 1) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(
+            h.state().view.frame.as_ref().unwrap().creatures,
+            before + 1,
+            "{tag}: подсадка без рендера"
+        );
+        h.state_mut().tool = Tool::Select;
+
+        h.state_mut().render_world = true;
+        h.state_mut().sim.send(Command::RenderWorld(true));
+        for _ in 0..100 {
+            h.step();
+            if h.state().view.frame.as_ref().is_some_and(|f| f.render_world && !f.corpses.is_empty()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let f = h.state().view.frame.as_ref().unwrap();
+        assert!(f.render_world && !f.dots && f.selected.is_some());
+        assert_eq!(f.corpses.len(), 1);
     }
 }

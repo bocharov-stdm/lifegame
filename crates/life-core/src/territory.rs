@@ -6,6 +6,7 @@ use crate::{
     creature::{Creature, Intent},
     flock::Flock,
     grid::Grid,
+    kin_grace::Grace,
     rng::mix,
 };
 
@@ -53,12 +54,19 @@ impl State {
 
     /// В перекрытии владеет точкой ближайший нормированный центр.
     pub fn owner(&self, x: f64, y: f64) -> Option<Area> {
+        self.owner_where(x, y, |_| true)
+    }
+
+    fn owner_where(&self, x: f64, y: f64, allowed: impl Fn(Area) -> bool) -> Option<Area> {
         if self.areas.is_empty() {
             return None;
         }
         let mut best: Option<(f64, u64, Area)> = None;
         self.grid.for_each_near(x, y, 320.0, |i, _, _| {
             let area = self.areas[i];
+            if !allowed(area) {
+                return;
+            }
             let score = ((x - area.x).powi(2) + (y - area.y).powi(2)) / area.radius.powi(2);
             if score <= 1.0
                 && best.is_none_or(|(old, id, _)| score < old || (score == old && area.flock < id))
@@ -76,9 +84,20 @@ impl State {
         space: &Space,
         tick: u64,
     ) -> Vec<Option<u64>> {
+        self.prepare_with_grace(flocks, creatures, space, tick, &Grace::default())
+    }
+
+    pub fn prepare_with_grace(
+        &mut self,
+        flocks: &mut BTreeMap<u64, Flock>,
+        creatures: &mut [Creature],
+        space: &Space,
+        tick: u64,
+        grace: &Grace,
+    ) -> Vec<Option<u64>> {
         self.areas.clear();
         self.areas.extend(flocks.iter().filter_map(|(&tag, f)| {
-            (f.members >= 2).then_some(Area {
+            (f.members >= 2 && f.territory_radius > 0.0).then_some(Area {
                 flock: tag,
                 x: f.goal.x,
                 y: f.goal.y,
@@ -86,7 +105,11 @@ impl State {
             })
         }));
         self.grid.rebuild(space, self.areas.iter().map(|a| (a.x, a.y)));
-        let owners: Vec<_> = creatures.iter().map(|v| self.owner(v.x, v.y)).collect();
+        let owners: Vec<_> = creatures
+            .iter()
+            .map(|v| self.owner_where(v.x, v.y, |a| !grace.contains(a.flock, v.flock, tick)))
+            .collect();
+        let by_id: BTreeMap<_, _> = creatures.iter().enumerate().map(|(i, v)| (v.id, i)).collect();
         let mut active = BTreeSet::new();
         let mut immediate = BTreeSet::new();
         self.attacks.retain(|&(_, _, when)| when >= tick);
@@ -96,7 +119,10 @@ impl State {
             }
         }
         for victim in creatures.iter() {
-            if let Some(hit) = victim.mind.social.hit.filter(|h| h.tick == tick) {
+            if let Some(hit) = victim.mind.social.hit.filter(|h| h.tick == tick)
+                && let Some(&j) = by_id.get(&hit.enemy)
+                && !grace.contains(victim.flock, creatures[j].flock, tick)
+            {
                 immediate.insert((victim.flock, hit.enemy));
             }
         }
@@ -111,17 +137,27 @@ impl State {
         for (i, v) in creatures.iter().enumerate() {
             if let Some(area) = owners[i].filter(|a| a.flock != v.flock) {
                 let key = (area.flock, v.id);
-                if tick.saturating_sub(self.encounters[&key]) >= 30 || immediate.contains(&key) {
+                let mode = flocks[&area.flock].territoriality;
+                if mode == crate::flock::Territoriality::Hard
+                    || tick.saturating_sub(self.encounters[&key]) >= 30
+                    || immediate.contains(&key)
+                {
                     warned.entry(area.flock).or_default().push(i);
                 }
             }
         }
-        let by_id: BTreeMap<_, _> = creatures.iter().enumerate().map(|(i, v)| (v.id, i)).collect();
         for (tag, enemy) in immediate {
-            if flocks.get(&tag).is_none_or(|f| f.members < 2) {
+            let Some(flock) = flocks.get(&tag).filter(|f| f.members >= 2) else {
                 continue;
-            }
+            };
             if let Some(&i) = by_id.get(&enemy) {
+                if grace.contains(tag, creatures[i].flock, tick)
+                    || flock.territoriality == crate::flock::Territoriality::None
+                    || (flock.territoriality == crate::flock::Territoriality::Hard
+                        && owners[i].is_none_or(|area| area.flock != tag))
+                {
+                    continue;
+                }
                 let enemies = warned.entry(tag).or_default();
                 if !enemies.contains(&i) {
                     enemies.push(i);
@@ -175,7 +211,7 @@ impl State {
             let mut intrusions = Vec::new();
             self.grid.for_each_near(v.x, v.y, v.pheno.vision + 320.0, |j, _, _| {
                 let area = self.areas[j];
-                if area.flock == v.flock {
+                if area.flock == v.flock || grace.contains(area.flock, v.flock, tick) {
                     return;
                 }
                 let distance = (v.x - area.x).hypot(v.y - area.y);

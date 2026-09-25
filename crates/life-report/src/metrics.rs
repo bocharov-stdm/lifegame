@@ -59,7 +59,7 @@ impl Reference {
     pub fn load(path: &Path) -> Result<Reference, String> {
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         let data: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-        if data["model"].as_str() != Some("life-behavior/4") {
+        if data["model"].as_str() != Some("life-behavior/5") {
             return Err("Эталон другой модели поведения. Пересоздайте его через --save-reference после проверки баланса.".into());
         }
         let field = |v: &Value, k: &str| v.get(k).cloned().ok_or(format!("нет поля {k}"));
@@ -218,6 +218,15 @@ pub fn save_reference(
     sample_every: u64,
     results: &[(u64, SimResult)],
 ) -> Result<(), String> {
+    if results.is_empty() {
+        return Err("эталон нельзя снять без прогонов".into());
+    }
+    if let Some((seed, run)) = results.iter().find(|(_, run)| !run.ok() || run.ticks_done != ticks) {
+        return Err(format!(
+            "эталон не записан: сид {seed} остановился ({}) на тике {} из {ticks}",
+            run.stop, run.ticks_done
+        ));
+    }
     let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(cfg.rules.get(k)))).collect();
     let runs: Vec<Value> = results
         .iter()
@@ -245,7 +254,7 @@ pub fn save_reference(
         .collect();
     let data = json!({
         "source": "rust",
-        "model": "life-behavior/4",
+        "model": "life-behavior/5",
         "sample_every": sample_every,
         "ticks": ticks,
         "genes": GENES.iter().map(|g| g.key).collect::<Vec<_>>(),
@@ -348,14 +357,35 @@ pub fn print_comparison(reference: &Reference, results: &[(u64, SimResult)]) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use life_core::World;
+    use life_sim::{Limits, run};
 
     #[test]
     fn старый_эталон_отклоняется_до_чтения_рядов() {
         let path = std::env::temp_dir().join(format!("life-old-reference-{}.json", std::process::id()));
-        for value in ["{}", r#"{"model":"life-behavior/1"}"#, r#"{"model":"life-behavior/2"}"#] {
+        for value in [
+            "{}",
+            r#"{"model":"life-behavior/1"}"#,
+            r#"{"model":"life-behavior/2"}"#,
+            r#"{"model":"life-behavior/3"}"#,
+            r#"{"model":"life-behavior/4"}"#,
+        ] {
             std::fs::write(&path, value).unwrap();
             assert!(Reference::load(&path).err().unwrap().contains("другой модели поведения"));
         }
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn оборванный_прогон_не_становится_эталоном() {
+        let cfg = WorldConfig { n_creatures: Some(0), ..Default::default() };
+        let world = World::new(&cfg);
+        let result = run(world, &Limits { ticks: 1, ..Default::default() }, &mut |_| {});
+        assert_eq!(result.stop, StopReason::Extinct);
+        let path =
+            std::env::temp_dir().join(format!("life-incomplete-reference-{}.json", std::process::id()));
+        let error = save_reference(&path, &cfg, 20_000, REFERENCE_SAMPLE, &[(cfg.seed, result)]).unwrap_err();
+        assert!(error.contains("эталон не записан") && error.contains("сид"), "{error}");
+        assert!(!path.exists());
     }
 }

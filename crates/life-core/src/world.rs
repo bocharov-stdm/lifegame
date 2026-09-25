@@ -117,6 +117,7 @@ pub struct World {
     pub corpses: Vec<crate::corpse::Corpse>,
     pub shots: Vec<crate::Shot>,
     pub territory: crate::territory::State,
+    pub grace: crate::kin_grace::Grace,
     pub next_flock: u64,
     pub split_watches: Vec<crate::flock::SplitWatch>,
     pub social_counts: crate::social::Counters,
@@ -154,6 +155,7 @@ impl World {
             corpses: Vec::new(),
             shots: Vec::new(),
             territory: Default::default(),
+            grace: Default::default(),
             next_flock: 1,
             split_watches: Vec::new(),
             social_counts: Default::default(),
@@ -177,7 +179,23 @@ impl World {
         let variants = creature_strategy::VARIANTS.len();
         for i in 0..n_start {
             let k = variant_for(i, n_start, &cfg.strategies, variants);
-            let genome = CreatureGenome::BASE.with(creature::Gene::Strategy, k as f64);
+            // Независимые от потока мира жребии не меняют места рождения и растения.
+            let mut founder = Rng::keyed(cfg.seed, 0x5A6C_5A6C_0000_0000 ^ i as u64);
+            let pack = founder.random() < 0.5;
+            let territory = founder.random();
+            let shooter = founder.random() < 0.05;
+            let mode = if !pack || territory < 0.5 {
+                0.0
+            } else if territory < 0.9 {
+                1.0
+            } else {
+                2.0
+            };
+            let genome = CreatureGenome::BASE
+                .with(creature::Gene::Strategy, k as f64)
+                .with(creature::Gene::PackInstinct, f64::from(pack as u8))
+                .with(creature::Gene::Territoriality, mode)
+                .with(creature::Gene::Shooter, f64::from(shooter as u8));
             let v = Creature::new(&w.space, &w.rules, genome, None, None, None, rng.fork());
             w.add_creature(v);
         }
@@ -237,18 +255,26 @@ impl World {
 
     fn update_creatures(&mut self) {
         let now = self.tick + 1;
+        self.grace.prune(now);
         self.shots.retain(|s| now.saturating_sub(s.tick) <= 8);
         if self.rules.cannibals() {
             self.corpses.retain_mut(|c| c.decay(now));
         } else {
             self.corpses.clear();
         }
+        crate::care::feed_children(&mut self.creatures, &self.rules);
         crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.flock_seed, true);
         crate::flock::food_goals(&mut self.flocks, &mut self.creatures, self.tick);
         self.prey_grid.rebuild(&self.space, self.creatures.iter().map(|v| (v.x, v.y)));
         crate::social::prepare(&mut self.creatures, &self.prey_grid, self.tick);
         let territorial_targets = if self.rules.cannibals() {
-            self.territory.prepare(&mut self.flocks, &mut self.creatures, &self.space, self.tick)
+            self.territory.prepare_with_grace(
+                &mut self.flocks,
+                &mut self.creatures,
+                &self.space,
+                self.tick,
+                &self.grace,
+            )
         } else {
             self.territory.clear();
             for f in self.flocks.values_mut() {
@@ -257,8 +283,12 @@ impl World {
             vec![None; self.creatures.len()]
         };
         if self.rules.cannibals() {
-            self.social_counts.interventions +=
-                crate::social::prepare_aid(&mut self.creatures, &self.prey_grid, self.tick);
+            self.social_counts.interventions += crate::social::prepare_aid_with_grace(
+                &mut self.creatures,
+                &self.prey_grid,
+                self.tick,
+                &self.grace,
+            );
         }
         let World {
             space,
@@ -283,7 +313,7 @@ impl World {
         // зависит от порядка ходов. Пока съесть друг друга нельзя (каннибализм
         // выключен), бояться некого — снимок не строится, и мир бит в бит прежний.
         let herd = if rules.cannibals() {
-            herd.rebuild(space, creatures, rules.cannibal_ratio);
+            herd.rebuild_with_grace(space, creatures, rules.cannibal_ratio, &self.grace, now);
             Some(&*herd)
         } else {
             None
@@ -362,14 +392,14 @@ impl World {
         }
         if rules.cannibals() {
             // Все уже сходили; новорождённых ещё нет. Удары одновременны.
-            let result = crate::combat::resolve(
+            let result = crate::combat::resolve_with_grace(
                 space,
                 rules,
                 creatures,
                 prey_grid,
                 counters,
                 now,
-                &territorial_targets,
+                crate::combat::CombatPolicy { territorial_targets: &territorial_targets, grace: &self.grace },
             );
             counters.ranged_shots += result.shots.len() as u64;
             counters.territorial_fights += result.territorial_attacks;
@@ -399,7 +429,15 @@ impl World {
         }
         for v in creatures.iter_mut().filter(|v| v.alive) {
             if let Some(child) = v.maybe_divide(space, rules) {
-                offspring.push(child);
+                // У неизменной одиночной линии каждая метка принадлежит одному
+                // существу. Родитель и ребёнок уже защищены родством; хранить
+                // ещё 600-тиковую пару для каждого такого рождения незачем.
+                let protect = v.pheno.pack_instinct
+                    || v.pheno.pack_instinct != child.pheno.pack_instinct
+                    || v.pheno.territoriality != child.pheno.territoriality
+                    || v.pheno.strategy != child.pheno.strategy
+                    || v.pheno.shooter != child.pheno.shooter;
+                offspring.push((child, v.flock, protect));
             }
         }
         if rules.cannibals() {
@@ -410,21 +448,32 @@ impl World {
         creatures.retain(|v| v.alive);
         plants.retain(|p| p.alive); // выметаем съеденное
         counters.born += offspring.len() as u64;
-        for child in offspring {
+        let mut transitions = Vec::new();
+        for (child, former_flock, protect) in offspring {
+            let separate = child.flock == 0;
             self.add_creature(child);
+            if separate && protect {
+                transitions.push((former_flock, self.next_flock - 1));
+            }
         }
         if (self.tick + 1).is_multiple_of(60) {
             self.prey_grid.rebuild(&self.space, self.creatures.iter().map(|v| (v.x, v.y)));
-            self.social_counts.splits += crate::flock::split(
+            self.social_counts.splits += crate::flock::split_with_transitions(
                 &mut self.creatures,
                 &self.prey_grid,
                 &mut self.split_watches,
                 &mut self.next_flock,
                 self.tick + 1,
+                &mut transitions,
             );
         }
-        self.social_counts.departures +=
-            crate::flock::departures(&mut self.creatures, &mut self.next_flock, now);
+        self.social_counts.departures += crate::flock::departures_with_transitions(
+            &mut self.creatures,
+            &mut self.next_flock,
+            now,
+            &mut transitions,
+        );
+        self.grace.register_transitions(&transitions, now);
         let prior_alarms: Vec<_> = self.flocks.iter().filter(|(_, f)| f.alarmed).map(|(&id, _)| id).collect();
         crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.flock_seed, false);
         self.social_counts.alarm_ends +=
@@ -512,5 +561,78 @@ impl World {
     /// по id и поиск двоичный: следить за существом можно и среди миллиона.
     pub fn creature(&self, id: u64) -> Option<&Creature> {
         self.creatures.binary_search_by_key(&id, |v| v.id).ok().map(|i| &self.creatures[i])
+    }
+}
+
+#[cfg(test)]
+mod trait_tests {
+    use super::*;
+    use crate::genome::creature::Gene;
+
+    #[test]
+    fn основатели_получают_воспроизводимые_режимы_без_смены_мест_рождения() {
+        let cfg = WorldConfig { seed: 17, n_creatures: Some(400), ..Default::default() };
+        let first = World::new(&cfg);
+        let again = World::new(&cfg);
+        let extended = World::new(&WorldConfig { n_creatures: Some(401), ..cfg });
+        let mut pack = 0;
+        let mut modes = [0usize; 3];
+        let mut shooters = 0;
+        for ((a, b), c) in first.creatures.iter().zip(&again.creatures).zip(&extended.creatures) {
+            assert_eq!(a.genome, b.genome);
+            assert_eq!((a.x, a.y), (b.x, b.y));
+            // Дополнительный основатель не сдвигает независимые жребии.
+            assert_eq!(a.pheno.pack_instinct, c.pheno.pack_instinct);
+            assert_eq!(a.pheno.territoriality, c.pheno.territoriality);
+            assert_eq!(a.pheno.shooter, c.pheno.shooter);
+            assert_eq!((a.x, a.y), (c.x, c.y));
+            pack += a.pheno.pack_instinct as usize;
+            shooters += a.pheno.shooter as usize;
+            if a.pheno.pack_instinct {
+                modes[a.genome[Gene::Territoriality] as usize] += 1;
+            } else {
+                assert_eq!(a.genome[Gene::Territoriality], 0.0);
+            }
+        }
+        assert!((160..=240).contains(&pack), "половина основателей стайные: {pack}");
+        assert!(modes[0] > modes[1] && modes[1] > modes[2], "режимы 50/40/10: {modes:?}");
+        assert!((8..=36).contains(&shooters), "пять процентов основателей стреляют: {shooters}");
+    }
+
+    #[test]
+    fn неизменная_одиночная_линия_не_создаёт_лишнюю_защиту_между_метками() {
+        let rules = Rules::default().with("plant_rate", 0.0).unwrap().with("mutation_sigma", 0.0).unwrap();
+        let mut world = World::new(&WorldConfig { n_creatures: Some(0), rules, ..Default::default() });
+        let genome = CreatureGenome::BASE
+            .with(Gene::PackInstinct, 0.0)
+            .with(Gene::Territoriality, 0.0)
+            .with(Gene::Mutability, 0.0);
+        let parent_id = world.spawn(genome, 1000.0, 1000.0, Some(100.0));
+        world.creatures[0].reproduction_wait = 0;
+        world.step();
+        assert_eq!(world.counters.born, 1);
+        assert_eq!(world.creatures[1].parent, parent_id);
+        assert_ne!(world.creatures[0].flock, world.creatures[1].flock);
+        assert_eq!(world.grace.entries().count(), 0);
+    }
+
+    #[test]
+    fn взрослый_после_ухода_из_переполненной_стаи_защищён_от_бывших_своих() {
+        let rules = Rules::default().with("plant_rate", 0.0).unwrap();
+        let mut world = World::new(&WorldConfig { n_creatures: Some(0), rules, ..Default::default() });
+        for i in 0..55 {
+            world.spawn(CreatureGenome::BASE, 1000.0 + i as f64, 1000.0, Some(100.0));
+        }
+        let former = world.creatures[0].flock;
+        for v in &mut world.creatures {
+            v.flock = former;
+            v.reproduction_wait = 10_000;
+        }
+        world.step();
+        assert_eq!(world.social_counts.departures, 1);
+        let departed = world.creatures.iter().find(|v| v.flock != former).unwrap();
+        assert_eq!(world.grace.entries().count(), 1);
+        assert!(world.grace.contains(former, departed.flock, 601));
+        assert!(!world.grace.contains(former, departed.flock, 602));
     }
 }

@@ -7,11 +7,12 @@ use life_core::flora::Profile;
 use life_core::genome::creature::N;
 use life_core::genome::{GeneSpec, creature};
 use life_core::{Rules, WorldConfig};
-use life_sim::observe::EventKind;
+use life_sim::observe::{EventKind, GeneStat};
 
 use crate::app::{LifeApp, SideTab, Tool};
 use crate::charts;
 use crate::frame::{CREATURE_COLOR, Ending, PLANT_COLOR, Selected};
+use crate::history::History;
 use crate::settings::{self, FIELDS, Tab};
 use crate::sim::{Command, SPEEDS};
 use crate::theme::{self, ACCENT, DANGER, GOOD, MUTED, TEXT, rgb, spaced};
@@ -42,6 +43,20 @@ fn lab_group(field: &settings::Field) -> &'static str {
         Key::MutationSigma => "Эволюция",
         _ => "Питание и энергия",
     }
+}
+
+/// Наследуемые охотничьи признаки в последнем срезе мира.
+pub(crate) fn predator_summary(history: &History) -> Option<(f64, f64, f64)> {
+    let genes = history.snapshots.last()?.genes.as_ref()?;
+    let median = |gene: creature::Gene| match genes[gene as usize] {
+        GeneStat::Number(spread) => Some(spread.p50),
+        _ => None,
+    };
+    let shooters = match genes[creature::Gene::Shooter as usize] {
+        GeneStat::Shares(shares) => shares[1] * 100.0,
+        _ => return None,
+    };
+    Some((median(creature::Gene::Carnivory)?, median(creature::Gene::PreyRatio)?, shooters))
 }
 
 /// Команда `life-report`, которая повторяет партию без окна.
@@ -230,7 +245,10 @@ impl LifeApp {
             return;
         };
         let (st, tick, counts) = (f.status, f.tick, [f.plants, f.creatures]);
-        let (tick_ms, build_ms) = (f.tick_ms, f.build_ms);
+        let (seed, scale) = (f.seed, f.scale);
+        let (tick_ms, snapshot_ms, build_ms, draw_ms) =
+            (f.tick_ms, f.snapshot_ms, f.build_ms, self.view.draw_ms);
+        let cannibals = f.rules.cannibals();
         ui.horizontal(|ui| {
             let (icon, hint) = if st.paused {
                 ("▶", "Пуск (Пробел)")
@@ -263,6 +281,11 @@ impl LifeApp {
             ui.label(format!("тик {}", spaced(tick)));
             ui.colored_label(rgb(PLANT_COLOR), format!("растения {}", spaced(counts[0] as u64)));
             ui.colored_label(rgb(CREATURE_COLOR), format!("существа {}", spaced(counts[1] as u64)));
+            ui.colored_label(
+                if cannibals { DANGER } else { MUTED },
+                if cannibals { "бои: вкл" } else { "бои: выкл" },
+            )
+            .on_hover_text("Каннибализм — общее правило мира: включает охоту и бои, но не меняет гены.");
             ui.separator();
             if st.lagging {
                 let target = SPEEDS[st.speed_index].unwrap_or(0.0);
@@ -278,9 +301,13 @@ impl LifeApp {
             if self.settings.show_fps {
                 ui.colored_label(
                     MUTED,
-                    format!("{:.0} к/с · тик {tick_ms:.1} мс · кадр мира {build_ms:.1} мс", self.fps()),
+                    format!(
+                        "{:.0} к/с · тик {tick_ms:.1} · срез {snapshot_ms:.1} · сборка {build_ms:.1} · рисунок {draw_ms:.1} мс",
+                        self.fps()
+                    ),
                 );
             }
+            ui.colored_label(MUTED, format!("сид {seed} · ×{scale}"));
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("☰ Меню").on_hover_text("Меню (Esc)").clicked() {
@@ -304,6 +331,16 @@ impl LifeApp {
             if ui.toggle_value(&mut self.flock_colors, "Стаи").on_hover_text("Области вокруг центров стай; цвет и число участников").changed() {
                 self.sim.send(Command::FlockColors(self.flock_colors));
             }
+            let was_rendering = self.render_world;
+            egui::ComboBox::from_id_salt("рендер мира")
+                .selected_text(if self.render_world { "Рендер: авто" } else { "Рендер: выкл" })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.render_world, true, "авто");
+                    ui.selectable_value(&mut self.render_world, false, "выкл");
+                });
+            if was_rendering != self.render_world {
+                self.sim.send(Command::RenderWorld(self.render_world));
+            }
             ui.separator();
             if ui.button("Весь мир").on_hover_text("Показать весь мир (Home)").clicked()
                 && let Some(cam) = &mut self.view.camera
@@ -324,16 +361,12 @@ impl LifeApp {
             {
                 self.restart();
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if let Some(f) = &self.view.frame {
-                    ui.colored_label(MUTED, format!("сид {} · масштаб ×{}", f.seed, f.scale));
-                }
-            });
         });
     }
 
     fn side_panel(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing.y = 4.0;
+        self.predator_status(ui);
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.side_tab, SideTab::Charts, "Графики");
             ui.selectable_value(&mut self.side_tab, SideTab::Log, "Хроника");
@@ -347,24 +380,45 @@ impl LifeApp {
         }
     }
 
+    pub(crate) fn predator_status(&self, ui: &mut egui::Ui) {
+        if let Some(f) = &self.view.frame {
+            ui.colored_label(
+                if f.rules.cannibals() { DANGER } else { MUTED },
+                if f.rules.cannibals() {
+                    "Бои/каннибализм: включены"
+                } else {
+                    "Бои/каннибализм: выключены"
+                },
+            )
+            .on_hover_text("Общий выключатель охоты и боёв для всего мира.");
+        }
+        if let Some((carnivory, ratio, shooters)) = predator_summary(&self.history) {
+            ui.label(format!("Адаптация: плотоядность {carnivory:.0}% · добыча ≤ 1/{ratio:.1} размера"))
+                .on_hover_text("Плотоядность и предел размера добычи наследуются каждым существом.");
+            ui.colored_label(
+                rgb(CREATURE_COLOR),
+                format!(
+                    "Стрелков {shooters:.1}% · выстрелов за 10 000 тиков {}",
+                    spaced(self.history.shots_in_window())
+                ),
+            );
+        }
+    }
+
     fn charts_tab(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.whole, false, "Недавнее");
-                ui.selectable_value(&mut self.whole, true, "Вся партия");
-            });
+            ui.colored_label(MUTED, "Последние 10 000 тиков");
             ui.label(RichText::new("Численность").strong().color(ACCENT));
-            charts::populations(ui, &self.history, self.whole, 112.0);
+            charts::populations(ui, &self.history, 112.0);
             ui.add_space(4.0);
             ui.label(RichText::new("Геном существ").strong());
-            let snaps = self.history.snapshots.points(self.whole);
+            let snaps = self.history.snapshots.points();
             let points: Vec<charts::GenePoint> =
                 snaps.iter().filter_map(|s| Some((s.tick, &s.genes.as_ref()?[..]))).collect();
             if points.is_empty() {
                 ui.colored_label(MUTED, "существ нет — нет и генома");
             } else {
-                let origin = self.history.gene_origin.as_ref().map(|o| &o[..]);
-                charts::genome(ui, &creature::GENES, &points, origin, rgb(CREATURE_COLOR), 23.0);
+                charts::genome(ui, &creature::GENES, &points, rgb(CREATURE_COLOR), 23.0);
             }
             ui.add_space(4.0);
             self.research(ui);
@@ -432,6 +486,11 @@ impl LifeApp {
         if let Some(s) = self.view.frame.as_ref().and_then(|f| f.selected_flock.as_ref()) {
             ui.heading(format!("Стая № {}", s.id));
             ui.label(format!("Участников: {} · молодых: {}", s.members, s.juveniles));
+            ui.label(format!(
+                "Стайность: {} · территориальность: {}",
+                if s.pack_instinct { "есть" } else { "нет" },
+                s.territoriality.label()
+            ));
             ui.label(format!("Сейчас: {}", s.activity.label()));
             ui.label(format!("Общительность: {:.0}%", s.sociability * 100.0));
             ui.label(format!("Сытость: {:.0}%", s.fullness * 100.0));
@@ -637,6 +696,15 @@ fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; N]>) {
     ));
     ui.label(format!("Здоровье {:.1} / {:.1} · {}", s.health, s.max_health, s.state));
     ui.label(s.flock.map_or("Одиночка".into(), |id| format!("Стая № {id}")));
+    ui.colored_label(
+        color,
+        format!(
+            "Плотоядность {:.0}% · добыча до 1/{:.1} своего размера",
+            s.genome[creature::Gene::Carnivory as usize],
+            s.genome[creature::Gene::PreyRatio as usize],
+        ),
+    )
+    .on_hover_text("Эти признаки наследуются и работают, когда мировое правило боёв включено.");
     let frac = (s.energy / s.max_energy).clamp(0.0, 1.0);
     ui.horizontal(|ui| {
         ui.colored_label(MUTED, "энергия");

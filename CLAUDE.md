@@ -29,8 +29,11 @@ ported from. Реформа поведения реализована: родс�
 Движок пока последовательный; снимок соседей и разделение движения/питания не означают
 распараллеливание. Стаи обмениваются локальными сведениями о еде и тревоге,
 отдыхают, собираются, переходят к новым местам и ограниченно прикрывают своих.
-У стаи есть территория; чужаки стараются обходить её, а предупреждённых
-вторженцев взрослые защитники могут обстрелять. Растения и трупы доступны
+Половина основателей стайные: территории бывают без защиты, умеренными и
+жёсткими. Взрослые защитники могут обстрелять вторженцев; у 5% основателей
+уже есть способность стрелять. После разделения семей действует 600-тиковая
+взаимная защита, родители могут кормить и прикрывать невзрослых детей.
+Растения и трупы доступны
 порциями, выстрелы слабее контактного удара и расходуют энергию.
 Совместной охоты, вожаков, раздела добычи и слияния стай нет. Общительность —
 наследуемый ген; устойчиво отделённые группы получают новую метку. См. `BEHAVIOR.md`.
@@ -88,7 +91,7 @@ gene shifts, creatures squeezing into a thin layer); ASCII maps (top = surface, 
 creatures, `:`/`.` plants). The JSON has the same plus every snapshot
 (`life_sim::observe::Snapshot`: per-gene `GeneStat` — a spread for numeric genes, variant
 shares for choice genes —, depth and width histograms, cumulative counters). Format
-`life-report/7` (социальные счётчики, территории, трупы, питание, выстрелы и настраиваемые цены действий): top-level `genes` describes the gene table (key,
+`life-report/8` (социальные счётчики, территории, трупы, питание, выстрелы и настраиваемые цены действий): top-level `genes` describes the gene table (key,
 label, kind, variants);
 keys are English (event `kind`), texts Russian. Long runs may stop on the work budget
 ("перегрузка") — raise it with `--max-work`.
@@ -101,8 +104,8 @@ and the event chronicle for its in-game event feed.
 `reference/fingerprint.json` is the balance fingerprint (8 seeds x 20 000 ticks, series every
 60 ticks). It started as the last Python version's (`python/fingerprint.py` at `python-final`)
 and is re-taken from Rust after each deliberate balance change. It is a world of creatures
-and plants (0 of 8 seeds extinct, 323–1107 creatures without combat); metrics: creatures and plants mean,
-size max and final. Текущий эталон имеет `model: "life-behavior/4"`; эталоны без этой версии отклоняются. `--compare` reruns the same seeds in Rust and checks each metric's mean
+and plants (0 of 8 seeds extinct, 1288–1679 creatures without combat in the current base profile); metrics: creatures and plants mean,
+size max and final. Текущий эталон имеет `model: "life-behavior/5"`; эталоны без этой версии отклоняются. `--compare` reruns the same seeds in Rust and checks each metric's mean
 against the reference's per-seed range; any mismatch exits with code 1 (CI relies on it). It
 refuses (code 2) when the world differs from the one the reference was taken on (world size —
 compared as `Space`, not shape name, since at ×1 strip and 3:2 are the same 6000x4000 —,
@@ -305,8 +308,11 @@ fitter on average), variation dries up and they lost to predators. Without preda
 12, ~2000 creatures, mutability settles near 0.4. The user chose deliberately: mutability has
 no energy cost.
 
-Текущая реформа: 8/8 миров выжили в каждом режиме за 20 000 тиков.
-Численность: 323–1107 без боёв, 366–797 с боями. Старые результаты гонки размеров
+Текущая реформа: 8/8 миров выжили в каждом из четырёх режимов за 20 000 тиков.
+Медианная численность: базовый профиль — 1464 без боёв и 848,5 с боями;
+спокойный — 1032 и 614. Население выросло, а в части прогонов стайные линии
+стали редкими: это открытый вопрос баланса, не критерий выживания миров.
+Старые результаты гонки размеров
 относятся к мгновенному поеданию и больше не описывают модель. См. `BEHAVIOR.md`.
 
 Behaviour genes without a cost run away. Tried and removed: «испуг» (flee distance, % of
@@ -422,18 +428,20 @@ Adding a strategy:
   took the previous frame, so frames are never dropped — that is why history/log/snapshots
   travel as *deltas* in `Frame` (a test checks none are lost). Tempo: ticks per second with a
   capped debt (lag is shown, never caught up in a burst), `SLICE` bounds a tick burst so
-  commands stay responsive; frame building is throttled to ≤ 1/3 of the thread's time.
+  commands stay responsive; frame building is throttled by its measured cost.
   `Snapshot::of` (sorting) runs every `SNAPSHOT_EVERY` ticks, stretched on big worlds to ≤ 5%.
 - `frame.rs` — what the UI needs: instances (32 bytes, relative to `origin` in f64 — f32
   absolute coords break at ×10 000) **culled to the visible rect** (padded by half a view,
   culled by body, not centre), or a density raster when more than `MAX_INSTANCES` are
-  visible; the minimap raster every 0.4 s. `кадр_огромного_мира_быстрый_и_лёгкий` guards it.
+  visible; the minimap raster every 0.4 s. At distant zoom the shader draws 2-pixel squares;
+  `RenderWorld(false)` omits world geometry, density, minimap, corpses and shot trails while
+  continuing selected cards and statistics. `кадр_огромного_мира_быстрый_и_лёгкий` guards it.
 - `motion.rs` — collects the instances and remembers the previous frame, so nothing jumps or
   pops: previous position and heading (two-pointer merge — creature vecs are sorted by id),
   birth age (a ring "max id / tick in frame → time"; a creature panned into view is not
   "born"), ghosts of the dead (eaten vs starved). Plants have no id: matched by
   (`Plant::born` tick, x bits); `born` sits in padding, `Plant` stays 24 bytes (tested).
-  All linear in visible count; reset with a new world.
+  All linear in visible count; reset with a new world or render mode switch.
 - `render.rs` + `creatures.wgsl` — one instanced draw call through `egui_wgpu::CallbackTrait`.
   The shader draws each creature between its previous and new position (`k`, from
   `view.rs`: time since the frame arrived / smoothed frame interval — one frame of latency),
@@ -449,7 +457,8 @@ Adding a strategy:
   `Command::SetRegion` makes the thread compute `frame::RegionStats` (who is inside, their gene
   stats next to the whole world's) at once — works while paused — and on every snapshot.
   Everything is fed by whole `Snapshot`s, sent to the UI as deltas (`Frame::snapshots`,
-  `History::snapshots`).
+  `History::snapshots`). Graphs and summaries retain only the last 10 000 ticks; the chronicle
+  remains independent of that window.
 - `view.rs` (world, selection, minimap), `camera.rs` (port of `camera.py`, f64), `game.rs`
   (game screen, lab window with «Правила»/«Еда» tabs, creature card, `report_command`),
   `screens.rs` (menu, «Новый мир» with tabs «Мир»/«Еда»/«Лаборатория» and buttons pinned in a

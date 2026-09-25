@@ -61,8 +61,8 @@ pub struct LifeApp {
     // ── состояние интерфейса ────────────────────────────────────────────────
     pub side_open: bool,
     pub side_tab: SideTab,
-    /// Графики за всю партию, а не за последнее окно.
-    pub whole: bool,
+    /// Показывать ли тела и окружение мира; история и карточка обновляются всегда.
+    pub render_world: bool,
     pub lab_open: bool,
     /// Черновик правил лаборатории на ходу; применяется кнопкой.
     pub lab: Settings,
@@ -123,7 +123,7 @@ impl LifeApp {
             log: Vec::new(),
             side_open: true,
             side_tab: SideTab::Charts,
-            whole: false,
+            render_world: true,
             lab_open: false,
             lab_tab: Tab::Lab,
             lab_reset_selected: HashSet::new(),

@@ -1,6 +1,7 @@
 use life_core::creature::Intent;
 use life_core::flock;
 use life_core::genome::creature::Gene;
+use life_core::kin_grace::Grace;
 use life_core::territory::{Area, State, steer};
 use life_core::{CreatureGenome, Rules, World, WorldConfig};
 
@@ -10,6 +11,52 @@ fn world() -> World {
         rules: Rules::default().with("cannibalism", 1.0).unwrap(),
         ..Default::default()
     })
+}
+
+#[test]
+fn три_режима_территории_дают_разный_момент_обороны() {
+    for (mode, first) in [(0.0, false), (1.0, false), (2.0, true)] {
+        let mut w = world();
+        let defender = CreatureGenome::BASE.with(Gene::Territoriality, mode);
+        let home = w.spawn(defender, 1000.0, 1000.0, Some(100.0));
+        w.spawn(defender, 1020.0, 1000.0, Some(100.0));
+        let stranger = w.spawn(CreatureGenome::BASE, 1010.0, 1000.0, Some(100.0));
+        let tag = w.creatures[0].flock;
+        w.creatures[1].flock = tag;
+        flock::update(&mut w.flocks, &mut w.creatures, &w.space, 1, false);
+        let mut territory = State::default();
+        let targets = territory.prepare(&mut w.flocks, &mut w.creatures, &w.space, 0);
+        assert_eq!(targets[0] == Some(stranger), first, "режим {mode}");
+        assert_eq!(w.flocks[&tag].territory_radius > 0.0, mode != 0.0);
+        assert_eq!(territory.owner(1010.0, 1000.0).is_some(), mode != 0.0);
+        let targets = territory.prepare(&mut w.flocks, &mut w.creatures, &w.space, 30);
+        assert_eq!(targets[0] == Some(stranger), mode != 0.0, "режим {mode} после предупреждения");
+        assert_eq!(w.creatures[0].id, home);
+    }
+}
+
+#[test]
+fn разделённые_стаи_не_считаются_вторженцами_пока_действует_защита() {
+    let mut w = world();
+    let defender = CreatureGenome::BASE.with(Gene::Territoriality, 2.0);
+    w.spawn(defender, 1000.0, 1000.0, Some(100.0));
+    w.spawn(defender, 1020.0, 1000.0, Some(100.0));
+    let stranger = w.spawn(CreatureGenome::BASE, 1010.0, 1000.0, Some(100.0));
+    let tag = w.creatures[0].flock;
+    let other = w.creatures[2].flock;
+    w.creatures[1].flock = tag;
+    flock::update(&mut w.flocks, &mut w.creatures, &w.space, 1, false);
+    let mut grace = Grace::default();
+    grace.register(tag, other, 0);
+    let mut territory = State::default();
+    for tick in [0, 300, 600] {
+        let targets = territory.prepare_with_grace(&mut w.flocks, &mut w.creatures, &w.space, tick, &grace);
+        assert_eq!(targets[0], None);
+        assert_eq!(w.flocks[&tag].warned, 0);
+    }
+    let targets = territory.prepare_with_grace(&mut w.flocks, &mut w.creatures, &w.space, 601, &grace);
+    assert_eq!(targets[0], Some(stranger));
+    assert_eq!(w.flocks[&tag].warned, 1);
 }
 
 #[test]

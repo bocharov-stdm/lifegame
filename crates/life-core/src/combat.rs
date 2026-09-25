@@ -2,6 +2,7 @@
 use crate::config::SHOT_RANGE_SIZES;
 use crate::creature::{Creature, Death};
 use crate::grid::Grid;
+use crate::kin_grace::Grace;
 use crate::{Counters, Rules, Space};
 
 /// Короткий след фактически совершённого выстрела для окна и хроники.
@@ -30,6 +31,11 @@ struct Hit {
     territorial: bool,
 }
 
+pub(crate) struct CombatPolicy<'a> {
+    pub territorial_targets: &'a [Option<u64>],
+    pub grace: &'a Grace,
+}
+
 /// Самооборона и помощь разрешают бить противника любого размера. Обычная
 /// охота остаётся ограниченной отношением размеров даже после выбора цели.
 fn defending(v: &Creature, enemy: u64, territorial: bool, tick: u64) -> bool {
@@ -39,6 +45,7 @@ fn defending(v: &Creature, enemy: u64, territorial: bool, tick: u64) -> bool {
         || (v.mind.attack == Some(enemy) && v.mind.social.activity == crate::social::Activity::Alarm)
 }
 
+#[cfg(test)]
 pub(crate) fn resolve(
     space: &Space,
     rules: &Rules,
@@ -48,6 +55,27 @@ pub(crate) fn resolve(
     tick: u64,
     territorial_targets: &[Option<u64>],
 ) -> CombatResult {
+    resolve_with_grace(
+        space,
+        rules,
+        creatures,
+        grid,
+        counters,
+        tick,
+        CombatPolicy { territorial_targets, grace: &Grace::default() },
+    )
+}
+
+pub(crate) fn resolve_with_grace(
+    space: &Space,
+    rules: &Rules,
+    creatures: &mut [Creature],
+    grid: &mut Grid,
+    counters: &mut Counters,
+    tick: u64,
+    policy: CombatPolicy<'_>,
+) -> CombatResult {
+    let CombatPolicy { territorial_targets, grace } = policy;
     grid.rebuild(space, creatures.iter().map(|v| (v.x, v.y)));
     let max_half = creatures.iter().filter(|v| v.alive).fold(0.0_f64, |m, v| m.max(v.pheno.half));
     let mut hits = Vec::new();
@@ -63,7 +91,11 @@ pub(crate) fn resolve(
             let mut target = None;
             grid.for_each_near(v.x, v.y, v.pheno.half + max_half, |j, _, _| {
                 let u = &creatures[j];
-                if !u.alive || v.kinship().kin(u.kinship()) || (v.flock != 0 && v.flock == u.flock) {
+                if !u.alive
+                    || v.kinship().kin(u.kinship())
+                    || (v.flock != 0 && v.flock == u.flock)
+                    || grace.contains(v.flock, u.flock, tick)
+                {
                     return;
                 }
                 if (v.x - u.x).hypot(v.y - u.y) > v.pheno.half + u.pheno.half {
@@ -125,6 +157,7 @@ pub(crate) fn resolve(
                 || u.id != desired
                 || v.kinship().kin(u.kinship())
                 || (v.flock != 0 && v.flock == u.flock)
+                || grace.contains(v.flock, u.flock, tick)
             {
                 return;
             }
@@ -212,6 +245,59 @@ mod tests {
             w.tick + 1,
             &territorial_targets,
         );
+    }
+
+    #[test]
+    fn временный_мир_между_стаями_запрещает_выстрел_и_ближний_удар() {
+        let mut w = world();
+        let shooter = CreatureGenome::BASE
+            .with(Gene::Shooter, 1.0)
+            .with(Gene::FirePreference, 100.0)
+            .with(Gene::FireReserve, 0.0);
+        w.spawn(shooter, 1000.0, 1000.0, Some(100.0));
+        let prey = w.spawn(CreatureGenome::BASE.with(Gene::Size, 15.0), 1100.0, 1000.0, Some(30.0));
+        w.creatures[0].mind.attack = Some(prey);
+        let mut grace = Grace::default();
+        grace.register(w.creatures[0].flock, w.creatures[1].flock, 0);
+        let mut grid = Grid::new(crate::config::GRID_CELL);
+        let during = resolve_with_grace(
+            &w.space,
+            &w.rules,
+            &mut w.creatures,
+            &mut grid,
+            &mut w.counters,
+            600,
+            CombatPolicy { territorial_targets: &[None, None], grace: &grace },
+        );
+        assert!(during.shots.is_empty());
+        assert_eq!(w.creatures[1].health, 15.0);
+        let after = resolve_with_grace(
+            &w.space,
+            &w.rules,
+            &mut w.creatures,
+            &mut grid,
+            &mut w.counters,
+            601,
+            CombatPolicy { territorial_targets: &[None, None], grace: &grace },
+        );
+        assert_eq!(after.shots.len(), 1);
+
+        let mut close = world();
+        close.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(100.0));
+        let target = close.spawn(CreatureGenome::BASE.with(Gene::Size, 15.0), 1010.0, 1000.0, Some(30.0));
+        close.creatures[0].mind.attack = Some(target);
+        let mut grace = Grace::default();
+        grace.register(close.creatures[0].flock, close.creatures[1].flock, 0);
+        resolve_with_grace(
+            &close.space,
+            &close.rules,
+            &mut close.creatures,
+            &mut grid,
+            &mut close.counters,
+            600,
+            CombatPolicy { territorial_targets: &[None, None], grace: &grace },
+        );
+        assert_eq!(close.creatures[1].health, 15.0);
     }
     #[test]
     fn удары_одновременны_и_погибший_не_получает_добычу() {

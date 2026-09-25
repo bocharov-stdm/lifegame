@@ -1,113 +1,76 @@
-//! История партии для графиков. Порт `app/history.py` (тег python-final).
-//!
-//! Рядов у каждой величины два:
-//! - «недавнее» — последние `RECENT` точек: крупно видно колебания численности;
-//! - «вся партия» — когда точек больше `FULL`, ряд прореживается вдвое (каждая
-//!   вторая точка), а шаг записи удваивается. Память ограничена при любой
-//!   длине партии.
-//!
-//! Точки снимает поток симуляции (ему видно каждый тик), а хранит окно.
+//! Ограниченная по возрасту история партии для графиков. Хроника хранится отдельно.
 
 use std::collections::VecDeque;
 
 use life_core::genome::creature;
+use life_sim::observe::Snapshot;
 
-use life_sim::observe::{GeneStat, Snapshot};
+/// Видимое окно истории, измеряется тиками мира, а не числом срезов.
+pub const WINDOW_TICKS: u64 = 10_000;
 
-pub const RECENT: usize = 300;
-pub const FULL: usize = 600;
-
-/// Точка графика численностей. Численности — средние за `DIVIDE_PERIOD`
-/// тиков: существа делятся разом раз в период, и мгновенные числа рисуют
-/// пилу, за которой не видно самих колебаний.
+/// Сглаженные численности и накопленные выстрелы на данном тике.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sample {
     pub tick: u64,
     pub plants: f64,
     pub creatures: f64,
-    /// Средний геном существ; None — существ нет.
+    pub shots: u64,
     pub genom: Option<[f64; creature::N]>,
 }
 
-/// Ряд с окном недавнего и прореженной всей партией.
 #[derive(Clone, Debug)]
 pub struct Series<T> {
-    recent: VecDeque<T>,
-    full: Vec<T>,
-    /// В `full` лежит каждая stride-я точка.
-    stride: usize,
-    count: usize,
+    points: VecDeque<(u64, T)>,
 }
 
-impl<T: Clone> Default for Series<T> {
+impl<T> Default for Series<T> {
     fn default() -> Self {
-        Series { recent: VecDeque::with_capacity(RECENT), full: Vec::new(), stride: 1, count: 0 }
+        Self { points: VecDeque::new() }
     }
 }
 
-impl<T: Clone> Series<T> {
-    pub fn push(&mut self, point: T) {
-        if self.recent.len() == RECENT {
-            self.recent.pop_front();
+impl<T> Series<T> {
+    pub fn push(&mut self, tick: u64, point: T) {
+        self.points.push_back((tick, point));
+        let oldest = tick.saturating_sub(WINDOW_TICKS);
+        while self.points.front().is_some_and(|(at, _)| *at < oldest) {
+            self.points.pop_front();
         }
-        self.recent.push_back(point.clone());
-        if self.count.is_multiple_of(self.stride) {
-            self.full.push(point);
-            if self.full.len() > FULL {
-                // full[i] — точка номер i * stride, поэтому каждая вторая — ровно
-                // точки с номерами, кратными 2 * stride
-                self.full = self.full.iter().step_by(2).cloned().collect();
-                self.stride *= 2;
-            }
-        }
-        self.count += 1;
     }
 
-    /// Точки для графика: вся партия или последнее окно. Последняя точка есть
-    /// всегда: при прореживании она могла не попасть в «всю партию». Ссылками:
-    /// срезы мира крупные, и копировать сотни их на каждый кадр окна незачем.
-    pub fn points(&self, whole: bool) -> Vec<&T> {
-        if !whole {
-            return self.recent.iter().collect();
-        }
-        let mut points: Vec<&T> = self.full.iter().collect();
-        if !self.count.saturating_sub(1).is_multiple_of(self.stride)
-            && let Some(last) = self.recent.back()
-        {
-            points.push(last);
-        }
-        points
+    pub fn points(&self) -> Vec<&T> {
+        self.points.iter().map(|(_, p)| p).collect()
+    }
+
+    pub fn first(&self) -> Option<&T> {
+        self.points.front().map(|(_, p)| p)
     }
 
     pub fn last(&self) -> Option<&T> {
-        self.recent.back()
+        self.points.back().map(|(_, p)| p)
     }
 }
 
-/// Вся история партии, которую видит окно.
 #[derive(Clone, Debug, Default)]
 pub struct History {
     pub counts: Series<Sample>,
-    /// Срезы мира (`Snapshot`): геном, сытость, где живут и где еда.
     pub snapshots: Series<Snapshot>,
-    /// Первый средний геном партии — база «изменения от начала»: в окне
-    /// недавнего первая точка уже не начало партии.
-    pub origin: Option<[f64; creature::N]>,
-    /// Первая сводка генов каждого вида — тоже база «изменения от начала».
-    pub gene_origin: Option<[GeneStat; creature::N]>,
 }
 
 impl History {
     pub fn add_sample(&mut self, s: Sample) {
-        if self.origin.is_none() {
-            self.origin = s.genom;
-        }
-        self.counts.push(s);
+        self.counts.push(s.tick, s);
     }
 
     pub fn add_snapshot(&mut self, s: Snapshot) {
-        self.gene_origin = self.gene_origin.or(s.genes);
-        self.snapshots.push(s);
+        self.snapshots.push(s.tick, s);
+    }
+
+    pub fn shots_in_window(&self) -> u64 {
+        match (self.counts.first(), self.counts.last()) {
+            (Some(first), Some(last)) => last.shots.saturating_sub(first.shots),
+            _ => 0,
+        }
     }
 }
 
@@ -116,42 +79,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn недавнее_держит_последние_точки() {
+    fn окно_держит_ровно_последние_десять_тысяч_тиков() {
         let mut s = Series::default();
-        for i in 0..(RECENT + 50) {
-            s.push(i);
+        for tick in [0, 1, 10_000, 10_001, 20_001] {
+            s.push(tick, tick);
         }
-        let recent: Vec<usize> = s.points(false).into_iter().copied().collect();
-        assert_eq!(recent.len(), RECENT);
-        assert_eq!(recent[0], 50);
-        assert_eq!(*recent.last().unwrap(), RECENT + 49);
+        let points: Vec<u64> = s.points().into_iter().copied().collect();
+        assert_eq!(points, [10_001, 20_001]);
+        assert_eq!(s.first(), Some(&10_001));
+        assert_eq!(s.last(), Some(&20_001));
     }
 
     #[test]
-    fn вся_партия_прореживается_и_помнит_начало_и_конец() {
-        let mut s = Series::default();
-        let n = FULL * 7 + 3;
-        for i in 0..n {
-            s.push(i);
-            let all: Vec<usize> = s.points(true).into_iter().copied().collect();
-            assert!(all.len() <= FULL + 1, "память ограничена");
-            assert_eq!(all[0], 0, "начало партии не теряется");
-            assert_eq!(*all.last().unwrap(), i, "последняя точка есть всегда");
-            assert!(all.windows(2).all(|w| w[0] < w[1]), "по возрастанию, без повторов");
-        }
-        // шаг равномерный: все точки, кроме последней, кратны шагу
-        let all: Vec<usize> = s.points(true).into_iter().copied().collect();
-        let step = all[1] - all[0];
-        assert!(all[..all.len() - 1].iter().all(|x| x % step == 0));
-    }
-
-    #[test]
-    fn начало_генома_запоминается_с_первого_существа() {
+    fn число_выстрелов_относится_к_видимому_окну() {
         let mut h = History::default();
-        let at = |tick, genom| Sample { tick, plants: 0.0, creatures: 0.0, genom };
-        h.add_sample(at(0, None));
-        h.add_sample(at(10, Some([1.0; creature::N])));
-        h.add_sample(at(20, Some([2.0; creature::N])));
-        assert_eq!(h.origin, Some([1.0; creature::N]));
+        for (tick, shots) in [(0, 2), (10_000, 7), (10_010, 12)] {
+            h.add_sample(Sample { tick, plants: 0.0, creatures: 0.0, shots, genom: None });
+        }
+        assert_eq!(h.shots_in_window(), 5);
     }
 }

@@ -34,11 +34,6 @@ impl LifeApp {
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Energy, "Энергия");
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Where, "Где живут");
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Region, "Область");
-                    if self.stats_tab != StatsTab::Region {
-                        ui.separator();
-                        ui.selectable_value(&mut self.whole, false, "Недавнее");
-                        ui.selectable_value(&mut self.whole, true, "Вся партия");
-                    }
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| match self.stats_tab {
@@ -51,14 +46,18 @@ impl LifeApp {
     }
 
     fn energy_tab(&mut self, ui: &mut egui::Ui) {
-        let snaps = self.history.snapshots.points(self.whole);
+        ui.colored_label(MUTED, "Последние 10 000 тиков");
+        self.predator_status(ui);
+        let snaps = self.history.snapshots.points();
         if let Some(s) = snaps.last() {
             ui.label(format!(
                 "Молодых {:.0}% · стай {}",
                 100.0 * s.juveniles as f64 / s.creatures.max(1) as f64,
                 s.flocks
             ));
-            ui.label(life_sim::observe::describe_flows(&s.counters));
+            if let Some(first) = snaps.first() {
+                ui.label(life_sim::observe::describe_flows(&s.counters.since(&first.counters)));
+            }
         }
         ui.label(RichText::new("Сытость").strong());
         charts::energy(ui, &snaps, 190.0);
@@ -71,7 +70,8 @@ impl LifeApp {
     }
 
     fn where_tab(&mut self, ui: &mut egui::Ui) {
-        let snaps = self.history.snapshots.points(self.whole);
+        ui.colored_label(MUTED, "Последние 10 000 тиков");
+        let snaps = self.history.snapshots.points();
         ui.label(RichText::new("Глубина существ во времени").strong());
         let hovered = charts::depth_map(ui, &snaps, 170.0);
         let Some(&at) = hovered.and_then(|i| snaps.get(i)).or(snaps.last()) else { return };

@@ -3,6 +3,7 @@
 //! здесь так же плохо, как ошибка в движке.
 
 use life_core::config::*;
+use life_core::genome::creature::Gene;
 use life_core::{World, WorldConfig};
 use life_sim::observe::{DEPTH_BANDS, EventKind, GeneStat, MAX_VARIANTS, Snapshot, ascii_map, events};
 use life_sim::{Limits, simulate};
@@ -25,12 +26,25 @@ fn срез_раскладывает_всех_по_глубине() {
     assert_eq!(s.creatures_by_width.iter().sum::<usize>(), w.creatures.len());
     assert_eq!(s.plants_by_width.iter().sum::<usize>(), w.plants.len());
     let g = s.genes.expect("существа есть");
-    for (stat, base) in g.iter().zip(life_core::CreatureGenome::BASE.to_values()) {
+    for (index, (stat, base)) in g.iter().zip(life_core::CreatureGenome::BASE.to_values()).enumerate() {
         match stat {
             GeneStat::Number(s) => assert_eq!(s.p50, base, "на старте геном у всех базовый"),
-            GeneStat::Shares(s) => assert_eq!(s[base as usize], 1.0, "на старте у всех базовый вариант"),
+            GeneStat::Shares(s) => {
+                for (variant, &share) in s.iter().enumerate() {
+                    let count =
+                        w.creatures.iter().filter(|v| v.genome.to_values()[index] == variant as f64).count();
+                    assert_eq!(share, count as f64 / w.creatures.len() as f64);
+                }
+                if index == Gene::Strategy as usize {
+                    assert_eq!(s[base as usize], 1.0, "начальная стратегия задана конфигурацией");
+                }
+            }
         }
     }
+    let packs = g[Gene::PackInstinct as usize].shares().unwrap()[1];
+    let shooters = g[Gene::Shooter as usize].shares().unwrap()[1];
+    assert!((0.4..=0.6).contains(&packs), "половина основателей стайные: {packs}");
+    assert!((0.02..=0.08).contains(&shooters), "редкие стрелки у основателей: {shooters}");
 
     let mut empty = w.clone();
     empty.creatures.clear();
@@ -81,6 +95,11 @@ fn хроника_видит_обвал_и_вымирание() {
 fn мелочь_не_попадает_в_хронику() {
     let mut w = world();
     w.creatures.truncate(25);
+    // Проверяем именно численность: случайный состав маленькой выборки
+    // основателей может сам по себе дать заметный сдвиг долей стайности.
+    for v in &mut w.creatures {
+        v.genome = life_core::CreatureGenome::BASE;
+    }
     let before = Snapshot::of(&w);
     w.creatures.truncate(10);
     w.tick = 60;

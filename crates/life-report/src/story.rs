@@ -38,7 +38,7 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     println!(
         "Существа за прогон: {} (из умерших погибли в бою {}).",
         describe_flows(&c),
-        percent(c.combat, c.cannibalized + c.starved + c.old_age + c.combat)
+        percent(c.combat, c.starved + c.old_age + c.combat)
     );
     println!("Растения за прогон: выросло {}, съедено {}.", c.plants_grown, c.plants_eaten);
     println!(
@@ -97,8 +97,8 @@ fn print_intervals(snaps: &[Snapshot], rows: usize) {
     let rows = rows.min(steps);
     println!("\nПо промежуткам (численность и геном — на конец, рождения и смерти — за промежуток):");
     println!(
-        "{:>13} {:>6} {:>5} │ {:>21} │ {:>6} {:>5} {:>6} │ {:>9} {:>5}",
-        "тики", "растен", "сущ", "сущ: +род −съед −гол", "размер", "скор", "зрение", "слой, %", "сыт"
+        "{:>13} {:>6} {:>5} │ {:>28} │ {:>6} {:>5} {:>6} │ {:>9} {:>5}",
+        "тики", "растен", "сущ", "сущ: +род −гол −возр −бой", "размер", "скор", "зрение", "слой, %", "сыт"
     );
     let mut from = 0;
     for r in 1..=rows {
@@ -108,13 +108,14 @@ fn print_intervals(snaps: &[Snapshot], rows: usize) {
         let gene = |g: Gene| opt(b.genes.and_then(|s| s[g as usize].spread().map(|x| x.p50)), 1);
         let layer = b.depth.map_or("—".into(), |d| format!("{:.0}‒{:.0}", d.p10, d.p90));
         println!(
-            "{:>13} {:>6} {:>5} │ {:>7} {:>6} {:>6} │ {:>6} {:>5} {:>6} │ {:>9} {:>5}",
+            "{:>13} {:>6} {:>5} │ {:>6} {:>6} {:>6} {:>6} │ {:>6} {:>5} {:>6} │ {:>9} {:>5}",
             format!("{}‒{}", a.tick, b.tick),
             b.plants,
             b.creatures,
             format!("+{}", c.born),
-            format!("−{}", c.cannibalized),
             format!("−{}", c.starved),
+            format!("−{}", c.old_age),
+            format!("−{}", c.combat),
             gene(Gene::Size),
             gene(Gene::Speed),
             gene(Gene::Vision),
@@ -123,7 +124,7 @@ fn print_intervals(snaps: &[Snapshot], rows: usize) {
         );
         from = to;
     }
-    println!("  («−съед» — съедены сородичами; «сыт» — средняя заполненность бака, %)");
+    println!("  («сыт» — средняя заполненность бака, %)");
 }
 
 fn print_genome(first: &Snapshot, last: &Snapshot) {

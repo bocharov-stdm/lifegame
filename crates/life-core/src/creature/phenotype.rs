@@ -8,6 +8,7 @@
 
 use super::Strategy;
 use crate::config::{ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, SLOW_PACE};
+use crate::flock::Territoriality;
 use crate::genome::CreatureGenome;
 use crate::genome::creature::Gene;
 use crate::rules::Rules;
@@ -19,6 +20,9 @@ pub struct Phenotype {
     pub size: f64,
     pub speed: f64,
     pub sociability: f64,
+    pub pack_instinct: bool,
+    pub territoriality: Territoriality,
+    pub care: f64,
     pub life_pace: f64,
     pub retreat: f64,
     pub plant_efficiency: f64,
@@ -108,6 +112,9 @@ impl Phenotype {
             size,
             speed,
             sociability: genome[Gene::Sociability].clamp(0.0, 100.0) / 100.0,
+            pack_instinct: genome[Gene::PackInstinct] >= 0.5,
+            territoriality: Territoriality::from_gene(genome[Gene::Territoriality]),
+            care: genome[Gene::Care].clamp(0.0, 100.0) / 100.0,
             life_pace,
             plant_efficiency: 1.0 - 0.8 * genome[Gene::Carnivory].clamp(0.0, 100.0) / 100.0,
             meat_efficiency: 0.2 + 0.8 * genome[Gene::Carnivory].clamp(0.0, 100.0) / 100.0,

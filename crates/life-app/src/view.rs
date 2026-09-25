@@ -14,7 +14,7 @@ use crate::camera::{Camera, Viewport};
 use crate::frame::{self, Area, CREATURE_COLOR, Frame, Instance, Raster, ViewRequest};
 use crate::render::Circles;
 use crate::sim::{Command, SimHandle};
-use crate::theme::{ACCENT, BG, LINE, MUTED, rgb};
+use crate::theme::{ACCENT, BG, DANGER, LINE, MUTED, rgb};
 
 /// Полос глубины на фоне: у поверхности светлее, на глубине темнее.
 const BANDS: usize = 32;
@@ -58,6 +58,8 @@ pub struct WorldView {
     dragged_area: Option<Area>,
     /// Заданная область — рисуется рамкой, пока её не сняли.
     pub area: Option<Area>,
+    /// Время построения команд отрисовки мира на CPU, мс.
+    pub draw_ms: f64,
 }
 
 fn pos(x: f64, y: f64) -> Pos2 {
@@ -126,6 +128,20 @@ impl WorldView {
     /// Нарисовать мир в прямоугольнике `rect`. `interactive` — можно ли
     /// двигать камеру и кликать (в меню мир только фон).
     pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        rect: Rect,
+        sim: &SimHandle,
+        interactive: bool,
+    ) -> Option<Click> {
+        let start = Instant::now();
+        let result = self.show_inner(ui, rect, sim, interactive);
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        self.draw_ms = if self.draw_ms == 0.0 { ms } else { self.draw_ms * 0.85 + ms * 0.15 };
+        result
+    }
+
+    fn show_inner(
         &mut self,
         ui: &mut egui::Ui,
         rect: Rect,
@@ -207,6 +223,43 @@ impl WorldView {
             }
         }
 
+        if !f.render_world {
+            let (x0, y0, x1, y1) = cam.visible_world();
+            let ppp = ui.ctx().pixels_per_point();
+            let req = ViewRequest {
+                x0,
+                y0,
+                x1,
+                y1,
+                px_w: (rect.width() * ppp) as u32,
+                px_h: (rect.height() * ppp) as u32,
+            };
+            if self.last_view != Some(req) {
+                self.last_view = Some(req);
+                sim.send(Command::View(req));
+            }
+            painter.text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                "Рендер мира выключен · симуляция продолжается",
+                FontId::proportional(16.0),
+                MUTED,
+            );
+            let screen = |a: Area| {
+                let (x0, y0) = cam.to_screen(a.0, a.1);
+                let (x1, y1) = cam.to_screen(a.2, a.3);
+                Rect::from_min_max(pos(x0, y0), pos(x1, y1))
+            };
+            if let Some(a) = self.area {
+                painter.rect_stroke(screen(a), 0.0, Stroke::new(1.5, ACCENT), StrokeKind::Outside);
+            }
+            if let Some(a) = drawing {
+                painter.rect_filled(screen(a), 0.0, ACCENT.gamma_multiply(0.08));
+                painter.rect_stroke(screen(a), 0.0, Stroke::new(1.0, ACCENT), StrokeKind::Outside);
+            }
+            return click;
+        }
+
         // ── фон: мир полосами глубины ─────────────────────────────────────────
         let (left, top) = cam.to_screen(0.0, 0.0);
         let (right, bottom) = cam.to_screen(f.world_w, f.world_h);
@@ -238,18 +291,20 @@ impl WorldView {
             }
             let [r, g, b] = flock.color;
             let warning = flock.details.warned > 0;
-            flock_painter.circle_stroke(
-                center,
-                territory,
-                Stroke::new(
-                    if warning { 1.8 } else { 1.0 },
-                    if warning {
-                        Color32::from_rgba_unmultiplied(255, 156, 92, 210)
-                    } else {
-                        Color32::from_rgba_unmultiplied(r, g, b, 75)
-                    },
-                ),
-            );
+            if territory > 0.0 {
+                flock_painter.circle_stroke(
+                    center,
+                    territory,
+                    Stroke::new(
+                        if warning { 1.8 } else { 1.0 },
+                        if warning {
+                            Color32::from_rgba_unmultiplied(255, 156, 92, 210)
+                        } else {
+                            Color32::from_rgba_unmultiplied(r, g, b, 75)
+                        },
+                    ),
+                );
+            }
             flock_painter.circle_filled(center, radius, Color32::from_rgba_unmultiplied(r, g, b, 20));
             flock_painter.circle_stroke(
                 center,
@@ -269,12 +324,19 @@ impl WorldView {
         for corpse in &f.corpses {
             let (x, y) = cam.to_screen(corpse.x, corpse.y);
             let center = pos(x, y);
-            if !rect.contains(center) {
+            let radius = (corpse.size * 0.5 * cam.zoom) as f32;
+            if !Rect::from_center_size(center, Vec2::splat(radius * 2.0)).intersects(rect) {
                 continue;
             }
-            let radius = (corpse.size * 0.24 * cam.zoom) as f32;
-            let radius = radius.clamp(2.0, 12.0);
             let alpha = (75.0 + 95.0 * corpse.fullness) as u8;
+            if f.dots {
+                painter.rect_filled(
+                    Rect::from_center_size(center, Vec2::splat(2.0 / ui.ctx().pixels_per_point())),
+                    0.0,
+                    Color32::from_rgba_unmultiplied(168, 136, 108, alpha),
+                );
+                continue;
+            }
             flock_painter.circle_filled(
                 center,
                 radius,
@@ -312,7 +374,7 @@ impl WorldView {
         } else if !self.instances.is_empty() {
             let (ox, oy) = cam.to_screen(f.origin.0, f.origin.1);
             let since = f.built.map_or(ANIMATION, |b| b.elapsed().as_secs_f32());
-            if k < 1.0 || since < ANIMATION {
+            if !f.dots && (k < 1.0 || since < ANIMATION) {
                 ui.ctx().request_repaint();
             }
             painter.add(egui_wgpu::Callback::new_paint_callback(
@@ -374,6 +436,7 @@ impl WorldView {
                 painter.circle_stroke(pos(sx, sy), vision, Stroke::new(1.0, ACCENT.gamma_multiply(0.45)));
             }
             let body = ((s.half * cam.zoom) as f32).max(2.0);
+            painter.circle_stroke(pos(sx, sy), body, Stroke::new(1.0, DANGER.gamma_multiply(0.8)));
             painter.circle_stroke(pos(sx, sy), body + 5.0, Stroke::new(2.0, ACCENT));
         }
 

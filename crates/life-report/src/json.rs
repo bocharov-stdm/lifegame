@@ -123,7 +123,7 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
     let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(rules.get(k)))).collect();
     let space = cfg.space();
     json!({
-        "format": "life-report/7",
+        "format": "life-report/8",
         "world": { "scale": cfg.scale, "shape": cfg.shape.key(), "width": space.width, "height": space.height },
         "ticks": ticks,
         "sample_every": sample_every,
@@ -175,12 +175,16 @@ mod tests {
         let res = run(world, &Limits { ticks: 0, ..Limits::default() }, &mut |_| {});
         let runs = [Run { seed: cfg.seed, res: &res, events: &[], maps: &[] }];
         let data = report(&cfg, &cfg.rules, 0, 1, &runs);
-        assert_eq!(data["format"], "life-report/7");
+        assert_eq!(data["format"], "life-report/8");
         let run = &data["runs"][0];
         let snap = &run["snapshots"][0];
         for key in ["plant_bites", "meat_bites", "ranged_shots", "territorial_fights"] {
             assert!(run["totals"][key].as_u64().is_some(), "нет итогового счётчика {key}");
             assert!(snap["counters"][key].as_u64().is_some(), "нет счётчика среза {key}");
+        }
+        for key in ["pack_instinct", "territoriality", "care"] {
+            assert!(data["genes"]["creature"].as_array().unwrap().iter().any(|row| row["key"] == key));
+            assert!(snap["genes"][key].is_object(), "нет сводки гена {key}");
         }
         assert_eq!(snap["corpses"], 1);
         assert_eq!(snap["social"]["departures"], 0);

@@ -290,10 +290,11 @@ fn print_summary(results: &[(u64, SimResult)]) {
     );
     for (seed, r) in results {
         let last = r.last();
-        // доля съеденных сородичами среди всех умерших
+        // Доля боевых смертей среди всех умерших. `cannibalized` — подмножество
+        // `combat`, поэтому в знаменатель повторно не входит.
         let c = r.world.counters;
-        let deaths = c.starved + c.cannibalized + c.old_age + c.combat;
-        let eaten = c.combat as f64 / deaths.max(1) as f64;
+        let deaths = c.starved + c.old_age + c.combat;
+        let combat_share = c.combat as f64 / deaths.max(1) as f64;
         let sizes: Vec<f64> =
             r.history.iter().filter_map(|s| s.avg_genom.map(|g| g[Gene::Size as usize])).collect();
         let smax = sizes.iter().copied().fold(f64::NAN, f64::max);
@@ -304,7 +305,7 @@ fn print_summary(results: &[(u64, SimResult)]) {
             r.ticks_done,
             last.creatures,
             last.plants,
-            eaten * 100.0,
+            combat_share * 100.0,
             smax,
             sfin,
             r.ms_per_tick()

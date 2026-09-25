@@ -338,7 +338,12 @@ impl Creature {
         let mut child = Creature::new(space, rules, baby_genome, Some(cx), Some(cy), Some(child_energy), rng);
         child.genome = genome;
         child.parent = self.id;
-        child.flock = if self.rng.random() < 0.99 { self.flock } else { 0 };
+        let same_mode = self.pheno.pack_instinct
+            && child.pheno.pack_instinct
+            && self.pheno.territoriality == child.pheno.territoriality
+            && self.pheno.strategy == child.pheno.strategy
+            && self.pheno.shooter == child.pheno.shooter;
+        child.flock = if same_mode && self.rng.random() < 0.99 { self.flock } else { 0 };
         child.reproduction_wait = (DIVIDE_PERIOD as f64 / child.pheno.life_pace).ceil() as u64;
         child.birth_size = child.genome[Gene::Size] * 0.5;
         child.pheno = Phenotype::at_size(&child.genome, rules, space, child.birth_size);

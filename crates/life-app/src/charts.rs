@@ -2,7 +2,7 @@
 //! где живут. Рисуются прямо кистью egui — линии из пары сотен точек,
 //! отдельная библиотека графиков им не нужна. Логика — как в `app/render.py`
 //! (тег python-final): у каждой величины своя шкала, под курсором — значения в
-//! этой точке, справа — изменение от начала.
+//! этой точке, справа — изменение от начала видимого окна.
 
 use eframe::egui::text::{LayoutJob, TextWrapping};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
@@ -125,8 +125,8 @@ fn draw_run(painter: &egui::Painter, run: &mut Vec<Pos2>, color: Color32) {
 }
 
 /// Численности: растения и существа — каждая в своей шкале.
-pub fn populations(ui: &mut egui::Ui, history: &History, whole: bool, height: f32) {
-    let points = history.counts.points(whole);
+pub fn populations(ui: &mut egui::Ui, history: &History, height: f32) {
+    let points = history.counts.points();
     let all = [
         Line { label: "растения", color: rgb(PLANT_COLOR), value: |s: &Sample| Some(s.plants) },
         Line { label: "существа", color: rgb(CREATURE_COLOR), value: |s: &Sample| Some(s.creatures) },
@@ -156,16 +156,8 @@ pub type GenePoint<'a> = (u64, &'a [GeneStat]);
 /// Геном: по мини-графику на ген, у каждого своя шкала. Линия — медиана,
 /// полоса — где живут 80% популяции (10‒90%): среднее прячет раскол на два
 /// вида, а полоса его показывает. У гена-выбора (стратегии) — доли вариантов
-/// слоями. Справа — значение и изменение от начала (`origin` — первая сводка
-/// партии; None — первая точка ряда). Таблица генов — вида, чей это геном.
-pub fn genome(
-    ui: &mut egui::Ui,
-    table: &[GeneSpec],
-    points: &[GenePoint],
-    origin: Option<&[GeneStat]>,
-    color: Color32,
-    row_h: f32,
-) {
+/// слоями. Справа — изменение от первой точки видимого окна.
+pub fn genome(ui: &mut egui::Ui, table: &[GeneSpec], points: &[GenePoint], color: Color32, row_h: f32) {
     let rows: Vec<usize> = (0..table.len()).filter(|&g| shown(&table[g])).collect();
     let n = points.len();
     let width = ui.available_width();
@@ -178,7 +170,7 @@ pub fn genome(
     );
     let hovered = hover_index(ui, spark_rect, n);
     let (tick, at) = points[hovered.unwrap_or(n - 1)];
-    let origin = origin.unwrap_or(points[0].1);
+    let origin = points[0].1;
     let font = FontId::proportional(12.5);
 
     for (row_i, &g) in rows.iter().enumerate() {
@@ -245,10 +237,7 @@ pub fn genome(
     }
     ui.colored_label(
         MUTED,
-        format!(
-            "тик {} · линия — медиана, полоса — 80% популяции; справа — изменение от начала",
-            spaced(tick)
-        ),
+        format!("тик {} · линия — медиана, полоса — 80% популяции; справа — изменение за окно", spaced(tick)),
     );
 }
 

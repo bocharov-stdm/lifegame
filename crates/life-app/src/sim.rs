@@ -70,6 +70,8 @@ pub enum Command {
     Step,
     SetSpeed(usize),
     FlockColors(bool),
+    /// Не строить графическое содержимое кадра, сохраняя статистику и управление.
+    RenderWorld(bool),
     View(ViewRequest),
     /// Выбрать существо у точки мира (клик): ближайшее, до края тела которого
     /// не дальше `radius`. Мимо — выбор снимается.
@@ -178,6 +180,8 @@ struct Sim {
     selected: Option<u64>,
     selected_flock: Option<u64>,
     region: Option<Area>,
+    render_world: bool,
+    dots: bool,
 
     // ── наблюдение ──────────────────────────────────────────────────────────
     /// Численности последних `DIVIDE_PERIOD` тиков — для сглаженной точки графика.
@@ -197,6 +201,8 @@ struct Sim {
     lagging: bool,
     /// Средняя цена тика, мс (скользящее среднее).
     tick_ms: f64,
+    /// Цена последнего снимка наблюдателя, мс.
+    snapshot_ms: f64,
 
     // ── кадры ───────────────────────────────────────────────────────────────
     /// Мир изменился с прошлого кадра.
@@ -236,6 +242,8 @@ impl Sim {
             selected: None,
             selected_flock: None,
             region: None,
+            render_world: true,
+            dots: false,
             window: VecDeque::new(),
             tracker: EventTracker::new(),
             snapshot_every: SNAPSHOT_EVERY,
@@ -248,6 +256,7 @@ impl Sim {
             tps_since: now,
             lagging: false,
             tick_ms: 0.0,
+            snapshot_ms: 0.0,
             dirty: true,
             last_frame: now - MIN_FRAME_INTERVAL,
             frame_interval: MIN_FRAME_INTERVAL,
@@ -358,6 +367,20 @@ impl Sim {
                 self.last_minimap = None;
                 self.dirty = true;
             }
+            Command::RenderWorld(enabled) => {
+                if self.render_world != enabled {
+                    let colored = self.motion.flock_colors;
+                    self.motion = Motion::default();
+                    self.motion.flock_colors = colored;
+                    self.dots = false;
+                    self.recent_shots.clear();
+                }
+                self.render_world = enabled;
+                if enabled {
+                    self.last_minimap = None;
+                }
+                self.dirty = true;
+            }
             Command::View(v) => {
                 if self.view != Some(v) {
                     self.view = Some(v);
@@ -461,6 +484,7 @@ impl Sim {
         self.motion.flock_colors = flock_colors;
         self.recent_shots.clear();
         self.tick_ms = 0.0;
+        self.snapshot_ms = 0.0;
         self.reset_tps();
         self.pending = Pending::default();
         self.observe_start();
@@ -479,16 +503,18 @@ impl Sim {
     fn tick(&mut self) {
         let start = Instant::now();
         self.world.step();
+        let engine_ms = start.elapsed().as_secs_f64() * 1000.0;
         let now = Instant::now();
-        for shot in self.world.shots.iter().filter(|shot| shot.tick == self.world.tick) {
-            self.recent_shots.push_back((ShotTrail { from: shot.from, to: shot.to, age: 0.0 }, now));
+        if self.render_world {
+            for shot in self.world.shots.iter().filter(|shot| shot.tick == self.world.tick) {
+                self.recent_shots.push_back((ShotTrail { from: shot.from, to: shot.to, age: 0.0 }, now));
+            }
+            self.recent_shots.retain(|(_, at)| now.duration_since(*at).as_secs_f32() < 0.25);
+            while self.recent_shots.len() > 512 {
+                self.recent_shots.pop_front();
+            }
         }
-        self.recent_shots.retain(|(_, at)| now.duration_since(*at).as_secs_f32() < 0.25);
-        while self.recent_shots.len() > 512 {
-            self.recent_shots.pop_front();
-        }
-        let ms = start.elapsed().as_secs_f64() * 1000.0;
-        self.tick_ms = if self.tick_ms == 0.0 { ms } else { self.tick_ms * 0.95 + ms * 0.05 };
+        self.tick_ms = if self.tick_ms == 0.0 { engine_ms } else { self.tick_ms * 0.95 + engine_ms * 0.05 };
         self.tps_ticks += 1;
         self.dirty = true;
 
@@ -528,6 +554,7 @@ impl Sim {
             tick: w.tick,
             plants: avg(0),
             creatures: avg(1),
+            shots: w.counters.ranged_shots,
             genom: stats.avg_genom,
         });
     }
@@ -538,6 +565,7 @@ impl Sim {
         let start = Instant::now();
         let snap = Snapshot::of(&self.world);
         let ms = start.elapsed().as_secs_f64() * 1000.0;
+        self.snapshot_ms = ms;
         if self.tick_ms > 0.0 {
             let ticks = (ms / (SNAPSHOT_SHARE * self.tick_ms)).ceil() as u64;
             self.snapshot_every = ticks.div_ceil(SNAPSHOT_EVERY).max(1) * SNAPSHOT_EVERY;
@@ -619,10 +647,30 @@ impl Sim {
         let mut instances = self.recycled.try_iter().last().unwrap_or_default();
         let mut density = None;
         let mut origin = (0.0, 0.0);
-        if let Some(view) = self.view {
+        if self.render_world
+            && let Some(view) = self.view
+        {
             let rect = view.padded();
             origin = (rect.0, rect.1);
-            if !self.motion.collect(w, rect, &mut instances) {
+            let mean_size =
+                w.creatures.iter().map(|v| v.pheno.size).sum::<f64>() / w.creatures.len().max(1) as f64;
+            let px_size = mean_size * view.px_w as f64 / (view.x1 - view.x0).max(1.0);
+            if self.dots {
+                if px_size >= 3.5 {
+                    self.dots = false;
+                    let colored = self.motion.flock_colors;
+                    self.motion = Motion::default();
+                    self.motion.flock_colors = colored;
+                }
+            } else if px_size <= 2.5 {
+                self.dots = true;
+            }
+            let collected = if self.dots {
+                frame::dots_colored(w, rect, &mut instances, self.motion.flock_colors)
+            } else {
+                self.motion.collect(w, rect, &mut instances)
+            };
+            if !collected {
                 instances.clear();
                 // Карта плотности ровно по видимой области, клетка — пара пикселей.
                 let (dw, dh) =
@@ -636,30 +684,38 @@ impl Sim {
                     self.motion.flock_colors,
                 ));
             }
+        } else {
+            instances.clear();
         }
-        let minimap = if self.last_minimap.is_none_or(|t| t.elapsed() >= MINIMAP_INTERVAL) {
-            self.last_minimap = Some(Instant::now());
-            let (mw, mh) = frame::minimap_size(w.space.width, w.space.height);
-            Some(frame::density_colored(
-                w,
-                (0.0, 0.0, w.space.width, w.space.height),
-                mw,
-                mh,
-                Raster::default(),
-                self.motion.flock_colors,
-            ))
-        } else {
-            None
-        };
+        let minimap =
+            if self.render_world && self.last_minimap.is_none_or(|t| t.elapsed() >= MINIMAP_INTERVAL) {
+                self.last_minimap = Some(Instant::now());
+                let (mw, mh) = frame::minimap_size(w.space.width, w.space.height);
+                Some(frame::density_colored(
+                    w,
+                    (0.0, 0.0, w.space.width, w.space.height),
+                    mw,
+                    mh,
+                    Raster::default(),
+                    self.motion.flock_colors,
+                ))
+            } else {
+                None
+            };
         let pending = std::mem::take(&mut self.pending);
-        let mut flock_areas = if self.motion.flock_colors || self.selected_flock.is_some() {
-            frame::flock_areas(w)
-        } else {
-            Vec::new()
-        };
-        let selected_flock = self
-            .selected_flock
-            .and_then(|id| flock_areas.iter().find(|s| s.id == id).map(|s| s.details.clone()));
+        let mut flock_areas =
+            if self.render_world && (self.motion.flock_colors || self.selected_flock.is_some()) {
+                frame::flock_areas(w)
+            } else {
+                Vec::new()
+            };
+        let selected_flock = self.selected_flock.and_then(|id| {
+            flock_areas
+                .iter()
+                .find(|s| s.id == id)
+                .map(|s| s.details.clone())
+                .or_else(|| life_core::flock::summary(w, id))
+        });
         if let Some(view) = self.view.filter(|_| self.motion.flock_colors) {
             let (x0, y0, x1, y1) = view.padded();
             flock_areas.retain(|s| {
@@ -669,28 +725,8 @@ impl Sim {
         } else {
             flock_areas.clear();
         }
-        Frame {
-            world_gen: self.world_gen,
-            seed: self.cfg.seed,
-            scale: self.cfg.scale,
-            rules: w.rules.clone(),
-            tick: w.tick,
-            plants: w.plants.len(),
-            creatures: w.creatures.len(),
-            world_w: w.space.width,
-            world_h: w.space.height,
-            status: Status {
-                paused: self.paused,
-                speed_index: self.speed_index,
-                tps: self.tps,
-                lagging: self.lagging,
-                ended: self.ended,
-            },
-            origin,
-            instances,
-            flock_areas,
-            corpses: self
-                .view
+        let corpses = if self.render_world {
+            self.view
                 .map(|v| {
                     let (x0, y0, x1, y1) = v.padded();
                     w.corpses
@@ -714,13 +750,43 @@ impl Sim {
                         })
                         .collect()
                 })
-                .unwrap_or_default(),
-            shots: self
-                .recent_shots
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let shots = if self.render_world {
+            self.recent_shots
                 .iter()
                 .filter(|(_, at)| at.elapsed().as_secs_f32() < 0.25)
                 .map(|(s, at)| ShotTrail { age: at.elapsed().as_secs_f32(), ..*s })
-                .collect(),
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Frame {
+            world_gen: self.world_gen,
+            seed: self.cfg.seed,
+            scale: self.cfg.scale,
+            rules: w.rules.clone(),
+            tick: w.tick,
+            plants: w.plants.len(),
+            creatures: w.creatures.len(),
+            world_w: w.space.width,
+            world_h: w.space.height,
+            status: Status {
+                paused: self.paused,
+                speed_index: self.speed_index,
+                tps: self.tps,
+                lagging: self.lagging,
+                ended: self.ended,
+            },
+            render_world: self.render_world,
+            dots: self.dots && self.render_world,
+            origin,
+            instances,
+            flock_areas,
+            corpses,
+            shots,
             density,
             minimap,
             selected: self.selected.and_then(|id| Selected::of(w, id)),
@@ -732,6 +798,7 @@ impl Sim {
             built: Some(Instant::now()),
             build_ms: start.elapsed().as_secs_f64() * 1000.0,
             tick_ms: self.tick_ms,
+            snapshot_ms: self.snapshot_ms,
         }
     }
 }
@@ -739,6 +806,69 @@ impl Sim {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn выключенный_рендер_сохраняет_карточку_стаи_без_областей() {
+        let cfg = WorldConfig { n_creatures: Some(2), ..Default::default() };
+        let (_tx, rx) = mpsc::channel();
+        let (_recycle_tx, recycled) = mpsc::channel();
+        let mut sim = Sim::new(cfg, rx, recycled, Arc::new(Mutex::new(None)), Box::new(|| {}));
+        let id = sim.world.creatures[0].flock;
+        sim.world.creatures[1].flock = id;
+        sim.selected_flock = Some(id);
+        sim.render_world = false;
+        let frame = sim.build_frame();
+        assert!(frame.flock_areas.is_empty());
+        assert_eq!(frame.selected_flock.unwrap().members, 2);
+    }
+
+    /// Диагностика разделяет цену среза и построения графического кадра.
+    /// Запускается вручную: цифры зависят от машины и не являются порогом теста.
+    #[test]
+    #[ignore]
+    fn замер_среза_и_режимов_сборки_кадра_4000_4000() {
+        use life_core::rng::Rng;
+        fn measure(sim: &mut Sim, count: usize) -> (f64, Frame) {
+            let start = Instant::now();
+            let mut last = Frame::default();
+            for _ in 0..count {
+                last = sim.build_frame();
+            }
+            (start.elapsed().as_secs_f64() * 1000.0 / count as f64, last)
+        }
+        let cfg = WorldConfig { n_creatures: Some(4_000), ..Default::default() };
+        let (_tx, rx) = mpsc::channel();
+        let (_recycle_tx, recycled) = mpsc::channel();
+        let mut sim = Sim::new(cfg, rx, recycled, Arc::new(Mutex::new(None)), Box::new(|| {}));
+        let flora = sim.world.flora().clone();
+        let mut rng = Rng::new(17);
+        sim.world.plants = (0..4_000).map(|_| flora.plant(&mut rng)).collect();
+        sim.view = Some(ViewRequest {
+            x0: 0.0,
+            y0: 0.0,
+            x1: sim.world.space.width,
+            y1: sim.world.space.height,
+            px_w: 1600,
+            px_h: 900,
+        });
+        let start = Instant::now();
+        let _snapshot = Snapshot::of(&sim.world);
+        let snapshot_ms = start.elapsed().as_secs_f64() * 1000.0;
+        let (normal_ms, normal) = measure(&mut sim, 20);
+        assert_eq!(normal.instances.len(), 8_000);
+        sim.view.as_mut().unwrap().px_w = 300;
+        let (dots_ms, dots) = measure(&mut sim, 20);
+        assert!(dots.dots);
+        assert_eq!(dots.instances.len(), 8_000);
+        sim.render_world = false;
+        sim.selected = Some(1);
+        let (off_ms, off) = measure(&mut sim, 20);
+        assert!(off.instances.is_empty() && off.density.is_none() && off.minimap.is_none());
+        assert!(off.selected.is_some());
+        eprintln!(
+            "срез {snapshot_ms:.3} мс · сборка тел {normal_ms:.3} · квадраты {dots_ms:.3} · выкл {off_ms:.3} мс"
+        );
+    }
 
     /// Кадры до первого подходящего; ожидание ограничено: 500 попыток по 10 мс.
     fn frames_until(h: &SimHandle, until: impl Fn(&Frame) -> bool) -> Vec<Frame> {
