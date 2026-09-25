@@ -21,24 +21,30 @@ use crate::rules::Rules;
 use crate::senses::Senses;
 use crate::space::Space;
 
-/// Кто кому родня: номер существа и номер его родителя (0 — родителя нет:
-/// стартовое или подсаженное). Мир выдаёт номера с 1, так что 0 ничей.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+/// Who is whose family: the creature's number and its parent's (0: no parent, a founder or a
+/// spawned one; the world numbers from 1, so 0 is nobody's), how far it has grown and until
+/// what growth of its own child it still knows the child.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Kinship {
     pub id: u64,
     pub parent: u64,
+    /// Body diameter over the inherited adult size: 1 is adult.
+    pub growth: f64,
+    /// A parent knows its child while the child's `growth` is below this: `2 × care`, at most 1.
+    /// The base parent knows it until it is adult, a careless one only while it is tiny.
+    pub knows_until: f64,
 }
 
 impl Kinship {
-    /// Родня: сам, родитель и ребёнок, дети одного родителя. Родня друг друга
-    /// не ест и друг от друга не бежит. Внуки и двоюродные — уже чужие: иначе
-    /// за сотню поколений родным стал бы весь мир.
+    /// Family: oneself, and a parent with its child while the parent still knows the child.
+    /// Family neither strikes nor flees from each other. Once the child has grown past what its
+    /// parent remembers they are strangers, as are siblings and grandchildren: whom to spare
+    /// is inherited (`care`), not a rule of the world.
     #[inline(always)]
     pub fn kin(self, other: Kinship) -> bool {
         self.id == other.id
-            || self.parent == other.id
-            || other.parent == self.id
-            || (self.parent != 0 && self.parent == other.parent)
+            || (other.parent == self.id && other.growth < self.knows_until)
+            || (self.parent == other.id && self.growth < other.knows_until)
     }
 }
 
@@ -128,10 +134,15 @@ impl Creature {
         }
     }
 
-    /// Номер и родитель: по ним узнают родню.
+    /// Number, parent and growth: by them a parent knows its growing child.
     #[inline(always)]
     pub fn kinship(&self) -> Kinship {
-        Kinship { id: self.id, parent: self.parent }
+        Kinship {
+            id: self.id,
+            parent: self.parent,
+            growth: self.pheno.size / self.genome[Gene::Size].max(0.01),
+            knows_until: (2.0 * self.pheno.care).min(1.0),
+        }
     }
 
     /// Базовое существо из конфига в случайном месте.
@@ -174,6 +185,7 @@ impl Creature {
             flock: self.flock,
             circle: self.circle,
             health_share: self.health / self.max_health(),
+            health: self.health,
             pheno: &self.pheno,
         };
         let intent = strategy::decide(&me, &mut self.mind, &mut self.rng, senses);
@@ -269,6 +281,7 @@ impl Creature {
             flock: self.flock,
             circle: self.circle,
             health_share: self.health / self.max_health(),
+            health: self.health,
             pheno: &self.pheno,
         };
         strategy::after_eating(&me, &mut self.mind, &mut self.rng);

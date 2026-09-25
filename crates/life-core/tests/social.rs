@@ -375,6 +375,7 @@ fn нулевая_общительность_не_принимает_сообщ�
             circle: None,
             pheno: &v.pheno,
             health_share: 1.0,
+            health: v.pheno.size,
         };
         let mut mind = Mind::default();
         let mut accepted = 0;

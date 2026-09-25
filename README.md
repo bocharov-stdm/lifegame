@@ -3,7 +3,8 @@
 **Текущая модель поведения:** детёныши растут на пище, взрослые стареют; существа
 защищаются, охотятся и наследуют стаи. Подробные правила и результаты проверки —
 [BEHAVIOR.md](BEHAVIOR.md). Размер в геноме — взрослый предел, на экране — фактическое
-тело. Близкая родня и участники одной стаи не атакуют друг друга. JSON: `life-report/9`.
+тело. JSON: `life-report/9`. A parent does not attack its growing child while it still knows it
+(the inherited care decides how long), and members of one flock never attack each other.
 A flock is a circle that moves as one object — settled, nomadic, scouts or vertical migrants —
 and its members feed inside it; the circle is also its territory. Circles without territoriality
 overlap freely, moderate ones push each other softly, hard ones never overlap. When there is no
@@ -32,9 +33,11 @@ the circles (the stroke tells the territoriality, red is a battle); a click open
 каннибализм.
 
 **Cannibalism** turns on hunting, territory defence, shots, simultaneous fights and eating
-corpses. Kin and members of the same flock are protected. How much smaller a prey must be is
-the inherited `prey_ratio` gene alone (there is no world limit any more); defending oneself or
-a territory may strike a bigger enemy. The game has it on by default, the report takes
+corpses. A growing child known to its parent and members of the same flock are protected. How
+much smaller a prey must be is the inherited `prey_ratio` gene alone (there is no world limit
+any more). A hunter weighs the meat it can still take in against the strikes it expects from the
+prey and the prey's visible allies; the inherited `caution` gene sets how much the risk weighs.
+Defending oneself or a territory may strike a bigger enemy. The game has it on by default, the report takes
 `--rule cannibalism=1`.
 
 Проект переписан на Rust, чтобы миры могли быть в сотни раз больше: есть
@@ -199,11 +202,10 @@ cargo fmt --all
 
 Медленный ход затаившегося стоит дешевле: за скорость платится по фактическому
 шагу, по тому же закону `скорость ** 2`, поэтому треть скорости обходится в
-девятую часть. Текущая модель прошла 8 сидов × 20 000 тиков для базового и
-спокойного профилей, с боями и без: выжили все 32 мира. Медианная финальная
-численность составила 1464 и 1032 без боёв, 848,5 и 614 с боями соответственно.
-Население выросло относительно прежней модели; подробные результаты и ограничения
-текущего баланса — в [BEHAVIOR.md](BEHAVIOR.md).
+девятую часть. The current model passed 8 seeds × 20 000 ticks for the base and the calm
+profiles, with combat and without: all 32 worlds survived. Median final population: 1329.5 and
+922.5 without combat, 748.5 and 511 with combat. Detailed results and the limits of the current
+balance: [BEHAVIOR.md](BEHAVIOR.md).
 
 ## Масштаб и форма
 

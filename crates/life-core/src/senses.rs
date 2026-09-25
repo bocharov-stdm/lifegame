@@ -70,7 +70,12 @@ pub struct CorpseFood {
 }
 
 impl Prey {
-    fn of(s: &Seen, me: &Me) -> Self {
+    /// Energy per tick the hunt is worth to `me`: the meat it can still take in (its tank is
+    /// not bottomless), less the share `me.pheno.caution` gives up for the strikes it expects.
+    /// The prey strikes back while it is being killed; its visible allies (`allies`: the sum of
+    /// their strikes) join in until the hunter has eaten. A careless hunter (caution 0) ignores
+    /// the risk; a hunt that looks deadly for a careful one is worth nothing.
+    fn of(s: &Seen, me: &Me, allies: f64) -> Self {
         let travel =
             ((s.x - me.x).hypot(s.y - me.y) - s.half - me.pheno.half).max(0.0) / me.pheno.speed.max(0.01);
         let hits = (s.health
@@ -78,15 +83,25 @@ impl Prey {
         .ceil();
         let portion = (me.pheno.plant_energy / f64::from(crate::plant::PORTIONS)).max(s.nutrition / 12.0);
         let feeding = (s.nutrition / portion.max(0.001)).ceil();
+        let gain = (s.nutrition * me.pheno.meat_efficiency * crate::config::CORPSE_BITE_YIELD)
+            .min(me.pheno.max_energy - me.energy)
+            .max(0.0);
+        let cap = me.pheno.size * 0.25;
+        let expected = s.strike.min(cap) * hits + allies * (hits + feeding);
+        let risk = me.pheno.caution * expected / me.health.max(0.001);
         Self {
             id: s.kinship.id,
             x: s.x,
             y: s.y,
-            score: s.nutrition * me.pheno.meat_efficiency * crate::config::CORPSE_BITE_YIELD
-                / (travel + hits + feeding).max(1.0),
+            score: gain * (1.0 - risk).max(0.0) / (travel + hits + feeding).max(1.0),
         }
     }
 }
+
+/// How many flocks and prey candidates a hunter keeps in mind at once. The buffers live on the
+/// stack; what does not fit is not seen (deterministically: the grid order decides).
+const SEEN_FLOCKS: usize = 32;
+const SEEN_PREY: usize = 64;
 
 /// Опасный чужак, каким его видит существо.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -155,28 +170,67 @@ impl Senses for GridSenses<'_> {
     fn prey(&self, me: &Me, previous: Option<u64>) -> Option<Prey> {
         let herd = self.herd?;
         let max_size = me.pheno.size / me.pheno.prey_ratio;
-        let mut best: Option<Prey> = None;
+        // One look around: the strikes of every visible flock but one's own, and the candidates.
+        // Loners have a label each and cover nobody, so only members of real flocks are summed.
+        let mut flocks = [(0_u64, 0.0_f64); SEEN_FLOCKS];
+        let mut n_flocks = 0;
+        let mut candidates = [0_usize; SEEN_PREY];
+        let mut n_candidates = 0;
         herd.grid.for_each_near(me.x, me.y, me.pheno.vision, |j, _, _| {
             let s = &herd.seen[j];
+            if (s.x - me.x).hypot(s.y - me.y) > me.pheno.vision || s.kinship.id == me.kinship.id {
+                return;
+            }
+            if s.grouped && s.flock != me.flock {
+                match flocks[..n_flocks].iter_mut().find(|f| f.0 == s.flock) {
+                    Some(f) => f.1 += s.strike,
+                    None if n_flocks < SEEN_FLOCKS => {
+                        flocks[n_flocks] = (s.flock, s.strike);
+                        n_flocks += 1;
+                    }
+                    None => {}
+                }
+            }
             if (me.flock != 0 && me.flock == s.flock)
                 || s.half * 2.0 > max_size
                 || me.kinship.kin(s.kinship)
                 || herd.grace.contains(me.flock, s.flock, herd.tick)
-                || (s.x - me.x).hypot(s.y - me.y) > me.pheno.vision
             {
                 return;
             }
-            let p = Prey::of(s, me);
-            if best.is_none_or(|b| {
-                if b.id == previous.unwrap_or(0) {
-                    false
-                } else {
-                    p.id == previous.unwrap_or(0) || p.score > b.score || (p.score == b.score && p.id < b.id)
+            if n_candidates < SEEN_PREY {
+                candidates[n_candidates] = j;
+                n_candidates += 1;
+            } else if Some(s.kinship.id) == previous {
+                candidates[SEEN_PREY - 1] = j;
+            }
+        });
+        let mut best: Option<Prey> = None;
+        for &j in &candidates[..n_candidates] {
+            let s = &herd.seen[j];
+            // Its flockmates in sight, and a parent in sight that still knows it and would cover it.
+            let mut allies = if s.grouped {
+                flocks[..n_flocks].iter().find(|f| f.0 == s.flock).map_or(0.0, |f| f.1) - s.strike
+            } else {
+                0.0
+            };
+            if let Ok(k) = herd.seen.binary_search_by_key(&s.kinship.parent, |p| p.kinship.id) {
+                let p = &herd.seen[k];
+                if p.flock != s.flock
+                    && p.kinship.kin(s.kinship)
+                    && (p.x - me.x).hypot(p.y - me.y) <= me.pheno.vision
+                {
+                    allies += p.strike;
                 }
+            }
+            let p = Prey::of(s, me, allies.max(0.0));
+            let kept = |b: &Prey| Some(b.id) == previous && b.score > 0.0;
+            if best.is_none_or(|b| {
+                !kept(&b) && (kept(&p) || p.score > b.score || (p.score == b.score && p.id < b.id))
             }) {
                 best = Some(p);
             }
-        });
+        }
         best
     }
 
@@ -258,8 +312,12 @@ pub(crate) struct Seen {
     health: f64,
     max_health: f64,
     nutrition: f64,
+    /// Its melee strike: what a hunter expects back from it or from it as an ally.
+    strike: f64,
     kinship: Kinship,
     flock: u64,
+    /// In a flock of two or more (it has a circle): its flockmates may cover it.
+    grouped: bool,
 }
 
 /// Снимок всех существ на начало фазы: мелкие нужны как добыча, крупные — как угрозы.
@@ -313,8 +371,10 @@ impl Herd {
             nutrition: v.energy
                 + (v.pheno.size - v.birth_size).max(0.0) * crate::config::GROWTH_ENERGY_PER_SIZE
                 + v.birth_size * crate::config::ENERGY_PER_SIZE * 0.25,
+            strike: v.pheno.size * v.pheno.melee_damage_share,
             kinship: v.kinship(),
             flock: v.flock,
+            grouped: v.circle.is_some(),
         }));
         self.grid.rebuild(space, self.seen.iter().map(|s| (s.x, s.y)));
         let (mut max_eats, mut max_half) = (0.0_f64, 0.0_f64);
@@ -504,6 +564,7 @@ mod tests {
             flock: v.flock,
             circle: v.circle,
             health_share: 1.0,
+            health: v.pheno.size,
             pheno: &v.pheno,
         };
         let mut near = Corpse::from_creature(v, 1);
@@ -560,6 +621,7 @@ mod tests {
             circle: None,
             pheno: &predator.pheno,
             health_share: 1.0,
+            health: predator.pheno.size,
         };
         let hunted = Me {
             x: prey.x,
@@ -570,6 +632,7 @@ mod tests {
             circle: None,
             pheno: &prey.pheno,
             health_share: 1.0,
+            health: prey.pheno.size,
         };
         for (tick, safe) in [(600, true), (601, false)] {
             herd.rebuild_with_grace(&world.space, &world.creatures, &grace, tick);
@@ -600,6 +663,7 @@ mod tests {
             let mut food = Grid::new(GRID_CELL);
             let mut snapshot = Herd::new();
             let (mut checked, mut threats, mut spared) = (0, 0, 0);
+            let (mut hunts, mut guarded, mut crowded) = (0, 0, 0);
             for tick in 0..1500 {
                 w.step();
                 if tick % 50 != 0 {
@@ -680,10 +744,107 @@ mod tests {
                         .filter(|u| u.id != v.id && v.kinship().kin(u.kinship()))
                         .count();
                 }
+                // prey: the same valuation over every creature instead of the grid and the buffers
+                let view = GridSenses {
+                    food: &food,
+                    plants: &plants,
+                    corpse_grid: None,
+                    corpses: &[],
+                    now: tick,
+                    herd: Some(&snapshot),
+                };
+                for v in &w.creatures {
+                    let me = Me {
+                        x: v.x,
+                        y: v.y,
+                        energy: v.energy,
+                        kinship: v.kinship(),
+                        flock: v.flock,
+                        circle: v.circle,
+                        pheno: &v.pheno,
+                        health_share: v.health / v.max_health(),
+                        health: v.health,
+                    };
+                    let sees = |u: &Creature| (u.x - v.x).hypot(u.y - v.y) <= v.pheno.vision && u.id != v.id;
+                    let strike = |u: &Creature| u.pheno.size * u.pheno.melee_damage_share;
+                    let candidates: Vec<usize> = (0..w.creatures.len())
+                        .filter(|&j| {
+                            let u = &w.creatures[j];
+                            sees(u)
+                                && !(v.flock != 0 && v.flock == u.flock)
+                                && u.pheno.size <= v.pheno.size / v.pheno.prey_ratio
+                                && !v.kinship().kin(u.kinship())
+                        })
+                        .collect();
+                    let flocks: std::collections::BTreeSet<u64> = w
+                        .creatures
+                        .iter()
+                        .filter(|u| sees(u) && u.circle.is_some() && u.flock != v.flock)
+                        .map(|u| u.flock)
+                        .collect();
+                    if candidates.len() > SEEN_PREY || flocks.len() > SEEN_FLOCKS {
+                        crowded += 1;
+                        continue;
+                    }
+                    let want = candidates
+                        .iter()
+                        .map(|&j| {
+                            let u = &w.creatures[j];
+                            let mut allies: f64 = w
+                                .creatures
+                                .iter()
+                                .filter(|a| {
+                                    u.circle.is_some()
+                                        && a.circle.is_some()
+                                        && sees(a)
+                                        && a.flock == u.flock
+                                        && a.flock != v.flock
+                                        && a.id != u.id
+                                })
+                                .map(strike)
+                                .sum();
+                            if let Some(p) = w.creatures.iter().find(|p| p.id == u.parent)
+                                && p.flock != u.flock
+                                && p.kinship().kin(u.kinship())
+                                && (p.x - v.x).hypot(p.y - v.y) <= v.pheno.vision
+                            {
+                                allies += strike(p);
+                            }
+                            guarded += (allies > 0.0) as usize;
+                            Prey::of(&snapshot.seen[j], &me, allies)
+                        })
+                        .fold(None, |b: Option<Prey>, p| {
+                            if b.is_none_or(|b| p.score > b.score || (p.score == b.score && p.id < b.id)) {
+                                Some(p)
+                            } else {
+                                b
+                            }
+                        });
+                    let got = view.prey(&me, None);
+                    // Sums in another order may differ in the last bits: compare scores, not ties.
+                    let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1e-12);
+                    match (got, want) {
+                        (Some(g), Some(e)) => assert!(
+                            close(g.score, e.score),
+                            "seed {seed}, tick {tick}: prey {} ({}) vs {} ({})",
+                            g.id,
+                            g.score,
+                            e.id,
+                            e.score
+                        ),
+                        (g, e) => {
+                            assert_eq!(g.map(|p| p.id), e.map(|p| p.id), "seed {seed}, tick {tick}: prey")
+                        }
+                    }
+                    hunts += got.is_some_and(|p| p.score > 0.0) as usize;
+                }
             }
             assert!(checked > 1000, "сид {seed}: проверено всего {checked} запросов — мир вымер?");
             assert!(threats > 100, "сид {seed}: угроз нашлось всего {threats}");
             assert!(spared > 10, "сид {seed}: родни среди угроз всего {spared}");
+            assert!(hunts > 100, "seed {seed}: only {hunts} worthwhile hunts");
+            assert!(guarded > 100, "seed {seed}: only {guarded} guarded candidates");
+            assert!(crowded * 20 < checked, "seed {seed}: {crowded} hunters saw more than the buffers hold");
             if seed == 4 {
                 let biggest = w.creatures.iter().fold(0.0_f64, |m, v| m.max(v.pheno.size));
                 assert!(
@@ -692,5 +853,121 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A world with a hungry hunter (size 80) at (1000, 1000); `setup` adds the rest. Returns the
+    /// hunter's best prey by the hunter's own valuation.
+    fn best_prey(caution: f64, energy_share: f64, setup: impl Fn(&mut World)) -> Option<Prey> {
+        use crate::genome::creature::Gene;
+        let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
+        let hunter = crate::CreatureGenome::BASE.with(Gene::Size, 80.0).with(Gene::Caution, caution);
+        w.spawn(hunter, 1000.0, 1000.0, None);
+        w.creatures[0].energy = w.creatures[0].pheno.max_energy * energy_share;
+        setup(&mut w);
+        let mut herd = Herd::new();
+        herd.rebuild(&w.space, &w.creatures);
+        let food = Grid::new(GRID_CELL);
+        let view = GridSenses {
+            food: &food,
+            plants: &[],
+            corpse_grid: None,
+            corpses: &[],
+            now: 1,
+            herd: Some(&herd),
+        };
+        let v = &w.creatures[0];
+        let me = Me {
+            x: v.x,
+            y: v.y,
+            energy: v.energy,
+            kinship: v.kinship(),
+            flock: v.flock,
+            circle: None,
+            pheno: &v.pheno,
+            health_share: 1.0,
+            health: v.health,
+        };
+        view.prey(&me, None)
+    }
+
+    /// A small creature (size 20) at `x`; `flock` with a circle makes it a flock member.
+    fn small(w: &mut World, x: f64, flock: Option<u64>) -> u64 {
+        use crate::genome::creature::Gene;
+        let id = w.spawn(crate::CreatureGenome::BASE.with(Gene::Size, 20.0), x, 1000.0, None);
+        if let Some(flock) = flock {
+            let v = w.creatures.last_mut().unwrap();
+            v.flock = flock;
+            v.circle = Some(Circle { x, y: 1000.0, radius: 150.0 });
+        }
+        id
+    }
+
+    #[test]
+    fn a_careful_hunter_leaves_a_guarded_prey_for_a_lone_one() {
+        let setup = |w: &mut World| {
+            small(w, 1060.0, Some(500)); // closer, but with three flockmates beside it
+            for dx in [80.0, 100.0, 120.0] {
+                small(w, 1000.0 + dx, Some(500));
+            }
+            small(w, 900.0, None); // a loner a little farther away
+        };
+        let careless = best_prey(0.0, 0.3, setup).unwrap();
+        let careful = best_prey(50.0, 0.3, setup).unwrap();
+        assert_eq!(careless.id, 2, "a careless hunter takes the nearest");
+        assert_eq!(careful.id, 6, "a careful hunter took the guarded one");
+        assert!(careful.score > 0.0);
+    }
+
+    #[test]
+    fn a_full_hunter_gains_nothing_and_a_hungry_one_something() {
+        let setup = |w: &mut World| {
+            small(w, 1060.0, None);
+        };
+        assert_eq!(best_prey(50.0, 1.0, setup).unwrap().score, 0.0);
+        assert!(best_prey(50.0, 0.3, setup).unwrap().score > 0.0);
+    }
+
+    #[test]
+    fn a_hunt_that_looks_deadly_is_worth_nothing_unless_careless() {
+        use crate::genome::creature::Gene;
+        // The prey's flock: five creatures as big as the hunter; the prey is one of them.
+        let setup = |w: &mut World| {
+            for dx in [60.0, 70.0, 80.0, 90.0, 100.0] {
+                w.spawn(crate::CreatureGenome::BASE.with(Gene::Size, 80.0), 1000.0 + dx, 1000.0, None);
+                let v = w.creatures.last_mut().unwrap();
+                v.flock = 500;
+                v.circle = Some(Circle { x: 1080.0, y: 1000.0, radius: 150.0 });
+            }
+            w.creatures[0].pheno.prey_ratio = 1.0;
+        };
+        assert_eq!(best_prey(50.0, 0.3, setup).unwrap().score, 0.0);
+        assert!(best_prey(0.0, 0.3, setup).unwrap().score > 0.0);
+    }
+
+    #[test]
+    fn a_parent_in_sight_covers_its_growing_child_only_while_it_knows_it() {
+        use crate::genome::creature::Gene;
+        let with_parent = |care: f64| {
+            move |w: &mut World| {
+                let parent = w.spawn(
+                    crate::CreatureGenome::BASE.with(Gene::Size, 60.0).with(Gene::Care, care),
+                    1100.0,
+                    1000.0,
+                    None,
+                );
+                small(w, 1060.0, None);
+                let child = w.creatures.last_mut().unwrap();
+                child.parent = parent;
+                child.genome = child.genome.with(Gene::Size, 40.0); // half grown
+            }
+        };
+        let alone = best_prey(50.0, 0.3, |w: &mut World| {
+            small(w, 1060.0, None);
+        })
+        .unwrap();
+        let covered = best_prey(50.0, 0.3, with_parent(50.0)).unwrap();
+        let forgotten = best_prey(50.0, 0.3, with_parent(10.0)).unwrap();
+        assert!(covered.score < alone.score, "a parent in sight did not count");
+        assert_eq!(forgotten.score, alone.score, "a parent that forgot its child still covers it");
     }
 }

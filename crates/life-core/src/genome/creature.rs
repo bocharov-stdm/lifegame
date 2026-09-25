@@ -32,6 +32,7 @@ pub enum Gene {
     FlockKind,
     LayerBound,
     FlockSpacing,
+    Caution,
 }
 
 impl Gene {
@@ -59,10 +60,11 @@ impl Gene {
         Gene::FlockKind,
         Gene::LayerBound,
         Gene::FlockSpacing,
+        Gene::Caution,
     ];
 }
 
-pub const N: usize = 23;
+pub const N: usize = 24;
 
 pub const PACK_VARIANTS: [Variant; 2] = [
     Variant {
@@ -288,7 +290,7 @@ pub const GENES: [GeneSpec; N] = [
     GeneSpec {
         key: "care",
         label: "защита_детей",
-        about: "Готовность защищать собственных невзрослых детей, %.",
+        about: "Защищает своих невзрослых детей и не трогает их, пока они растут; при малой заботе узнаёт только самых маленьких, %.",
         kind: GeneKind::Percent,
         base: 50.0,
         mutation: SCALE,
@@ -315,6 +317,14 @@ pub const GENES: [GeneSpec; N] = [
         about: "Радиус круга стаи на корень из числа участников (50–500).",
         kind: GeneKind::Absolute,
         base: 200.0,
+        mutation: SCALE,
+    },
+    GeneSpec {
+        key: "caution",
+        label: "осторожность",
+        about: "Насколько охотник боится ответных ударов добычи и её видимых союзников, %.",
+        kind: GeneKind::Percent,
+        base: 50.0,
         mutation: SCALE,
     },
 ];

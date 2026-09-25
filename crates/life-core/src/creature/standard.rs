@@ -154,8 +154,13 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
     let inside = |px: f64, py: f64| bound.is_none_or(|c| c.holds(px, py, me.pheno.half));
     let plant = mind.social.personal_food;
     let corpse = senses.best_corpse(me).filter(|c| inside(c.x, c.y));
-    let prey = if mind.attack.is_some() || me.energy <= me.pheno.max_energy * 0.9 {
-        senses.prey(me, mind.attack).filter(|p| mind.attack == Some(p.id) || inside(p.x, p.y))
+    // A hunt is worth what the meat adds to the tank less the expected strikes (`Prey::of`); a
+    // full tank takes nothing, and a hunt that stopped paying (allies came, the tank filled)
+    // is dropped.
+    let prey = if me.energy < me.pheno.max_energy {
+        senses
+            .prey(me, mind.attack)
+            .filter(|p| p.score > 0.0 && (mind.attack == Some(p.id) || inside(p.x, p.y)))
     } else {
         None
     };
@@ -343,6 +348,7 @@ mod tests {
                 circle: Some(circle),
                 pheno: &v.pheno,
                 health_share: 1.0,
+                health: v.pheno.size,
             };
             let (_, mode) = plan(&me, &mut mind, &mut rng, &PlantOutside, v.pheno.speed);
             assert_eq!(mind.social.foraging, forages, "fullness {share}");
@@ -375,6 +381,7 @@ mod tests {
                 circle: None,
                 pheno: &v.pheno,
                 health_share: 1.0,
+                health: v.pheno.size,
             };
             let mut mind = Mind::default();
             let mut rng = Rng::new(3);

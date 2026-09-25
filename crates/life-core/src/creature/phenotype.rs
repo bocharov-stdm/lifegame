@@ -34,6 +34,9 @@ pub struct Phenotype {
     pub plant_efficiency: f64,
     pub meat_efficiency: f64,
     pub prey_ratio: f64,
+    /// How much a hunter weighs the strikes it expects from its prey and the prey's visible
+    /// allies: 0 ignores them, 1 is the base, 2 is twice as careful.
+    pub caution: f64,
     /// Возможность и личный стиль дальнего боя.
     pub shooter: bool,
     pub fire_preference: f64,
@@ -133,6 +136,7 @@ impl Phenotype {
             plant_efficiency: 1.0 - 0.8 * genome[Gene::Carnivory].clamp(0.0, 100.0) / 100.0,
             meat_efficiency: 0.2 + 0.8 * genome[Gene::Carnivory].clamp(0.0, 100.0) / 100.0,
             prey_ratio: genome[Gene::PreyRatio].clamp(1.0, 5.0),
+            caution: genome[Gene::Caution].clamp(0.0, 100.0) / 50.0,
             shooter: genome[Gene::Shooter] >= 0.5,
             fire_preference: genome[Gene::FirePreference].clamp(0.0, 100.0) / 100.0,
             fire_reserve: genome[Gene::FireReserve].clamp(0.0, 100.0) / 100.0,

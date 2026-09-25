@@ -87,6 +87,8 @@ pub struct Me<'a> {
     pub circle: Option<crate::flock::Circle>,
     pub pheno: &'a Phenotype,
     pub health_share: f64,
+    /// Health now: a hunter weighs the strikes it expects against it.
+    pub health: f64,
 }
 
 /// Решение хода: точка, к которой шагнуть. Шаг — не дальше speed в её сторону;

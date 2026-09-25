@@ -187,10 +187,16 @@ impl World {
             let k = variant_for(i, n_start, &cfg.strategies, variants);
             // Независимые от потока мира жребии не меняют места рождения и растения.
             let mut founder = Rng::keyed(cfg.seed, 0x5A6C_5A6C_0000_0000 ^ i as u64);
-            let pack = founder.random() < 0.5;
+            // Every other founder is flocking: a draw left 3 to 15 of 20 calm founders flocking,
+            // and the flocks of a world were decided by that lottery. The draw stays, so the
+            // founders' other draws are the same.
+            let _ = founder.random();
+            let pack = i % 2 == 0;
             let territory = founder.random();
             let shooter = founder.random() < 0.05;
-            let mode = if !pack || territory < 0.5 {
+            // Loners carry territoriality too: it acts only through a flock's circle, so for them
+            // it is neutral variation that a flock descending from them inherits.
+            let mode = if territory < 0.5 {
                 0.0
             } else if territory < 0.9 {
                 1.0
@@ -626,33 +632,30 @@ mod trait_tests {
     }
 
     #[test]
-    fn основатели_получают_воспроизводимые_режимы_без_смены_мест_рождения() {
+    fn founders_get_reproducible_modes_without_moving_their_birthplaces() {
         let cfg = WorldConfig { seed: 17, n_creatures: Some(400), ..Default::default() };
         let first = World::new(&cfg);
         let again = World::new(&cfg);
         let extended = World::new(&WorldConfig { n_creatures: Some(401), ..cfg });
-        let mut pack = 0;
         let mut modes = [0usize; 3];
         let mut shooters = 0;
-        for ((a, b), c) in first.creatures.iter().zip(&again.creatures).zip(&extended.creatures) {
+        for (i, ((a, b), c)) in
+            first.creatures.iter().zip(&again.creatures).zip(&extended.creatures).enumerate()
+        {
             assert_eq!(a.genome, b.genome);
             assert_eq!((a.x, a.y), (b.x, b.y));
-            // Дополнительный основатель не сдвигает независимые жребии.
+            // An extra founder does not shift the independent draws.
             assert_eq!(a.pheno.pack_instinct, c.pheno.pack_instinct);
             assert_eq!(a.pheno.territoriality, c.pheno.territoriality);
             assert_eq!(a.pheno.shooter, c.pheno.shooter);
             assert_eq!((a.x, a.y), (c.x, c.y));
-            pack += a.pheno.pack_instinct as usize;
+            assert_eq!(a.pheno.pack_instinct, i % 2 == 0, "every other founder is flocking");
             shooters += a.pheno.shooter as usize;
-            if a.pheno.pack_instinct {
-                modes[a.genome[Gene::Territoriality] as usize] += 1;
-            } else {
-                assert_eq!(a.genome[Gene::Territoriality], 0.0);
-            }
+            // loners carry territoriality too, as neutral variation
+            modes[a.genome[Gene::Territoriality] as usize] += 1;
         }
-        assert!((160..=240).contains(&pack), "половина основателей стайные: {pack}");
-        assert!(modes[0] > modes[1] && modes[1] > modes[2], "режимы 50/40/10: {modes:?}");
-        assert!((8..=36).contains(&shooters), "пять процентов основателей стреляют: {shooters}");
+        assert!(modes[0] > modes[1] && modes[1] > modes[2], "modes 50/40/10: {modes:?}");
+        assert!((8..=36).contains(&shooters), "five percent of the founders shoot: {shooters}");
     }
 
     #[test]

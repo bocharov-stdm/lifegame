@@ -113,37 +113,61 @@ fn каннибализм_выключен_бит_в_бит_и_счётчики_
 
 // ── родство и бегство ──────────────────────────────────────────────────────
 
-/// Ребёнок знает родителя; родня — родитель, дети и братья, но не внуки.
+/// A child knows its parent. Family is a parent and its growing child while the parent still
+/// knows it (base care: until the child is adult); siblings and grandchildren are strangers.
 #[test]
-fn родство_наследуется() {
+fn kinship_is_a_parent_and_its_growing_child() {
     let mut w = empty_world(Rules::default());
     let id = w.spawn(BASE.with(Gene::ReproThreshold, 30.0), 3000.0, 2000.0, None);
     let (s, r) = (w.space, w.rules.clone());
     let parent = &mut w.creatures[0];
-    assert_eq!(parent.parent, 0, "подсаженное — без родителя");
+    assert_eq!(parent.parent, 0, "a spawned creature has no parent");
     let mut kids = Vec::new();
     for n in 0..2 {
         parent.reproduction_wait = 0;
         parent.energy = parent.pheno.max_energy;
-        let mut kid = parent.maybe_divide(&s, &r).expect("сытый родитель не поделился");
-        kid.id = 100 + n; // номер выдаёт мир
+        let mut kid = parent.maybe_divide(&s, &r).expect("a full parent did not divide");
+        kid.id = 100 + n; // the world numbers them
         kids.push(kid);
     }
     let parent = parent.kinship();
     let (a, b) = (kids[0].kinship(), kids[1].kinship());
-    assert_eq!(a.parent, id, "ребёнок помнит родителя");
-    assert!(parent.kin(a) && a.kin(parent), "родитель и ребёнок — родня");
-    assert!(a.kin(b), "братья — родня");
+    assert_eq!(a.parent, id, "the child remembers its parent");
+    assert!(a.growth < 1.0, "a newborn is not adult");
+    assert!(parent.kin(a) && a.kin(parent), "a parent and its newborn are family");
+    assert!(!a.kin(b), "siblings are strangers");
     kids[0].nourish(10000.0, &r);
+    assert!(kids[0].adult());
+    assert!(!parent.kin(kids[0].kinship()), "the parent forgets its grown child");
     kids[0].reproduction_wait = 0;
     kids[0].energy = kids[0].pheno.max_energy;
-    let mut grandchild = kids[0].maybe_divide(&s, &r).expect("сытый ребёнок не поделился");
+    let mut grandchild = kids[0].maybe_divide(&s, &r).expect("a full child did not divide");
     grandchild.id = 200;
     let grandchild = grandchild.kinship();
-    assert!(a.kin(grandchild), "ребёнок и внук — родня");
-    assert!(!parent.kin(grandchild) && !b.kin(grandchild), "внук деду и дяде уже чужой");
-    let strangers = (Kinship { id: 7, parent: 0 }, Kinship { id: 8, parent: 0 });
-    assert!(!strangers.0.kin(strangers.1), "стартовые без родителя друг другу не братья");
+    assert!(kids[0].kinship().kin(grandchild), "a child and its own newborn are family");
+    assert!(
+        !parent.kin(grandchild) && !b.kin(grandchild),
+        "a grandchild is a stranger to grandparent and uncle"
+    );
+    let strangers = (Kinship { id: 7, ..Default::default() }, Kinship { id: 8, ..Default::default() });
+    assert!(!strangers.0.kin(strangers.1), "founders without a parent are strangers");
+}
+
+/// How long a parent knows its child is inherited: `care` sets the growth up to which it does.
+#[test]
+fn a_careless_parent_knows_only_its_tiny_children() {
+    let mut w = empty_world(Rules::default());
+    for care in [5.0, 50.0, 100.0] {
+        w.spawn(BASE.with(Gene::Care, care), 3000.0, 2000.0, None);
+    }
+    let parents: Vec<Kinship> = w.creatures.iter().map(|v| v.kinship()).collect();
+    assert_eq!(parents.iter().map(|k| k.knows_until).collect::<Vec<_>>(), [0.1, 1.0, 1.0]);
+    for (growth, known) in [(0.05, [true, true, true]), (0.5, [false, true, true]), (1.0, [false; 3])] {
+        for (p, known) in parents.iter().zip(known) {
+            let child = Kinship { id: 99, parent: p.id, growth, knows_until: 1.0 };
+            assert_eq!(p.kin(child), known, "care {} growth {growth}", p.knows_until);
+        }
+    }
 }
 
 /// Мир с крупным существом размера `big` и мелким (30) на `dx` правее;
@@ -175,29 +199,44 @@ fn мелкий_бежит_от_крупного_чужака() {
     assert!((dx - speed).abs() < 1e-9 && dy.abs() < 1e-9, "бежал не прочь: ({dx}, {dy})");
 }
 
+/// The small one is still growing: its body is half of its inherited size.
+fn growing(w: &mut World) {
+    let v = &mut w.creatures[1];
+    v.genome = v.genome.with(Gene::Size, v.pheno.size * 2.0);
+}
+
 #[test]
-fn не_бежит_от_родни_равного_и_далёкого() {
-    let parent = |w: &mut World| w.creatures[1].parent = w.creatures[0].id;
-    let child = |w: &mut World| w.creatures[0].parent = w.creatures[1].id;
+fn does_not_flee_a_parent_that_knows_it_nor_an_equal_or_distant_one() {
+    let parent = |w: &mut World| {
+        growing(w);
+        w.creatures[1].parent = w.creatures[0].id;
+    };
+    let cases: [(World, &str); 4] = [
+        (threat_world(true, 100.0, 150.0, parent), "from its parent"),
+        (threat_world(true, 70.0, 150.0, |_| {}), "from one only 2.3 times bigger"),
+        (threat_world(true, 100.0, 250.0, |_| {}), "from one 200 away, beyond a third of its vision"),
+        (threat_world(false, 100.0, 150.0, |_| {}), "when eating one another is off"),
+    ];
+    for (w, why) in cases {
+        let (_, _, fleeing) = small_step(w);
+        assert!(!fleeing, "flees {why}");
+    }
+    let grown_child = |w: &mut World| w.creatures[1].parent = w.creatures[0].id; // adult: forgotten
+    let adult_child = |w: &mut World| w.creatures[0].parent = w.creatures[1].id;
     let brothers = |w: &mut World| {
         w.creatures[0].parent = 999;
         w.creatures[1].parent = 999;
     };
-    let strangers = |w: &mut World| w.creatures[1].parent = 999; // у крупного родителя нет
-    let cases: [(World, &str); 6] = [
-        (threat_world(true, 100.0, 150.0, parent), "от родителя"),
-        (threat_world(true, 100.0, 150.0, child), "от своего ребёнка"),
-        (threat_world(true, 100.0, 150.0, brothers), "от брата"),
-        (threat_world(true, 70.0, 150.0, |_| {}), "от того, кто крупнее всего в 2.3 раза"),
-        (threat_world(true, 100.0, 250.0, |_| {}), "от того, до кого 200 — дальше трети зрения"),
-        (threat_world(false, 100.0, 150.0, |_| {}), "когда есть сородичей нельзя"),
-    ];
-    for (w, why) in cases {
+    let strangers = |w: &mut World| w.creatures[1].parent = 999;
+    for (w, why) in [
+        (threat_world(true, 100.0, 150.0, strangers), "a stranger"),
+        (threat_world(true, 100.0, 150.0, brothers), "a brother"),
+        (threat_world(true, 100.0, 150.0, grown_child), "a parent that forgot it"),
+        (threat_world(true, 100.0, 150.0, adult_child), "its own adult child"),
+    ] {
         let (_, _, fleeing) = small_step(w);
-        assert!(!fleeing, "бежит {why}");
+        assert!(fleeing, "does not flee {why}");
     }
-    let (_, _, fleeing) = small_step(threat_world(true, 100.0, 150.0, strangers));
-    assert!(fleeing, "от чужого с другим родителем не бежит");
 }
 
 /// Испуг длится FLEE_TICKS тиков и тогда, когда угроза пропала из виду, —
@@ -231,21 +270,23 @@ fn бежит_ещё_после_пропажи_угрозы() {
 }
 
 #[test]
-fn каннибал_не_ест_родню() {
-    let as_parent = |w: &mut World| w.creatures[1].parent = w.creatures[0].id;
+fn a_hunter_spares_its_growing_child_but_not_a_brother() {
+    let as_child = |w: &mut World| {
+        growing(w);
+        w.creatures[1].parent = w.creatures[0].id;
+    };
+    let mut w = threat_world(true, 100.0, 10.0, as_child);
+    w.creatures[0].energy = w.creatures[0].pheno.max_energy * 0.3;
+    w.step();
+    assert_eq!(w.creatures[1].health, w.creatures[1].max_health(), "the hunter struck its own growing child");
     let as_brother = |w: &mut World| {
         w.creatures[0].parent = 999;
         w.creatures[1].parent = 999;
     };
-    for (w, why) in [
-        (threat_world(true, 100.0, 10.0, as_parent), "своего ребёнка"),
-        (threat_world(true, 100.0, 10.0, as_brother), "брата"),
-    ] {
-        let mut w = w;
-        w.step();
-        assert_eq!(w.creatures.len(), 2, "каннибал съел {why}");
-        assert_eq!(w.counters.cannibalized, 0);
-    }
+    let mut w = threat_world(true, 100.0, 10.0, as_brother);
+    w.creatures[0].energy = w.creatures[0].pheno.max_energy * 0.3;
+    w.step();
+    assert!(w.creatures[1].health < w.creatures[1].max_health(), "a hungry hunter spared a brother");
 }
 
 /// Мир с бегством детерминирован: сородичей видят по снимку на начало фазы.

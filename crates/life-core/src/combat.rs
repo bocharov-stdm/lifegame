@@ -101,10 +101,11 @@ pub(crate) fn resolve_with_grace(
                 if (v.x - u.x).hypot(v.y - u.y) > v.pheno.half + u.pheno.half {
                     return;
                 }
+                // Only a chosen target or a defence: a creature does not bite whoever it bumps into.
                 let selected = v.mind.attack == Some(u.id);
                 let territorial = assigned == Some(u.id);
                 let defense = defending(v, u.id, territorial, tick);
-                if !selected && !defense && (v.fleeing() || v.energy > v.pheno.max_energy * 0.9) {
+                if !selected && !defense {
                     return;
                 }
                 if !defense && u.pheno.size > v.pheno.size / v.pheno.prey_ratio {
@@ -316,10 +317,23 @@ mod tests {
         assert_eq!(w.counters.combat, 2);
     }
     #[test]
-    fn полное_здоровье_требует_нескольких_ударов() {
+    fn a_hungry_creature_does_not_bite_whoever_it_bumps_into() {
+        let mut w = world();
+        w.spawn(CreatureGenome::BASE.with(Gene::Size, 100.0), 1000.0, 1000.0, Some(20.0));
+        let small = w.spawn(CreatureGenome::BASE.with(Gene::Size, 30.0), 1000.0, 1000.0, Some(50.0));
+        hit(&mut w);
+        assert_eq!(w.creatures[1].health, w.creatures[1].max_health(), "struck without choosing a target");
+        w.creatures[0].mind.attack = Some(small);
+        hit(&mut w);
+        assert!(w.creatures[1].health < w.creatures[1].max_health(), "did not strike its chosen prey");
+    }
+
+    #[test]
+    fn full_health_takes_several_strikes() {
         let mut w = world();
         w.spawn(CreatureGenome::BASE.with(Gene::Size, 100.0), 1000.0, 1000.0, Some(200.0));
-        w.spawn(CreatureGenome::BASE.with(Gene::Size, 30.0), 1000.0, 1000.0, Some(50.0));
+        let prey = w.spawn(CreatureGenome::BASE.with(Gene::Size, 30.0), 1000.0, 1000.0, Some(50.0));
+        w.creatures[0].mind.attack = Some(prey);
         for _ in 0..5 {
             hit(&mut w);
             assert!(w.creatures[1].alive);
@@ -329,13 +343,15 @@ mod tests {
         assert_eq!(w.counters.combat, 1);
     }
     #[test]
-    fn гибель_не_передаёт_энергию_мгновенно() {
+    fn a_death_passes_no_energy_at_once() {
         let mut w = world();
         for _ in 0..2 {
             w.spawn(CreatureGenome::BASE.with(Gene::Size, 100.0), 1000.0, 1000.0, Some(100.0));
         }
-        w.spawn(CreatureGenome::BASE.with(Gene::Size, 30.0), 1000.0, 1000.0, Some(50.0));
+        let prey = w.spawn(CreatureGenome::BASE.with(Gene::Size, 30.0), 1000.0, 1000.0, Some(50.0));
         w.creatures[2].health = 5.0;
+        w.creatures[0].mind.attack = Some(prey);
+        w.creatures[1].mind.attack = Some(prey);
         hit(&mut w);
         assert_eq!(w.creatures[0].energy, 95.0);
         assert_eq!(w.creatures[1].energy, 95.0);
@@ -398,16 +414,20 @@ mod tests {
     }
 
     #[test]
-    fn одна_особь_наносит_не_более_одного_удара_за_тик() {
+    fn one_creature_strikes_at_most_once_a_tick() {
         let mut w = world();
         let shooter = CreatureGenome::BASE
             .with(Gene::Shooter, 1.0)
             .with(Gene::FirePreference, 100.0)
             .with(Gene::FireReserve, 0.0);
         w.spawn(shooter, 1000.0, 1000.0, Some(80.0));
-        w.spawn(CreatureGenome::BASE.with(Gene::Size, 15.0), 1020.0, 1000.0, Some(30.0));
+        let near = w.spawn(CreatureGenome::BASE.with(Gene::Size, 15.0), 1020.0, 1000.0, Some(30.0));
         let distant = w.spawn(CreatureGenome::BASE.with(Gene::Size, 15.0), 1100.0, 1000.0, Some(30.0));
+        // Hunting the distant one, it was just struck by the near one: defending in contact
+        // takes its one strike, and it does not shoot as well.
         w.creatures[0].mind.attack = Some(distant);
+        w.creatures[0].mind.social.hit =
+            Some(crate::social::Alarm { enemy: near, x: 1020.0, y: 1000.0, tick: 1 });
         let result = resolve(
             &w.space,
             &w.rules,
@@ -424,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn защита_территории_позволяет_стрелять_по_крупному_чужаку_но_не_по_родне() {
+    fn territory_defence_may_shoot_a_bigger_stranger_but_not_a_growing_child() {
         let mut w = world();
         let shooter = CreatureGenome::BASE
             .with(Gene::Shooter, 1.0)
@@ -450,6 +470,7 @@ mod tests {
         assert_eq!(defense.territorial_attacks, 1);
         let parent = w.creatures[0].id;
         w.creatures[1].parent = parent;
+        w.creatures[1].genome = w.creatures[1].genome.with(Gene::Size, 200.0); // still growing
         let kin = resolve(
             &w.space,
             &w.rules,

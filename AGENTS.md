@@ -70,7 +70,11 @@ overlap freely, moderate ones push softly and are respected only in sight of a m
 ones never overlap anything; no strict overlap may ever remain. With combat on, a territorial
 flock squeezed with no room nearby fights every flock touching its circle; a flock that lost
 half of its adults moves away. Loners live with separate labels. After a split, two groups don't
-attack each other for 600 ticks; close kin are protected indefinitely. A parent may defend a
-non-adult child; energy is passed to it at birth. A melee strike requires bodies to touch;
+attack each other for 600 ticks. Family is only a parent and its growing child while the parent
+still knows it (`care` sets until what growth); siblings and grandchildren are strangers. A
+parent may defend a non-adult child; energy is passed to it at birth. A hunter weighs the meat
+its tank can take in against the expected strikes of the prey and its visible allies
+(`caution`); strikes need a chosen target, a defence or a territorial assignment. Every other
+founder is flocking. A melee strike requires bodies to touch;
 corpses are available to everyone from the next tick. Behaviour genes are free: restrain them by
 behaviour and effect limits, never by upkeep.

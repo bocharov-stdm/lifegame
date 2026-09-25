@@ -65,6 +65,34 @@ split groups never strike each other. A flock that has lost half of the adults i
 the battle and moves away; the others keep the place. A battle lasts at most 300 ticks, and a
 flock that left one neither starts nor joins another for 600 ticks (`battle.rs`).
 
+**Rational hunting** (combat on only). A creature hunts when the hunt pays. The hunt is worth
+the meat its tank can still take in (the prey's energy times its meat efficiency, but no more
+than the free room in the tank), less the strikes it expects, per tick of the chase, the fight
+and the meal. It expects the prey to strike back while it is being killed, and every visible
+ally of the prey to join in until the meal ends: the prey's flockmates in sight, and a parent in
+sight that still knows it. The new free gene `caution` (0–100%, base 50%, the last row of the
+gene table) weighs that risk: at 0 it is ignored; at the base a hunt whose expected strikes
+equal the hunter's health is worth nothing; at 100% half of that is enough. A hunt goes on while
+it is worth anything; a new one starts only when it is worth more than the best plant or corpse
+in sight, and a full tank starts none. Gone are the fixed 90% fullness threshold for hunting and
+the bites of whoever a creature bumps into: a strike needs a chosen target, a defence or a
+territorial assignment. `prey_ratio` (1–5) still limits whom a creature attacks first; the risk,
+not a world floor, restrains a low ratio. A reckless mutant may be born and gets beaten by the
+prey's allies: that is the catch of this free behaviour gene.
+
+**Kinship.** Family is only a parent and its growing child while the parent still knows it. A
+parent knows its child until the child's body reaches `min(1, 2 × care)` of its adult size: the
+base parent (care 50%) until the child is adult, a careless one only while it is tiny. Siblings,
+grandchildren and grown children are strangers. Family neither strikes nor flees from each
+other; members of one flock and groups under the 600-tick grace are still protected. Whom to
+spare is thus inherited, not a rule of the world: with combat, care drifts to a median of
+36–39%, and parents forget their children at 70–80% of their growth.
+
+**Founders.** Every other founder is flocking. A draw used to make 3 to 15 of the 20 founders
+flocking, and that lottery decided whether flocks survived a world. Territoriality is drawn for
+the loners as well (50/40/10): it acts only through a flock's circle, so for a loner it is
+neutral variation that a flock descending from it inherits.
+
 **Care and growth** (unchanged from the start of this stage). A parent no longer feeds its child
 every tick: the inherited `care` gene only controls protection. The base inherited share of
 energy at birth is 40%. A child gets no more than its tank holds; the parent pays only the energy
@@ -94,18 +122,41 @@ Seeds 1–8, 20 000 ticks, `--max-work 1e15`, every run finished by itself:
 
 | Mode | Alive | Flocks persist | Both lines ≥ 10% | Median | vs old reference | Inside, median (min) |
 |---|---:|---:|---:|---:|---:|---:|
-| base, no combat | 8/8 | 7/8 | 5/8 | 1346 | −8% (1464) | 0.93 (0.82) |
-| base, combat | 8/8 | 5/8 | 5/8 | 755 | −11% (848.5) | 0.82 (0.44) |
-| calm, no combat | 8/8 | 5/8 | 4/8 | 981.5 | −5% (1032) | 0.99 (0.81) |
-| calm, combat | 8/8 | 6/8 | 4/8 | 780.5 | +27% (614) | 0.85 (0.69) |
+| base, no combat | 8/8 | 7/8 | 3/8 | 1329.5 | −9% (1464) | 0.92 (0.62) |
+| base, combat | 8/8 | 8/8 | 3/8 | 748.5 | −12% (848.5) | 0.77 (0.46) |
+| calm, no combat | 8/8 | 6/8 | 4/8 | 922.5 | −11% (1032) | 0.94 (0.74) |
+| calm, combat | 8/8 | 8/8 | 4/8 | 511 | −17% (614) | 0.74 (0.63) |
 
-Eight seeds cannot tell 5/8 from 7/8 apart, so the combat profiles were also run on seeds 1–16:
-base — flocks persist in 12/16, both lines in 11/16, median 900.5; calm — flocks persist in
-14/16, both lines in 6/16 (flocks took over 8 worlds), median 731.5. Strict overlaps: 0 in every
-snapshot of every run. Circle radius p90: at most 600. Battles for room: 87 in 5 of 8 base worlds
-with combat (12 retreats), 116 in 4 of 8 calm ones (21 retreats); none without combat, as
-designed. The `flock_spacing` median drifts to 45–270, in one calm world to 664 (the effect stays
-clamped at 500).
+Eight seeds cannot tell 5/8 from 7/8 apart, so the combat profiles were also run on seeds
+1–48. Flocks persist in base 13/16 on seeds 1–16 and 42/48 on all; calm 16/16 and 40/48.
+Without combat, seeds 1–16: base 15/16, calm 10/16. For comparison on 48 seeds (base / calm):
+the prey ratio alone as the attack threshold gave 33 / 30, the old floor of 2.5 under it 42 / 33,
+rational hunting with drawn founders 36 / 32. Strict overlaps: 0 in every snapshot of every run.
+Circle radius p90: at most 600. Battles for room, seeds 1–8: 215 in 6 of 8 base worlds with
+combat (75 retreats), 129 in 6 of 8 calm ones (24 retreats); none without combat, as designed.
+The `flock_spacing` median drifts to 80–670 (the effect stays clamped at 500).
+
+**Open: members inside their circle.** The median share over the final snapshots of seeds 1–8 is
+0.77 in base and 0.74 in calm with combat, below the 80% target. It fell from 0.84 to 0.75 when
+the prey ratio alone became the attack threshold, and rational hunting did not restore it: with
+combat creatures are hungrier, and members forage and chase outside their circle more often.
+
+**Sharp turns** (`social_probe`, seeds 1–8). With combat: base 2.50% (`8cced8d`: 4.07%), calm
+2.44% (1.69%). Without combat: 2.90% and 1.61% (1.24% and 0.95%; `8cced8d` had no territories
+without combat). In the calm profile with combat the total is above `8cced8d`, but no context
+is: inside the own circle 4.0% (11.6%), around a border 15.7% (16.8%), all territory contexts
+4.5% (5.4%), elsewhere 1.52% (1.48%). What grew is the share of moves in territory contexts,
+30% instead of 5%: territorial flocks now persist in every calm world.
+
+**Who kills whom** (a temporary probe, seeds 1–8 with combat, base / calm). Kills fell by 13% /
+24%. Strikes without a chosen target were 4.0% / 1.1% of the kills, now none. A parent kills its
+own child in 0.4% / 1.1% of the kills; the kinship check makes each of them a child grown past
+what its parent remembers. Grandparents kill a descendant in 0.2%. Caution ends with a median of
+53% (base) and 33% (calm) with combat, 41–50% without; `prey_ratio` ends at 3.7 and 2.8.
+
+A ×100 world with combat ticks about 5–8% slower than before rational hunting at the same
+population (400 ticks, seeds 1–2): every creature with room in its tank now values the prey it
+sees each tick, allies included.
 
 **`repro_cost`.** The plan asked for the smallest value in 10–20 that lowers the median by 15–25%
 in all four modes. None does (seeds 1–8, 20 000 ticks, change vs the old references):
@@ -379,10 +430,10 @@ Claude над родством и бегством. Она сохранена и
 
 ## Механики
 
-- Родитель, ребёнок и дети одного родителя — близкие родственники. Родню и носителей
-  одинаковой метки стаи нельзя атаковать. Угрозы читаются из снимка соседей.
-  Совпадающие координаты дают воспроизводимое направление; выключение каннибализма
-  сбрасывает бегство и цель атаки.
+- Family is a parent and its child while the parent still knows it (`care`, see the first
+  section). Family and carriers of the same flock label may not be attacked. Threats are read
+  from the neighbour snapshot. Coinciding coordinates give a reproducible direction; turning
+  cannibalism off resets fleeing and the attack target.
 - Ген размера задаёт взрослый диаметр. Ребёнок рождается с половиной диаметра;
   основатели и добавленные вручную существа взрослые. Только усвоенная пища растит
   тело: доля `p/(1+p)`, текущая цена единицы диаметра `GROWTH_ENERGY_PER_SIZE = 2.25`.
@@ -407,10 +458,11 @@ Claude над родством и бегством. Она сохранена и
   `prey_ratio`: base 2.5, range 1–5, a free behaviour gene. It alone decides whom a creature
   attacks first (a body at most `size / prey_ratio`) and, in the eyes of others, whom it
   threatens. The world rule `cannibal_ratio` (2.5) is gone: it came from swallowing prey whole
-  and only set a floor under the gene. What restrains a low ratio is behaviour: an equal fights
-  back. Defence and territory strike regardless of size. A target is chosen by the energy it
-  yields over the time of the chase and the fight. Above 90% of the tank no new hunt starts.
-  `cannibalism` turns all combat off.
+  and only set a floor under the gene. What restrains a low ratio is the risk a hunter weighs
+  (`caution`): an equal and its allies fight back. Defence and territory strike regardless of
+  size. A target is chosen by the meat its tank can take in, less the expected strikes, over the
+  time of the chase, the fight and the meal (see "Rational hunting"). `cannibalism` turns all
+  combat off.
 - The flock label is kept apart from the gene table: unique for founders, inherited with a 99%
   chance. Two living carriers make a flock, and a flock has a circle (see the first section).
   There is no cooperative hunting. Empty flocks are removed.
