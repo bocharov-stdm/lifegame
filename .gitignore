@@ -1,5 +1,6 @@
 # Rust
-/target/
+# build output, including stray per-crate target/ folders (screen test shots land there)
+target/
 
 # Python — прототипы в Relict/ ещё можно запустить
 __pycache__/
