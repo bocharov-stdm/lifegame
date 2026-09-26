@@ -14,7 +14,7 @@
 
 use crate::config::{
     CORPSE_BOTTOM_PCT, CORPSE_DECAY_TICKS, CORPSE_FRESH_TICKS, CORPSE_ROTTEN_TICKS, CORPSE_SKELETON_SHARE,
-    ENERGY_PER_SIZE, SKELETON_SINK_TICKS, SKELETON_TICKS, SKELETON_ZONE_PCT,
+    GROWTH_ENERGY_PER_SIZE, SKELETON_SINK_TICKS, SKELETON_TICKS, SKELETON_ZONE_PCT,
 };
 use crate::creature::Creature;
 use crate::grid::Grid;
@@ -178,12 +178,14 @@ fn smooth_step(age: u64, from: u64, to: u64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// The meat of creature `v`'s body: as much as its full tank (`size × ENERGY_PER_SIZE`), plus
-/// what is left in the tank. A body that starved is still meat; when a corpse held only a quarter
-/// of the birth energy, meat was too scarce for anyone but omnivores to live on. A hunter weighs
-/// its prey by the same measure.
+/// The meat of creature `v`'s body: the energy that went into growing it since birth
+/// (`GROWTH_ENERGY_PER_SIZE` a unit of diameter), plus what is left in the tank. A body that starved
+/// is still meat. The body a creature is born with (or spawned with) was nobody's food, so it is
+/// no one's meat: when it counted at the full tank's worth (`size × ENERGY_PER_SIZE`), a parent that
+/// bore nearly empty children and ate their corpses made energy from nothing — a world of 9500
+/// scavengers on 34 plants. A hunter weighs its prey by the same measure.
 pub fn meat(v: &Creature) -> f64 {
-    v.energy.max(0.0) + v.pheno.size * ENERGY_PER_SIZE
+    v.energy.max(0.0) + (v.pheno.size - v.birth_size).max(0.0) * GROWTH_ENERGY_PER_SIZE
 }
 
 /// Where the remains of creature `id` with body radius `half` come to rest: in the lowest `pct` of
@@ -281,16 +283,22 @@ mod tests {
         v
     }
 
-    /// The whole body is meat, however it grew, plus what was left in the tank.
+    /// The grown body is meat at what growing it cost, plus what was left in the tank; the body
+    /// it was born with is not: a newborn's corpse is its tank.
     #[test]
-    fn meat_is_the_whole_body_plus_the_tank() {
+    fn meat_is_the_grown_body_plus_the_tank() {
         let mut v = body();
         v.birth_size = 20.0;
+        let grown = (v.pheno.size - 20.0) * GROWTH_ENERGY_PER_SIZE;
+        assert_eq!(grown, 45.0);
         let c = Corpse::from_creature(&v, 12);
-        assert_eq!(c.initial, 40.0 + v.pheno.size * ENERGY_PER_SIZE);
+        assert_eq!(c.initial, 40.0 + grown);
         v.energy = 0.0;
-        assert_eq!(Corpse::from_creature(&v, 12).initial, v.pheno.size * ENERGY_PER_SIZE, "a starved body");
+        assert_eq!(Corpse::from_creature(&v, 12).initial, grown, "a starved body");
         assert_eq!((c.owner, c.flock, c.born), (7, 3, 12));
+        v.birth_size = v.pheno.size;
+        v.energy = 3.0;
+        assert_eq!(Corpse::from_creature(&v, 12).initial, 3.0, "a newborn is its tank");
     }
 
     #[test]

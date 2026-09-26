@@ -10,7 +10,7 @@ mod phenotype;
 mod standard;
 pub mod strategy;
 
-pub use phenotype::{Diet, Phenotype};
+pub use phenotype::{Diet, Phenotype, melee_damage};
 pub use strategy::{Intent, Me, Mind, Strategy};
 
 use crate::config::*;

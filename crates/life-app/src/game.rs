@@ -34,7 +34,7 @@ fn lab_group(field: &settings::Field) -> &'static str {
         return "Распределение растений";
     }
     match field.key {
-        Key::MeleeDamage | Key::ShotDamage | Key::ShotCost | Key::ShotPeriod => "Бой",
+        Key::MeleeDamage | Key::MeleeSizePower | Key::ShotDamage | Key::ShotCost | Key::ShotPeriod => "Бой",
         Key::MutationSigma => "Эволюция",
         _ => "Питание и энергия",
     }

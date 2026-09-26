@@ -138,13 +138,19 @@ fn cannibal_world(small: f64, dx: f64) -> World {
     w
 }
 
+/// A hunter strikes the small one beside it: 2.5 times smaller it survives the first strike,
+/// 6.7 times smaller it dies of it (`MELEE_SIZE_POWER`) and leaves a corpse.
 #[test]
 fn каннибал_съедает_мелкого_рядом() {
-    let mut w = cannibal_world(30.0, 10.0);
+    let mut w = cannibal_world(40.0, 10.0);
     w.step();
-    assert_eq!(w.creatures.len(), 2, "полное здоровье не теряется за один удар");
+    assert_eq!(w.creatures.len(), 2, "2.5 times smaller, full health survives one strike");
     assert!(w.creatures[1].health < w.creatures[1].max_health());
     assert_eq!(w.counters.combat, 0);
+    let mut w = cannibal_world(15.0, 10.0);
+    w.step();
+    assert_eq!(w.creatures.len(), 1, "6.7 times smaller, one strike kills");
+    assert_eq!((w.counters.combat, w.corpses.len()), (1, 1));
 }
 
 #[test]
@@ -296,7 +302,7 @@ fn does_not_flee_a_parent_that_knows_it_nor_an_equal_or_distant_one() {
 #[test]
 fn бежит_ещё_после_пропажи_угрозы() {
     let food = |_: f64, _: f64, _: f64| Some((900.0, 1000.0));
-    let threat = Threat { id: 999, x: 960.0, y: 1000.0, gap: 20.0 };
+    let threat = Threat { id: 999, x: 960.0, y: 1000.0, gap: 20.0, half: 20.0 };
     for g in [BASE, LURKER] {
         let mut v = creature(1000.0, 1000.0, g);
         v.health = v.max_health() * 0.1;
@@ -318,6 +324,24 @@ fn бежит_ещё_после_пропажи_угрозы() {
     let far = Threat { gap: v.pheno.flee + 1.0, ..threat };
     move_once(&mut v, &senses_from(food).with_threat(far));
     assert!(v.x < 1000.0 && !v.fleeing(), "испугался далёкого");
+}
+
+/// A healthy creature in contact with a threat strikes back — unless the threat is `prey_ratio`
+/// times bigger than it: then it runs.
+#[test]
+fn strikes_back_an_equal_but_runs_from_one_out_of_its_league() {
+    for (half, fights) in [(20.0, true), (49.0, true), (50.0, false), (120.0, false)] {
+        let mut v = creature(1000.0, 1000.0, BASE);
+        assert_eq!((v.pheno.half, v.pheno.prey_ratio), (20.0, 2.5));
+        let threat = Threat { id: 999, x: 1000.0 + 20.0 + half - 1.0, y: 1000.0, gap: 19.0, half };
+        let before = v.x;
+        v.step(&senses_from(|_, _, _| None).with_threat(threat));
+        assert_eq!(v.mind.attack == Some(999), fights, "enemy radius {half}");
+        assert_eq!(v.fleeing(), !fights, "enemy radius {half}");
+        if !fights {
+            assert!(v.x < before, "ran towards the enemy");
+        }
+    }
 }
 
 #[test]
@@ -455,7 +479,8 @@ fn ребёнок_рождается_у_родителя() {
 /// Слой мягкий: растение над слоем видно — существо идёт и съедает его.
 #[test]
 fn еда_над_слоем_съедается() {
-    let mut w = empty_world(Rules::default());
+    // no plants grow: a nearer sprout between patches would be eaten first
+    let mut w = empty_world(Rules::default().with("plant_rate", 0.0).unwrap());
     let g = BASE.with(Gene::MinY, 50.0);
     w.spawn(g, 3000.0, 2100.0, Some(80.0));
     let v = &w.creatures[0];
@@ -973,7 +998,8 @@ fn профиль_еды_меняется_на_ходу() {
 #[test]
 fn совпавшая_угроза_не_обездвиживает() {
     let mut v = creature(1000.0, 1000.0, BASE);
-    let senses = senses_from(|_, _, _| None).with_threat(Threat { id: 999, x: v.x, y: v.y, gap: -50.0 });
+    let senses =
+        senses_from(|_, _, _| None).with_threat(Threat { id: 999, x: v.x, y: v.y, gap: -50.0, half: 50.0 });
     v.health = v.max_health() * 0.1;
     let before = (v.x, v.y);
     v.step(&senses);

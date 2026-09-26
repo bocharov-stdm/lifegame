@@ -69,16 +69,31 @@ that food) and its edges, all read in `Phenotype::of` / `Diet::*`:
 | scavenger | ×1.3 | smells corpses at 2× vision (`DIET_SMELL`, free); upkeep falls linearly from half the depth to −40% on the bottom (`DIET_DEEP_SAVING`, `Phenotype::depth_upkeep`, applied in `Creature::act`); founders start with layer 50–100% (`SCAVENGER_START_LAYER`) |
 | carnivore | ×1.5 | speed term of upkeep ×0.8 (`DIET_SPEED_COST`) |
 
-The strike bonus is on damage only, never on the strike's energy cost (`strike` vs `strike_cost`);
-damage also scales with size (melee 5% of size, capped at ¼ of the target's max health; a shot 1%).
+The strike bonus is on damage only, never on the strike's energy cost (`strike` vs `strike_cost`).
+Damage scales with size: melee is 5% of the striker's size, times (its size / the target's) **
+`melee_size_power` (rule, `MELEE_SIZE_POWER` 1.25) when it is the bigger — equals trade ~20
+strikes, 2× needs ~5, 3× a carnivore kills a herbivore in two, 7× in one (`Phenotype::strike_on`,
+`melee_damage`; hunters weigh prey and retaliation by the same function). At 1.75 (3× = one blow)
+carnivores boomed, ate the herbivores out and starved; at 1.0 they died out everywhere.
+Melee has no cap any more; a shot stays 1% of size, capped at ¼ of the target's max health, and
+expensive. Reach grows with size by itself: contact is the sum of the two radii. **Fights at food**:
+below its inherited `rivalry` share of the store a creature strikes a stranger (not kin, not its
+flock, not under grace) that is `prey_ratio` times smaller and eats the *same* food beside it this
+tick — plants side by side or the same corpse (`combat::Feeding`, filled in `world.rs` from the
+feeding phase); so a herbivore never fights a carnivore over grass, and a big scavenger clears small
+bone-eaters off its corpse. A struck creature strikes back only if the enemy is less than its own
+`prey_ratio` times bigger; otherwise it runs (`standard.rs`). Bystanders do not flee a brawler.
 Upkeep with the diet's factors is `Rules::upkeep_diet`; `Rules::upkeep` is it with `[1, 1]`, bit for
 bit. **Own niche** (`DIET_OWN`): above its inherited `picky` share of the store a creature eats and
 goes only for its own food — a sated scavenger neither touches a corpse in its fresher half
 (rot < 0.5) nor hunts (`hunts_now`), a sated carnivore does not touch the rotten half or skeletons;
 below `picky` it takes whatever it digests (`Phenotype::corpse_efficiency(rot, hungry)`, hunger judged
 once per tick before the meal in `world.rs`). Anyone who eats fresh meat at all (`hunts`) is feared,
-and a child of another diet leaves its flock. A corpse is the whole body's meat (`corpse::meat`: size
-× `ENERGY_PER_SIZE` plus the tank) — hunters weigh prey by the same measure. It is fresh for 150
+and a child of another diet leaves its flock. A corpse's meat is the body grown since birth, at what
+growing it cost (`GROWTH_ENERGY_PER_SIZE` a unit of size), plus the tank (`corpse::meat`) — hunters
+weigh prey by the same measure. The body a creature is born or spawned with is no meat: counted at
+`size × ENERGY_PER_SIZE` it made energy from nothing (parents bore empty children and ate their
+corpses — 9500 scavengers on 34 plants). It is fresh for 150
 ticks, then rots and sinks, fully rotten on the bottom (lowest 2%) at 600, gone at 1800 (in % of
 depth, a function of the tick only). A corpse eaten down to `CORPSE_SKELETON_SHARE` (10%) of its meat
 becomes a **skeleton** (`Corpse::skeleton`): rot from then, it sinks within 300 ticks to a place in
@@ -89,8 +104,8 @@ default depth profile «игровое» (see "Where food grows").
 
 ## Where the `food-web` work stands
 
-The branch `food-web` (not pushed yet; merge only on the user's word) holds five stages of
-commits up to `16af4f7`. What is left:
+The branch `food-web` (not pushed yet; merge only on the user's word) holds six stages of
+commits. What is left:
 - `AGENTS.md`, `BEHAVIOR.md`, `README.md` still describe the pre-`food-web` model (this file is
   current): diets and their edges, own niche and `picky`, rot, skeletons, patches, «игровое».
 - The golden digests fail by design until re-recorded; re-record them and both references
@@ -98,8 +113,10 @@ commits up to `16af4f7`. What is left:
   `--rule cost_scale=3`) in
   one separate commit once the user accepts the balance; golden case H can become "all four diets".
 - Then push, PR, green CI.
-- Planned next: the life/pace reform (see "Balance: exponents, not coefficients"); the user also
-  asked whether fights should be more common for every diet (e.g. a size rule) — undecided.
+- Open (2026-09-26): with meat = grown body + tank the meat niches collapsed (seeds 1–8: no
+  carnivores or scavengers anywhere, herbivores 79–100%, medians 925 / 755); the user decides how
+  to feed them; re-measure after the choice.
+- Planned next: the life/pace reform (see "Balance: exponents, not coefficients").
 The user keeps a short PDF of genes, strategies and diet edges (built by a throwaway fpdf2 script
 with Arial for Cyrillic); regenerate and send it after diet or gene changes.
 
@@ -404,13 +421,20 @@ surface cannot hand its room to the deep sea. Plant energy does not affect capac
 - `plant_patches = 0` — scattered: slots are cells of equal fertility, an `nx × ny` grid in the
   coordinates of each axis's distribution function (`Axis::cdf`); a plant draws **two** numbers
   (x, then y) by the profile and takes its cell.
-- `plant_patches > 0` (default 24 per base world, radius ~`plant_patch_size` 200) — patches:
-  coarse regions of equal fertility, ~2 patches each; every region holds the same number of slots
-  (so region by region the profile holds — `заросли_не_ломают_профиль`). A region has 1–3 patches
-  with their own size (×0.5–1.5), stretch and weight (a heavier patch takes more of the region's
-  slots); centres are drawn by the profile inside the region from `Rng::keyed(seed, PATCH_STREAM)`,
-  never the world stream. Ellipses are squashed, not clipped, against the plant zone. Slots lie on
-  a sunflower spiral; a plant draws **three** numbers: the slot (uniform), then a jitter inside it.
+- `plant_patches > 0` (default 24 per base world, radius ~`plant_patch_size` 200) — patches and
+  plants between them: coarse regions of equal fertility, ~2 patches each; every region holds the
+  same number of slots (so region by region the profile holds — `заросли_не_ломают_профиль`). Part of
+  a region's slots lie in its patches, the rest are scattered over the region by the profile (R2
+  low-discrepancy points in the distribution functions' coordinates). The part in patches is
+  `min(1, c · light)`, light being the depth profile's density at the region's centre (floor 0.05),
+  with `c` found so that the world's mean is `plant_patch_share` (rule, default 60%). A patch's
+  radius is also times `max(0.3, sqrt(light))` at its centre, so deep patches are rare (deep regions
+  are wide), small and poor (`заросли_глубже_реже_мельче_беднее`). A region has 1–3 patches with their
+  own size (×0.5–1.5), stretch and weight (a heavier patch takes more of the region's patch slots);
+  centres are drawn by the profile inside the region from `Rng::keyed(seed, PATCH_STREAM)`, never
+  the world stream. Ellipses are squashed, not clipped, against the plant zone. Patch slots come
+  first (a sunflower spiral each), then the scattered ones region by region; a plant draws
+  **three** numbers: the slot (uniform), then a jitter inside it.
 
 `Plant` stays 24 bytes: `alive` is `portions > 0`, and the slot (24 bits, `NO_SLOT` for plants put
 in by hand) fills the padding next to `born`. Occupied slots are a bitset (`world::Occupancy`)
@@ -513,7 +537,8 @@ multiplier ≥ 0.1); `Switch { chance }` to any other variant (0.1% for the choi
 `Neighbours { chance, jump, of }` for the diet — a step to a neighbour in `DIET_NEIGHBOURS`
 (0.1%; the omnivore forks to herbivore / scavenger / carnivore, scavenger ↔ carnivore) or, on the
 same first draw, a jump to any other diet (0.01%). All chances are multiplied by the parent's
-mutability. The last row is `picky` («разборчивость», %, base 30, free): the own-niche threshold. A founders' diet mix (`WorldConfig::diets`, 55/25/10/10 in variant order H/O/S/C,
+mutability. Then `picky` («разборчивость», %, base 30, free): the own-niche threshold; the last row
+is `rivalry` («задиристость», %, base 30, free): below it a creature fights for its food. A founders' diet mix (`WorldConfig::diets`, 55/25/10/10 in variant order H/O/S/C,
 `--diet-mix`) is dealt without draws through `genome::spread_ranks`, so it does not line up with
 the strategy mix.
 

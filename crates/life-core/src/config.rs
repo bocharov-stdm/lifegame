@@ -79,6 +79,13 @@ pub const PATCH_STRETCH: f64 = 2.5;
 /// A patch's weight — its share of its region's slots, and so of the seeds — is drawn from this
 /// to 1: patches differ in how dense and how rich they are.
 pub const PATCH_WEIGHT_MIN: f64 = 0.2;
+/// Share of the slots in patches, %; the rest grow scattered between them by the same profile. A
+/// region's share follows its light (the depth profile's density there): bright regions keep more
+/// in patches, dark ones scatter more, and the world's mean is this.
+pub const PLANT_PATCH_SHARE: f64 = 60.0;
+/// A patch's radius shrinks with the light at its centre, times `max(this, sqrt(light))`: deep
+/// patches are small, and with fewer slots in their region's patches, poor.
+pub const PATCH_DARK_SIZE: f64 = 0.3;
 
 // ── Существа ──────────────────────────────────────────────────────────────
 // Базовый геном существа — в таблице генов (`genome/creature.rs`).
@@ -141,6 +148,13 @@ pub const STRATEGY_SWITCH_CHANCE: f64 = 0.001;
 pub const SHOOTER_SWITCH_CHANCE: f64 = 0.001;
 /// Ближний удар: доля диаметра, одновременно базовый урон и цена энергии.
 pub const MELEE_DAMAGE_SHARE: f64 = 0.05;
+/// A bigger body strikes disproportionately harder: melee damage is times (attacker's size /
+/// target's size) ** this when the attacker is the bigger (never less than ×1). Equal bodies still
+/// trade ~20 strikes; 2× bigger needs ~5; 3× a carnivore kills a herbivore in two (0.075 · 3^2.25 /
+/// 1.5 = 0.59 of its health a strike): a carp and a fry, not a duel. There is no cap on a strike's
+/// share of the target's health any more; shots keep theirs. At 1.75 (3× = one blow) carnivores
+/// boomed, ate the herbivores out and starved; at 1.0 they died out everywhere (seeds 1–8).
+pub const MELEE_SIZE_POWER: f64 = 1.25;
 /// Выстрел слабее ближнего удара, но требует собственного запаса энергии.
 pub const SHOT_DAMAGE_SHARE: f64 = 0.01;
 pub const SHOT_ENERGY_SHARE: f64 = 0.02;

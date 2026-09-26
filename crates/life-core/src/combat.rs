@@ -34,6 +34,20 @@ struct Hit {
 pub(crate) struct CombatPolicy<'a> {
     pub territorial_targets: &'a [Option<u64>],
     pub grace: &'a Grace,
+    /// What each creature eats this tick, and whether it is hungry enough to fight for it
+    /// (`Phenotype::rivals`, judged before the meal). Missing entries: not eating.
+    pub feeding: &'a [Feeding],
+    pub rivals: &'a [bool],
+}
+
+/// What a creature eats this tick, for fights at food: plants (any, side by side), or one corpse
+/// (its owner's id).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Feeding {
+    #[default]
+    Nothing,
+    Plants,
+    Corpse(u64),
 }
 
 /// Самооборона и помощь разрешают бить противника любого размера. Обычная
@@ -62,7 +76,7 @@ pub(crate) fn resolve(
         grid,
         counters,
         tick,
-        CombatPolicy { territorial_targets, grace: &Grace::default() },
+        CombatPolicy { territorial_targets, grace: &Grace::default(), feeding: &[], rivals: &[] },
     )
 }
 
@@ -75,7 +89,8 @@ pub(crate) fn resolve_with_grace(
     tick: u64,
     policy: CombatPolicy<'_>,
 ) -> CombatResult {
-    let CombatPolicy { territorial_targets, grace } = policy;
+    let CombatPolicy { territorial_targets, grace, feeding, rivals } = policy;
+    let feeds = |i: usize| feeding.get(i).copied().unwrap_or_default();
     grid.rebuild(space, creatures.iter().map(|v| (v.x, v.y)));
     let max_half = creatures.iter().filter(|v| v.alive).fold(0.0_f64, |m, v| m.max(v.pheno.half));
     let mut hits = Vec::new();
@@ -87,6 +102,8 @@ pub(crate) fn resolve_with_grace(
         // Назначение границы действует лишь пока это выбранное намерение.
         // Личное спасение, самооборона и прикрытие могут сменить цель после снимка.
         let assigned = territorial_targets.get(i).copied().flatten().filter(|&id| v.mind.attack == Some(id));
+        // Hungry at its food, it strikes a smaller stranger eating the same food beside it.
+        let rival = rivals.get(i).copied().unwrap_or(false) && feeds(i) != Feeding::Nothing;
         if v.energy > cost {
             let mut target = None;
             grid.for_each_near(v.x, v.y, v.pheno.half + max_half, |j, _, _| {
@@ -101,11 +118,13 @@ pub(crate) fn resolve_with_grace(
                 if (v.x - u.x).hypot(v.y - u.y) > v.pheno.half + u.pheno.half {
                     return;
                 }
-                // Only a chosen target or a defence: a creature does not bite whoever it bumps into.
+                // Only a chosen target, a defence or a rival at its food: a creature does not bite
+                // whoever it bumps into.
                 let selected = v.mind.attack == Some(u.id);
                 let territorial = assigned == Some(u.id);
                 let defense = defending(v, u.id, territorial, tick);
-                if !selected && !defense {
+                let rival_here = rival && feeds(j) == feeds(i);
+                if !(selected || defense || rival_here) {
                     return;
                 }
                 if !defense && u.pheno.size > v.pheno.size / v.pheno.prey_ratio {
@@ -126,7 +145,7 @@ pub(crate) fn resolve_with_grace(
                 hits.push(Hit {
                     attacker: i,
                     victim: j,
-                    damage: v.pheno.strike().min(creatures[j].max_health() * 0.25),
+                    damage: v.pheno.strike_on(creatures[j].pheno.size),
                     cost,
                     ranged: false,
                     territorial: assigned == Some(creatures[j].id),
@@ -265,7 +284,7 @@ mod tests {
             &mut grid,
             &mut w.counters,
             600,
-            CombatPolicy { territorial_targets: &[None, None], grace: &grace },
+            CombatPolicy { territorial_targets: &[None, None], grace: &grace, feeding: &[], rivals: &[] },
         );
         assert!(during.shots.is_empty());
         assert_eq!(w.creatures[1].health, w.creatures[1].max_health());
@@ -276,7 +295,7 @@ mod tests {
             &mut grid,
             &mut w.counters,
             601,
-            CombatPolicy { territorial_targets: &[None, None], grace: &grace },
+            CombatPolicy { territorial_targets: &[None, None], grace: &grace, feeding: &[], rivals: &[] },
         );
         assert_eq!(after.shots.len(), 1);
 
@@ -293,7 +312,7 @@ mod tests {
             &mut grid,
             &mut close.counters,
             600,
-            CombatPolicy { territorial_targets: &[None, None], grace: &grace },
+            CombatPolicy { territorial_targets: &[None, None], grace: &grace, feeding: &[], rivals: &[] },
         );
         assert_eq!(close.creatures[1].health, close.creatures[1].max_health());
     }
@@ -331,9 +350,10 @@ mod tests {
         w.spawn(CreatureGenome::BASE.with(Gene::Size, 100.0), 1000.0, 1000.0, Some(200.0));
         let prey = w.spawn(CreatureGenome::BASE.with(Gene::Size, 30.0), 1000.0, 1000.0, Some(50.0));
         w.creatures[0].mind.attack = Some(prey);
-        // the hardy herbivore (health ×1.5) takes nine strikes of 5
-        let strikes = (w.creatures[1].max_health() / w.creatures[0].pheno.strike()).ceil() as usize;
-        assert_eq!(strikes, 9);
+        // 3.3 times bigger, it strikes for 5 · 3.33^1.25 ≈ 22.5: the hardy herbivore (health 45)
+        // takes two strikes
+        let strikes = (w.creatures[1].max_health() / w.creatures[0].pheno.strike_on(30.0)).ceil() as usize;
+        assert_eq!(strikes, 2);
         for _ in 0..strikes - 1 {
             hit(&mut w);
             assert!(w.creatures[1].alive);
@@ -342,6 +362,98 @@ mod tests {
         assert!(!w.creatures[1].alive);
         assert_eq!(w.counters.combat, 1);
     }
+    /// Equal bodies trade weak strikes; a bigger one strikes disproportionately harder: three times
+    /// bigger a carnivore kills a herbivore in two blows, seven times bigger in one. A smaller one
+    /// strikes in proportion to its size, no weaker.
+    #[test]
+    fn a_bigger_body_strikes_disproportionately_harder() {
+        let strikes_to_kill = |attacker: CreatureGenome, target: CreatureGenome| {
+            let mut w = world();
+            w.spawn(attacker, 1000.0, 1000.0, Some(500.0));
+            let prey = w.spawn(target, 1000.0, 1000.0, Some(50.0));
+            w.creatures[0].mind.attack = Some(prey);
+            w.creatures[0].mind.social.activity = crate::social::Activity::Alarm; // any size
+            for n in 1..=40 {
+                hit(&mut w);
+                if !w.creatures[1].alive {
+                    return n;
+                }
+            }
+            panic!("still alive after 40 strikes");
+        };
+        let carnivore = |size| CreatureGenome::BASE.with(Gene::Diet, 3.0).with(Gene::Size, size);
+        let herbivore = |size| CreatureGenome::BASE.with(Gene::Size, size);
+        let omnivore = |size| CreatureGenome::BASE.with(Gene::Diet, 1.0).with(Gene::Size, size);
+        assert_eq!(strikes_to_kill(herbivore(40.0), herbivore(40.0)), 30, "equals: 2 a strike, health 60");
+        assert_eq!(strikes_to_kill(carnivore(120.0), herbivore(40.0)), 2, "3× carnivore");
+        assert_eq!(strikes_to_kill(herbivore(120.0), omnivore(40.0)), 2, "3× herbivore on an omnivore");
+        assert_eq!(strikes_to_kill(herbivore(120.0), herbivore(40.0)), 3, "the hardy herbivore");
+        assert_eq!(strikes_to_kill(carnivore(80.0), herbivore(40.0)), 5, "2× carnivore");
+        assert_eq!(strikes_to_kill(carnivore(280.0), herbivore(40.0)), 1, "7× carnivore");
+        // the small one's strike is its own size's share, as before
+        let mut w = world();
+        w.spawn(herbivore(40.0), 1000.0, 1000.0, Some(500.0));
+        let big = w.spawn(herbivore(120.0), 1000.0, 1000.0, Some(50.0));
+        w.creatures[0].mind.attack = Some(big);
+        w.creatures[0].mind.social.activity = crate::social::Activity::Alarm;
+        hit(&mut w);
+        assert_eq!(w.creatures[1].max_health() - w.creatures[1].health, 2.0);
+        // with the power 0 a bigger body strikes in proportion to its size alone
+        let mut w = world();
+        w.set_rules(w.rules.with("melee_size_power", 0.0).unwrap());
+        w.spawn(carnivore(120.0), 1000.0, 1000.0, Some(500.0));
+        let prey = w.spawn(herbivore(40.0), 1000.0, 1000.0, Some(50.0));
+        w.creatures[0].mind.attack = Some(prey);
+        hit(&mut w);
+        assert_eq!(w.creatures[1].max_health() - w.creatures[1].health, 9.0);
+    }
+
+    /// Hungry at its food, a creature strikes a smaller stranger eating the same food beside it —
+    /// plants side by side or the same corpse — and nobody else: not one eating other food, not a
+    /// flockmate, not one too big for it, and not when sated.
+    #[test]
+    fn rivals_fight_only_over_the_same_food() {
+        let struck = |feeding: [Feeding; 2], rivals: [bool; 2], small: f64, same_flock: bool| {
+            let mut w = world();
+            w.spawn(CreatureGenome::BASE.with(Gene::Size, 100.0), 1000.0, 1000.0, Some(200.0));
+            w.spawn(CreatureGenome::BASE.with(Gene::Size, small), 1030.0, 1000.0, Some(40.0));
+            if same_flock {
+                w.creatures[1].flock = w.creatures[0].flock;
+            }
+            resolve_with_grace(
+                &w.space,
+                &w.rules,
+                &mut w.creatures,
+                &mut Grid::new(crate::config::GRID_CELL),
+                &mut w.counters,
+                1,
+                CombatPolicy {
+                    territorial_targets: &[None, None],
+                    grace: &Grace::default(),
+                    feeding: &feeding,
+                    rivals: &rivals,
+                },
+            );
+            (
+                w.creatures[1].health < w.creatures[1].max_health(),
+                w.creatures[0].health < w.creatures[0].max_health(),
+            )
+        };
+        let plants = [Feeding::Plants; 2];
+        assert_eq!(struck(plants, [true, true], 30.0, false), (true, false), "grazing side by side");
+        let corpse = [Feeding::Corpse(7); 2];
+        assert_eq!(struck(corpse, [true, false], 30.0, false), (true, false), "at one corpse");
+        let two = [Feeding::Corpse(7), Feeding::Corpse(8)];
+        assert_eq!(struck(two, [true, true], 30.0, false), (false, false), "two corpses");
+        let other = [Feeding::Plants, Feeding::Corpse(7)];
+        assert_eq!(struck(other, [true, true], 30.0, false), (false, false), "other food");
+        let idle = [Feeding::Plants, Feeding::Nothing];
+        assert_eq!(struck(idle, [true, true], 30.0, false), (false, false), "not eating");
+        assert_eq!(struck(plants, [false, true], 30.0, false), (false, false), "sated");
+        assert_eq!(struck(plants, [true, true], 45.0, false), (false, false), "not prey_ratio smaller");
+        assert_eq!(struck(plants, [true, true], 30.0, true), (false, false), "a flockmate");
+    }
+
     #[test]
     fn a_death_passes_no_energy_at_once() {
         let mut w = world();
@@ -410,7 +522,9 @@ mod tests {
         );
         assert!(result.shots.is_empty());
         assert_eq!(w.creatures[0].energy, 98.0);
-        assert_eq!(w.creatures[1].health, w.creatures[1].max_health() - 2.0);
+        // a strike of 2, times (40 / 15) ** 1.75 for the bigger body
+        let damage = 2.0 * (40.0_f64 / 15.0).powf(crate::config::MELEE_SIZE_POWER);
+        assert_eq!(w.creatures[1].health, w.creatures[1].max_health() - damage);
     }
 
     #[test]
@@ -438,7 +552,8 @@ mod tests {
             &[None, None, None],
         );
         assert!(result.shots.is_empty());
-        assert_eq!(w.creatures[1].health, w.creatures[1].max_health() - 2.0);
+        let damage = 2.0 * (40.0_f64 / 15.0).powf(crate::config::MELEE_SIZE_POWER);
+        assert_eq!(w.creatures[1].health, w.creatures[1].max_health() - damage);
         assert_eq!(w.creatures[2].health, w.creatures[2].max_health());
         assert_eq!(w.creatures[0].energy, 78.0);
     }

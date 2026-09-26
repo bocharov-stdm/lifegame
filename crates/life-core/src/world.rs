@@ -404,6 +404,9 @@ impl World {
         let mut reserved = corpses.clone();
         // Hunger is judged once, before the meal: the same in both feeding phases.
         let hungry: Vec<bool> = creatures.iter().map(|v| v.pheno.hungry(v.energy)).collect();
+        let rivals: Vec<bool> = creatures.iter().map(|v| v.pheno.rivals(v.energy)).collect();
+        // What each one eats this tick: rivals fight only over the same food.
+        let mut feeding = vec![crate::combat::Feeding::Nothing; creatures.len()];
         let plant_bite = rules.plant_energy * rules.plant_bite_yield / f64::from(crate::plant::PORTIONS);
         for (i, v) in creatures.iter_mut().enumerate().filter(|(_, v)| v.alive) {
             // Only what the diet digests is eaten at all: a meat-eater does not take a plant from
@@ -434,7 +437,9 @@ impl World {
                 v.feed(1, rules);
                 v.meal = Some(Meal { tick: now, x: px, y: py, food: Morsel::Plant });
                 fed[i] = true;
+                feeding[i] = crate::combat::Feeding::Plants;
             } else if let Some(j) = corpse {
+                feeding[i] = crate::combat::Feeding::Corpse(reserved[j].owner);
                 // Мясо выгоднее, или растение досталось более раннему ID: этот едок
                 // претендует на труп раньше следующих участников.
                 reserved[j].bite(now, rules.plant_energy);
@@ -448,7 +453,12 @@ impl World {
             prey_grid,
             counters,
             now,
-            crate::combat::CombatPolicy { territorial_targets: &territorial_targets, grace: &self.grace },
+            crate::combat::CombatPolicy {
+                territorial_targets: &territorial_targets,
+                grace: &self.grace,
+                feeding: &feeding,
+                rivals: &rivals,
+            },
         );
         counters.ranged_shots += result.shots.len() as u64;
         counters.territorial_fights += result.territorial_attacks;

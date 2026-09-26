@@ -391,7 +391,8 @@ fn один_остаток_трупа_получает_едок_с_меньши�
     w.creatures[1].flock = w.creatures[0].flock;
     let mut corpse = Corpse::from_creature(&w.creatures[0], 0);
     corpse.owner = 99;
-    corpse.remaining = 10.0;
+    // one bite: a spawned body is no meat, so the corpse is its tank of 30, 3 of it the bones
+    corpse.remaining = 3.0;
     w.corpses.push(corpse);
     w.step();
     assert_eq!(w.counters.meat_bites, 1);

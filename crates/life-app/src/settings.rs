@@ -62,6 +62,8 @@ pub enum Key {
     PlantBiteYield,
     PlantPatches,
     PlantPatchSize,
+    MeleeSizePower,
+    PlantPatchShare,
 }
 
 pub struct Field {
@@ -127,7 +129,7 @@ fn percent(v: f64) -> String {
     format!("{v:.0}%")
 }
 
-pub const FIELDS: [Field; 32] = [
+pub const FIELDS: [Field; 34] = [
     // ── Мир ──────────────────────────────────────────────────────────────────
     Field {
         key: Key::Creatures,
@@ -479,6 +481,20 @@ pub const FIELDS: [Field; 32] = [
         ..SLIDER
     },
     Field {
+        key: Key::PlantPatchShare,
+        label: "Доля в зарослях",
+        hint: "Сколько растений растёт в зарослях, остальные — россыпью между ними. \
+               Глубже света меньше: заросли там реже, мельче и беднее, а россыпи больше.",
+        lo: 0.0,
+        hi: 100.0,
+        step: 5.0,
+        format: |v| format!("{v:.0}%"),
+        tab: Tab::Food,
+        rule: Some("plant_patch_share"),
+        shown: |s| s.get(Key::PlantPatches) > 0.0,
+        ..SLIDER
+    },
+    Field {
         key: Key::ReproCost,
         label: "Цена рождения",
         hint: "Энергия, которую родитель тратит сверх доли, отданной ребёнку.",
@@ -493,13 +509,26 @@ pub const FIELDS: [Field; 32] = [
     Field {
         key: Key::MeleeDamage,
         label: "Сила ближнего удара",
-        hint: "Урон и цена удара в процентах от собственного диаметра. Урон ограничен четвертью здоровья цели.",
+        hint: "Урон и цена удара в процентах от собственного диаметра.",
         lo: 0.01,
         hi: 0.25,
         step: 0.01,
         format: |v| format!("{:.0}%", v * 100.0),
         tab: Tab::Lab,
         rule: Some("melee_damage_share"),
+        ..SLIDER
+    },
+    Field {
+        key: Key::MeleeSizePower,
+        label: "Перевес размера",
+        hint: "Насколько крупный бьёт сильнее: урон × (во сколько раз крупнее цели) в этой степени. \
+               При 1,75 втрое крупный мясоед убивает с одного удара; при 0 урон просто по размеру.",
+        lo: 0.0,
+        hi: 3.0,
+        step: 0.05,
+        format: |v| format!("{v:.2}"),
+        tab: Tab::Lab,
+        rule: Some("melee_size_power"),
         ..SLIDER
     },
     Field {

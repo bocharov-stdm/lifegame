@@ -13,7 +13,7 @@ const BASE_VISION: f64 = GENES[Gene::Vision as usize].base;
 
 /// Имена настраиваемых правил — для отчёта (`--rule имя=число`) и настроек.
 /// Профили еды — по шесть на ось, по порядку `flora::AXIS_PARAMS`.
-pub const RULE_KEYS: [&str; 27] = [
+pub const RULE_KEYS: [&str; 29] = [
     "plant_rate",
     "plant_energy",
     "mutation_sigma",
@@ -41,6 +41,8 @@ pub const RULE_KEYS: [&str; 27] = [
     "plant_bite_yield",
     "plant_patches",
     "plant_patch_size",
+    "melee_size_power",
+    "plant_patch_share",
 ];
 
 /// Patches per base world — no more than this: at 1500 slots that is five places a patch, and
@@ -87,6 +89,11 @@ pub struct Rules {
     /// Patches of food per base world (0 — scattered) and their mean radius (`flora.rs`).
     pub plant_patches: f64,
     pub plant_patch_size: f64,
+    /// How much harder a bigger body strikes (`config::MELEE_SIZE_POWER`); 0 — damage in
+    /// proportion to size alone.
+    pub melee_size_power: f64,
+    /// Share of the plant slots in patches, % (`config::PLANT_PATCH_SHARE`).
+    pub plant_patch_share: f64,
     // производные коэффициенты — считает `renormalize`
     size_coef: f64,
     speed_coef: f64,
@@ -117,6 +124,8 @@ impl Default for Rules {
             plant_bite_yield: PLANT_BITE_YIELD,
             plant_patches: PLANT_PATCHES,
             plant_patch_size: PLANT_PATCH_SIZE,
+            melee_size_power: MELEE_SIZE_POWER,
+            plant_patch_share: PLANT_PATCH_SHARE,
             size_coef: 0.0,
             speed_coef: 0.0,
             sight_coef: 0.0,
@@ -166,6 +175,8 @@ impl Rules {
             "plant_bite_yield" => r.plant_bite_yield = value,
             "plant_patches" => r.plant_patches = value,
             "plant_patch_size" => r.plant_patch_size = value,
+            "melee_size_power" => r.melee_size_power = value,
+            "plant_patch_share" => r.plant_patch_share = value,
             _ => return Err(unknown(key)),
         }
         // Пределы — только те, за которыми правило теряет смысл, а не «разумные»:
@@ -176,6 +187,7 @@ impl Rules {
             "plant_bite_yield" => (0.0..=1.0).contains(&value),
             "plant_patches" => value.fract() == 0.0 && (0.0..=MAX_PATCHES).contains(&value),
             "plant_patch_size" => value >= PLANT_RADIUS,
+            "plant_patch_share" => (0.0..=100.0).contains(&value),
             _ => value >= 0.0,
         };
         if !allowed {
@@ -184,6 +196,7 @@ impl Rules {
                 "plant_bite_yield" => "число от 0 до 1",
                 "plant_patches" => "целое число от 0 до 300",
                 "plant_patch_size" => "число не меньше радиуса растения (10)",
+                "plant_patch_share" => "число от 0 до 100",
                 _ => "число не меньше 0",
             };
             return Err(format!("правило {key}: нужно {need}, а не {value}"));
@@ -233,6 +246,8 @@ impl Rules {
             "plant_bite_yield" => self.plant_bite_yield,
             "plant_patches" => self.plant_patches,
             "plant_patch_size" => self.plant_patch_size,
+            "melee_size_power" => self.melee_size_power,
+            "plant_patch_share" => self.plant_patch_share,
             _ => return None,
         })
     }
@@ -308,6 +323,9 @@ mod tests {
             ("plant_patches", 2.5),
             ("plant_patches", MAX_PATCHES + 1.0),
             ("plant_patch_size", PLANT_RADIUS - 1.0),
+            ("melee_size_power", -0.5),
+            ("plant_patch_share", -1.0),
+            ("plant_patch_share", 100.5),
         ] {
             assert!(rules.with(key, value).is_err(), "{key}={value}");
         }

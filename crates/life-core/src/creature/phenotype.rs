@@ -124,7 +124,11 @@ pub struct Phenotype {
     pub plant_energy: f64,
     pub plant_bite_yield: f64,
     pub melee_damage_share: f64,
+    /// A bigger body's strike is times (size ratio) ** this (`Rules::melee_size_power`).
+    pub melee_size_power: f64,
     pub shot_energy_share: f64,
+    /// Below this share of its store it strikes a smaller stranger eating beside it (`rivals`).
+    pub rivalry: f64,
     pub vision: f64,
 
     // ── слой обитания и границы ─────────────────────────────────────────────
@@ -236,7 +240,9 @@ impl Phenotype {
             plant_energy: rules.plant_energy,
             plant_bite_yield: rules.plant_bite_yield,
             melee_damage_share: rules.melee_damage_share,
+            melee_size_power: rules.melee_size_power,
             shot_energy_share: rules.shot_energy_share,
+            rivalry: genome[Gene::Rivalry].clamp(0.0, 100.0) / 100.0,
             retreat: 0.8 - 0.6 * genome[Gene::Bravery].clamp(0.0, 100.0) / 100.0,
             bravery: genome[Gene::Bravery].clamp(0.0, 100.0) / 100.0,
             vision,
@@ -259,6 +265,13 @@ impl Phenotype {
             strategy: Strategy::from_gene(genome[Gene::Strategy]),
         }
     }
+}
+
+/// Melee damage of a strike `strike` from a body of size `size` to one of size `target`: times
+/// (size / target) ** `power` when the striker is the bigger (`config::MELEE_SIZE_POWER`), else as is.
+#[inline]
+pub fn melee_damage(strike: f64, size: f64, target: f64, power: f64) -> f64 {
+    if size <= target { strike } else { strike * (size / target).powf(power) }
 }
 
 impl Phenotype {
@@ -306,6 +319,18 @@ impl Phenotype {
 
     pub fn strike_cost(&self) -> f64 {
         self.size * self.melee_damage_share
+    }
+
+    /// Its melee damage to a body of size `target`: bigger bodies strike disproportionately harder.
+    #[inline]
+    pub fn strike_on(&self, target: f64) -> f64 {
+        melee_damage(self.strike(), self.size, target, self.melee_size_power)
+    }
+
+    /// Below `rivalry` of its store it strikes a smaller stranger eating beside it.
+    #[inline]
+    pub fn rivals(&self, energy: f64) -> bool {
+        energy < self.max_energy * self.rivalry
     }
 
     /// Eats fresh meat, at least when hungry: others fear it.

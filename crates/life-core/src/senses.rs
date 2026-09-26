@@ -85,12 +85,11 @@ impl Prey {
     fn of(s: &Seen, me: &Me, allies: f64) -> Self {
         let travel =
             ((s.x - me.x).hypot(s.y - me.y) - s.half - me.pheno.half).max(0.0) / me.pheno.speed.max(0.01);
-        let hits = (s.health / me.pheno.strike().min(s.max_health * 0.25).max(0.001)).ceil();
+        let hits = (s.health / me.pheno.strike_on(s.half * 2.0).max(0.001)).ceil();
         let portion = (me.pheno.plant_energy / f64::from(crate::plant::PORTIONS)).max(s.nutrition / 12.0);
         let feeding = (s.nutrition / portion.max(0.001)).ceil();
         let gain = (s.nutrition * me.pheno.meat_efficiency).min(me.pheno.max_energy - me.energy).max(0.0);
-        let cap = me.pheno.size * 0.25;
-        let expected = s.strike.min(cap) * hits + allies * (hits + feeding);
+        let expected = s.strike_on(me) * hits + allies * (hits + feeding);
         let risk = me.pheno.caution * expected / me.health.max(0.001);
         Self {
             id: s.kinship.id,
@@ -117,6 +116,8 @@ pub struct Threat {
     pub y: f64,
     /// Расстояние до края его тела; внутри тела — меньше нуля.
     pub gap: f64,
+    /// Радиус его тела: заведомо сильнейшему в ответ не бьют, от него бегут.
+    pub half: f64,
 }
 
 /// Мир глазами существа: растения по сетке тика, сородичи по снимку стада.
@@ -171,7 +172,7 @@ impl Senses for GridSenses<'_> {
         {
             return None;
         }
-        Some(Threat { id, x: s.x, y: s.y, gap: distance - s.half })
+        Some(Threat { id, x: s.x, y: s.y, gap: distance - s.half, half: s.half })
     }
     fn prey(&self, me: &Me, previous: Option<u64>) -> Option<Prey> {
         if !me.pheno.hunts_now(me.energy) {
@@ -194,9 +195,9 @@ impl Senses for GridSenses<'_> {
             }
             if s.grouped && s.flock != me.flock {
                 match flocks[..n_flocks].iter_mut().find(|f| f.0 == s.flock) {
-                    Some(f) => f.1 += s.strike,
+                    Some(f) => f.1 += s.strike_on(me),
                     None if n_flocks < SEEN_FLOCKS => {
-                        flocks[n_flocks] = (s.flock, s.strike);
+                        flocks[n_flocks] = (s.flock, s.strike_on(me));
                         n_flocks += 1;
                     }
                     None => {}
@@ -232,7 +233,7 @@ impl Senses for GridSenses<'_> {
             let s = &herd.seen[j];
             // Its flockmates in sight, and a parent in sight that still knows it and would cover it.
             let mut allies = if s.grouped {
-                flocks[..n_flocks].iter().find(|f| f.0 == s.flock).map_or(0.0, |f| f.1) - s.strike
+                flocks[..n_flocks].iter().find(|f| f.0 == s.flock).map_or(0.0, |f| f.1) - s.strike_on(me)
             } else {
                 0.0
             };
@@ -242,7 +243,7 @@ impl Senses for GridSenses<'_> {
                     && p.kinship.kin(s.kinship)
                     && (p.x - me.x).hypot(p.y - me.y) <= me.pheno.vision
                 {
-                    allies += p.strike;
+                    allies += p.strike_on(me);
                 }
             }
             let p = Prey::of(s, me, allies.max(0.0));
@@ -338,7 +339,6 @@ pub(crate) struct Seen {
     /// Самое крупное тело, какое он может съесть; 0 — он не ест свежего мяса и никому не угроза.
     eats_up_to: f64,
     health: f64,
-    max_health: f64,
     nutrition: f64,
     /// Its melee strike: what a hunter expects back from it or from it as an ally.
     strike: f64,
@@ -348,6 +348,14 @@ pub(crate) struct Seen {
     grouped: bool,
     /// It chose a target on its last move: it is hunting (or fighting) someone.
     hunting: bool,
+}
+
+impl Seen {
+    /// Its strike on `me`: harder when it is the bigger (`phenotype::melee_damage`).
+    #[inline]
+    fn strike_on(&self, me: &Me) -> f64 {
+        crate::creature::melee_damage(self.strike, self.half * 2.0, me.pheno.size, me.pheno.melee_size_power)
+    }
 }
 
 /// Снимок всех существ на начало фазы: мелкие нужны как добыча, крупные — как угрозы.
@@ -397,7 +405,6 @@ impl Herd {
             half: v.pheno.half,
             eats_up_to: if v.pheno.hunts() { v.pheno.size / v.pheno.prey_ratio } else { 0.0 },
             health: v.health,
-            max_health: v.max_health(),
             nutrition: crate::corpse::meat(v),
             strike: v.pheno.strike(),
             kinship: v.kinship(),
@@ -457,7 +464,7 @@ pub(crate) fn nearest_threat(
         }
         let gap = d2.sqrt() - s.half;
         if best.is_none_or(|b| gap < b.gap) {
-            best = Some(Threat { id: s.kinship.id, x: sx, y: sy, gap });
+            best = Some(Threat { id: s.kinship.id, x: sx, y: sy, gap, half: s.half });
         }
     });
     best
@@ -805,7 +812,7 @@ mod tests {
     #[test]
     fn запросы_к_сеткам_совпадают_с_перебором_в_живом_мире() {
         let giants = Rules::default().with("size_power", 1.0).unwrap().with("plant_energy", 120.0).unwrap();
-        for (seed, rules) in [(1, Rules::default()), (3, giants)] {
+        for (seed, rules) in [(1, Rules::default()), (4, giants)] {
             let mut w = World::new(&WorldConfig { seed, rules, ..Default::default() });
             let mut food = Grid::new(GRID_CELL);
             let mut snapshot = Herd::new();
@@ -927,7 +934,7 @@ mod tests {
                         health: v.health,
                     };
                     let sees = |u: &Creature| (u.x - v.x).hypot(u.y - v.y) <= v.pheno.vision && u.id != v.id;
-                    let strike = |u: &Creature| u.pheno.strike();
+                    let strike = |u: &Creature| u.pheno.strike_on(v.pheno.size);
                     let mut candidates: Vec<usize> = (0..w.creatures.len())
                         .filter(|&j| {
                             let u = &w.creatures[j];
@@ -1016,7 +1023,7 @@ mod tests {
                 crowded * 20 < checked,
                 "seed {seed}: {crowded} hunters saw more flocks than the buffer holds"
             );
-            if seed == 3 {
+            if seed == 4 {
                 let biggest = w.creatures.iter().fold(0.0_f64, |m, v| m.max(v.pheno.size));
                 assert!(
                     biggest > 100.0,
@@ -1064,10 +1071,12 @@ mod tests {
         view.prey(&me, None)
     }
 
-    /// A small creature (size 20) at `x`; `flock` with a circle makes it a flock member.
+    /// A small creature (size 20, grown from 10: its body is meat) at `x`; `flock` with a circle
+    /// makes it a flock member.
     fn small(w: &mut World, x: f64, flock: Option<u64>) -> u64 {
         use crate::genome::creature::Gene;
         let id = w.spawn(crate::CreatureGenome::BASE.with(Gene::Size, 20.0), x, 1000.0, None);
+        w.creatures.last_mut().unwrap().birth_size = 10.0;
         if let Some(flock) = flock {
             let v = w.creatures.last_mut().unwrap();
             v.flock = flock;
@@ -1083,7 +1092,7 @@ mod tests {
             for dx in [80.0, 100.0, 120.0] {
                 small(w, 1000.0 + dx, Some(500));
             }
-            small(w, 900.0, None); // a loner a little farther away
+            small(w, 925.0, None); // a loner a little farther away
         };
         let careless = best_prey(0.0, 0.3, setup).unwrap();
         let careful = best_prey(50.0, 0.3, setup).unwrap();

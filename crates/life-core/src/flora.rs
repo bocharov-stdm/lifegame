@@ -23,19 +23,25 @@
 //! each axis's distribution function, narrow where food is rich and wide where it is poor — and a
 //! seed is drawn by the profile as above.
 //!
-//! With patches the food grows in islands. The world is split into coarse *regions* of equal
-//! fertility, about two patches each; every region holds the same number of slots, so region by
-//! region the food still follows the profile. A region has one to three patches with their own
-//! size, shape and weight: a heavier patch takes more of the region's slots, so its seeds fall
-//! more often. Patch centres are drawn by the profile inside their region, from a stream keyed by
-//! the world's seed (not the world's stream). Slots lie on a sunflower spiral inside the patch; a
-//! seed draws three numbers — the slot, uniform over all of them, then a jitter inside the slot.
+//! With patches the food grows in islands and between them. The world is split into coarse
+//! *regions* of equal fertility, about two patches each; every region holds the same number of
+//! slots, so region by region the food still follows the profile. Part of a region's slots lie in
+//! its patches, the rest are scattered over the region by the profile. The part in patches follows
+//! the region's light — the depth profile's density at its centre: bright regions keep more in
+//! patches, dark ones scatter more, and the world's mean is `plant_patch_share`. A region has one
+//! to three patches with their own size, shape and weight: a heavier patch takes more of the
+//! region's patch slots, so its seeds fall more often; a patch is smaller the darker it lies
+//! (`PATCH_DARK_SIZE`). So deep patches are rare (regions are wide there), small and poor. Patch
+//! centres are drawn by the profile inside their region, from a stream keyed by the world's seed
+//! (not the world's stream). Slots lie on a sunflower spiral inside the patch, scattered slots on
+//! a low-discrepancy sequence over the region; a seed draws three numbers — the slot, uniform over
+//! all of them, then a jitter inside the slot.
 
 use std::f64::consts::{PI, TAU};
 
 use crate::config::{
-    GAME_PLATEAU, GAME_SLOPE_END, GAME_SLOPE_LEVEL, PATCH_STRETCH, PATCH_WEIGHT_MIN, PLANT_MAX, PLANT_RADIUS,
-    PLANT_TOP_MARGIN_PCT, WORLD_HEIGHT, WORLD_WIDTH,
+    GAME_PLATEAU, GAME_SLOPE_END, GAME_SLOPE_LEVEL, PATCH_DARK_SIZE, PATCH_STRETCH, PATCH_WEIGHT_MIN,
+    PLANT_MAX, PLANT_RADIUS, PLANT_TOP_MARGIN_PCT, WORLD_HEIGHT, WORLD_WIDTH,
 };
 use crate::plant::Plant;
 use crate::rng::Rng;
@@ -360,8 +366,29 @@ pub struct Flora {
     ny: usize,
     /// Patches in slot order; empty — plants are scattered into cells.
     patches: Vec<Patch>,
+    /// Slots from `in_patches` on: scattered over their regions (`rx` × `ry`).
+    scatters: Vec<Scatter>,
+    in_patches: usize,
+    rx: usize,
+    ry: usize,
     slots: usize,
 }
+
+/// A region's scattered slots: `slots` consecutive slots from `first` over region (`i`, `j`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Scatter {
+    first: usize,
+    slots: usize,
+    i: usize,
+    j: usize,
+}
+
+/// The light of a region never counts as less than this: even a dead region has a share in patches
+/// the share rule can raise to 100%.
+const MIN_LIGHT: f64 = 0.05;
+/// The R2 sequence's steps (the plastic number's powers): scattered slots cover a region evenly.
+const R2_X: f64 = 0.754_877_666_246_692_7;
+const R2_Y: f64 = 0.569_840_290_998_053_2;
 
 /// A patch: an ellipse squashed against the edges of the plant zone (its reach from the centre
 /// differs by side), holding `slots` consecutive slots from `first`.
@@ -397,10 +424,12 @@ impl Flora {
         let ny = rows(cap, space);
         let x = Axis::new(&rules.plant_width, space.width, r, space.width - r);
         let y = Axis::new(&rules.plant_depth, space.height, r + margin, space.height - r);
-        let patches = layout(&x, &y, rules, space, seed, cap);
+        let Layout { patches, scatters, rx, ry } = layout(&x, &y, rules, space, seed, cap);
         let nx = cap.div_ceil(ny);
-        let slots = if patches.is_empty() { nx * ny } else { cap };
-        Flora { x, y, nx, ny, patches, slots }
+        let scattered = patches.is_empty() && scatters.is_empty();
+        let slots = if scattered { nx * ny } else { cap };
+        let in_patches = patches.last().map_or(0, |p| p.first + p.slots);
+        Flora { x, y, nx, ny, patches, scatters, in_patches, rx, ry, slots }
     }
 
     /// How many places for plants the world has (one plant each).
@@ -423,7 +452,7 @@ impl Flora {
     /// три: место, затем разброс внутри места поперёк и вглубь.
     #[inline]
     pub fn plant(&self, rng: &mut Rng) -> Plant {
-        if self.patches.is_empty() {
+        if self.patches.is_empty() && self.scatters.is_empty() {
             let x = self.x.sample(rng);
             let y = self.y.sample(rng);
             return Plant::in_slot(x, y, self.cell(x, y));
@@ -437,6 +466,9 @@ impl Flora {
     /// Where a plant in `slot` grows; `jx`, `jy` from 0 to 1 place it inside the slot.
     #[inline]
     fn slot_at(&self, slot: usize, jx: f64, jy: f64) -> (f64, f64) {
+        if slot >= self.in_patches {
+            return self.scattered_at(slot, jx, jy);
+        }
         let p = &self.patches[self.patches.partition_point(|p| p.first <= slot) - 1];
         let k = slot - p.first;
         let rho = ((k as f64 + 0.5) / p.slots as f64).sqrt();
@@ -447,6 +479,46 @@ impl Flora {
         let y = p.y + dy + p.jitter * (jy - 0.5);
         (x.clamp(self.x.lo, self.x.hi), y.clamp(self.y.lo, self.y.hi))
     }
+
+    /// Where a plant in a scattered slot grows: a fixed point of its region in the coordinates of
+    /// the distribution functions, so by the profile, moved by up to a slot's width.
+    #[inline]
+    fn scattered_at(&self, slot: usize, jx: f64, jy: f64) -> (f64, f64) {
+        let s = &self.scatters[self.scatters.partition_point(|s| s.first <= slot) - 1];
+        let q = (slot - s.first + 1) as f64;
+        let spread = 1.0 / (s.slots as f64).sqrt();
+        let u = (0.5 + q * R2_X + spread * (jx - 0.5)).rem_euclid(1.0);
+        let v = (0.5 + q * R2_Y + spread * (jy - 0.5)).rem_euclid(1.0);
+        (self.x.at((s.i as f64 + u) / self.rx as f64), self.y.at((s.j as f64 + v) / self.ry as f64))
+    }
+}
+
+/// The patches and the scattered slots of a world with patches; empty without them.
+struct Layout {
+    patches: Vec<Patch>,
+    scatters: Vec<Scatter>,
+    rx: usize,
+    ry: usize,
+}
+
+/// Each region's share of slots in patches by its light: `min(1, c · light)`, with `c` such that
+/// the mean over the regions is `share`.
+fn patch_shares(light: &[f64], share: f64) -> Vec<f64> {
+    if share >= 1.0 || share <= 0.0 {
+        return vec![share.clamp(0.0, 1.0); light.len()];
+    }
+    let mean = |c: f64| light.iter().map(|l| (c * l).min(1.0)).sum::<f64>() / light.len() as f64;
+    // at `hi` every region is all patches, so the mean is 1 > share
+    let (mut lo, mut hi) = (0.0, 1.0 / light.iter().fold(f64::MAX, |m, &l| m.min(l)));
+    for _ in 0..64 {
+        let mid = (lo + hi) / 2.0;
+        if mean(mid) < share {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    light.iter().map(|l| (hi * l).min(1.0)).collect()
 }
 
 /// Rows of a grid of `n` cells by the world's proportions.
@@ -454,30 +526,40 @@ fn rows(n: usize, space: &Space) -> usize {
     ((n as f64 * space.height / space.width).sqrt().round() as usize).clamp(1, n)
 }
 
-/// Patches over regions of equal fertility, in slot order; empty when the rules ask for none.
-fn layout(x: &Axis, y: &Axis, rules: &Rules, space: &Space, seed: u64, cap: usize) -> Vec<Patch> {
+/// Patches over regions of equal fertility, in slot order, then the regions' scattered slots;
+/// empty when the rules ask for no patches.
+fn layout(x: &Axis, y: &Axis, rules: &Rules, space: &Space, seed: u64, cap: usize) -> Layout {
     let wanted = (rules.plant_patches * space.area_ratio()).round() as usize;
     if wanted == 0 {
-        return Vec::new();
+        return Layout { patches: Vec::new(), scatters: Vec::new(), rx: 0, ry: 0 };
     }
     // about two patches a region, and every region holds at least one slot
     let ry = rows(wanted.div_ceil(2).min(cap), space);
     let rx = wanted.div_ceil(2).min(cap).div_ceil(ry);
     let regions = (rx * ry).min(cap);
+    // light: the depth profile's density, at a region's centre and at a patch's
+    let light = |at: f64| rules.plant_depth.density(at / space.height).max(0.0);
+    let lights: Vec<f64> =
+        (0..regions).map(|r| light(y.at(((r / rx) as f64 + 0.5) / ry as f64)).max(MIN_LIGHT)).collect();
+    let shares = patch_shares(&lights, rules.plant_patch_share / 100.0);
     let mut rng = Rng::keyed(seed, PATCH_STREAM);
     let mut patches = Vec::with_capacity(2 * regions);
+    let mut scattered = Vec::with_capacity(regions);
     let mut first = 0;
-    for r in 0..regions {
+    for (r, share) in shares.iter().enumerate() {
         let (i, j) = ((r % rx) as f64, (r / rx) as f64);
-        // every region its own equal share of the slots
-        let own = (r + 1) * cap / regions - r * cap / regions;
+        // every region its own equal share of the slots, part of them in its patches
+        let all = (r + 1) * cap / regions - r * cap / regions;
+        let own = ((all as f64 * share).round() as usize).min(all);
+        scattered.push((r % rx, r / rx, all - own));
         let n = (1 + (rng.random() * 3.0) as usize).min(3).min(own);
         let mut drawn = [(0.0, Patch::default()); 3];
         for (weight, p) in drawn.iter_mut().take(n) {
             // the centre by the profile inside the region
             p.x = x.at((i + rng.random()) / rx as f64);
             p.y = y.at((j + rng.random()) / ry as f64);
-            let size = rules.plant_patch_size * rng.uniform(0.5, 1.5);
+            let size =
+                rules.plant_patch_size * rng.uniform(0.5, 1.5) * light(p.y).sqrt().max(PATCH_DARK_SIZE);
             let stretch = PATCH_STRETCH.powf(rng.uniform(-1.0, 1.0)).sqrt();
             let (wide, tall) = (size * stretch, size / stretch);
             (p.left, p.right) = (wide.min(p.x - x.lo), wide.min(x.hi - p.x));
@@ -501,8 +583,15 @@ fn layout(x: &Axis, y: &Axis, rules: &Rules, space: &Space, seed: u64, cap: usiz
         }
         first += own;
     }
+    let mut scatters = Vec::with_capacity(regions);
+    for (i, j, slots) in scattered {
+        if slots > 0 {
+            scatters.push(Scatter { first, slots, i, j });
+            first += slots;
+        }
+    }
     debug_assert_eq!(first, cap);
-    patches
+    Layout { patches, scatters, rx, ry }
 }
 
 /// Плотность еды в точке (доли ширины и глубины) по правилам, от 0 до 1 — для
@@ -521,8 +610,8 @@ pub fn describe(rules: &Rules) -> String {
         "россыпью".to_string()
     } else {
         format!(
-            "заросли — {} на участок {WORLD_WIDTH}×{WORLD_HEIGHT}, радиус ~{}",
-            rules.plant_patches, rules.plant_patch_size
+            "заросли — {} на участок {WORLD_WIDTH}×{WORLD_HEIGHT}, радиус ~{}, в них {}% растений",
+            rules.plant_patches, rules.plant_patch_size, rules.plant_patch_share
         )
     };
     format!(
@@ -723,7 +812,7 @@ mod tests {
     fn профиль_словами() {
         assert_eq!(
             describe(&Rules::default()),
-            "по глубине — игровое; по ширине — равномерно; заросли — 24 на участок 6000×4000, радиус ~200"
+            "по глубине — игровое; по ширине — равномерно; заросли — 24 на участок 6000×4000, радиус ~200, в них 60% растений"
         );
         assert_eq!(
             describe(&scattered(&rules(&[("plant_depth_profile", Profile::Exp.index())]))),
@@ -821,7 +910,7 @@ mod tests {
         let widths: Vec<f64> = flora.patches.iter().map(|p| p.left + p.right).collect();
         let (w_lo, w_hi) = widths.iter().fold((f64::MAX, 0.0_f64), |(a, b), w| (a.min(*w), b.max(*w)));
         assert!(w_hi > 2.0 * w_lo, "patches differ in size: {widths:?}");
-        // slots run on without gaps, patch after patch
+        // slots run on without gaps, patch after patch, then the scattered ones region by region
         let mut next = 0;
         for p in &flora.patches {
             assert_eq!(p.first, next);
@@ -830,7 +919,68 @@ mod tests {
             assert!(p.x - p.left >= flora.x.lo - 1e-9 && p.x + p.right <= flora.x.hi + 1e-9);
             assert!(p.y - p.up >= flora.y.lo - 1e-9 && p.y + p.down <= flora.y.hi + 1e-9);
         }
+        assert_eq!(next, flora.in_patches);
+        for s in &flora.scatters {
+            assert_eq!(s.first, next);
+            next += s.slots;
+        }
         assert_eq!(next, flora.slots());
+        // every region holds the same number of slots, patches and scattered together
+        let regions = flora.rx * flora.ry;
+        let mut per_region = vec![0; regions];
+        let region = |x: f64, y: f64| {
+            let (i, j) = (flora.x.slot(x, flora.rx), flora.y.slot(y, flora.ry));
+            i + flora.rx * j
+        };
+        for p in &flora.patches {
+            per_region[region(p.x, p.y)] += p.slots;
+        }
+        for s in &flora.scatters {
+            per_region[s.i + flora.rx * s.j] += s.slots;
+        }
+        let (lo, hi) = (per_region.iter().min().unwrap(), per_region.iter().max().unwrap());
+        assert!(hi - lo <= 1, "regions differ: {per_region:?}");
+    }
+
+    /// `plant_patch_share` of the slots lie in patches, the rest scattered; 0 and 100 are all one
+    /// or all the other. Deeper, in less light, patches are rarer, smaller and poorer.
+    #[test]
+    fn заросли_глубже_реже_мельче_беднее() {
+        let space = Space::default();
+        for (share, want) in [(60.0, 900), (0.0, 0), (100.0, PLANT_MAX), (35.0, 525)] {
+            let r = rules(&[("plant_patch_share", share)]);
+            let flora = Flora::new(&r, &space, 7);
+            assert!(flora.in_patches.abs_diff(want) <= flora.rx * flora.ry, "{share}%: {}", flora.in_patches);
+            assert_eq!(flora.slots(), PLANT_MAX);
+            // every seed lands in the plant zone, patch or not
+            let mut rng = Rng::new(3);
+            for _ in 0..3000 {
+                let p = flora.plant(&mut rng);
+                assert!(p.x >= flora.x.lo && p.x <= flora.x.hi && p.y >= flora.y.lo && p.y <= flora.y.hi);
+            }
+        }
+        // over many layouts: patches in the upper third against those below the middle
+        let (mut upper, mut lower) = ([0.0; 3], [0.0; 3]); // count, mean width, mean slots
+        for seed in 0..40 {
+            for p in Flora::new(&Rules::default(), &space, seed).patches {
+                let t = p.y / space.height;
+                let side = if t < 1.0 / 3.0 {
+                    &mut upper
+                } else if t > 0.5 {
+                    &mut lower
+                } else {
+                    continue;
+                };
+                side[0] += 1.0;
+                side[1] += p.left + p.right;
+                side[2] += p.slots as f64;
+            }
+        }
+        let mean = |s: [f64; 3]| (s[1] / s[0], s[2] / s[0]);
+        let ((w_up, n_up), (w_low, n_low)) = (mean(upper), mean(lower));
+        assert!(lower[0] < upper[0] * 0.8, "deep patches rarer: {} vs {}", lower[0], upper[0]);
+        assert!(w_low < w_up * 0.85, "deep patches smaller: {w_low:.0} vs {w_up:.0}");
+        assert!(n_low < n_up * 0.7, "deep patches poorer: {n_low:.1} vs {n_up:.1}");
     }
 
     /// Patches do not break the profile: averaged over layouts, bands of depth and of width

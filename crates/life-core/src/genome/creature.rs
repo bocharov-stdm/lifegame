@@ -35,6 +35,7 @@ pub enum Gene {
     Caution,
     Forage,
     Picky,
+    Rivalry,
 }
 
 impl Gene {
@@ -65,10 +66,11 @@ impl Gene {
         Gene::Caution,
         Gene::Forage,
         Gene::Picky,
+        Gene::Rivalry,
     ];
 }
 
-pub const N: usize = 26;
+pub const N: usize = 27;
 
 pub const PACK_VARIANTS: [Variant; 2] = [
     Variant {
@@ -379,6 +381,14 @@ pub const GENES: [GeneSpec; N] = [
         key: "picky",
         label: "разборчивость",
         about: "Ниже этой доли запаса ест и чужую пищу (падальщик — свежее мясо, мясоед — гниль), выше — только свою, %.",
+        kind: GeneKind::Percent,
+        base: 30.0,
+        mutation: SCALE,
+    },
+    GeneSpec {
+        key: "rivalry",
+        label: "задиристость",
+        about: "Ниже этой доли запаса бьёт у еды чужака не из своей стаи, если тот мельче в «отношение_добычи» раз; сытым ест рядом мирно, %.",
         kind: GeneKind::Percent,
         base: 30.0,
         mutation: SCALE,

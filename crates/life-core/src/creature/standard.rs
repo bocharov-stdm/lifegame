@@ -131,8 +131,11 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
         mind.social.observed_alarm =
             Some(crate::social::Alarm { enemy: t.id, x: t.x, y: t.y, tick: mind.social.tick });
     }
+    // It strikes back unless the enemy is out of its league — as many times bigger as it takes
+    // its own prey to be smaller (`prey_ratio`): then it runs.
     if let Some(t) = threat
         && t.gap <= me.pheno.half
+        && t.half < me.pheno.half * me.pheno.prey_ratio
         && me.health_share >= me.pheno.retreat
         && me.energy > me.pheno.size * me.pheno.melee_damage_share
     {
