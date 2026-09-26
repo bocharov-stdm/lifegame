@@ -107,7 +107,7 @@ fn растение_за_кругом_не_уводит_сытого_участ�
             assert!(circle.holds(v.x, v.y, v.pheno.half + v.pheno.speed * 2.0));
         }
     }
-    assert!(w.plants[0].alive && w.plants[0].portions == life_core::plant::PORTIONS);
+    assert!(w.plants[0].alive() && w.plants[0].portions == life_core::plant::PORTIONS);
 }
 
 #[test]

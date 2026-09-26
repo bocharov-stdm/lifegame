@@ -7,6 +7,9 @@
 //! крупное торчит в кадр, даже когда центр далеко). Если видимых слишком много,
 //! вместо кружков идёт карта плотности — одна картинка размером с экран.
 
+use std::sync::Arc;
+
+use life_core::flora::Patch;
 use life_core::genome::creature;
 use life_core::{Rules, World};
 use life_sim::observe::{EventKind, GeneStat, Snapshot, gene_stats};
@@ -278,6 +281,9 @@ pub struct Frame {
     /// Растения, потом существа — в таком порядке и рисуются.
     pub instances: Vec<Instance>,
     pub flock_areas: Vec<FlockArea>,
+    /// The food patches, when they are new: in the first frame of a world and after a rules
+    /// change (frames are never dropped, so the window keeps the last ones it got).
+    pub patches: Option<Arc<[Patch]>>,
     pub corpses: Vec<CorpseMark>,
     pub shots: Vec<ShotTrail>,
     /// Вместо кружков, когда видимых больше `MAX_INSTANCES`.
@@ -367,9 +373,13 @@ pub fn rgba(c: [u8; 3], a: u8) -> u32 {
     u32::from_le_bytes([c[0], c[1], c[2], a])
 }
 
+/// Sprouts are dark green: there are many of them, and they must not compete with those
+/// that move. Charts and counters keep the bright `PLANT_COLOR`.
+pub const SPROUT_COLOR: [u8; 3] = [64, 150, 84];
+
 /// Растения тусклее животных: их много, и они не должны спорить с теми, кто движется.
 pub fn plant_color() -> [u8; 3] {
-    lerp(WORLD_BOTTOM, PLANT_COLOR, 0.6)
+    lerp(WORLD_BOTTOM, SPROUT_COLOR, 0.75)
 }
 
 /// Карта плотности: сколько растений и существ в каждой клетке

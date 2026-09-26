@@ -27,7 +27,15 @@ pub const ENERGY_FROM_PLANT: f64 = 50.0;
 pub const PLANT_BITE_YIELD: f64 = 0.44;
 
 // Где растёт еда — профиль по глубине и по ширине (flora.rs), правила мира.
-// По умолчанию — как было всегда: экспонента по глубине, равномерно по ширине.
+// By default: the «игровое» profile down, uniform across, in patches.
+
+/// The «игровое» depth profile (`flora::Profile::Game`), a rough real sea: nutritious upper
+/// layers and a dead bottom, where the rot settles. Full food down to 20% of depth (the dead zone
+/// at the very surface still applies), a straight slope to 15% of it at 85% of depth, then a
+/// cosine fall to nothing on the bottom. Before it the default was the exponent with steepness 8.
+pub const GAME_PLATEAU: f64 = 0.2;
+pub const GAME_SLOPE_END: f64 = 0.85;
+pub const GAME_SLOPE_LEVEL: f64 = 0.15;
 
 /// Крутизна экспоненты по глубине: чем больше, тем плотнее еда прижата к
 /// поверхности. При 8 у дна еды в e^8 ≈ 3000 раз меньше, чем наверху.
@@ -59,6 +67,18 @@ pub const PLANT_SPAWN_CHANCE: f64 = DENSITY_PER_PIXEL * WORLD_WIDTH * WORLD_HEIG
 /// used to peak at 219‒289 plants, but seeds landing in occupied cells already
 /// slow growth well below the cap. Grows with the world's area.
 pub const PLANT_MAX: usize = 1500;
+
+/// Patches of food per base world (`flora.rs`): plants grow in islands instead of an even carpet,
+/// so creatures are seen between the food rather than inside it. 0 — scattered by the profile.
+/// With 1500 slots it is about 60 plants a patch when the world is full.
+pub const PLANT_PATCHES: f64 = 24.0;
+/// Mean patch radius; each patch draws its own from half to one and a half of it.
+pub const PLANT_PATCH_SIZE: f64 = 200.0;
+/// Patches are ellipses: width to height from 1/2.5 to 2.5.
+pub const PATCH_STRETCH: f64 = 2.5;
+/// A patch's weight — its share of its region's slots, and so of the seeds — is drawn from this
+/// to 1: patches differ in how dense and how rich they are.
+pub const PATCH_WEIGHT_MIN: f64 = 0.2;
 
 // ── Существа ──────────────────────────────────────────────────────────────
 // Базовый геном существа — в таблице генов (`genome/creature.rs`).

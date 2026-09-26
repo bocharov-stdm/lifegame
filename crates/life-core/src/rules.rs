@@ -13,7 +13,7 @@ const BASE_VISION: f64 = GENES[Gene::Vision as usize].base;
 
 /// Имена настраиваемых правил — для отчёта (`--rule имя=число`) и настроек.
 /// Профили еды — по шесть на ось, по порядку `flora::AXIS_PARAMS`.
-pub const RULE_KEYS: [&str; 25] = [
+pub const RULE_KEYS: [&str; 27] = [
     "plant_rate",
     "plant_energy",
     "mutation_sigma",
@@ -39,7 +39,13 @@ pub const RULE_KEYS: [&str; 25] = [
     "shot_energy_share",
     "shot_period",
     "plant_bite_yield",
+    "plant_patches",
+    "plant_patch_size",
 ];
+
+/// Patches per base world — no more than this: at 1500 slots that is five places a patch, and
+/// with fewer a patch is a lone plant, not an island.
+pub const MAX_PATCHES: f64 = 300.0;
 
 /// Параметры профилей еды, пока их не выбрали (config.rs).
 const FOOD_AXIS: FoodAxis = FoodAxis {
@@ -78,6 +84,9 @@ pub struct Rules {
     pub shot_period: f64,
     /// Доля питательной ценности растения, усваиваемая за пять порций.
     pub plant_bite_yield: f64,
+    /// Patches of food per base world (0 — scattered) and their mean radius (`flora.rs`).
+    pub plant_patches: f64,
+    pub plant_patch_size: f64,
     // производные коэффициенты — считает `renormalize`
     size_coef: f64,
     speed_coef: f64,
@@ -95,7 +104,7 @@ impl Default for Rules {
             speed_power: SPEED_ENERGY_POWER,
             sight_power: SIGHT_ENERGY_POWER,
             plant_depth: FoodAxis {
-                profile: Profile::Exp.index(),
+                profile: Profile::Game.index(),
                 steepness: PLANT_DEPTH_DECAY,
                 ..FOOD_AXIS
             },
@@ -106,6 +115,8 @@ impl Default for Rules {
             shot_energy_share: SHOT_ENERGY_SHARE,
             shot_period: SHOT_PERIOD as f64,
             plant_bite_yield: PLANT_BITE_YIELD,
+            plant_patches: PLANT_PATCHES,
+            plant_patch_size: PLANT_PATCH_SIZE,
             size_coef: 0.0,
             speed_coef: 0.0,
             sight_coef: 0.0,
@@ -153,6 +164,8 @@ impl Rules {
             "shot_energy_share" => r.shot_energy_share = value,
             "shot_period" => r.shot_period = value,
             "plant_bite_yield" => r.plant_bite_yield = value,
+            "plant_patches" => r.plant_patches = value,
+            "plant_patch_size" => r.plant_patch_size = value,
             _ => return Err(unknown(key)),
         }
         // Пределы — только те, за которыми правило теряет смысл, а не «разумные»:
@@ -161,12 +174,16 @@ impl Rules {
         let allowed = match key {
             "shot_period" => value >= 1.0 && value.fract() == 0.0,
             "plant_bite_yield" => (0.0..=1.0).contains(&value),
+            "plant_patches" => value.fract() == 0.0 && (0.0..=MAX_PATCHES).contains(&value),
+            "plant_patch_size" => value >= PLANT_RADIUS,
             _ => value >= 0.0,
         };
         if !allowed {
             let need = match key {
                 "shot_period" => "целое число не меньше 1",
                 "plant_bite_yield" => "число от 0 до 1",
+                "plant_patches" => "целое число от 0 до 300",
+                "plant_patch_size" => "число не меньше радиуса растения (10)",
                 _ => "число не меньше 0",
             };
             return Err(format!("правило {key}: нужно {need}, а не {value}"));
@@ -214,6 +231,8 @@ impl Rules {
             "shot_energy_share" => self.shot_energy_share,
             "shot_period" => self.shot_period,
             "plant_bite_yield" => self.plant_bite_yield,
+            "plant_patches" => self.plant_patches,
+            "plant_patch_size" => self.plant_patch_size,
             _ => return None,
         })
     }
@@ -279,6 +298,10 @@ mod tests {
             ("shot_period", 0.0),
             ("shot_period", 1.5),
             ("plant_bite_yield", 1.1),
+            ("plant_patches", -1.0),
+            ("plant_patches", 2.5),
+            ("plant_patches", MAX_PATCHES + 1.0),
+            ("plant_patch_size", PLANT_RADIUS - 1.0),
         ] {
             assert!(rules.with(key, value).is_err(), "{key}={value}");
         }
@@ -287,9 +310,10 @@ mod tests {
     #[test]
     fn профиль_еды_по_умолчанию_как_в_конфиге() {
         let r = Rules::default();
-        assert_eq!(r.plant_depth.kind(), Profile::Exp);
+        assert_eq!(r.plant_depth.kind(), Profile::Game);
         assert_eq!(r.plant_depth.steepness, PLANT_DEPTH_DECAY);
         assert_eq!(r.plant_width.kind(), Profile::Uniform);
+        assert_eq!((r.plant_patches, r.plant_patch_size), (PLANT_PATCHES, PLANT_PATCH_SIZE));
     }
 
     /// Пределы — только за которыми правило теряет смысл.

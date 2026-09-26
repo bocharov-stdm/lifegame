@@ -37,7 +37,7 @@ fn creature(x: f64, y: f64, g: CreatureGenome) -> Creature {
 // ── регрессии ───────────────────────────────────────────────────────────────
 
 /// Темп растений — ожидаемое число за тик, а не вероятность (было: ровно 1 за тик).
-/// Seeds landing in occupied fertility cells are lost, so an empty world fills
+/// Seeds landing in occupied slots are lost, so an empty world fills
 /// logistically: `cap * (1 - exp(-rate * t / cap))`.
 #[test]
 fn темп_растений_это_ожидаемое_число() {
@@ -46,8 +46,8 @@ fn темп_растений_это_ожидаемое_число() {
     for _ in 0..ticks {
         w.step();
     }
-    let cells = w.flora().cells() as f64;
-    let expected = cells * (1.0 - (-PLANT_SPAWN_CHANCE * ticks as f64 / cells).exp());
+    let slots = w.flora().slots() as f64;
+    let expected = slots * (1.0 - (-PLANT_SPAWN_CHANCE * ticks as f64 / slots).exp());
     let got = w.plants.len() as f64;
     assert!((got - expected).abs() < 40.0, "{got} plants, expected {expected:.0}");
 }
@@ -57,37 +57,49 @@ fn in_band(p: &Plant, height: f64) -> bool {
     (0.2..0.3).contains(&(p.y / height))
 }
 
-/// Without creatures plants fill their cells up to the cap, one plant per cell.
+/// Plants scattered by the profile, no patches.
+fn scattered() -> Rules {
+    Rules::default().with("plant_patches", 0.0).unwrap()
+}
+
+/// Without creatures plants fill their slots up to the cap, one plant per slot, in patches and
+/// scattered.
 #[test]
-fn plants_fill_cells_up_to_cap() {
-    let mut w = empty_world(Rules::default());
-    for _ in 0..3000 {
-        w.step();
+fn plants_fill_slots_up_to_cap() {
+    for rules in [Rules::default(), scattered()] {
+        let mut w = empty_world(rules);
+        for _ in 0..3000 {
+            w.step();
+        }
+        assert!(w.plants.len() <= PLANT_MAX && w.plants.len() >= PLANT_MAX * 9 / 10, "{}", w.plants.len());
+        let mut slots: Vec<usize> = w.plants.iter().map(|p| p.slot().expect("grown in a slot")).collect();
+        slots.sort_unstable();
+        slots.dedup();
+        assert_eq!(slots.len(), w.plants.len(), "two plants share a slot");
     }
-    assert!(w.plants.len() <= PLANT_MAX && w.plants.len() >= PLANT_MAX * 9 / 10, "{}", w.plants.len());
-    let mut cells: Vec<usize> = w.plants.iter().map(|p| w.flora().cell(p.x, p.y)).collect();
-    cells.sort_unstable();
-    cells.dedup();
-    assert_eq!(cells.len(), w.plants.len(), "two plants share a cell");
 }
 
 /// The surface is grazed bare every tick: the deep sea keeps only its own share
-/// of the cap (about 14% below 30% depth with the default exponent) instead of
-/// growing a forest into the room the surface left.
+/// of the cap instead of growing a forest into the room the surface left — about
+/// 14% below 30% depth with the exponent, about 55% with the «игровое» profile
+/// (patches blur the line a little).
 #[test]
 fn deep_plants_do_not_take_over_when_surface_is_eaten() {
-    let mut w = empty_world(Rules::default());
-    for _ in 0..3000 {
-        w.step();
-        let h = w.space.height;
-        w.plants.retain(|p| p.y >= 0.3 * h);
+    let exp = scattered().with("plant_depth_profile", life_core::flora::Profile::Exp.index()).unwrap();
+    for (rules, share) in [(exp, 0.07..0.2), (Rules::default(), 0.45..0.62)] {
+        let mut w = empty_world(rules);
+        for _ in 0..3000 {
+            w.step();
+            let h = w.space.height;
+            w.plants.retain(|p| p.y >= 0.3 * h);
+        }
+        let deep = w.plants.len() as f64 / PLANT_MAX as f64;
+        assert!(share.contains(&deep), "{deep:.3} of the cap below 30% depth, expected {share:?}");
     }
-    let deep = w.plants.len();
-    assert!((150..PLANT_MAX / 5).contains(&deep), "{deep} plants below 30% depth");
 }
 
-/// A band cleared in a full world grows back into the cells it freed, and only
-/// there. (Cells on the band's edges straddle it: their new plant may sprout
+/// A band cleared in a full world grows back into the slots it freed, and only
+/// there. (Slots on the band's edges straddle it: their new plant may sprout
 /// just outside, so the band's own count comes back a little lower.)
 #[test]
 fn cleared_band_recovers() {
@@ -97,8 +109,7 @@ fn cleared_band_recovers() {
     }
     let h = w.space.height;
     let cells_of = |w: &World, keep: &dyn Fn(&Plant) -> bool| {
-        let mut c: Vec<usize> =
-            w.plants.iter().filter(|p| keep(p)).map(|p| w.flora().cell(p.x, p.y)).collect();
+        let mut c: Vec<usize> = w.plants.iter().filter(|p| keep(p)).filter_map(|p| p.slot()).collect();
         c.sort_unstable();
         c
     };
@@ -110,7 +121,7 @@ fn cleared_band_recovers() {
     }
     let now = cells_of(&w, &|_| true);
     let back = cleared.iter().filter(|c| now.binary_search(c).is_ok()).count();
-    assert!(back * 100 >= band * 95, "{back} of {band} cleared cells taken again");
+    assert!(back * 100 >= band * 95, "{back} of {band} cleared slots taken again");
     let after = w.plants.iter().filter(|p| in_band(p, h)).count();
     assert!(after * 10 >= band * 8, "band {band} -> {after}");
 }
@@ -697,7 +708,7 @@ fn инварианты_держатся_со_временем() {
                 assert!(!spec.is_percent() || (0.0..=100.0).contains(x), "ген-процент вне 0‒100: {g:?}");
             }
         }
-        assert!(w.plants.iter().all(|p| p.alive), "съеденное растение не выметено");
+        assert!(w.plants.iter().all(|p| p.alive()), "съеденное растение не выметено");
         let mut ids: Vec<u64> = w.creatures.iter().map(|v| v.id).collect();
         ids.sort_unstable();
         ids.dedup();

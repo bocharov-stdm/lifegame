@@ -16,6 +16,7 @@ use crate::render::Circles;
 use crate::sim::{Command, SimHandle};
 use crate::theme::{ACCENT, BG, DANGER, LINE, MUTED, rgb};
 use life_core::flock::Territoriality;
+use life_core::flora::Patch;
 
 /// Полос глубины на фоне: у поверхности светлее, на глубине темнее.
 const BANDS: usize = 32;
@@ -55,6 +56,8 @@ pub struct WorldView {
     prev_selected: Option<(u64, f64, f64)>,
     /// Flock circles of the previous frame (x, y, radius): circles glide like the bodies.
     prev_circles: std::collections::BTreeMap<u64, (f64, f64, f64)>,
+    /// The world's food patches, as the last frame that carried them had them.
+    patches: Arc<[Patch]>,
     /// Перетаскивание рисует область, а не двигает камеру (инструмент «Область»).
     pub area_mode: bool,
     /// Где началось перетаскивание области, в координатах мира.
@@ -69,6 +72,44 @@ pub struct WorldView {
 
 fn pos(x: f64, y: f64) -> Pos2 {
     Pos2::new(x as f32, y as f32)
+}
+
+/// A patch smaller than this on screen, points, is not tinted: from afar the sprouts show it.
+const MIN_PATCH: f64 = 6.0;
+
+/// Tints the visible food patches: each an ellipse squashed against the plant zone's edges, a
+/// soft rim and a slightly deeper heart.
+fn paint_patches(painter: &egui::Painter, cam: &Camera, rect: Rect, patches: &[Patch]) {
+    const SIDES: usize = 32;
+    for p in patches {
+        let (x, y) = cam.to_screen(p.x, p.y);
+        let (l, r) = (p.left * cam.zoom, p.right * cam.zoom);
+        let (u, d) = (p.up * cam.zoom, p.down * cam.zoom);
+        if l.max(r).max(u).max(d) < MIN_PATCH
+            || !Rect::from_min_max(pos(x - l, y - u), pos(x + r, y + d)).intersects(rect)
+        {
+            continue;
+        }
+        // slots per area: how dense the patch grows when full, relative to an even circle
+        let area = std::f64::consts::FRAC_PI_4 * (p.left + p.right) * (p.up + p.down);
+        let dense = (p.slots as f64 / area.max(1.0) * 1.2e3).clamp(0.3, 1.0);
+        for (scale, alpha) in [(1.15, 7.0), (0.95, 9.0), (0.6, 8.0)] {
+            let points = (0..SIDES)
+                .map(|i| {
+                    let (sin, cos) = (i as f64 / SIDES as f64 * std::f64::consts::TAU).sin_cos();
+                    let dx = cos * if cos < 0.0 { l } else { r };
+                    let dy = sin * if sin < 0.0 { u } else { d };
+                    pos(x + dx * scale, y + dy * scale)
+                })
+                .collect();
+            let a = (alpha * (0.5 + dense)) as u8;
+            painter.add(egui::Shape::convex_polygon(
+                points,
+                Color32::from_rgba_unmultiplied(70, 150, 90, a),
+                Stroke::NONE,
+            ));
+        }
+    }
 }
 
 /// Область по двум углам в любом порядке, обрезанная краями мира.
@@ -126,6 +167,9 @@ impl WorldView {
                 Some(tex) => tex.set(image(&r), TextureOptions::LINEAR),
                 None => self.minimap = Some(ctx.load_texture("миникарта", image(&r), TextureOptions::LINEAR)),
             }
+        }
+        if let Some(patches) = f.patches.take() {
+            self.patches = patches;
         }
         // новый мир — новая камера
         if self.frame.as_ref().is_some_and(|old| old.world_gen != f.world_gen) {
@@ -289,9 +333,15 @@ impl WorldView {
             );
         }
 
+        // Food patches: a faint tint of the sea floor under the sprouts, so the islands read as
+        // islands. Denser patches are a little darker green.
+        let flock_painter = painter.with_clip_rect(world_rect.intersect(rect));
+        if !f.dots {
+            paint_patches(&flock_painter, cam, rect, &self.patches);
+        }
+
         // Flock circles under the bodies, clipped to the world. A circle glides between frames
         // like the bodies; its stroke tells the territoriality, red is a battle for room.
-        let flock_painter = painter.with_clip_rect(world_rect.intersect(rect));
         let mut labels = Vec::new();
         for flock in &f.flock_areas {
             let (fx, fy, fr) = match self.prev_circles.get(&flock.id) {

@@ -123,7 +123,8 @@ fn vs_main(
     out.dir = vec2(cos(angle), sin(angle));
     out.kind = kind;
     out.dot = u32(dot);
-    out.diet = diet;
+    // a sprout has no diet: these bits carry its leaf count, 3 to 5, from its turn
+    out.diet = select(diet, 3u + (flags & 0xFFFu) % 3u, kind == PLANT);
     out.proboscis = vec4(cos(food_angle), sin(food_angle), length_px, u.time);
     return out;
 }
@@ -151,7 +152,7 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     let r = in.r_px;
     let q = in.local;
     let len = length(q);
-    let d = len - r;
+    var d = len - r;
     let base = in.color.rgb;
     let full = in.color.a;
     // детали появляются плавно между 3 и 6 пикселями радиуса
@@ -162,8 +163,19 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     var tube = vec3(0.0);
     var tube_a = 0.0;
     if in.kind == PLANT {
-        // светлее к середине — растение объёмное, а не плоское пятно
-        col = base * (1.0 + 0.35 * (1.0 - clamp(len / r, 0.0, 1.0)) * detail);
+        // A sprout: 3–5 leaves turned its own way; from afar a small dark dot.
+        let f = vec2(dot(q, in.dir), dot(q, vec2(-in.dir.y, in.dir.x)));
+        let n = f32(in.diet);
+        let ang = atan2(f.y, f.x);
+        let lobe = pow(0.5 + 0.5 * cos(n * ang), 1.6);
+        d = mix(len - 0.55 * r, len - r * (0.3 + 0.7 * lobe), detail);
+        // lighter towards the leaf tips, a darker midrib along each leaf, a dark stem at the heart
+        let out_share = clamp(len / r, 0.0, 1.0);
+        col = base * mix(0.8, 1.2, lobe * out_share);
+        let rib_px = len * abs(sin(n * ang * 0.5)) * 2.0 / n;
+        let rib = (1.0 - smoothstep(0.0, max(0.7, 0.05 * r), rib_px)) * smoothstep(0.2 * r, 0.35 * r, len);
+        col = mix(col, base * 0.55, rib * 0.7 * detail);
+        col = mix(col, base * 0.6, inside(len - 0.18 * r) * detail);
     } else {
         // координаты вдоль курса и поперёк
         let f = vec2(dot(q, in.dir), dot(q, vec2(-in.dir.y, in.dir.x)));

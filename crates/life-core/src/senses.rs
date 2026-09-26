@@ -471,7 +471,7 @@ pub(crate) fn nearest_threat(
 pub(crate) fn nearest_plant(grid: &Grid, plants: &[Plant], x: f64, y: f64, r2: f64) -> Option<(f64, f64)> {
     let mut best: Option<(f64, f64, f64)> = None;
     grid.for_each_near(x, y, r2.sqrt(), |j, px, py| {
-        if !plants[j].alive || plants[j].portions == 0 {
+        if !plants[j].alive() {
             return; // съедено раньше в этом же тике
         }
         let (dx, dy) = (px - x, py - y);
@@ -495,7 +495,7 @@ pub(crate) fn nearest_plant_where(
 ) -> Option<(f64, f64)> {
     let mut best: Option<(f64, f64, f64)> = None;
     grid.for_each_near(x, y, r2.sqrt(), |j, px, py| {
-        if !plants[j].alive || plants[j].portions == 0 || !keep(px, py) {
+        if !plants[j].alive() || !keep(px, py) {
             return;
         }
         let (dx, dy) = (px - x, py - y);
@@ -523,8 +523,7 @@ pub(crate) fn bite_plant(
     grid.for_each_near(x, y, size, |j, px, py| {
         let (dx, dy) = (x - px, y - py);
         let d2 = dx * dx + dy * dy;
-        if plants[j].alive
-            && plants[j].portions > 0
+        if plants[j].alive()
             && !bitten_this_tick[j]
             && d2 <= r2
             && best.is_none_or(|(old, distance)| d2 < distance || (d2 == distance && j < old))
@@ -573,7 +572,7 @@ mod tests {
             bite_plant(&grid, &mut plants, &mut eaten_today, 1000.0, 1000.0, 20.0),
             Some((true, 1010.0, 1000.0))
         );
-        assert!(!plants[0].alive);
+        assert!(!plants[0].alive());
         assert_eq!(
             bite_plant(&grid, &mut plants, &mut eaten_today, 1000.0, 1000.0, 20.0),
             Some((false, 990.0, 1000.0))
@@ -773,7 +772,7 @@ mod tests {
                 }
                 // some plants were "eaten this tick": the queries must skip them
                 let mut plants = w.plants.clone();
-                plants.iter_mut().step_by(5).for_each(|p| p.alive = false);
+                plants.iter_mut().step_by(5).for_each(|p| p.portions = 0);
                 food.rebuild(&w.space, plants.iter().map(|p| (p.x, p.y)));
 
                 for v in &w.creatures {
@@ -781,7 +780,7 @@ mod tests {
                         .map(|(px, py)| dist2(px, py, v.x, v.y));
                     let want = min(plants
                         .iter()
-                        .filter(|p| p.alive)
+                        .filter(|p| p.alive())
                         .map(|p| dist2(p.x, p.y, v.x, v.y))
                         .filter(|&d2| d2 < v.pheno.vision2));
                     assert_eq!(got, want, "сид {seed}, тик {tick}: ближайшее растение");
@@ -793,7 +792,7 @@ mod tests {
                     .map(|(px, py)| dist2(px, py, v.x, v.y));
                     let want = min(plants
                         .iter()
-                        .filter(|p| p.alive && circle.holds(p.x, p.y, v.pheno.half))
+                        .filter(|p| p.alive() && circle.holds(p.x, p.y, v.pheno.half))
                         .map(|p| dist2(p.x, p.y, v.x, v.y))
                         .filter(|&d2| d2 < v.pheno.vision2));
                     assert_eq!(got, want, "сид {seed}, тик {tick}: ближайшее растение в круге");
@@ -801,7 +800,7 @@ mod tests {
                     let expected = plants
                         .iter()
                         .enumerate()
-                        .filter(|(_, p)| p.alive && p.portions > 0)
+                        .filter(|(_, p)| p.alive())
                         .map(|(i, p)| (i, dist2(p.x, p.y, v.x, v.y)))
                         .filter(|(_, d2)| *d2 <= v.pheno.size2)
                         .min_by(|(ia, da), (ib, db)| da.total_cmp(db).then(ia.cmp(ib)))
@@ -814,8 +813,8 @@ mod tests {
                     for (i, (before, after)) in plants.iter().zip(&bitten).enumerate() {
                         assert_eq!(after.portions, before.portions - u8::from(expected == Some(i)));
                         assert_eq!(
-                            after.alive,
-                            before.alive && !(expected == Some(i) && before.portions == 1)
+                            after.alive(),
+                            before.alive() && !(expected == Some(i) && before.portions == 1)
                         );
                     }
                     checked += 1;

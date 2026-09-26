@@ -217,6 +217,8 @@ struct Sim {
     recent_shots: VecDeque<(ShotTrail, Instant)>,
     /// Tick of the last built frame: sinking corpses are drawn from where they lay then.
     last_frame_tick: u64,
+    /// The food patches changed since the last frame: a new world or new rules.
+    patches_due: bool,
 }
 
 impl Sim {
@@ -267,6 +269,7 @@ impl Sim {
             motion: Motion::default(),
             recent_shots: VecDeque::new(),
             last_frame_tick: 0,
+            patches_due: true,
         };
         sim.observe_start();
         sim
@@ -334,6 +337,7 @@ impl Sim {
             #[cfg(test)]
             Command::TestWorld(world) => {
                 self.world = *world;
+                self.patches_due = true;
                 self.recent_shots.clear();
                 for shot in &self.world.shots {
                     self.recent_shots
@@ -424,6 +428,7 @@ impl Sim {
             }
             Command::SetRules { rules, note } => {
                 self.world.set_rules(rules);
+                self.patches_due = true;
                 self.log(None, note);
             }
             Command::Spawn { x, y } => {
@@ -470,6 +475,7 @@ impl Sim {
     fn restart(&mut self, cfg: WorldConfig) {
         // Большой мир строится заметное время — но в этом потоке, окно живёт.
         self.world = World::new(&cfg);
+        self.patches_due = true;
         self.cfg = cfg;
         self.world_gen += 1;
         self.ended = None;
@@ -644,6 +650,7 @@ impl Sim {
 
     fn build_frame(&mut self) -> Frame {
         let start = Instant::now();
+        let patches = std::mem::take(&mut self.patches_due).then(|| Arc::from(self.world.flora().patches()));
         let w = &self.world;
         let mut instances = self.recycled.try_iter().last().unwrap_or_default();
         let mut density = None;
@@ -789,6 +796,7 @@ impl Sim {
             origin,
             instances,
             flock_areas,
+            patches,
             corpses,
             shots,
             density,

@@ -130,7 +130,8 @@ pub struct World {
     pub split_watches: Vec<crate::flock::SplitWatch>,
     pub social_counts: crate::social::Counters,
     pub flocks: std::collections::BTreeMap<u64, crate::flock::Flock>,
-    flock_seed: u64,
+    /// The world's seed: keys the flock and patch streams.
+    seed: u64,
     pub space: Space,
     pub rules: Rules,
     pub tick: u64,
@@ -170,7 +171,7 @@ impl World {
             next_flock: 1,
             split_watches: Vec::new(),
             social_counts: Default::default(),
-            flora: Flora::new(&rules, &space),
+            flora: Flora::new(&rules, &space, cfg.seed),
             plant_cells: Occupancy::stale(),
             space,
             rules,
@@ -179,7 +180,7 @@ impl World {
             creatures: Vec::with_capacity(n_start),
             counters: Counters::default(),
             flocks: Default::default(),
-            flock_seed: cfg.seed,
+            seed: cfg.seed,
             next_id: 1,
             rng: Rng::new(0),
             herd: Herd::new(),
@@ -273,8 +274,8 @@ impl World {
 
     /// Растений за тик — ожидаемое число (не вероятность): целую часть спауним
     /// всегда, дробную — с соответствующим шансом. Выше потолка не растём.
-    /// A seed that lands in an occupied fertility cell (`flora.rs`) does not
-    /// sprout, so growth slows as the neighbourhood fills up.
+    /// A seed that lands in an occupied slot (`flora.rs`) does not sprout, so
+    /// growth slows as the neighbourhood fills up.
     fn spawn_plants(&mut self) {
         let rate = self.rules.plant_rate * self.space.area_ratio();
         let mut count = rate as usize;
@@ -286,7 +287,7 @@ impl World {
         self.plant_cells.sync(&self.flora, &self.plants);
         for _ in 0..count {
             let mut p = self.flora.plant(&mut self.rng);
-            if !self.plant_cells.take(self.flora.cell(p.x, p.y)) {
+            if !self.plant_cells.take(p.slot()) {
                 continue;
             }
             p.born = self.tick.min(u32::MAX as u64) as u32;
@@ -302,7 +303,7 @@ impl World {
         self.corpses.retain_mut(|c| c.decay(now));
         crate::flock::food_goals(&mut self.flocks, &self.creatures, self.tick);
         self.social_counts.relocations +=
-            crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.flock_seed, true);
+            crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.seed, true);
         let outcome =
             self.battles.update(&mut self.flocks, &self.creatures, &self.space, self.tick, &self.grace);
         self.social_counts.battles += outcome.started;
@@ -332,7 +333,6 @@ impl World {
             bitten_plants,
             counters,
             shots,
-            flora,
             plant_cells,
             ..
         } = self;
@@ -460,10 +460,10 @@ impl World {
         );
         creatures.retain(|v| v.alive);
         plants.retain(|p| {
-            if !p.alive {
-                plant_cells.free(flora.cell(p.x, p.y));
+            if !p.alive() {
+                plant_cells.free(p.slot());
             }
-            p.alive
+            p.alive()
         }); // выметаем съеденное
         counters.born += offspring.len() as u64;
         let mut transitions = Vec::new();
@@ -495,7 +495,7 @@ impl World {
         );
         self.grace.register_transitions(&transitions, now);
         let prior_alarms: Vec<_> = self.flocks.iter().filter(|(_, f)| f.alarmed).map(|(&id, _)| id).collect();
-        crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.flock_seed, false);
+        crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.seed, false);
         self.social_counts.alarm_ends +=
             prior_alarms.iter().filter(|id| !self.flocks.contains_key(id)).count() as u64;
         let alarmed: std::collections::BTreeSet<_> = self
@@ -540,8 +540,13 @@ impl World {
             v.apply_rules(&rules, &self.space);
         }
         // уже выросшие растения остаются на местах, новые — по новому профилю
-        self.flora = Flora::new(&rules, &self.space);
-        self.plant_cells.invalidate(); // the cells moved with the profile
+        let flora = Flora::new(&rules, &self.space, self.seed);
+        if flora != self.flora {
+            // the slots moved: old plants hold none, and new ones fill in as they are eaten
+            self.plants.iter_mut().for_each(Plant::lose_slot);
+            self.flora = flora;
+            self.plant_cells.invalidate();
+        }
         self.rules = rules;
     }
 
@@ -575,11 +580,11 @@ impl World {
     }
 }
 
-/// Occupied fertility cells (`flora.rs`) as a bitset, updated per birth and per
-/// eaten plant rather than rebuilt from every plant each tick. Anything that
-/// edits `World::plants` from outside changes their count (tests, the app), and
-/// a count that does not match makes the next birth phase rebuild the set. So
-/// does a rules change, since the cells follow the profile.
+/// Occupied slots (`flora.rs`) as a bitset, updated per birth and per eaten
+/// plant rather than rebuilt from every plant each tick. Anything that edits
+/// `World::plants` from outside changes their count (tests, the app), and a
+/// count that does not match makes the next birth phase rebuild the set. So
+/// does a new slot layout.
 #[derive(Clone, Debug)]
 struct Occupancy {
     bits: Vec<u64>,
@@ -597,29 +602,32 @@ impl Occupancy {
             return;
         }
         self.bits.clear();
-        self.bits.resize(flora.cells().div_ceil(64), 0);
-        for p in plants {
-            // after a profile change two old plants may share a cell
-            let c = flora.cell(p.x, p.y);
+        self.bits.resize(flora.slots().div_ceil(64), 0);
+        // plants put in by hand may share a slot; one out of range holds none
+        for c in plants.iter().filter_map(Plant::slot).filter(|c| *c < flora.slots()) {
             self.bits[c / 64] |= 1 << (c % 64);
         }
         self.plants = Some(plants.len());
     }
 
-    /// Takes a free cell for a new plant; false if it is occupied.
-    fn take(&mut self, cell: usize) -> bool {
-        let (word, bit) = (cell / 64, 1 << (cell % 64));
-        if self.bits[word] & bit != 0 {
-            return false;
+    /// Takes a free slot for a new plant; false if it is occupied.
+    fn take(&mut self, slot: Option<usize>) -> bool {
+        if let Some(c) = slot {
+            let (word, bit) = (c / 64, 1 << (c % 64));
+            if self.bits[word] & bit != 0 {
+                return false;
+            }
+            self.bits[word] |= bit;
         }
-        self.bits[word] |= bit;
         self.plants = self.plants.map(|n| n + 1);
         true
     }
 
-    fn free(&mut self, cell: usize) {
+    fn free(&mut self, slot: Option<usize>) {
         if let Some(n) = self.plants {
-            self.bits[cell / 64] &= !(1 << (cell % 64));
+            if let Some(c) = slot.filter(|c| *c / 64 < self.bits.len()) {
+                self.bits[c / 64] &= !(1 << (c % 64));
+            }
             self.plants = Some(n - 1);
         }
     }
@@ -633,12 +641,25 @@ impl Occupancy {
 mod occupancy_tests {
     use super::*;
 
-    /// Updating per birth and per eaten plant gives the same cells as a rebuild
-    /// from all plants, in a world where creatures eat.
+    /// Updating per birth and per eaten plant gives the same slots as a rebuild
+    /// from all plants, in a world where creatures eat — also after the layout
+    /// changes mid-game, when the old plants hold no slot.
     #[test]
-    fn incremental_cells_match_a_rebuild() {
+    fn incremental_slots_match_a_rebuild() {
         let mut w = World::new(&WorldConfig { seed: 2, ..Default::default() });
-        for _ in 0..6 {
+        for round in 0..6 {
+            if round == 3 {
+                let grown = w.plants.clone();
+                w.set_rules(w.rules.with("plant_patch_size", 300.0).unwrap());
+                assert!(w.plants.iter().all(|p| p.slot().is_none()), "the old slots are gone");
+                assert!(
+                    grown.iter().zip(&w.plants).all(|(a, b)| (a.x, a.y) == (b.x, b.y)),
+                    "plants stay put"
+                );
+                let same = w.flora.clone();
+                w.set_rules(w.rules.with("cost_scale", 2.0).unwrap());
+                assert_eq!(w.flora, same, "rules that do not touch food keep the layout");
+            }
             for _ in 0..100 {
                 w.step();
             }
@@ -647,6 +668,7 @@ mod occupancy_tests {
             fresh.sync(&w.flora, &w.plants);
             assert_eq!(w.plant_cells.bits, fresh.bits, "tick {}", w.tick);
         }
+        assert!(w.plants.iter().any(|p| p.slot().is_some()), "new plants take the new slots");
         assert!(w.counters.plants_grown > w.plants.len() as u64, "nothing was eaten");
     }
 }

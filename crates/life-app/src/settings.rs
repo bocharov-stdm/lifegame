@@ -60,6 +60,8 @@ pub enum Key {
     ShotCost,
     ShotPeriod,
     PlantBiteYield,
+    PlantPatches,
+    PlantPatchSize,
 }
 
 pub struct Field {
@@ -96,7 +98,7 @@ const SLIDER: Field = Field {
 };
 
 /// Подписи профилей еды — по порядку `Profile::ALL` (сверено тестом).
-const PROFILES: [&str; 5] = ["равномерно", "линейно", "экспонента", "логарифм", "волны"];
+const PROFILES: [&str; 6] = ["равномерно", "линейно", "экспонента", "логарифм", "волны", "игровое"];
 
 fn profile_label(v: f64) -> String {
     Profile::of(v).label().into()
@@ -125,7 +127,7 @@ fn percent(v: f64) -> String {
     format!("{v:.0}%")
 }
 
-pub const FIELDS: [Field; 30] = [
+pub const FIELDS: [Field; 32] = [
     // ── Мир ──────────────────────────────────────────────────────────────────
     Field {
         key: Key::Creatures,
@@ -173,7 +175,8 @@ pub const FIELDS: [Field; 30] = [
     Field {
         key: Key::Herbivores,
         label: "Травоядных на старте",
-        hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание                наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
+        hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание \
+               наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
         lo: 0.0,
         hi: 100.0,
         step: 5.0,
@@ -185,7 +188,8 @@ pub const FIELDS: [Field; 30] = [
     Field {
         key: Key::Omnivores,
         label: "Всеядных на старте",
-        hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание                наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
+        hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание \
+               наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
         lo: 0.0,
         hi: 100.0,
         step: 5.0,
@@ -197,7 +201,8 @@ pub const FIELDS: [Field; 30] = [
     Field {
         key: Key::Carnivores,
         label: "Мясоедов на старте",
-        hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание                наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
+        hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание \
+               наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
         lo: 0.0,
         hi: 100.0,
         step: 5.0,
@@ -209,7 +214,8 @@ pub const FIELDS: [Field; 30] = [
     Field {
         key: Key::Scavengers,
         label: "Падальщиков на старте",
-        hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание                наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
+        hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание \
+               наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
         lo: 0.0,
         hi: 100.0,
         step: 5.0,
@@ -285,10 +291,11 @@ pub const FIELDS: [Field; 30] = [
     Field {
         key: Key::PlantDepthProfile,
         label: "Еда по глубине",
-        hint: "Как густо растут растения от поверхности ко дну. Гены слоя от этого не меняются: \
-               существа сами найдут, на какой глубине выгоднее жить.",
+        hint: "Как густо растут растения от поверхности ко дну. «Игровое» — как в море: сытый верх, \
+               ниже еды всё меньше, дно мёртвое. Гены слоя от этого не меняются: существа сами найдут, \
+               на какой глубине выгоднее жить.",
         lo: 0.0,
-        hi: 4.0,
+        hi: 5.0,
         step: 1.0,
         format: profile_label,
         tab: Tab::Food,
@@ -369,7 +376,7 @@ pub const FIELDS: [Field; 30] = [
         hint: "Как густо растут растения слева направо. Складывается с профилем по глубине: \
                например, волны по ширине дают богатые столбы.",
         lo: 0.0,
-        hi: 4.0,
+        hi: 5.0,
         step: 1.0,
         format: profile_label,
         tab: Tab::Food,
@@ -441,6 +448,34 @@ pub const FIELDS: [Field; 30] = [
         tab: Tab::Food,
         rule: Some("plant_width_amplitude"),
         shown: |s| s.food(Along::Width) == Profile::Waves,
+        ..SLIDER
+    },
+    // Patches keep the profile: each region of equal fertility holds the same room for plants.
+    Field {
+        key: Key::PlantPatches,
+        label: "Зарослей",
+        hint: "Сколько островков зарослей на каждом участке 6000×4000. Заросли разные: крупные и мелкие, \
+               густые и редкие, но профиль еды они не меняют. 0 — растения рассыпаны по профилю.",
+        lo: 0.0,
+        hi: 100.0,
+        step: 1.0,
+        format: |v| if v == 0.0 { "россыпью".into() } else { format!("{v:.0}") },
+        tab: Tab::Food,
+        rule: Some("plant_patches"),
+        ..SLIDER
+    },
+    Field {
+        key: Key::PlantPatchSize,
+        label: "Размер зарослей",
+        hint: "Средний радиус островка; каждый берёт свой, от половины до полутора. \
+               Для сравнения: базовое существо — 40 в поперечнике.",
+        lo: 50.0,
+        hi: 1000.0,
+        step: 10.0,
+        format: int,
+        tab: Tab::Food,
+        rule: Some("plant_patch_size"),
+        shown: |s| s.get(Key::PlantPatches) > 0.0,
         ..SLIDER
     },
     Field {
@@ -892,7 +927,8 @@ mod tests {
     #[test]
     fn поля_еды_покрывают_профили() {
         assert_eq!(PROFILES, Profile::ALL.map(Profile::label));
-        for key in life_core::rules::RULE_KEYS.iter().filter(|k| life_core::flora::split_key(k).is_some()) {
+        let food = |k: &&&str| life_core::flora::split_key(k).is_some() || k.starts_with("plant_patch");
+        for key in life_core::rules::RULE_KEYS.iter().filter(food) {
             assert!(FIELDS.iter().any(|f| f.rule == Some(*key)), "{key}: нет поля");
         }
         for f in FIELDS.iter().filter(|f| !f.choices.is_empty()) {
@@ -904,8 +940,14 @@ mod tests {
     fn параметр_профиля_виден_при_своём_профиле() {
         let mut s = Settings::default();
         let shown = |s: &Settings, key| (field(key).shown)(s);
-        assert!(shown(&s, Key::PlantDepthSteepness), "по умолчанию — экспонента");
+        assert!(!shown(&s, Key::PlantDepthSteepness), "по умолчанию — игровое, параметров нет");
         assert!(!shown(&s, Key::PlantDepthWaves));
+        assert!(shown(&s, Key::PlantPatchSize), "по умолчанию — заросли");
+        s.set(Key::PlantDepthProfile, Profile::Exp.index());
+        assert!(shown(&s, Key::PlantDepthSteepness));
+        s.set(Key::PlantPatches, 0.0);
+        assert!(!shown(&s, Key::PlantPatchSize), "россыпью — размера нет");
+        s = Settings::default();
         assert!(!shown(&s, Key::PlantWidthSteepness), "по ширине — равномерно, параметров нет");
         s.set(Key::PlantWidthProfile, Profile::Waves.index());
         assert!(shown(&s, Key::PlantWidthWaves) && shown(&s, Key::PlantWidthAmplitude));

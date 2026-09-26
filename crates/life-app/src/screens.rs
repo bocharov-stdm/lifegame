@@ -1,7 +1,9 @@
 //! Меню, «Новый мир», настройки экрана и справка.
 
 use eframe::egui::{self, Align2, RichText, Vec2};
-use life_core::flora;
+use std::sync::Arc;
+
+use life_core::flora::{self, Patch};
 use life_core::genome::creature;
 use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::{Rules, Shape, Space};
@@ -140,7 +142,7 @@ impl LifeApp {
                             ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| fields(ui, &mut self.settings, Tab::Food));
                                 ui.add_space(12.0);
-                                food_preview(ui, &self.settings.rules(), space);
+                                food_preview(ui, &self.settings.rules(), space, self.settings.seed);
                             });
                         } else {
                             fields(ui, &mut self.settings, self.setup_tab);
@@ -349,9 +351,24 @@ pub fn field_input(ui: &mut egui::Ui, f: &Field, value: &mut f64) -> bool {
     k != before
 }
 
+/// Patches the preview still draws: more would be specks of a pixel.
+const PREVIEW_PATCHES: f64 = 3000.0;
+
+/// The patch layout of these rules, world and seed; kept between frames, since the preview is
+/// redrawn every frame and the layout changes only with the sliders.
+fn preview_patches(ui: &egui::Ui, rules: &Rules, space: Space, seed: u64) -> Arc<[Patch]> {
+    let id = egui::Id::new(("заросли", format!("{rules:?}{space:?}"), seed));
+    let cached: Option<Arc<[Patch]>> = ui.ctx().data(|d| d.get_temp(id));
+    cached.unwrap_or_else(|| {
+        let patches: Arc<[Patch]> = Arc::from(flora::Flora::new(rules, &space, seed).patches());
+        ui.ctx().data_mut(|d| d.insert_temp(id, patches.clone()));
+        patches
+    })
+}
+
 /// Предпросмотр еды: мир в своих пропорциях, закрашенный плотностью растений
-/// по правилам — ярче там, где гуще. Верх — поверхность.
-pub fn food_preview(ui: &mut egui::Ui, rules: &Rules, space: Space) {
+/// по правилам — ярче там, где гуще, — и заросли сида `seed`. Верх — поверхность.
+pub fn food_preview(ui: &mut egui::Ui, rules: &Rules, space: Space, seed: u64) {
     let aspect = (space.width / space.height) as f32;
     let (max_w, max_h) = (ui.available_width().clamp(120.0, 280.0), 170.0);
     // очень длинная полоса всё равно видна хотя бы полоской в 14 точек
@@ -366,17 +383,46 @@ pub fn food_preview(ui: &mut egui::Ui, rules: &Rules, space: Space) {
         let (nx, ny) = (((size.x / 4.0) as usize).clamp(8, 70), ((size.y / 4.0) as usize).clamp(3, 42));
         let cell = Vec2::new(size.x / nx as f32, size.y / ny as f32);
         let plant = theme::rgb(PLANT_COLOR);
+        let patches =
+            rules.plant_patches > 0.0 && rules.plant_patches * space.area_ratio() <= PREVIEW_PATCHES;
         for j in 0..ny {
             for i in 0..nx {
                 let d = flora::density(rules, (i as f64 + 0.5) / nx as f64, (j as f64 + 0.5) / ny as f64);
                 let min = rect.min + Vec2::new(i as f32 * cell.x, j as f32 * cell.y);
                 // клетки с запасом в полточки: иначе между ними видны швы
                 let r = egui::Rect::from_min_size(min, cell + Vec2::splat(0.5)).intersect(rect);
-                painter.rect_filled(r, 0.0, BG.lerp_to_gamma(plant, d.sqrt() as f32));
+                let shade = if patches { 0.35 } else { 1.0 };
+                painter.rect_filled(r, 0.0, BG.lerp_to_gamma(plant, shade * d.sqrt() as f32));
+            }
+        }
+        if patches {
+            let (sx, sy) = (size.x as f64 / space.width, size.y as f64 / space.height);
+            for p in preview_patches(ui, rules, space, seed).iter() {
+                let center = rect.min + Vec2::new((p.x * sx) as f32, (p.y * sy) as f32);
+                let points = (0..16)
+                    .map(|i| {
+                        let (sin, cos) = (i as f64 / 16.0 * std::f64::consts::TAU).sin_cos();
+                        let dx = cos * if cos < 0.0 { p.left } else { p.right } * sx;
+                        let dy = sin * if sin < 0.0 { p.up } else { p.down } * sy;
+                        center + Vec2::new(dx as f32, dy as f32)
+                    })
+                    .collect();
+                painter.add(egui::Shape::convex_polygon(
+                    points,
+                    plant.gamma_multiply(0.75),
+                    egui::Stroke::NONE,
+                ));
             }
         }
         painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, MUTED), egui::StrokeKind::Outside);
-        ui.colored_label(MUTED, "вверху поверхность; ярче — гуще");
+        let caption = if patches {
+            "вверху поверхность; пятна — заросли этого сида"
+        } else if rules.plant_patches > 0.0 {
+            "вверху поверхность; ярче — гуще (зарослей слишком много, чтобы их рисовать)"
+        } else {
+            "вверху поверхность; ярче — гуще"
+        };
+        ui.colored_label(MUTED, caption);
     });
 }
 

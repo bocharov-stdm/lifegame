@@ -82,7 +82,8 @@ fn digest(w: &World) -> u64 {
     for p in &w.plants {
         h.f64(p.x);
         h.f64(p.y);
-        h.u64(p.alive as u64);
+        h.u64(p.alive() as u64);
+        h.u64(p.slot().map_or(u64::MAX, |s| s as u64));
         h.u64(p.born as u64);
         h.u64(p.portions as u64);
     }

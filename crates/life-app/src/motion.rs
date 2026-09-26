@@ -159,6 +159,17 @@ fn feeding_bits(v: &life_core::creature::Creature, tick: u64) -> (u32, bool) {
     (diet | dir << FOOD_DIR_SHIFT | steps << REACH_SHIFT, meal.tick + 1 >= tick)
 }
 
+/// A sprout's drawn radius at full portions, in plant radii: sprouts stay smaller than the
+/// creatures, so the world does not look carpeted with food.
+pub const SPROUT: f64 = 0.75;
+
+/// A sprout's turn, from its position: the same between frames, different between neighbours.
+/// The shader also takes its leaf count from these bits.
+fn sprout_turn(xbits: u64, y: f64) -> f32 {
+    let h = life_core::rng::mix(xbits ^ y.to_bits().rotate_left(29));
+    (h >> 40) as f32 / (1u64 << 24) as f32 * TAU
+}
+
 fn meta(kind: u32, heading: f32) -> u32 {
     pack_heading(heading) | kind << 16
 }
@@ -223,7 +234,8 @@ impl Motion {
             }
             let (x, y) = ((p.x - x0) as f32, (p.y - y0) as f32);
             let remaining = f64::from(p.portions) / f64::from(life_core::plant::PORTIONS);
-            let radius = (r * (0.45 + 0.55 * remaining)) as f32;
+            let radius = (r * SPROUT * (0.55 + 0.45 * remaining)) as f32;
+            let turn = sprout_turn(p.x.to_bits(), p.y);
             out.push(Instance {
                 x,
                 y,
@@ -232,7 +244,7 @@ impl Motion {
                 r: radius,
                 color,
                 age: self.ticks.age(p.born as u64 + 1, now),
-                meta: meta(KIND_PLANT, 0.0),
+                meta: meta(KIND_PLANT, turn),
             });
             if out.len() > MAX_INSTANCES {
                 return false;
@@ -259,7 +271,7 @@ impl Motion {
                     y: p.y,
                     r: p.r,
                     color,
-                    heading: 0.0,
+                    heading: sprout_turn(p.xbits, p.y),
                     starved: false,
                     died: now,
                     diet: 0,
@@ -530,7 +542,7 @@ mod tests {
         let mut out = Vec::new();
         motion.collect(&world, ALL, &mut out);
         let original = out[0].r;
-        assert_eq!(original, PLANT_RADIUS as f32);
+        assert_eq!(original, (PLANT_RADIUS * SPROUT) as f32);
         let _ = world.plants[0].bite();
         motion.collect(&world, ALL, &mut out);
         assert!(out[0].r < original && out[0].r > original * 0.45);

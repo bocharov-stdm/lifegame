@@ -544,11 +544,11 @@ impl LifeApp {
     }
 
     fn lab_window(&mut self, ctx: &egui::Context) {
-        let Some((current, space)) = self
+        let Some((current, space, seed)) = self
             .view
             .frame
             .as_ref()
-            .map(|f| (f.rules.clone(), life_core::Space { width: f.world_w, height: f.world_h }))
+            .map(|f| (f.rules.clone(), life_core::Space { width: f.world_w, height: f.world_h }, f.seed))
         else {
             return;
         };
@@ -625,7 +625,7 @@ impl LifeApp {
                     }
                     if food {
                         ui.add_space(6.0);
-                        crate::screens::food_preview(ui, &self.lab.rules(), space);
+                        crate::screens::food_preview(ui, &self.lab.rules(), space, seed);
                     }
                 });
                 let mut now = self.lab.clone();
