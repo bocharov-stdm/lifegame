@@ -85,8 +85,6 @@ pub struct LifeApp {
     pub toast: Option<(String, f64)>,
     fps: f64,
     applied: (bool, f64),
-    #[cfg(test)]
-    pub freeze_sim_frame: bool,
 }
 
 impl LifeApp {
@@ -141,17 +139,11 @@ impl LifeApp {
             toast: None,
             fps: 0.0,
             applied: (false, -1.0),
-            #[cfg(test)]
-            freeze_sim_frame: false,
         }
     }
 
     /// Забрать новый кадр из потока симуляции, если он есть.
     fn receive(&mut self, ctx: &egui::Context) {
-        #[cfg(test)]
-        if self.freeze_sim_frame {
-            return;
-        }
         let Some(mut f) = self.sim.take_frame() else { return };
         if self.view.frame.as_ref().is_none_or(|old| old.world_gen != f.world_gen) {
             self.history = History::default();

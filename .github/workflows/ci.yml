@@ -1,5 +1,5 @@
-# Проверки на каждый push и PR: Rust на Windows и Linux (включая тесты экранов
-# игры) плюс сверка баланса с эталоном, снятым с Python-версии (тег python-final).
+# Checks on every push and PR, on Windows (where the game runs and the references are recorded):
+# fmt, clippy, tests (including the game's screen tests) and the balance vs both references.
 name: CI
 
 on:
@@ -8,23 +8,17 @@ on:
 
 jobs:
   rust:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      # Тесты экранов игры рисуют через wgpu: на Linux без видеокарты нужен
-      # программный Vulkan (lavapipe); на Windows есть встроенный WARP.
-      - name: Программный Vulkan и заголовки окна (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libxkbcommon-dev libwayland-dev
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
-      - name: Сверка с эталоном Python
+      - name: Balance vs the reference
         run: cargo run -p life-report --release -- --compare reference/fingerprint.json
+      - name: Balance vs the calm reference
+        run: cargo run -p life-report --release -- --compare reference/calm-fingerprint.json --rule cost_scale=3 --rule cannibalism=1

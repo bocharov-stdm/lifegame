@@ -14,17 +14,20 @@
 //! сначала x, потом y. Экспонента по глубине и равномерность по ширине
 //! считаются теми же выражениями, что и до профилей, — мир по умолчанию не
 //! сдвинулся ни на бит.
+//!
+//! Capacity: the world is split into `PLANT_MAX` (per area) cells of equal
+//! fertility — equal steps of each axis's distribution function, so a cell is
+//! narrow where food is rich and wide where it is poor. A cell holds at most
+//! one plant (`World::spawn_plants`), so a full world follows the profile
+//! exactly and a grazed surface cannot hand its room to the deep sea.
 
 use std::f64::consts::TAU;
 
-use crate::config::{PLANT_RADIUS, PLANT_TOP_MARGIN_PCT};
+use crate::config::{PLANT_MAX, PLANT_RADIUS, PLANT_TOP_MARGIN_PCT};
 use crate::plant::Plant;
 use crate::rng::Rng;
 use crate::rules::Rules;
 use crate::space::Space;
-
-/// Depth bands used to keep a rich surface from sharing one plant cap with the deep sea.
-pub const DEPTH_BANDS: usize = 10;
 
 /// Закон плотности вдоль оси.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -271,9 +274,11 @@ impl Axis {
         }
     }
 
-    fn fraction_before(&self, at: f64) -> f64 {
+    /// Share of plants before `at` — the inverse of `sample`, from 0 to 1.
+    #[inline]
+    fn cdf(&self, at: f64) -> f64 {
         let at = at.clamp(self.lo, self.hi);
-        match &self.law {
+        let share = match &self.law {
             Law::Uniform => (at - self.lo) / (self.hi - self.lo),
             Law::Exp { lambda, e_lo, e_hi } => (e_lo - (-lambda * at).exp()) / (e_lo - e_hi),
             Law::Table(cdf) => {
@@ -281,8 +286,14 @@ impl Axis {
                 let i = (pos as usize).min(cdf.len() - 2);
                 cdf[i] + (cdf[i + 1] - cdf[i]) * (pos - i as f64)
             }
-        }
-        .clamp(0.0, 1.0)
+        };
+        share.clamp(0.0, 1.0)
+    }
+
+    /// Which of `n` equal shares of the axis `at` falls into.
+    #[inline]
+    fn slot(&self, at: f64, n: usize) -> usize {
+        ((self.cdf(at) * n as f64) as usize).min(n - 1)
     }
 }
 
@@ -311,6 +322,10 @@ fn table(spec: &FoodAxis, len: f64, lo: f64, hi: f64) -> Option<Box<[f64]>> {
 pub struct Flora {
     x: Axis,
     y: Axis,
+    /// Cells of equal fertility across and down: `nx * ny` is at least the
+    /// world's plant cap.
+    nx: usize,
+    ny: usize,
 }
 
 impl Flora {
@@ -319,10 +334,26 @@ impl Flora {
         // Считается как 5 * 4000 / 100 — ровно 200, как было до профилей.
         let margin = PLANT_TOP_MARGIN_PCT * space.height / 100.0;
         let r = PLANT_RADIUS;
+        // rows by the world's proportions: with uniform food the cells are near squares
+        let cap = space.per_area(PLANT_MAX);
+        let ny = ((cap as f64 * space.height / space.width).sqrt().round() as usize).clamp(1, cap);
         Flora {
             x: Axis::new(&rules.plant_width, space.width, r, space.width - r),
             y: Axis::new(&rules.plant_depth, space.height, r + margin, space.height - r),
+            nx: cap.div_ceil(ny),
+            ny,
         }
+    }
+
+    /// How many cells of equal fertility the world has (one plant each).
+    pub fn cells(&self) -> usize {
+        self.nx * self.ny
+    }
+
+    /// The cell a plant at (x, y) occupies.
+    #[inline]
+    pub fn cell(&self, x: f64, y: f64) -> usize {
+        self.x.slot(x, self.nx) + self.nx * self.y.slot(y, self.ny)
     }
 
     /// Новое растение: два случайных числа, x и потом y.
@@ -331,21 +362,6 @@ impl Flora {
         let x = self.x.sample(rng);
         let y = self.y.sample(rng);
         Plant::at(x, y)
-    }
-
-    /// Divide the world's plant capacity by the same depth distribution used for births.
-    /// Rounding cumulative shares keeps the sum exactly equal to `cap`.
-    pub fn depth_caps(&self, cap: usize, height: f64) -> [usize; DEPTH_BANDS] {
-        let mut caps = [0; DEPTH_BANDS];
-        let mut previous = 0;
-        for (i, band_cap) in caps.iter_mut().enumerate() {
-            let edge = height * (i + 1) as f64 / DEPTH_BANDS as f64;
-            let cumulative = (cap as f64 * self.y.fraction_before(edge)).round() as usize;
-            let cumulative = cumulative.min(cap).max(previous);
-            *band_cap = cumulative - previous;
-            previous = cumulative;
-        }
-        caps
     }
 }
 
@@ -545,5 +561,48 @@ mod tests {
             describe(&Rules::default()),
             "по глубине — экспонента, крутизна 8; по ширине — равномерно"
         );
+    }
+
+    /// The distribution function undoes sampling: a plant drawn with `u` sits at share `u`.
+    #[test]
+    fn cdf_inverts_sampling_for_every_profile() {
+        let space = Space::new(7.0, Shape::Square);
+        for r in every_profile() {
+            let flora = Flora::new(&r, &space);
+            let (mut a, mut b) = (Rng::new(17), Rng::new(17));
+            for _ in 0..500 {
+                let (ux, uy) = (a.random(), a.random());
+                let p = flora.plant(&mut b);
+                assert!((flora.x.cdf(p.x) - ux).abs() < 1e-6, "x: {ux} {r:?}");
+                assert!((flora.y.cdf(p.y) - uy).abs() < 1e-6, "y: {uy} {r:?}");
+            }
+        }
+    }
+
+    /// Every cell is equally fertile: seeds spread evenly over cells, whatever the profile.
+    #[test]
+    fn seeds_fall_evenly_into_cells() {
+        let space = Space::default();
+        for r in [
+            Rules::default(),
+            rules(&[("plant_depth_profile", Profile::Waves.index()), ("plant_depth_amplitude", 100.0)]),
+            rules(&[("plant_width_profile", Profile::Linear.index()), ("plant_width_end", 0.0)]),
+        ] {
+            let flora = Flora::new(&r, &space);
+            assert!(flora.cells() >= PLANT_MAX && flora.cells() < PLANT_MAX + flora.ny);
+            let mut hits = vec![0u32; flora.cells()];
+            let mut rng = Rng::new(21);
+            for _ in 0..100 * flora.cells() {
+                let p = flora.plant(&mut rng);
+                hits[flora.cell(p.x, p.y)] += 1;
+            }
+            // Poisson(100): 6 sigma either way
+            assert!(
+                hits.iter().all(|&n| (40..=160).contains(&n)),
+                "{:?}..{:?} {r:?}",
+                hits.iter().min(),
+                hits.iter().max()
+            );
+        }
     }
 }

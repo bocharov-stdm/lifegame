@@ -91,8 +91,6 @@ fn snapshot(s: &Snapshot) -> Value {
         "plants": s.plants,
         "corpses": s.corpses,
         "plant_cap": s.plant_cap,
-        "plant_biomass": s.plant_biomass,
-        "plant_biomass_cap": s.plant_biomass_cap,
         "creatures": s.creatures,
         "juveniles": s.juveniles,
         "pack_carriers": s.pack_carriers,
@@ -136,7 +134,7 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
     let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(rules.get(k)))).collect();
     let space = cfg.space();
     json!({
-        "format": "life-report/10",
+        "format": "life-report/9",
         "world": { "scale": cfg.scale, "shape": cfg.shape.key(), "width": space.width, "height": space.height },
         "ticks": ticks,
         "sample_every": sample_every,
@@ -192,7 +190,7 @@ mod tests {
         let res = run(world, &Limits { ticks: 0, ..Limits::default() }, &mut |_| {});
         let runs = [Run { seed: cfg.seed, res: &res, events: &[], maps: &[] }];
         let data = report(&cfg, &cfg.rules, 0, 1, &runs);
-        assert_eq!(data["format"], "life-report/10");
+        assert_eq!(data["format"], "life-report/9");
         let run = &data["runs"][0];
         let snap = &run["snapshots"][0];
         for key in ["plant_bites", "meat_bites", "ranged_shots", "territorial_fights"] {

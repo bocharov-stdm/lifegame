@@ -1,6 +1,39 @@
 # Реформа поведения Tiny Life
 
-## Review fixes, borders and inherited hunger and fear (this stage)
+## Plant capacity in fertility cells (this stage)
+
+Model `life-behavior/9`, format `life-report/9` (unchanged).
+
+With the exponential depth profile the plant cap was one number for the whole world: creatures
+grazed the rich surface, the room they freed went to seeds that fell deep, and a forest grew where
+the profile promised almost nothing. Now `PLANT_MAX` (per area) is split into cells of equal
+fertility — equal steps of the profile's distribution function along each axis, so cells are narrow
+near the rich surface and wide in the poor deep. A cell holds at most one plant; a seed landing
+in an occupied cell does not sprout. Consequences:
+- a full world holds exactly the profile's shape, for any depth and width profile; a grazed band
+  regrows into its own cells while the others stay put;
+- growth is logistic: the more of a neighbourhood is taken, the more seeds are lost there. In
+  ordinary runs plants use a few percent of the cap, so the rate barely changes; an empty world
+  fills to 95% of the cap in about 1800 ticks instead of 570;
+- plant energy does not affect capacity (as before `life-behavior/9`); two random numbers per
+  seed as before, positions of sprouting plants unchanged.
+
+Validated on seeds 1–8 × 20 000 ticks (`--max-work 1e15`), every run finished by itself; all
+32 worlds survived:
+
+| Mode | Alive | Median | Range |
+|---|---:|---:|---:|
+| base, no combat | 8/8 | 1139 | 703–1805 |
+| base, combat | 8/8 | 925 | 678–1191 |
+| calm, no combat | 8/8 | 732.5 | 544–1108 |
+| calm, combat | 8/8 | 564 | 314–875 |
+
+Golden digests and both references (`fingerprint.json`, `calm-fingerprint.json`) are re-recorded
+for `life-behavior/9`. On Windows the giants of seed 4 stopped at size 99 (just under the tests'
+threshold of 100; on Linux they passed it), while the other seeds of 1–10 pass 100 by tick 1500
+and reach 132–534 by tick 2000; the giant worlds of the golden and the senses tests use seed 3 now.
+
+## Review fixes, borders and inherited hunger and fear (previous stage)
 
 Model `life-behavior/8`, format `life-report/9` (unchanged).
 

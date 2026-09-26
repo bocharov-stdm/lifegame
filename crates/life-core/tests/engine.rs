@@ -5,7 +5,6 @@
 use life_core::config::*;
 use life_core::creature::Creature;
 use life_core::creature::Kinship;
-use life_core::flora::{DEPTH_BANDS, Flora};
 use life_core::genome::creature::{GENES, Gene};
 use life_core::grid::Grid;
 use life_core::plant::Plant;
@@ -33,71 +32,82 @@ fn creature(x: f64, y: f64, g: CreatureGenome) -> Creature {
 // ── регрессии ───────────────────────────────────────────────────────────────
 
 /// Темп растений — ожидаемое число за тик, а не вероятность (было: ровно 1 за тик).
+/// Seeds landing in occupied fertility cells are lost, so an empty world fills
+/// logistically: `cap * (1 - exp(-rate * t / cap))`.
 #[test]
 fn темп_растений_это_ожидаемое_число() {
     let mut w = empty_world(Rules::default());
-    let ticks = 500; // 2.5 * 500 = 1250 — ниже потолка 1500
+    let ticks = 200;
     for _ in 0..ticks {
         w.step();
     }
-    let rate = w.plants.len() as f64 / ticks as f64;
-    assert!((rate - PLANT_SPAWN_CHANCE).abs() < 0.15, "прирост {rate:.3} растений/тик");
+    let cells = w.flora().cells() as f64;
+    let expected = cells * (1.0 - (-PLANT_SPAWN_CHANCE * ticks as f64 / cells).exp());
+    let got = w.plants.len() as f64;
+    assert!((got - expected).abs() < 40.0, "{got} plants, expected {expected:.0}");
 }
 
-/// With no consumers, all depth bands eventually reach their own capacities.
+/// The band 20‒30% of depth.
+fn in_band(p: &Plant, height: f64) -> bool {
+    (0.2..0.3).contains(&(p.y / height))
+}
+
+/// Without creatures plants fill their cells up to the cap, one plant per cell.
 #[test]
-fn plants_reach_the_distributed_cap() {
+fn plants_fill_cells_up_to_cap() {
     let mut w = empty_world(Rules::default());
     for _ in 0..3000 {
         w.step();
     }
-    assert_eq!(w.plants.len(), PLANT_MAX);
+    assert!(w.plants.len() <= PLANT_MAX && w.plants.len() >= PLANT_MAX * 9 / 10, "{}", w.plants.len());
+    let mut cells: Vec<usize> = w.plants.iter().map(|p| w.flora().cell(p.x, p.y)).collect();
+    cells.sort_unstable();
+    cells.dedup();
+    assert_eq!(cells.len(), w.plants.len(), "two plants share a cell");
 }
 
+/// The surface is grazed bare every tick: the deep sea keeps only its own share
+/// of the cap (about 14% below 30% depth with the default exponent) instead of
+/// growing a forest into the room the surface left.
 #[test]
-fn deep_plants_do_not_take_over_capacity_when_surface_is_eaten() {
+fn deep_plants_do_not_take_over_when_surface_is_eaten() {
     let mut w = empty_world(Rules::default());
-    let caps = Flora::new(&w.rules, &w.space).depth_caps(PLANT_MAX, w.space.height);
     for _ in 0..3000 {
         w.step();
-        w.plants.retain(|p| p.y >= w.space.height * 0.3);
+        let h = w.space.height;
+        w.plants.retain(|p| p.y >= 0.3 * h);
     }
-    let mut occupied = [0; DEPTH_BANDS];
-    for p in &w.plants {
-        let band = ((p.y / w.space.height * DEPTH_BANDS as f64) as usize).min(DEPTH_BANDS - 1);
-        occupied[band] += 1;
-    }
-    assert!(caps[DEPTH_BANDS - 1] <= 2);
-    assert_eq!(occupied[DEPTH_BANDS - 1], caps[DEPTH_BANDS - 1]);
-    assert!(occupied.iter().zip(caps).all(|(n, cap)| *n <= cap));
-    assert!(w.plants.len() < PLANT_MAX / 2);
+    let deep = w.plants.len();
+    assert!((150..PLANT_MAX / 5).contains(&deep), "{deep} plants below 30% depth");
 }
 
+/// A band cleared in a full world grows back into the cells it freed, and only
+/// there. (Cells on the band's edges straddle it: their new plant may sprout
+/// just outside, so the band's own count comes back a little lower.)
 #[test]
-fn depth_budget_uses_remaining_plant_energy() {
-    let rules = Rules::default().with("plant_energy", ENERGY_FROM_PLANT * 2.0).unwrap();
-    let mut w = empty_world(rules);
+fn cleared_band_recovers() {
+    let mut w = empty_world(Rules::default());
+    for _ in 0..4000 {
+        w.step();
+    }
+    let h = w.space.height;
+    let cells_of = |w: &World, keep: &dyn Fn(&Plant) -> bool| {
+        let mut c: Vec<usize> =
+            w.plants.iter().filter(|p| keep(p)).map(|p| w.flora().cell(p.x, p.y)).collect();
+        c.sort_unstable();
+        c
+    };
+    let cleared = cells_of(&w, &|p| in_band(p, h));
+    let band = cleared.len();
+    w.plants.retain(|p| !in_band(p, h));
     for _ in 0..3000 {
         w.step();
     }
-    let before = w.plants.len();
-    assert!(before <= PLANT_MAX / 2, "large plants use more of the energy budget");
-
-    for p in &mut w.plants {
-        p.portions = 1;
-    }
-    for _ in 0..300 {
-        w.step();
-    }
-    assert!(w.plants.len() > before, "eating portions frees capacity before a plant disappears");
-
-    let caps = Flora::new(&w.rules, &w.space).depth_caps(PLANT_MAX, w.space.height);
-    let mut energy = [0.0; DEPTH_BANDS];
-    for p in &w.plants {
-        let band = ((p.y / w.space.height * DEPTH_BANDS as f64) as usize).min(DEPTH_BANDS - 1);
-        energy[band] += f64::from(p.portions) * w.rules.plant_energy / f64::from(life_core::plant::PORTIONS);
-    }
-    assert!(energy.iter().zip(caps).all(|(used, cap)| *used <= cap as f64 * ENERGY_FROM_PLANT));
+    let now = cells_of(&w, &|_| true);
+    let back = cleared.iter().filter(|c| now.binary_search(c).is_ok()).count();
+    assert!(back * 100 >= band * 95, "{back} of {band} cleared cells taken again");
+    let after = w.plants.iter().filter(|p| in_band(p, h)).count();
+    assert!(after * 10 >= band * 8, "band {band} -> {after}");
 }
 
 // ── каннибализм ────────────────────────────────────────────────────────────
@@ -768,7 +778,7 @@ fn масштаб_растит_площадь() {
     for _ in 0..2000 {
         e.step();
     }
-    assert_eq!(e.plants.len(), PLANT_MAX * 2);
+    assert!((PLANT_MAX * 2 * 9 / 10..=PLANT_MAX * 2).contains(&e.plants.len()), "{}", e.plants.len());
 }
 
 /// Мир уже базового не строится: в узком мире полоса блуждания переворачивалась,

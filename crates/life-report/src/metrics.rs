@@ -372,6 +372,7 @@ mod tests {
             r#"{"model":"life-behavior/5"}"#,
             r#"{"model":"life-behavior/6"}"#,
             r#"{"model":"life-behavior/7"}"#,
+            r#"{"model":"life-behavior/8"}"#,
         ] {
             std::fs::write(&path, value).unwrap();
             assert!(Reference::load(&path).err().unwrap().contains("другой модели поведения"));

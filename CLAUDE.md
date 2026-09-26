@@ -84,7 +84,10 @@ Looking at the game from an agent: don't take screenshots of the desktop (other 
 captured) and don't inject mouse/keyboard input. Render screens headless with `TINYLIFE_SHOTS`
 (egui_kittest), and drive state through `LifeApp` fields / `sim::Command` in `ui_tests.rs`.
 
-CI (`.github/workflows/ci.yml`, Windows + Linux) runs fmt, clippy, tests and `--compare`.
+CI (`.github/workflows/ci.yml`, Windows only) runs fmt, clippy, tests and `--compare` against
+both references (base and calm). The game, the golden digests and the references live on
+Windows: another platform's libm differs in the last bits, the same seeds grow into another
+realization of the world, and its means may leave the Windows per-seed range by chance.
 Dev builds use `opt-level = 2`: tests run real multi-thousand-tick simulations.
 
 Validating a model change: seeds 1–8 × 20 000 ticks with `cannibalism=0` and `cannibalism=1`,
@@ -121,7 +124,7 @@ events (crashes and rises with their causes, extinction, plants hitting the cap,
 creatures squeezing into a thin layer); ASCII maps (top = surface, `O`/`o` creatures, `:`/`.`
 plants). The JSON has the same plus every snapshot (`life_sim::observe::Snapshot`: per-gene
 `GeneStat` — a spread for numeric genes, variant shares for choice genes —, depth and width
-histograms, cumulative counters, remaining plant biomass and its cap). Format `life-report/10` (social counters, flocking-gene
+histograms, cumulative counters). Format `life-report/9` (social counters, flocking-gene
 carriers, territories, corpses, feeding, shots, configurable action costs): top-level `genes`
 describes the gene table (key, label, kind, variants); keys are English (event `kind`), texts
 Russian. Long runs may stop on the work budget ("перегрузка") — raise it with `--max-work`.
@@ -134,9 +137,9 @@ and the event chronicle for its in-game event feed.
 `reference/fingerprint.json` is the balance fingerprint (8 seeds x 20 000 ticks, series every
 60 ticks). It started as the last Python version's (`python/fingerprint.py` at `python-final`)
 and is re-taken from Rust after each deliberate balance change. It is a world of creatures
-and plants; metrics: creatures and plants mean, size max and final. The checked-in reference is
-still `life-behavior/8`. The depth biomass limit is `life-behavior/9`, so comparison rejects the
-old reference until it is re-recorded. This change was visually checked without re-recording it.
+and plants; metrics: creatures and plants mean, size max and final. The model is
+`life-behavior/9` (plant capacity in fertility cells); references without this version are
+rejected with an explanation.
 `--compare` reruns the same seeds in Rust and checks each metric's mean against the reference's
 per-seed range; any mismatch exits with code 1 (CI relies on it). It refuses (code 2) when the
 world differs from the one the reference was taken on (world size — compared as `Space`, not
@@ -327,7 +330,7 @@ layer genes don't adapt to it.
 `Flora` is derived from rules + space like a phenotype from a genome: built in `World::new` and
 in `set_rules` (plants already grown stay put). Exactly **two random numbers per plant** for any
 profile (x then y); uniform and exp keep the pre-profile expressions (`rng.uniform`, the
-analytic inverse CDF), so each default plant position is bit for bit the old one — a unit test compares
+analytic inverse CDF), so the default world is bit for bit the old one — a unit test compares
 10 000 plants against a copy of the old formula. Linear, log and waves sample a tabulated
 inverse CDF (4096 bins; empty bins never picked). `flora::density(rules, tx, ty)` is the
 preview the game paints; `flora::describe(rules)` is the story's line. Limits in `with`: profile
@@ -336,12 +339,21 @@ percents 0‒100. Profiles are not balanced: at ×1 with each non-default profil
 parameters (6 seeds × 20 000 ticks), 6 of 48 runs died out (depth log 2, width linear 2, width
 exp 1, width log 1); the default profile — 0 of 12.
 
-Plant capacity follows the depth profile in ten bands. Each band's capacity is its share of
-`PLANT_MAX * ENERGY_FROM_PLANT` in raw plant energy; occupied capacity is the remaining portions
-times the current `plant_energy / PORTIONS`. Eating portions frees room before a plant disappears,
-and larger `plant_energy` means fewer whole plants fit. `PLANT_MAX` remains a hard count bound for
-memory. On a live profile change, existing plants stay in place; births wait in any band already
-above its new capacity. The energy chart and report show remaining biomass against the world cap.
+Capacity is shaped by the same profiles. `Flora` splits the world into `PLANT_MAX` (per area)
+**cells of equal fertility**: an `nx × ny` grid in the coordinates of each axis's distribution
+function (`Axis::cdf`, the inverse of sampling), rows by the world's proportions, `nx·ny ≥ cap`.
+Where food is rich the cells are narrow, where it is poor they are wide; every cell gets a seed
+with the same chance. A cell holds at most one plant, and a seed that lands in an occupied cell
+does not sprout (its two random numbers are still drawn). So a full world follows the profile
+exactly, growth is logistic (`cap·(1 − e^(−rate·t/cap))` in an empty world), and a grazed surface
+cannot hand its room to the deep sea. Plant energy does not affect capacity.
+
+Occupied cells are a bitset (`world::Occupancy`) updated per birth and per eaten plant, not
+rebuilt from every plant each tick: a full rebuild doubled the tick of a plant-saturated ×100
+world. It is rebuilt when the plant count stops matching it (tests and the app edit `plants`
+directly — keep such edits changing the count, or the stale set goes unnoticed) and after
+`set_rules`, since the cells follow the profile. After a profile change two old plants may share a
+cell; the first one eaten frees it. `incremental_cells_match_a_rebuild` guards the bookkeeping.
 
 ### Balance: exponents, not coefficients
 
@@ -361,9 +373,11 @@ fitter on average), variation dries up and they lost to predators. Without preda
 12, ~2000 creatures, mutability settles near 0.4. The user chose deliberately: mutability has
 no energy cost.
 
-The previous model (`life-behavior/8`): 16/16 worlds survived in each of the four modes over
-20 000 ticks (seeds 1–16). Median population: base profile — 1214.5 without fights, 816 with
-fights; calm — 848 and 632 (`life-behavior/7`, same seeds with fights: 707.5 and 586). Balance
+The current model (`life-behavior/9`, plant capacity in fertility cells): 8/8 worlds survived in
+each of the four modes over 20 000 ticks (seeds 1–8). Median population: base profile — 1139
+without fights, 925 with fights; calm — 732.5 and 564. The previous model (`life-behavior/8`,
+seeds 1–16): 16/16 in every mode; medians 1214.5 / 816 (base) and 848 / 632 (calm). The flock
+figures below were measured on `life-behavior/8` and not re-measured for the plant cells. Balance
 criterion (combat is on by default): flocks persist — at least two flocks and 10% flocking
 carriers — in ≥ 75% of the worlds of each profile with combat (base 14/16, calm 13/16; before:
 13/16 and 16/16); loners may vanish, a flock takeover is a legitimate outcome. Judge it on 16+
@@ -539,7 +553,7 @@ cleared area.
   follow (the creature vec stays sorted by id — tested).
 - `ui_tests.rs` — egui_kittest: every screen at 960×600 and 1600×900, buttons/sliders inside
   the window and not overlapping (scrolled-away side-panel content excluded). They share one
-  GPU lock: parallel wgpu renderers crash the driver on Windows. CI installs lavapipe on Linux.
+  GPU lock: parallel wgpu renderers crash the driver on Windows. CI renders through WARP.
 - Release on Windows builds with `windows_subsystem = "windows"` (no console on double-click)
   and attaches to the parent console so flag errors still print.
 

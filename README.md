@@ -200,13 +200,17 @@ cargo fmt --all
 `зрение ** 2`.
 
 Растения ограничены потолком `PLANT_MAX`. Растение исчезает, только когда его
-съели, так что в мире без существ они копились бы бесконечно.
+съели, так что в мире без существ они копились бы бесконечно. Потолок разложен по
+миру профилем еды: мир делится на `PLANT_MAX` клеток равного плодородия (где еды
+много, клетки узкие, где мало — широкие), и в клетке растёт не больше одного
+растения. Семя, упавшее в занятую клетку, не прорастает. Поэтому объеденная
+поверхность не отдаёт своё место глубине, а рост замедляется по мере заполнения.
 
 Медленный ход затаившегося стоит дешевле: за скорость платится по фактическому
 шагу, по тому же закону `скорость ** 2`, поэтому треть скорости обходится в
 девятую часть. The current model passed 8 seeds × 20 000 ticks for the base and the calm
-profiles, with combat and without: all 32 worlds survived. Median final population: 1329.5 and
-922.5 without combat, 748.5 and 511 with combat. Detailed results and the limits of the current
+profiles, with combat and without: all 32 worlds survived. Median final population: 1139 and
+732.5 without combat, 925 and 564 with combat. Detailed results and the limits of the current
 balance: [BEHAVIOR.md](BEHAVIOR.md).
 
 ## Масштаб и форма
