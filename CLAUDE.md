@@ -58,15 +58,50 @@ leaders, no sharing of prey, no merging of flocks. Sociability is an inherited g
 that stay separated get a new label. The exact mechanics and their checks: `BEHAVIOR.md`.
 
 The food web (branch `food-web`): the `diet` choice gene — herbivore, omnivore, scavenger,
-carnivore — sets what a creature digests (`config::DIET_DIGESTION`: plants, fresh meat, rot; 0
-means it neither eats nor goes for that food) and how hard it strikes (`DIET_STRIKE`, ×1–1.5 on
-damage, not on the strike's energy cost). Only those that eat fresh meat hunt and are feared; a
-child of another diet leaves its flock. A corpse is the whole body's meat (`corpse::meat`: size ×
-`ENERGY_PER_SIZE` plus the tank) — hunters weigh prey by the same measure. It is fresh for 150
-ticks, then rots and sinks, fully rotten on the bottom at 600, gone at 1800 (in % of depth, a
-function of the tick only). Creatures stop at `EAT_STOP_SHARE` of their reach instead of standing
-on the food, and the game draws a proboscis to it. Plants grow in patches over a new default
-depth profile «игровое» (see "Where food grows").
+carnivore (variant order H/O/S/C, the order of every `DIET_*` table in `config.rs`) — sets what a
+creature digests (`DIET_DIGESTION`: plants, fresh meat, rot; 0 means it neither eats nor goes for
+that food) and its edges, all read in `Phenotype::of` / `Diet::*`:
+
+| | strike (`DIET_STRIKE`) | other edge |
+|---|---|---|
+| herbivore | ×1 | health ×1.5 (`DIET_HEALTH`), size term of upkeep ×0.85 (`DIET_SIZE_COST`) |
+| omnivore | ×1.15 | eats everything, so no food is foreign to it |
+| scavenger | ×1.3 | smells corpses at 2× vision (`DIET_SMELL`, free); upkeep falls linearly from half the depth to −40% on the bottom (`DIET_DEEP_SAVING`, `Phenotype::depth_upkeep`, applied in `Creature::act`); founders start with layer 50–100% (`SCAVENGER_START_LAYER`) |
+| carnivore | ×1.5 | speed term of upkeep ×0.8 (`DIET_SPEED_COST`) |
+
+The strike bonus is on damage only, never on the strike's energy cost (`strike` vs `strike_cost`);
+damage also scales with size (melee 5% of size, capped at ¼ of the target's max health; a shot 1%).
+Upkeep with the diet's factors is `Rules::upkeep_diet`; `Rules::upkeep` is it with `[1, 1]`, bit for
+bit. **Own niche** (`DIET_OWN`): above its inherited `picky` share of the store a creature eats and
+goes only for its own food — a sated scavenger neither touches a corpse in its fresher half
+(rot < 0.5) nor hunts (`hunts_now`), a sated carnivore does not touch the rotten half or skeletons;
+below `picky` it takes whatever it digests (`Phenotype::corpse_efficiency(rot, hungry)`, hunger judged
+once per tick before the meal in `world.rs`). Anyone who eats fresh meat at all (`hunts`) is feared,
+and a child of another diet leaves its flock. A corpse is the whole body's meat (`corpse::meat`: size
+× `ENERGY_PER_SIZE` plus the tank) — hunters weigh prey by the same measure. It is fresh for 150
+ticks, then rots and sinks, fully rotten on the bottom (lowest 2%) at 600, gone at 1800 (in % of
+depth, a function of the tick only). A corpse eaten down to `CORPSE_SKELETON_SHARE` (10%) of its meat
+becomes a **skeleton** (`Corpse::skeleton`): rot from then, it sinks within 300 ticks to a place in
+the lowest 15% of the depth (hash of the id, never up) and decays over 1800 ticks from the stripping;
+a corpse left alone is never stripped. Creatures stop at `EAT_STOP_SHARE` of their reach instead of
+standing on the food, and the game draws a proboscis to it. Plants grow in patches over a new
+default depth profile «игровое» (see "Where food grows").
+
+## Where the `food-web` work stands
+
+The branch `food-web` (not pushed yet; merge only on the user's word) holds five stages of
+commits up to `16af4f7`. What is left:
+- `AGENTS.md`, `BEHAVIOR.md`, `README.md` still describe the pre-`food-web` model (this file is
+  current): diets and their edges, own niche and `picky`, rot, skeletons, patches, «игровое».
+- The golden digests fail by design until re-recorded; re-record them and both references
+  (`--save-reference reference/fingerprint.json`, and `reference/calm-fingerprint.json` with
+  `--rule cost_scale=3`) in
+  one separate commit once the user accepts the balance; golden case H can become "all four diets".
+- Then push, PR, green CI.
+- Planned next: the life/pace reform (see "Balance: exponents, not coefficients"); the user also
+  asked whether fights should be more common for every diet (e.g. a size rule) — undecided.
+The user keeps a short PDF of genes, strategies and diet edges (built by a throwaway fpdf2 script
+with Arial for Cyrillic); regenerate and send it after diet or gene changes.
 
 ## Commands
 
@@ -141,7 +176,8 @@ creatures squeezing into a thin layer); ASCII maps (top = surface, `O`/`o` creat
 plants). The JSON has the same plus every snapshot (`life_sim::observe::Snapshot`: per-gene
 `GeneStat` — a spread for numeric genes, variant shares for choice genes —, depth and width
 histograms, cumulative counters). Format `life-report/10` (social counters, flocking-gene
-carriers, territories, corpses, feeding and rot bites, shots, configurable action costs): top-level `genes`
+carriers, territories, corpses, feeding and rot bites, corpse fates — appeared, removed, lain on the bottom,
+skeletons, lifetimes —, shots, configurable action costs): top-level `genes`
 describes the gene table (key, label, kind, variants); keys are English (event `kind`), texts
 Russian. Long runs may stop on the work budget ("перегрузка") — raise it with `--max-work`.
 
@@ -404,12 +440,20 @@ fitter on average), variation dries up and they lost to predators. Without preda
 12, ~2000 creatures, mutability settles near 0.4. The user chose deliberately: mutability has
 no energy cost.
 
-The `food-web` model (`life-behavior/10`, measured 2026-09-26, seeds 1–8 × 20 000): 8/8 worlds
-survived in both profiles; median population 824 (base) and 544 (calm). Founder meat-eaters
-always starve by tick ~400 (no corpses yet, equal-sized founders are no prey); meat diets that
-persist are later mutants of omnivores. Carnivores took 41% of one base world; scavengers appear
-but barely hold — rot is rare, since corpses are eaten fresh. Balance is still being tuned with
-the user; the history of what was tried is in the commit messages of `e158f9e` and before.
+The `food-web` model (`life-behavior/10`, measured 2026-09-26, seeds 1–8 × 20 000, commit
+`16af4f7`): 16/16 worlds survived; median population 802 (base) and 694 (calm). Carnivores hold in
+2 worlds (10%, 11%), scavengers in 5 (2–55%); herbivores and omnivores everywhere. Founder
+meat-eaters mostly starve by tick ~400 (no corpses yet, equal-sized founders are no prey); meat
+diets that persist are later mutants. Corpses: in the base profile ~99% of removed corpses were
+stripped to skeletons and they lie 40–150 ticks on average (eaten fast); in the calm one 55–100%,
+up to ~1000 ticks. Before the bonuses and skeletons (`e158f9e`): 824 / 544, carnivores in 1 world,
+scavengers in none. The history of what was tried is in the commit messages of `16af4f7` and
+before.
+
+Lifespan (measured on `16af4f7`): the `life_pace` gene sits at its floor 0.5 in every world
+(upkeep × pace makes slow life a near-free 50% discount), so the age limit is ~24 000 ticks, while
+creatures live a median of 250–470 ticks (p90 ~2000) and die of hunger or in fights; under 0.1%
+reach the ageing fifth. The user agreed to reform life and pace as a separate stage later.
 
 The previous model (`life-behavior/9`, cells, exp profile, one diet): 8/8 in each of the four
 modes (with and without the then-optional combat); medians base 1139 / 925, calm 732.5 / 564.
@@ -469,7 +513,7 @@ multiplier ≥ 0.1); `Switch { chance }` to any other variant (0.1% for the choi
 `Neighbours { chance, jump, of }` for the diet — a step to a neighbour in `DIET_NEIGHBOURS`
 (0.1%; the omnivore forks to herbivore / scavenger / carnivore, scavenger ↔ carnivore) or, on the
 same first draw, a jump to any other diet (0.01%). All chances are multiplied by the parent's
-mutability. A founders' diet mix (`WorldConfig::diets`, 55/25/10/10 in variant order H/O/S/C,
+mutability. The last row is `picky` («разборчивость», %, base 30, free): the own-niche threshold. A founders' diet mix (`WorldConfig::diets`, 55/25/10/10 in variant order H/O/S/C,
 `--diet-mix`) is dealt without draws through `genome::spread_ranks`, so it does not line up with
 the strategy mix.
 
@@ -575,8 +619,9 @@ cleared area.
   the food (a capsule SDF, extends and retracts with `k`, «gulps» run along it by `time`).
   Plants are dark 3–5-leaf sprouts, a dark dot from afar. Selection ring and follow camera use
   the same interpolated position. The buffer is uploaded only when a new frame arrives.
-  `view.rs` paints corpses (red-brown fresh → grey-green rot, sinking between frames) and the
-  faint patch tint under the flock circles.
+  `view.rs` paints corpses (red-brown fresh → grey-green rot, sinking between frames; a skeleton
+  pale and smaller, `CorpseMark::skeleton`) and the faint patch tint under the flock circles. The
+  creature card shows the diet's edges from the `DIET_*` tables (`game::diet_bonuses`).
 - `app.rs` — `LifeApp`: screens and transitions, owns the settings and the `SimHandle`;
   `theme.rs` — palette (port of `app/theme.py`).
 - `stats.rs` — the «Статистика» window (key I): «Энергия» (fullness, plants vs cap),
