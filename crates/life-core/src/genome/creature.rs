@@ -117,14 +117,14 @@ pub const FLOCK_KIND_VARIANTS: [Variant; 4] = [
     },
 ];
 
-/// What a creature can digest (`config::DIET_DIGESTION`). A mutation steps to a neighbour in
-/// `DIET_NEIGHBOURS`. Labels are game UI.
 /// Which diets a child's diet may step to: the herbivore only to the omnivore; the omnivore is a
 /// fork to the herbivore, the scavenger and the carnivore, a third each; the scavenger and the
 /// carnivore to each other and back to the omnivore. In a chain one meat diet could arise only
 /// from the other, and whichever stood last never appeared in the validation worlds.
 pub const DIET_NEIGHBOURS: [&[usize]; 4] = [&[1], &[0, 2, 3], &[1, 3], &[1, 2]];
 
+/// What a creature can digest (`config::DIET_DIGESTION`). A mutation steps to a neighbour in
+/// `DIET_NEIGHBOURS`. Labels are game UI.
 pub const DIET_VARIANTS: [Variant; 4] = [
     Variant {
         key: "herbivore",
