@@ -7,7 +7,7 @@
 //! своё действие, а его цена дописывается в конец суммы расхода.
 
 use super::Strategy;
-use crate::config::{DIET_DIGESTION, ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, SLOW_PACE};
+use crate::config::{DIET_DIGESTION, DIET_STRIKE, ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, SLOW_PACE};
 use crate::flock::{FlockKind, Territoriality};
 use crate::genome::CreatureGenome;
 use crate::genome::creature::Gene;
@@ -20,12 +20,12 @@ use crate::space::Space;
 pub enum Diet {
     Herbivore,
     Omnivore,
-    Carnivore,
     Scavenger,
+    Carnivore,
 }
 
 impl Diet {
-    pub const ALL: [Diet; 4] = [Diet::Herbivore, Diet::Omnivore, Diet::Carnivore, Diet::Scavenger];
+    pub const ALL: [Diet; 4] = [Diet::Herbivore, Diet::Omnivore, Diet::Scavenger, Diet::Carnivore];
 
     pub fn from_gene(value: f64) -> Diet {
         Diet::ALL[(value.max(0.0) as usize).min(Diet::ALL.len() - 1)]
@@ -34,6 +34,11 @@ impl Diet {
     /// Digestibility of plants, fresh meat and rot (`DIET_DIGESTION`).
     pub fn digestion(self) -> [f64; 3] {
         DIET_DIGESTION[self as usize]
+    }
+
+    /// How much harder than a herbivore it strikes (`DIET_STRIKE`).
+    pub fn strike_bonus(self) -> f64 {
+        DIET_STRIKE[self as usize]
     }
 }
 
@@ -223,6 +228,16 @@ impl Phenotype {
 
     /// Eats fresh meat: it hunts, and others fear it.
     #[inline]
+    /// Its melee damage: a share of its size, times its diet's bonus. The energy a strike costs
+    /// is the share without the bonus (`strike_cost`).
+    pub fn strike(&self) -> f64 {
+        self.strike_cost() * self.diet.strike_bonus()
+    }
+
+    pub fn strike_cost(&self) -> f64 {
+        self.size * self.melee_damage_share
+    }
+
     pub fn hunts(&self) -> bool {
         self.meat_efficiency > 0.0
     }

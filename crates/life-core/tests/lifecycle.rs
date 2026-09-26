@@ -164,7 +164,7 @@ fn диеты_усваивают_по_таблице() {
     let plant_bite = r.plant_energy * r.plant_bite_yield / 5.0;
     for (diet, plants, fresh, rot) in [
         (Diet::Herbivore, 1.0, 0.0, 0.0),
-        (Diet::Omnivore, 0.7, 0.6, 0.15),
+        (Diet::Omnivore, 0.7, 0.3, 0.05),
         (Diet::Carnivore, 0.0, 1.0, 0.1),
         (Diet::Scavenger, 0.0, 0.8, 0.9),
     ] {
@@ -180,7 +180,18 @@ fn диеты_усваивают_по_таблице() {
         assert!((v.pheno.corpse_efficiency(0.5) - (fresh + rot) / 2.0).abs() < 1e-12);
         assert_eq!(v.pheno.eats_plants(), plants > 0.0);
         assert_eq!(v.pheno.hunts(), fresh > 0.0);
+        assert_eq!(
+            v.pheno.strike_cost(),
+            v.pheno.size * r.melee_damage_share,
+            "{diet:?}: the cost has no bonus"
+        );
     }
+    // meat eaters strike harder: herbivore < omnivore < scavenger < carnivore
+    let bonus = |d: Diet| d.strike_bonus();
+    assert_eq!(bonus(Diet::Herbivore), 1.0);
+    assert!(bonus(Diet::Herbivore) < bonus(Diet::Omnivore));
+    assert!(bonus(Diet::Omnivore) < bonus(Diet::Scavenger));
+    assert!(bonus(Diet::Scavenger) < bonus(Diet::Carnivore));
 }
 
 #[test]
@@ -367,6 +378,8 @@ fn потерявший_растение_ест_труп_который_каса
     corpse.x = 1040.0;
     corpse.bottom = corpse.y0;
     corpse.remaining = 40.0;
+    // its decay is counted up to now: what is left is the 40 above
+    corpse.last_decay = 700;
     w.corpses.push(corpse);
     w.plants.push(Plant::at(1000.0, 1000.0));
     w.tick = 700;

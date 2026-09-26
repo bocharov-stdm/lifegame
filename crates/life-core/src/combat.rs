@@ -80,7 +80,7 @@ pub(crate) fn resolve_with_grace(
     let max_half = creatures.iter().filter(|v| v.alive).fold(0.0_f64, |m, v| m.max(v.pheno.half));
     let mut hits = Vec::new();
     for (i, v) in creatures.iter().enumerate() {
-        let cost = v.pheno.size * rules.melee_damage_share;
+        let cost = v.pheno.strike_cost();
         if !v.alive || v.fleeing() {
             continue;
         }
@@ -126,7 +126,7 @@ pub(crate) fn resolve_with_grace(
                 hits.push(Hit {
                     attacker: i,
                     victim: j,
-                    damage: cost.min(creatures[j].max_health() * 0.25),
+                    damage: v.pheno.strike().min(creatures[j].max_health() * 0.25),
                     cost,
                     ranged: false,
                     territorial: assigned == Some(creatures[j].id),
@@ -177,7 +177,8 @@ pub(crate) fn resolve_with_grace(
             hits.push(Hit {
                 attacker: i,
                 victim: j,
-                damage: (v.pheno.size * rules.shot_damage_share).min(u.max_health() * 0.25),
+                damage: (v.pheno.size * rules.shot_damage_share * v.pheno.diet.strike_bonus())
+                    .min(u.max_health() * 0.25),
                 cost: shot_cost,
                 ranged: true,
                 territorial,

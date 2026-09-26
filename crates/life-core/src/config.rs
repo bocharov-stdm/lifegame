@@ -158,9 +158,16 @@ pub const SLOW_PACE: f64 = 1.0 / 3.0;
 // There is no world size ratio either: whom one attacks first is its own `prey_ratio` gene.
 
 // ── Питание ─────────────────────────────────────────────────────────────────
-/// Chance that a child's diet steps to a neighbour in the chain herbivore ↔ omnivore ↔
-/// carnivore ↔ scavenger: as rare as the other choice genes.
+/// Chance that a child's diet steps to a neighbour (`genome::creature::DIET_NEIGHBOURS`): as rare
+/// as the other choice genes.
 pub const DIET_STEP_CHANCE: f64 = 0.001;
+/// Chance that a child's diet jumps to any other diet, neighbour or not: ten times rarer than a
+/// step, so a line is not locked into its branch forever.
+pub const DIET_JUMP_CHANCE: f64 = 0.0001;
+/// Strike damage by diet, times the world's `melee_damage_share` (and `shot_damage_share`): meat
+/// eaters are built to kill. The omnivore strikes a little harder than the herbivore, the
+/// scavenger harder still, the carnivore hardest. The energy a strike costs does not change.
+pub const DIET_STRIKE: [f64; 4] = [1.0, 1.15, 1.3, 1.5];
 /// Digestibility by diet (order of `genome::creature::DIET_VARIANTS`): plants, fresh meat,
 /// rot. For plants 1 is the world's yield `plant_bite_yield`; for meat it is the whole raw
 /// portion — the diet alone decides how much of it is taken in (the old flat 10% fed a hunter
@@ -170,9 +177,9 @@ pub const DIET_STEP_CHANCE: f64 = 0.001;
 /// A piece of a rotting corpse is a mix: fresh and rot by the corpse's rot share.
 pub const DIET_DIGESTION: [[f64; 3]; 4] = [
     [1.0, 0.0, 0.0],  // травоядный
-    [0.7, 0.6, 0.15], // всеядный
-    [0.0, 1.0, 0.1],  // мясоед
+    [0.7, 0.3, 0.05], // всеядный
     [0.0, 0.8, 0.9],  // падальщик
+    [0.0, 1.0, 0.1],  // мясоед
 ];
 /// Founders' diets, shares in the same order. Dealt without a draw.
 pub const DIET_START_MIX: [f64; 4] = [55.0, 25.0, 10.0, 10.0];

@@ -85,9 +85,7 @@ impl Prey {
     fn of(s: &Seen, me: &Me, allies: f64) -> Self {
         let travel =
             ((s.x - me.x).hypot(s.y - me.y) - s.half - me.pheno.half).max(0.0) / me.pheno.speed.max(0.01);
-        let hits = (s.health
-            / (me.pheno.size * me.pheno.melee_damage_share).min(s.max_health * 0.25).max(0.001))
-        .ceil();
+        let hits = (s.health / me.pheno.strike().min(s.max_health * 0.25).max(0.001)).ceil();
         let portion = (me.pheno.plant_energy / f64::from(crate::plant::PORTIONS)).max(s.nutrition / 12.0);
         let feeding = (s.nutrition / portion.max(0.001)).ceil();
         let gain = (s.nutrition * me.pheno.meat_efficiency).min(me.pheno.max_energy - me.energy).max(0.0);
@@ -399,10 +397,8 @@ impl Herd {
             eats_up_to: if v.pheno.hunts() { v.pheno.size / v.pheno.prey_ratio } else { 0.0 },
             health: v.health,
             max_health: v.max_health(),
-            nutrition: v.energy
-                + (v.pheno.size - v.birth_size).max(0.0) * crate::config::GROWTH_ENERGY_PER_SIZE
-                + v.birth_size * crate::config::ENERGY_PER_SIZE * 0.25,
-            strike: v.pheno.size * v.pheno.melee_damage_share,
+            nutrition: crate::corpse::meat(v),
+            strike: v.pheno.strike(),
             kinship: v.kinship(),
             flock: v.flock,
             grouped: v.circle.is_some(),
@@ -540,6 +536,10 @@ pub(crate) fn bite_plant(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Diet gene values, by the variants' order.
+    const CARNIVORE: f64 = crate::creature::Diet::Carnivore as usize as f64;
+    const SCAVENGER: f64 = crate::creature::Diet::Scavenger as usize as f64;
     use crate::flock::Circle;
     use crate::rules::Rules;
     use crate::world::{World, WorldConfig};
@@ -605,7 +605,7 @@ mod tests {
     fn падаль_выбирается_по_порциям_и_дороге_но_не_в_тик_смерти() {
         let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
         w.spawn(
-            crate::CreatureGenome::BASE.with(crate::genome::creature::Gene::Diet, 2.0),
+            crate::CreatureGenome::BASE.with(crate::genome::creature::Gene::Diet, CARNIVORE),
             1000.0,
             1000.0,
             Some(40.0),
@@ -652,7 +652,7 @@ mod tests {
     fn падальщик_выбирает_гниль_мясоед_свежее() {
         use crate::genome::creature::Gene;
         let now = 1000;
-        for (diet, want) in [(2.0, Some(1)), (3.0, Some(2)), (0.0, None), (1.0, Some(1))] {
+        for (diet, want) in [(CARNIVORE, Some(1)), (SCAVENGER, Some(2)), (0.0, None), (1.0, Some(1))] {
             let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
             w.spawn(crate::CreatureGenome::BASE.with(Gene::Diet, diet), 1000.0, 1000.0, Some(40.0));
             let v = &w.creatures[0];
@@ -696,7 +696,7 @@ mod tests {
         world.spawn(
             crate::CreatureGenome::BASE
                 .with(crate::genome::creature::Gene::Size, 80.0)
-                .with(crate::genome::creature::Gene::Diet, 2.0),
+                .with(crate::genome::creature::Gene::Diet, CARNIVORE),
             1000.0,
             1000.0,
             None,
@@ -881,7 +881,7 @@ mod tests {
                         health: v.health,
                     };
                     let sees = |u: &Creature| (u.x - v.x).hypot(u.y - v.y) <= v.pheno.vision && u.id != v.id;
-                    let strike = |u: &Creature| u.pheno.size * u.pheno.melee_damage_share;
+                    let strike = |u: &Creature| u.pheno.strike();
                     let mut candidates: Vec<usize> = (0..w.creatures.len())
                         .filter(|&j| {
                             let u = &w.creatures[j];
@@ -988,7 +988,7 @@ mod tests {
         let hunter = crate::CreatureGenome::BASE
             .with(Gene::Size, 80.0)
             .with(Gene::Caution, caution)
-            .with(Gene::Diet, 2.0);
+            .with(Gene::Diet, CARNIVORE);
         w.spawn(hunter, 1000.0, 1000.0, None);
         w.creatures[0].energy = w.creatures[0].pheno.max_energy * energy_share;
         setup(&mut w);
@@ -1122,7 +1122,7 @@ mod tests {
         for (diet, bravery, hunting, feared) in [
             (2.0, 0.0, false, true),
             (2.0, 50.0, false, false),
-            (2.0, 50.0, true, true),
+            (CARNIVORE, 50.0, true, true),
             (0.0, 0.0, true, false),
         ] {
             let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });

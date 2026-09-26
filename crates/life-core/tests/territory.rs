@@ -322,7 +322,7 @@ fn подтвержденное_нападение_вызывает_залп_и_
         .with(Gene::Shooter, 1.0)
         .with(Gene::FirePreference, 100.0)
         .with(Gene::FireReserve, 0.0)
-        .with(Gene::Diet, 2.0);
+        .with(Gene::Diet, life_core::creature::Diet::Carnivore as usize as f64);
     for x in [1000.0, 1020.0, 1040.0] {
         w.spawn(shooter, x, 1000.0, Some(100.0));
     }

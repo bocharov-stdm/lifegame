@@ -49,11 +49,12 @@ pub enum Mutation {
     /// Смена варианта с шансом `chance` на любой другой. С одним вариантом
     /// жребий не тянется вовсе: ген инертен и не сдвигает случайные числа.
     Switch { chance: f64 },
-    /// A step to a neighbouring variant in table order, with chance `chance`: the variants are
-    /// a chain (herbivore ↔ omnivore ↔ carnivore ↔ scavenger). An inner variant steps either
-    /// way with equal odds (one more draw), an end one only inwards. With one variant nothing
-    /// is drawn.
-    Step { chance: f64 },
+    /// A step to a neighbouring variant, with chance `chance`: `of[k]` lists the neighbours of
+    /// variant `k` (the diets: the omnivore is a fork to the herbivore, the scavenger and the
+    /// carnivore). One of several neighbours is picked with equal odds (one more draw); with one
+    /// neighbour there is no second draw. With chance `jump` instead it leaps to any other variant
+    /// (one more draw); the same first draw decides both. With one variant nothing is drawn.
+    Neighbours { chance: f64, jump: f64, of: &'static [&'static [usize]] },
 }
 
 /// Строка таблицы генов.
@@ -156,23 +157,24 @@ pub(crate) fn mutate_values(
                     *value = (k + (k >= current) as usize) as f64;
                 }
             }
-            Mutation::Step { chance } => {
+            Mutation::Neighbours { chance, jump, of } => {
                 let n = spec.variants().map_or(0, <[Variant]>::len);
                 if n < 2 {
                     continue;
                 }
-                if rng.random() < chance * mutability {
-                    let current = (*value as usize).min(n - 1);
-                    let next = if current == 0 {
-                        1
-                    } else if current == n - 1 {
-                        n - 2
-                    } else if rng.random() < 0.5 {
-                        current - 1
-                    } else {
-                        current + 1
+                let u = rng.random();
+                let current = (*value as usize).min(n - 1);
+                if u < chance * mutability {
+                    let near = of.get(current).copied().unwrap_or(&[]);
+                    *value = match near.len() {
+                        0 => *value,
+                        1 => near[0] as f64,
+                        k => near[rng.randint(0, k as i64 - 1) as usize] as f64,
                     };
-                    *value = next as f64;
+                } else if u < (chance + jump) * mutability {
+                    // any other variant, as `Switch` picks it
+                    let k = rng.randint(0, n as i64 - 2) as usize;
+                    *value = (k + (k >= current) as usize) as f64;
                 }
             }
         }
@@ -298,12 +300,18 @@ mod tests {
         );
     }
 
+    /// A chain a — b — c.
+    const CHAIN: [&[usize]; 3] = [&[1], &[0, 2], &[1]];
+
     fn chain(chance: f64) -> GeneSpec {
-        GeneSpec { mutation: Mutation::Step { chance }, ..choice(&THREE, chance) }
+        GeneSpec {
+            mutation: Mutation::Neighbours { chance, jump: 0.0, of: &CHAIN },
+            ..choice(&THREE, chance)
+        }
     }
 
     #[test]
-    fn шаг_по_цепочке_только_к_соседу() {
+    fn шаг_только_к_соседу() {
         let mut rng = Rng::new(11);
         let mut seen = [[0usize; 3]; 3];
         for (start, row) in seen.iter_mut().enumerate() {
@@ -317,6 +325,56 @@ mod tests {
         assert_eq!(seen[2], [0, 600, 0], "from the last end only inwards");
         assert_eq!(seen[1][1], 0, "an inner variant always steps");
         assert!(seen[1][0] > 240 && seen[1][2] > 240, "both ways about equally: {:?}", seen[1]);
+    }
+
+    /// A jump leaps anywhere but stays put, and it shares the first draw with the step.
+    #[test]
+    fn прыжок_в_любой_другой_вариант() {
+        const FAR: [&[usize]; 3] = [&[1], &[0, 2], &[1]];
+        let spec = GeneSpec {
+            mutation: Mutation::Neighbours { chance: 0.0, jump: 1.0, of: &FAR },
+            ..choice(&THREE, 1.0)
+        };
+        let mut rng = Rng::new(8);
+        let mut seen = [0usize; 3];
+        for _ in 0..3000 {
+            let mut v = [0.0];
+            mutate_values(&mut v, &[spec], 0.3, 1.0, &mut rng);
+            seen[v[0] as usize] += 1;
+        }
+        assert_eq!(seen[0], 0, "a jump always leaves");
+        assert!(seen[2] > 1300, "a jump reaches a variant that is not a neighbour: {seen:?}");
+    }
+
+    /// A fork: the middle variant steps to either of three neighbours alike; one with a single
+    /// neighbour draws only the chance.
+    #[test]
+    fn развилка_делит_шаг_поровну() {
+        const FOUR: [Variant; 4] = [
+            Variant { key: "a", label: "а", about: "" },
+            Variant { key: "b", label: "б", about: "" },
+            Variant { key: "c", label: "в", about: "" },
+            Variant { key: "d", label: "г", about: "" },
+        ];
+        const FORK: [&[usize]; 4] = [&[1], &[0, 2, 3], &[1, 3], &[1, 2]];
+        let spec = GeneSpec {
+            mutation: Mutation::Neighbours { chance: 1.0, jump: 0.0, of: &FORK },
+            ..choice(&FOUR, 1.0)
+        };
+        let mut rng = Rng::new(3);
+        let mut seen = [0usize; 4];
+        for _ in 0..3000 {
+            let mut v = [1.0];
+            mutate_values(&mut v, &[spec], 0.3, 1.0, &mut rng);
+            seen[v[0] as usize] += 1;
+        }
+        assert_eq!(seen[1], 0);
+        assert!(seen.iter().enumerate().all(|(k, &n)| k == 1 || (850..=1150).contains(&n)), "{seen:?}");
+        let (mut a, mut b) = (Rng::new(4), Rng::new(4));
+        let mut v = [0.0];
+        mutate_values(&mut v, &[spec], 0.3, 1.0, &mut a);
+        b.random();
+        assert_eq!((v, a), ([1.0], b), "a single neighbour: only the chance is drawn");
     }
 
     #[test]
@@ -339,7 +397,10 @@ mod tests {
         let mut v = [0.0];
         mutate_values(
             &mut v,
-            &[GeneSpec { mutation: Mutation::Step { chance: 1.0 }, ..choice(&ONE, 1.0) }],
+            &[GeneSpec {
+                mutation: Mutation::Neighbours { chance: 1.0, jump: 1.0, of: &[&[]] },
+                ..choice(&ONE, 1.0)
+            }],
             0.3,
             1.0,
             &mut rng,

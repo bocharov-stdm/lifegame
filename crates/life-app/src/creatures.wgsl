@@ -134,13 +134,13 @@ fn inside(d: f32) -> f32 {
     return clamp(0.5 - d, 0.0, 1.0);
 }
 
-// Цвет каёмки по диете: травоядный, всеядный, мясоед, падальщик.
+// Цвет каёмки по диете: травоядный, всеядный, падальщик, мясоед.
 fn diet_color(diet: u32) -> vec3<f32> {
     switch diet {
         case 0u: { return vec3(0.35, 0.80, 0.42); }
         case 1u: { return vec3(0.90, 0.78, 0.30); }
-        case 2u: { return vec3(0.92, 0.30, 0.26); }
-        default: { return vec3(0.62, 0.52, 0.70); }
+        case 2u: { return vec3(0.62, 0.52, 0.70); }
+        default: { return vec3(0.92, 0.30, 0.26); }
     }
 }
 

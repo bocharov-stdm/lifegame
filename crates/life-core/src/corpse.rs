@@ -9,7 +9,6 @@
 
 use crate::config::{
     CORPSE_BOTTOM_PCT, CORPSE_DECAY_TICKS, CORPSE_FRESH_TICKS, CORPSE_ROTTEN_TICKS, ENERGY_PER_SIZE,
-    GROWTH_ENERGY_PER_SIZE,
 };
 use crate::creature::Creature;
 use crate::grid::Grid;
@@ -48,9 +47,7 @@ pub struct Bite {
 
 impl Corpse {
     pub fn from_creature(v: &Creature, born: u64) -> Self {
-        let grown = (v.pheno.size - v.birth_size).max(0.0) * GROWTH_ENERGY_PER_SIZE;
-        let birth = v.birth_size * ENERGY_PER_SIZE * 0.25;
-        let initial = v.energy.max(0.0) + grown + birth;
+        let initial = meat(v);
         Self {
             owner: v.id,
             flock: v.flock,
@@ -109,6 +106,14 @@ impl Corpse {
         self.remaining = (self.remaining - amount).max(0.0);
         Some(Bite { amount, rot: self.rot(now), x: self.x, y: self.y })
     }
+}
+
+/// The meat of creature `v`'s body: as much as its full tank (`size × ENERGY_PER_SIZE`), plus
+/// what is left in the tank. A body that starved is still meat; when a corpse held only a quarter
+/// of the birth energy, meat was too scarce for anyone but omnivores to live on. A hunter weighs
+/// its prey by the same measure.
+pub fn meat(v: &Creature) -> f64 {
+    v.energy.max(0.0) + v.pheno.size * ENERGY_PER_SIZE
 }
 
 /// Where the rot of creature `id` with body radius `half` comes to rest: in the lowest
@@ -206,13 +211,15 @@ mod tests {
         v
     }
 
+    /// The whole body is meat, however it grew, plus what was left in the tank.
     #[test]
-    fn ценность_учитывает_энергию_рост_и_часть_тела_при_рождении() {
+    fn meat_is_the_whole_body_plus_the_tank() {
         let mut v = body();
         v.birth_size = 20.0;
         let c = Corpse::from_creature(&v, 12);
-        let expected = 40.0 + 20.0 * GROWTH_ENERGY_PER_SIZE + 20.0 * ENERGY_PER_SIZE * 0.25;
-        assert_eq!(c.initial, expected);
+        assert_eq!(c.initial, 40.0 + v.pheno.size * ENERGY_PER_SIZE);
+        v.energy = 0.0;
+        assert_eq!(Corpse::from_creature(&v, 12).initial, v.pheno.size * ENERGY_PER_SIZE, "a starved body");
         assert_eq!((c.owner, c.flock, c.born), (7, 3, 12));
     }
 
@@ -245,8 +252,10 @@ mod tests {
         grid.rebuild(&Space::default(), corpses.iter().map(|c| (c.x, c.y)));
         assert_eq!(nearest(&grid, &corpses, 1000.0, 1000.0, 100.0, 3), None);
         assert_eq!(nearest(&grid, &corpses, 1000.0, 1000.0, 100.0, 4).unwrap().0, 1);
+        // a portion: a fifth of a plant or a twelfth of the body, whichever is more
+        let portion = (50.0 / 5.0_f64).max(corpses[1].initial / 12.0);
         let value = bite(&grid, &mut corpses, (1000.0, 1000.0), 30.0, 20.0, 50.0, 4, |_| true).unwrap();
-        assert_eq!((value.amount, value.x), (10.0, 995.0));
+        assert_eq!((value.amount, value.x), (portion, 995.0));
         assert_eq!(bite(&grid, &mut corpses, (1000.0, 1000.0), 30.0, 20.0, 50.0, 4, |_| false), None);
         assert_eq!(corpses[0].remaining, corpses[0].initial);
         assert!(corpses[1].remaining < corpses[1].initial);

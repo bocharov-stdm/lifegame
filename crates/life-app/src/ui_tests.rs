@@ -19,6 +19,10 @@ use crate::app::{LifeApp, Screen, SideTab, Tool};
 use crate::frame::Instance;
 use crate::settings::{Key, Tab};
 use crate::sim::Command;
+
+/// Diet gene values, by the variants' order.
+const CARNIVORE: f64 = life_core::creature::Diet::Carnivore as usize as f64;
+const SCAVENGER: f64 = life_core::creature::Diet::Scavenger as usize as f64;
 use crate::stats::StatsTab;
 
 /// Видеокарта одна: параллельные рендеры wgpu в одном процессе роняют
@@ -506,7 +510,12 @@ fn flock_scenes_and_card_without_a_window() {
     scenes.push(("переход", w));
     let mut w = fixture();
     // a big meat-eater: a herbivore would frighten nobody
-    w.spawn(CreatureGenome::BASE.with(Gene::Size, 120.0).with(Gene::Diet, 2.0), 2950.0, 2000.0, Some(180.0));
+    w.spawn(
+        CreatureGenome::BASE.with(Gene::Size, 120.0).with(Gene::Diet, CARNIVORE),
+        2950.0,
+        2000.0,
+        Some(180.0),
+    );
     w.creatures.last_mut().unwrap().age = life_core::config::LIFESPAN - 12.0;
     let (mut alarm, mut back) = (false, false);
     for _ in 0..200 {
@@ -722,7 +731,7 @@ fn последовательность_обхода_предупреждени�
         .with(Gene::Shooter, 1.0)
         .with(Gene::FirePreference, 100.0)
         .with(Gene::FireReserve, 0.0)
-        .with(Gene::Diet, 2.0);
+        .with(Gene::Diet, CARNIVORE);
     for x in [1000.0, 1020.0, 1040.0] {
         world.spawn(shooter, x, 1000.0, Some(100.0));
     }
@@ -805,7 +814,7 @@ fn хоботок_тянется_к_еде_вблизи() {
     });
     w.plants.clear();
     w.tick = 700;
-    let eaters = [(0.0, 1000.0), (3.0, 1300.0), (2.0, 1600.0)];
+    let eaters = [(0.0, 1000.0), (SCAVENGER, 1300.0), (CARNIVORE, 1600.0)];
     for (diet, y) in eaters {
         w.spawn(CreatureGenome::BASE.with(Gene::Diet, diet), 1000.0, y, Some(40.0));
         w.creatures.last_mut().unwrap().reproduction_wait = 10_000;
@@ -865,7 +874,7 @@ fn хоботок_тянется_к_еде_вблизи() {
             assert!(!(8..=120).contains(&dir), "{tag}: the proboscis points at the food, {dir}/128");
         }
         let diets: Vec<u32> = creatures.iter().map(|i| (i.meta >> 12) & 3).collect();
-        assert_eq!(diets, [0, 3, 2], "{tag}: the diet travels to the shader for the rim");
+        assert_eq!(diets, [0, 2, 3], "{tag}: the diet travels to the shader for the rim");
         shot(&mut h, &format!("хоботок-{tag}"));
     }
 }

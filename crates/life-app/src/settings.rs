@@ -40,8 +40,8 @@ pub enum Key {
     Lurkers,
     Herbivores,
     Omnivores,
-    Carnivores,
     Scavengers,
+    Carnivores,
     PlantDepthProfile,
     PlantDepthSteepness,
     PlantDepthEnd,
@@ -176,7 +176,7 @@ pub const FIELDS: [Field; 32] = [
         key: Key::Herbivores,
         label: "Травоядных на старте",
         hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание \
-               наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
+               наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный, всеядный → падальщик или мясоед.",
         lo: 0.0,
         hi: 100.0,
         step: 5.0,
@@ -189,20 +189,7 @@ pub const FIELDS: [Field; 32] = [
         key: Key::Omnivores,
         label: "Всеядных на старте",
         hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание \
-               наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
-        lo: 0.0,
-        hi: 100.0,
-        step: 5.0,
-        format: int,
-        tab: Tab::World,
-        rule: None,
-        ..SLIDER
-    },
-    Field {
-        key: Key::Carnivores,
-        label: "Мясоедов на старте",
-        hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание \
-               наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
+               наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный, всеядный → падальщик или мясоед.",
         lo: 0.0,
         hi: 100.0,
         step: 5.0,
@@ -215,7 +202,20 @@ pub const FIELDS: [Field; 32] = [
         key: Key::Scavengers,
         label: "Падальщиков на старте",
         hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание \
-               наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
+               наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный, всеядный → падальщик или мясоед.",
+        lo: 0.0,
+        hi: 100.0,
+        step: 5.0,
+        format: int,
+        tab: Tab::World,
+        rule: None,
+        ..SLIDER
+    },
+    Field {
+        key: Key::Carnivores,
+        label: "Мясоедов на старте",
+        hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание \
+               наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный, всеядный → падальщик или мясоед.",
         lo: 0.0,
         hi: 100.0,
         step: 5.0,
@@ -592,8 +592,8 @@ impl Default for Settings {
                 Key::Lurkers => 0.0,
                 Key::Herbivores => DIET_START_MIX[0],
                 Key::Omnivores => DIET_START_MIX[1],
-                Key::Carnivores => DIET_START_MIX[2],
-                Key::Scavengers => DIET_START_MIX[3],
+                Key::Scavengers => DIET_START_MIX[2],
+                Key::Carnivores => DIET_START_MIX[3],
                 _ => rules.get(f.rule.expect("правило")).expect("правило есть в Rules"),
             }),
             fullscreen: false,
@@ -663,7 +663,7 @@ impl Settings {
             rules: self.rules(),
             n_creatures: Some(per_area(Key::Creatures)),
             strategies: mix(Key::Lurkers),
-            diets: [Key::Herbivores, Key::Omnivores, Key::Carnivores, Key::Scavengers]
+            diets: [Key::Herbivores, Key::Omnivores, Key::Scavengers, Key::Carnivores]
                 .map(|k| self.get(k))
                 .to_vec(),
         }

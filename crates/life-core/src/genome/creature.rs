@@ -1,7 +1,7 @@
 //! Геном существа.
 
 use super::{GeneKind, GeneSpec, Genome, Mutation, Variant, bases};
-use crate::config::{DIET_STEP_CHANCE, SHOOTER_SWITCH_CHANCE, STRATEGY_SWITCH_CHANCE};
+use crate::config::{DIET_JUMP_CHANCE, DIET_STEP_CHANCE, SHOOTER_SWITCH_CHANCE, STRATEGY_SWITCH_CHANCE};
 use crate::creature::strategy::VARIANTS as STRATEGIES;
 use crate::rng::Rng;
 
@@ -117,8 +117,14 @@ pub const FLOCK_KIND_VARIANTS: [Variant; 4] = [
     },
 ];
 
-/// What a creature can digest (`config::DIET_DIGESTION`). The order is the chain a mutation walks
-/// one step at a time: herbivore ↔ omnivore ↔ carnivore ↔ scavenger. Labels are game UI.
+/// What a creature can digest (`config::DIET_DIGESTION`). A mutation steps to a neighbour in
+/// `DIET_NEIGHBOURS`. Labels are game UI.
+/// Which diets a child's diet may step to: the herbivore only to the omnivore; the omnivore is a
+/// fork to the herbivore, the scavenger and the carnivore, a third each; the scavenger and the
+/// carnivore to each other and back to the omnivore. In a chain one meat diet could arise only
+/// from the other, and whichever stood last never appeared in the validation worlds.
+pub const DIET_NEIGHBOURS: [&[usize]; 4] = [&[1], &[0, 2, 3], &[1, 3], &[1, 2]];
+
 pub const DIET_VARIANTS: [Variant; 4] = [
     Variant {
         key: "herbivore",
@@ -131,14 +137,14 @@ pub const DIET_VARIANTS: [Variant; 4] = [
         about: "Ест растения, свежее мясо и гниль, но всё усваивает хуже специалистов.",
     },
     Variant {
-        key: "carnivore",
-        label: "мясоед",
-        about: "Ест только мясо: свежее усваивает полностью, гниль — едва.",
-    },
-    Variant {
         key: "scavenger",
         label: "падальщик",
         about: "Ест только мясо: гниль усваивает лучше всех, свежее — чуть хуже мясоеда.",
+    },
+    Variant {
+        key: "carnivore",
+        label: "мясоед",
+        about: "Ест только мясо: свежее усваивает полностью, гниль — едва.",
     },
 ];
 
@@ -254,10 +260,14 @@ pub const GENES: [GeneSpec; N] = [
     GeneSpec {
         key: "diet",
         label: "питание",
-        about: "Что ест и как усваивает; потомок изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
+        about: "Что ест и как усваивает; потомок изредка сдвигается на шаг: травоядный ↔ всеядный, всеядный → падальщик или мясоед, падальщик ↔ мясоед; совсем редко перескакивает в любое питание. Мясоед бьёт сильнее всех, падальщик и всеядный слабее.",
         kind: GeneKind::Choice(&DIET_VARIANTS),
         base: 0.0,
-        mutation: Mutation::Step { chance: DIET_STEP_CHANCE },
+        mutation: Mutation::Neighbours {
+            chance: DIET_STEP_CHANCE,
+            jump: DIET_JUMP_CHANCE,
+            of: &DIET_NEIGHBOURS,
+        },
     },
     GeneSpec {
         key: "prey_ratio",
@@ -442,20 +452,28 @@ mod tests {
     }
 
     #[test]
-    fn диета_меняется_редко_и_только_на_шаг() {
+    fn диета_меняется_редко_и_почти_всегда_на_шаг() {
+        // the neighbours go both ways
+        for (k, near) in DIET_NEIGHBOURS.iter().enumerate() {
+            assert!(near.iter().all(|&j| j != k && DIET_NEIGHBOURS[j].contains(&k)), "{k}: {near:?}");
+        }
+        assert_eq!(DIET_NEIGHBOURS[0], &[1]);
         let mut rng = Rng::new(21);
-        for start in 0..4 {
+        let n = 200_000;
+        for (start, near) in DIET_NEIGHBOURS.iter().enumerate() {
             let parent = CreatureGenome::BASE.with(Gene::Diet, start as f64);
-            let mut changed = 0;
-            for _ in 0..20_000 {
+            let (mut steps, mut jumps) = (0, 0);
+            for _ in 0..n {
                 let child = parent.mutate(0.3, &mut rng)[Gene::Diet];
                 assert_eq!(child.fract(), 0.0);
                 if child != start as f64 {
-                    changed += 1;
-                    assert_eq!((child - start as f64).abs(), 1.0, "{start} → {child}: one step only");
+                    if near.contains(&(child as usize)) { steps += 1 } else { jumps += 1 }
                 }
             }
-            assert!((5..=45).contains(&changed), "rare: {changed} of 20000 from {start}");
+            // a step 0.1%, a jump 0.01% of which some land on neighbours
+            assert!((140..=270).contains(&steps), "steps from {start}: {steps} of {n}");
+            let far = 3 - near.len();
+            assert!(jumps <= 12 * far && (far == 0 || jumps >= 1), "jumps from {start}: {jumps}");
         }
     }
 
