@@ -139,11 +139,12 @@ impl Senses for GridSenses<'_> {
     #[inline(always)]
     fn best_corpse(&self, me: &Me) -> Option<CorpseFood> {
         let mut best: Option<CorpseFood> = None;
-        self.corpse_grid?.for_each_near(me.x, me.y, me.pheno.vision, |i, cx, cy| {
+        let hungry = me.pheno.hungry(me.energy);
+        self.corpse_grid?.for_each_near(me.x, me.y, me.pheno.smell, |i, cx, cy| {
             let c = &self.corpses[i];
             let distance = (cx - me.x).hypot(cy - me.y);
-            let efficiency = me.pheno.corpse_efficiency(c.rot(self.now));
-            if c.born >= self.now || c.remaining <= 0.0 || distance >= me.pheno.vision || efficiency <= 0.0 {
+            let efficiency = me.pheno.corpse_efficiency(c.rot(self.now), hungry);
+            if c.born >= self.now || c.remaining <= 0.0 || distance >= me.pheno.smell || efficiency <= 0.0 {
                 return;
             }
             let portion = c.portion(me.pheno.plant_energy);
@@ -173,8 +174,8 @@ impl Senses for GridSenses<'_> {
         Some(Threat { id, x: s.x, y: s.y, gap: distance - s.half })
     }
     fn prey(&self, me: &Me, previous: Option<u64>) -> Option<Prey> {
-        if !me.pheno.hunts() {
-            return None; // fresh meat is worth nothing to it
+        if !me.pheno.hunts_now(me.energy) {
+            return None; // fresh meat is worth nothing to it, or it is sated and meat is not its own
         }
         let herd = self.herd?;
         let max_size = me.pheno.size / me.pheno.prey_ratio;
@@ -690,6 +691,51 @@ mod tests {
         }
     }
 
+    /// The scavenger smells corpses twice as far as it sees; the others find them by sight only.
+    /// Sated, it leaves a fresh corpse to the hunters; hungry, it goes for it too.
+    #[test]
+    fn падальщик_чует_издалека_и_сытым_не_берёт_свежее() {
+        use crate::genome::creature::Gene;
+        let now = 1000;
+        for (diet, energy, born, want) in [
+            (SCAVENGER, 40.0, now - 700, true),
+            (1.0, 40.0, now - 700, false),
+            (SCAVENGER, 40.0, now - 10, false),
+            (SCAVENGER, 10.0, now - 10, true),
+        ] {
+            let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
+            w.spawn(crate::CreatureGenome::BASE.with(Gene::Diet, diet), 1000.0, 1000.0, Some(energy));
+            let v = &w.creatures[0];
+            let me = Me {
+                x: v.x,
+                y: v.y,
+                energy: v.energy,
+                kinship: v.kinship(),
+                flock: v.flock,
+                circle: None,
+                health_share: 1.0,
+                health: v.pheno.size,
+                pheno: &v.pheno,
+            };
+            let mut c = Corpse::from_creature(v, born);
+            let far = if born == now - 700 { 1.8 } else { 0.5 } * v.pheno.vision;
+            (c.owner, c.x, c.bottom) = (1, 1000.0 + far, c.y0);
+            let corpses = [c];
+            let mut cgrid = Grid::new(GRID_CELL);
+            cgrid.rebuild(&w.space, corpses.iter().map(|c| (c.x, c.y)));
+            let food = Grid::new(GRID_CELL);
+            let view = GridSenses {
+                food: &food,
+                plants: &[],
+                corpse_grid: Some(&cgrid),
+                corpses: &corpses,
+                now,
+                herd: None,
+            };
+            assert_eq!(view.best_corpse(&me).is_some(), want, "diet {diet}, energy {energy}, born {born}");
+        }
+    }
+
     #[test]
     fn разделившиеся_стаи_не_видят_друг_друга_целью_охоты_или_угрозой_до_срока() {
         let mut world = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
@@ -885,7 +931,7 @@ mod tests {
                     let mut candidates: Vec<usize> = (0..w.creatures.len())
                         .filter(|&j| {
                             let u = &w.creatures[j];
-                            v.pheno.hunts()
+                            v.pheno.hunts_now(v.energy)
                                 && sees(u)
                                 && !(v.flock != 0 && v.flock == u.flock)
                                 && u.pheno.size <= v.pheno.size / v.pheno.prey_ratio

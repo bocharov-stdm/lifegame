@@ -237,12 +237,18 @@ pub struct CorpseMark {
     /// 0 fresh, 1 rotten.
     pub rot: f64,
     pub size: f64,
+    /// What is left: of the whole meat, or of a skeleton's store.
     pub fullness: f64,
+    /// Eaten down to its bones: drawn pale and smaller.
+    pub skeleton: bool,
 }
 
 impl CorpseMark {
-    /// Fresh meat is red-brown, rot grey-green.
+    /// Fresh meat is red-brown, rot grey-green, bones pale.
     pub fn rgb(&self) -> [u8; 3] {
+        if self.skeleton {
+            return [206, 198, 172];
+        }
         let (fresh, rotten) = ([176.0, 104.0, 88.0], [118.0, 128.0, 96.0]);
         [0, 1, 2].map(|i| (fresh[i] + (rotten[i] - fresh[i]) * self.rot.clamp(0.0, 1.0)) as u8)
     }

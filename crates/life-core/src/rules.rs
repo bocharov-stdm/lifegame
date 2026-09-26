@@ -267,9 +267,15 @@ impl Rules {
     /// Расход энергии за тик: COEF * стат ** POWER, суммарно по трём статам.
     /// Цена скорости ещё и растёт с размером: см. SPEED_MASS_POWER.
     pub fn upkeep(&self, size: f64, speed: f64, vision: f64) -> f64 {
+        self.upkeep_diet(size, speed, vision, [1.0, 1.0])
+    }
+
+    /// Upkeep with the size and speed terms times the diet's factors (`config::DIET_SIZE_COST`,
+    /// `DIET_SPEED_COST`).
+    pub fn upkeep_diet(&self, size: f64, speed: f64, vision: f64, [size_cost, speed_cost]: [f64; 2]) -> f64 {
         let mass = (size / BASE_SIZE).powf(SPEED_MASS_POWER);
-        self.size_coef * size.powf(self.size_power)
-            + self.speed_coef * speed.powf(self.speed_power) * mass
+        self.size_coef * size.powf(self.size_power) * size_cost
+            + self.speed_coef * speed.powf(self.speed_power) * mass * speed_cost
             + self.sight_coef * vision.powf(self.sight_power)
     }
 }

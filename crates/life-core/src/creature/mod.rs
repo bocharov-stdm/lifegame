@@ -147,7 +147,7 @@ impl Creature {
             space: *space,
             alive: true,
             age: 0.0,
-            health: pheno.size,
+            health: pheno.size * pheno.health_bonus,
             peaceful_ticks: 60,
             reproduction_wait: (DIVIDE_PERIOD as f64 / pheno.life_pace).ceil() as u64,
             death: None,
@@ -259,7 +259,7 @@ impl Creature {
             self.mind.social.heading = Some(moved);
         }
 
-        self.energy -= upkeep;
+        self.energy -= upkeep * self.pheno.depth_upkeep(y);
         if self.energy <= 0.0 {
             self.alive = false;
             self.death = Some(Death::Starved);
@@ -312,9 +312,12 @@ impl Creature {
         self.energy = self.pheno.max_energy.min(self.energy + gain - growth * GROWTH_ENERGY_PER_SIZE);
     }
 
-    /// Старение в последней пятой жизни уменьшает здоровье до половины.
+    /// Здоровье — размер тела, times the diet's bonus (`DIET_HEALTH`). Старение в последней
+    /// пятой жизни уменьшает его до половины.
     pub fn max_health(&self) -> f64 {
-        self.pheno.size * (1.0 - ((self.age / LIFESPAN - 0.8) / 0.2).clamp(0.0, 1.0) * 0.5)
+        self.pheno.size
+            * self.pheno.health_bonus
+            * (1.0 - ((self.age / LIFESPAN - 0.8) / 0.2).clamp(0.0, 1.0) * 0.5)
     }
 
     /// The inherited flock mode is the same: flocking, territoriality, strategy, shooting,

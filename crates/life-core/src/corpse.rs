@@ -4,11 +4,17 @@
 //! sinks: its rot share and its depth follow one smooth step, and by `CORPSE_ROTTEN_TICKS` it is
 //! fully rotten and rests on the bottom (the lowest `CORPSE_BOTTOM_PCT` of the depth, spread by
 //! the owner's id, no draws). The path is in shares of the depth, so rot reaches the bottom in a
-//! world of any height. Its store decays evenly over `CORPSE_DECAY_TICKS`. Everything is a
-//! function of the tick, so the result does not depend on how often it is checked.
+//! world of any height. Its store decays evenly over `CORPSE_DECAY_TICKS`.
+//!
+//! A corpse eaten down to `CORPSE_SKELETON_SHARE` of its meat becomes a skeleton: rot from that
+//! moment, it sinks within `SKELETON_SINK_TICKS` to its place in the lowest `SKELETON_ZONE_PCT`
+//! of the depth (never up) and its store decays evenly over `SKELETON_TICKS` from then. One left
+//! alone is never stripped; it just decays. Everything is a function of the tick, so the result
+//! does not depend on how often it is checked.
 
 use crate::config::{
-    CORPSE_BOTTOM_PCT, CORPSE_DECAY_TICKS, CORPSE_FRESH_TICKS, CORPSE_ROTTEN_TICKS, ENERGY_PER_SIZE,
+    CORPSE_BOTTOM_PCT, CORPSE_DECAY_TICKS, CORPSE_FRESH_TICKS, CORPSE_ROTTEN_TICKS, CORPSE_SKELETON_SHARE,
+    ENERGY_PER_SIZE, SKELETON_SINK_TICKS, SKELETON_TICKS, SKELETON_ZONE_PCT,
 };
 use crate::creature::Creature;
 use crate::grid::Grid;
@@ -26,6 +32,9 @@ pub struct Corpse {
     pub y0: f64,
     /// Where its rot comes to rest; never above `y0`.
     pub bottom: f64,
+    /// Where its skeleton would settle (in the lowest `SKELETON_ZONE_PCT`); never above the depth
+    /// at which it is stripped.
+    pub deep: f64,
     pub size: f64,
     /// Питательность сразу после смерти.
     pub initial: f64,
@@ -34,6 +43,22 @@ pub struct Corpse {
     pub born: u64,
     /// Последний тик учтённого разложения.
     pub last_decay: u64,
+    /// It lay fully rotten on the bottom with meat left (for the counters).
+    pub settled: bool,
+    /// Eaten down to its bones.
+    pub skeleton: Option<Skeleton>,
+}
+
+/// What is left of an eaten corpse: rot that sinks to the deep.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Skeleton {
+    /// Tick it was stripped.
+    pub at: u64,
+    /// Depth it was stripped at, and where it comes to rest.
+    pub y1: f64,
+    pub rest: f64,
+    /// Its meat when stripped.
+    pub store: f64,
 }
 
 /// A bite of a corpse: the raw portion, the rot share at that tick and where the corpse lies.
@@ -54,58 +79,103 @@ impl Corpse {
             x: v.x,
             y: v.y,
             y0: v.y,
-            bottom: bottom(v.space(), v.id, v.pheno.half).max(v.y),
+            bottom: resting_place(v.space(), v.id, v.pheno.half, CORPSE_BOTTOM_PCT, 0xB077_0000_0000_0000)
+                .max(v.y),
+            deep: resting_place(v.space(), v.id, v.pheno.half, SKELETON_ZONE_PCT, 0x5CE1_0000_0000_0000),
             size: v.pheno.size,
             initial,
             remaining: initial,
             born,
             last_decay: born,
+            settled: false,
+            skeleton: None,
         }
     }
 
-    /// Rot share at tick `now`: 0 while fresh, then a smooth step to 1 when fully rotten.
+    /// Rot share at tick `now`: 0 while fresh, then a smooth step to 1 when fully rotten. A
+    /// skeleton is rot.
     pub fn rot(&self, now: u64) -> f64 {
-        let age = now.saturating_sub(self.born) as f64;
-        let t = ((age - CORPSE_FRESH_TICKS as f64) / (CORPSE_ROTTEN_TICKS - CORPSE_FRESH_TICKS) as f64)
-            .clamp(0.0, 1.0);
-        t * t * (3.0 - 2.0 * t)
+        if self.skeleton.is_some() {
+            return 1.0;
+        }
+        smooth_step(now.saturating_sub(self.born), CORPSE_FRESH_TICKS, CORPSE_ROTTEN_TICKS)
     }
 
-    /// Depth at tick `now`: it sinks as it rots.
+    /// Depth at tick `now`: it sinks as it rots, a skeleton to its own place.
     pub fn y_at(&self, now: u64) -> f64 {
-        self.y0 + (self.bottom - self.y0) * self.rot(now)
+        match self.skeleton {
+            Some(s) => s.y1 + (s.rest - s.y1) * smooth_step(now.saturating_sub(s.at), 0, SKELETON_SINK_TICKS),
+            None => self.y0 + (self.bottom - self.y0) * self.rot(now),
+        }
     }
 
     /// Равномерное разложение по первоначальной ценности, даже если часть съедена, и оседание.
-    /// Возвращает `false`, когда труп нужно убрать.
+    /// A skeleton decays by its own store and time. Возвращает `false`, когда труп нужно убрать.
     pub fn decay(&mut self, now: u64) -> bool {
-        if now >= self.born.saturating_add(CORPSE_DECAY_TICKS) {
+        let (start, store, span) = match self.skeleton {
+            Some(s) => (s.at, s.store, SKELETON_TICKS),
+            None => (self.born, self.initial, CORPSE_DECAY_TICKS),
+        };
+        if now >= start.saturating_add(span) {
             self.remaining = 0.0;
         } else if now > self.last_decay {
-            let elapsed = now - self.last_decay.max(self.born);
-            self.remaining =
-                (self.remaining - self.initial * elapsed as f64 / CORPSE_DECAY_TICKS as f64).max(0.0);
+            let elapsed = now - self.last_decay.max(start);
+            self.remaining = (self.remaining - store * elapsed as f64 / span as f64).max(0.0);
         }
         self.last_decay = self.last_decay.max(now);
         self.y = self.y_at(self.last_decay);
+        if self.remaining > 0.0
+            && self.skeleton.is_none()
+            && self.last_decay >= self.born + CORPSE_ROTTEN_TICKS
+        {
+            self.settled = true;
+        }
         self.remaining > 0.0
     }
 
-    /// Доступная сейчас порция до усвоения.
+    /// Meat the eaters cannot strip from a corpse: its skeleton's share. None once stripped.
+    fn bones(&self) -> f64 {
+        if self.skeleton.is_some() { 0.0 } else { self.initial * CORPSE_SKELETON_SHARE }
+    }
+
+    /// Доступная сейчас порция до усвоения: a corpse is eaten down to its bones, then the
+    /// skeleton to nothing.
     pub fn portion(&self, plant_energy: f64) -> f64 {
-        (plant_energy / f64::from(PORTIONS)).max(self.initial / 12.0).min(self.remaining)
+        let size = (plant_energy / f64::from(PORTIONS)).max(self.initial / 12.0);
+        let bones = self.bones();
+        if self.remaining > bones { size.min(self.remaining - bones) } else { size.min(self.remaining) }
     }
 
     /// Одна порция. Даже если этот метод вызван до отдельной фазы разложения,
-    /// срок жизни и расход учитываются ровно один раз.
+    /// срок жизни и расход учитываются ровно один раз. A corpse eaten down to its bones — by
+    /// this bite or by decay before it — becomes a skeleton.
     pub fn bite(&mut self, now: u64, plant_energy: f64) -> Option<Bite> {
         if now <= self.born || !self.decay(now) {
             return None;
         }
+        if self.remaining <= self.bones() {
+            self.strip(now);
+        }
         let amount = self.portion(plant_energy);
-        self.remaining = (self.remaining - amount).max(0.0);
-        Some(Bite { amount, rot: self.rot(now), x: self.x, y: self.y })
+        let rot = self.rot(now);
+        self.remaining = (self.remaining - amount).max(self.bones().min(self.remaining));
+        if self.remaining <= self.bones() {
+            self.strip(now);
+        }
+        Some(Bite { amount, rot, x: self.x, y: self.y })
     }
+
+    /// It becomes a skeleton at tick `now`, where it lies.
+    fn strip(&mut self, now: u64) {
+        self.skeleton =
+            Some(Skeleton { at: now, y1: self.y, rest: self.deep.max(self.y), store: self.remaining });
+    }
+}
+
+/// 0 up to `from` ticks of age, then a smooth step to 1 at `to`.
+fn smooth_step(age: u64, from: u64, to: u64) -> f64 {
+    let t = ((age as f64 - from as f64) / (to - from) as f64).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// The meat of creature `v`'s body: as much as its full tank (`size × ENERGY_PER_SIZE`), plus
@@ -116,11 +186,11 @@ pub fn meat(v: &Creature) -> f64 {
     v.energy.max(0.0) + v.pheno.size * ENERGY_PER_SIZE
 }
 
-/// Where the rot of creature `id` with body radius `half` comes to rest: in the lowest
-/// `CORPSE_BOTTOM_PCT` of the depth, spread by a hash of the id so the dead do not lie on one line.
-fn bottom(space: &Space, id: u64, half: f64) -> f64 {
-    let band = space.height * CORPSE_BOTTOM_PCT / 100.0;
-    let spread = (crate::rng::mix(id ^ 0xB077_0000_0000_0000) % 1024) as f64 / 1023.0;
+/// Where the remains of creature `id` with body radius `half` come to rest: in the lowest `pct` of
+/// the depth, spread by a hash of the id (with `salt`) so the dead do not lie on one line.
+fn resting_place(space: &Space, id: u64, half: f64, pct: f64, salt: u64) -> f64 {
+    let band = space.height * pct / 100.0;
+    let spread = (crate::rng::mix(id ^ salt) % 1024) as f64 / 1023.0;
     (space.height - half.min(space.height / 2.0) - spread * band).max(0.0)
 }
 
@@ -316,5 +386,75 @@ mod tests {
         deep.y = space.height - 5.0;
         let d = Corpse::from_creature(&deep, 0);
         assert_eq!(d.bottom, deep.y, "one that died deeper does not rise");
+    }
+
+    /// Eaten down to a tenth, a corpse becomes a skeleton: rot from then, it sinks into the lowest
+    /// 15% of the depth and lies there `SKELETON_TICKS` from the stripping, not from death.
+    #[test]
+    fn скелет_остаётся_от_объеденного_трупа() {
+        let space = Space::default();
+        let mut c = Corpse::from_creature(&body(), 100);
+        let bones = c.initial * CORPSE_SKELETON_SHARE;
+        let mut stripped = None;
+        for tick in 101..140 {
+            let bite = c.bite(tick, 50.0).unwrap();
+            assert_eq!(bite.rot, 0.0, "fresh bites, the stripping one too");
+            if c.skeleton.is_some() {
+                stripped = Some(tick);
+                break;
+            }
+        }
+        let at = stripped.expect("eaten down to its bones");
+        let s = c.skeleton.unwrap();
+        assert_eq!((s.at, s.y1), (at, 1000.0));
+        assert!((s.store - bones).abs() < 1e-9 && c.remaining == s.store, "a tenth is left: {}", s.store);
+        assert_eq!(c.rot(at), 1.0, "a skeleton is rot");
+        let zone = space.height * (1.0 - SKELETON_ZONE_PCT / 100.0);
+        assert!(s.rest >= zone - 20.0 && s.rest <= space.height - 20.0, "near the bottom: {}", s.rest);
+        let mut once = c.clone();
+        let mut last = c.y;
+        for tick in at + 1..=at + SKELETON_SINK_TICKS {
+            assert!(c.decay(tick));
+            assert!(c.y >= last, "only sinks");
+            last = c.y;
+        }
+        assert_eq!(c.y, s.rest, "at rest");
+        assert!(c.decay(100 + CORPSE_DECAY_TICKS), "the corpse's own time no longer counts");
+        assert!(c.decay(at + SKELETON_TICKS - 1));
+        assert!(once.decay(at + SKELETON_TICKS - 1));
+        assert!((c.remaining - once.remaining).abs() < 1e-12 && c.y == once.y, "any check frequency");
+        assert!(!c.decay(at + SKELETON_TICKS), "gone after its time");
+        // a skeleton is eaten to nothing
+        let mut eaten = Corpse::from_creature(&body(), 100);
+        for tick in 101..140 {
+            if eaten.bite(tick, 50.0).is_none() {
+                break;
+            }
+        }
+        assert!(eaten.skeleton.is_some() && eaten.remaining == 0.0);
+    }
+
+    /// Only an eaten corpse is stripped: one left alone rots on the bottom and decays away. One
+    /// that died deep does not rise as a skeleton.
+    #[test]
+    fn нетронутый_труп_не_становится_скелетом() {
+        let mut c = Corpse::from_creature(&body(), 0);
+        assert!(c.decay(CORPSE_ROTTEN_TICKS - 1) && !c.settled);
+        assert!(c.decay(CORPSE_ROTTEN_TICKS) && c.settled, "lay rotten on the bottom");
+        assert!(!c.decay(CORPSE_DECAY_TICKS));
+        assert!(c.skeleton.is_none());
+        let mut deep = body();
+        deep.y = Space::default().height - 25.0;
+        let mut d = Corpse::from_creature(&deep, 0);
+        for tick in 1..40 {
+            d.bite(tick, 50.0);
+        }
+        let s = d.skeleton.expect("eaten down");
+        assert_eq!(s.rest, s.y1, "never rises");
+        let mut fresh = Corpse::from_creature(&body(), 0);
+        for tick in 1..40 {
+            fresh.bite(tick, 50.0);
+        }
+        assert!(!fresh.settled, "eaten fresh, never lay on the bottom");
     }
 }

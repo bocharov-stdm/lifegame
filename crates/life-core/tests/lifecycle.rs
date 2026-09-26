@@ -146,14 +146,17 @@ fn раны_лечатся_за_энергию_после_паузы() {
     assert_eq!(v.health, 20.0);
     v.peaceful_ticks = 59;
     let e = v.energy;
+    // 0.2% of its health a tick: 60 for a hardy herbivore of size 40
+    let heal = v.max_health() * 0.002;
+    assert!((heal - 0.12).abs() < 1e-12);
     v.step(&life_core::senses::Blind);
-    assert!((v.health - 20.08).abs() < 1e-9);
+    assert!((v.health - 20.0 - heal).abs() < 1e-9);
     let upkeep = if v.mind.social.activity == life_core::social::Activity::Resting {
         v.pheno.slow_upkeep
     } else {
         v.pheno.upkeep
     };
-    assert!((e - v.energy - upkeep - 0.08).abs() < 1e-9);
+    assert!((e - v.energy - upkeep - heal).abs() < 1e-9);
 }
 
 /// The diet table: a specialist digests its own food fully, the omnivore everything but worse,
@@ -175,9 +178,10 @@ fn диеты_усваивают_по_таблице() {
         v.energy = 0.0;
         v.feed(1, &r);
         assert!((v.energy - plant_bite * plants).abs() < 1e-9, "{diet:?}: plants {}", v.energy);
-        assert_eq!(v.pheno.corpse_efficiency(0.0), fresh, "{diet:?}: fresh meat");
-        assert_eq!(v.pheno.corpse_efficiency(1.0), rot, "{diet:?}: rot");
-        assert!((v.pheno.corpse_efficiency(0.5) - (fresh + rot) / 2.0).abs() < 1e-12);
+        // hungry, it eats whatever it digests
+        assert_eq!(v.pheno.corpse_efficiency(0.0, true), fresh, "{diet:?}: fresh meat");
+        assert_eq!(v.pheno.corpse_efficiency(1.0, true), rot, "{diet:?}: rot");
+        assert!((v.pheno.corpse_efficiency(0.5, true) - (fresh + rot) / 2.0).abs() < 1e-12);
         assert_eq!(v.pheno.eats_plants(), plants > 0.0);
         assert_eq!(v.pheno.hunts(), fresh > 0.0);
         assert_eq!(
@@ -192,6 +196,77 @@ fn диеты_усваивают_по_таблице() {
     assert!(bonus(Diet::Herbivore) < bonus(Diet::Omnivore));
     assert!(bonus(Diet::Omnivore) < bonus(Diet::Scavenger));
     assert!(bonus(Diet::Scavenger) < bonus(Diet::Carnivore));
+}
+
+/// Sated, a creature eats and goes only for its own food: the scavenger leaves the fresher half
+/// of a corpse's time to the hunters and does not hunt, the carnivore leaves rot and skeletons to
+/// the scavengers. Below `picky` of its store it takes whatever it digests. The omnivore has no
+/// foreign food.
+#[test]
+fn сытый_ест_только_свою_пищу() {
+    let r = Rules::default();
+    for (diet, sated_fresh, sated_rot) in
+        [(Diet::Omnivore, true, true), (Diet::Scavenger, false, true), (Diet::Carnivore, true, false)]
+    {
+        let mut v = parent();
+        v.genome = with_diet(v.genome, diet).with(Gene::Picky, 30.0);
+        v.apply_rules(&r, &Space::default());
+        let full = v.pheno.max_energy;
+        assert!(!v.pheno.hungry(full * 0.3) && v.pheno.hungry(full * 0.29), "{diet:?}: picky is 30%");
+        for rot in [0.0, 0.3, 0.49] {
+            assert_eq!(v.pheno.corpse_efficiency(rot, false) > 0.0, sated_fresh, "{diet:?} at rot {rot}");
+            assert!(v.pheno.corpse_efficiency(rot, true) > 0.0, "{diet:?} hungry at rot {rot}");
+        }
+        for rot in [0.5, 0.8, 1.0] {
+            assert_eq!(v.pheno.corpse_efficiency(rot, false) > 0.0, sated_rot, "{diet:?} at rot {rot}");
+            assert!(v.pheno.corpse_efficiency(rot, true) > 0.0, "{diet:?} hungry at rot {rot}");
+        }
+        assert_eq!(v.pheno.hunts_now(full), sated_fresh, "{diet:?}: hunts sated");
+        assert!(v.pheno.hunts_now(0.0), "{diet:?}: hunts hungry");
+        assert!(v.pheno.hunts(), "{diet:?}: feared either way");
+    }
+}
+
+/// Each diet has an edge of its own besides the strike: the herbivore is hardy and carries its
+/// size cheaper, the carnivore runs cheaper, the scavenger smells corpses from afar and lives
+/// cheaper in the deep. Only the named term of upkeep changes.
+#[test]
+fn бонусы_диет() {
+    let r = Rules::default();
+    let space = Space::default();
+    let of = |diet: Diet| {
+        let mut v = parent();
+        v.genome = with_diet(v.genome, diet);
+        v.apply_rules(&r, &space);
+        v
+    };
+    let (h, o, s, c) = (of(Diet::Herbivore), of(Diet::Omnivore), of(Diet::Scavenger), of(Diet::Carnivore));
+    let (size, speed, vision) = (o.pheno.size, o.pheno.speed, o.pheno.vision);
+    assert_eq!(
+        o.pheno.upkeep,
+        r.upkeep(size, speed, vision) * o.pheno.life_pace,
+        "the omnivore pays the base"
+    );
+    assert_eq!(h.max_health(), 1.5 * o.max_health(), "hardy herbivore");
+    assert_eq!(c.max_health(), o.max_health());
+    let size_term = r.upkeep(size, speed, vision) - r.upkeep_diet(size, speed, vision, [0.0, 1.0]);
+    assert!((o.pheno.upkeep - h.pheno.upkeep - 0.15 * size_term * h.pheno.life_pace).abs() < 1e-12);
+    let speed_term = r.upkeep(size, speed, vision) - r.upkeep_diet(size, speed, vision, [1.0, 0.0]);
+    assert!((o.pheno.upkeep - c.pheno.upkeep - 0.2 * speed_term * c.pheno.life_pace).abs() < 1e-12);
+    assert_eq!(s.pheno.upkeep, o.pheno.upkeep, "the scavenger saves only in the deep");
+    assert_eq!((s.pheno.smell, o.pheno.smell), (2.0 * vision, vision));
+    // the deep saving grows from half the depth to 40% on the bottom
+    assert_eq!(s.pheno.depth_upkeep(0.0), 1.0);
+    assert_eq!(s.pheno.depth_upkeep(space.height * 0.5), 1.0);
+    assert!((s.pheno.depth_upkeep(space.height * 0.75) - 0.8).abs() < 1e-12);
+    assert!((s.pheno.depth_upkeep(space.height) - 0.6).abs() < 1e-12);
+    assert_eq!(o.pheno.depth_upkeep(space.height), 1.0);
+    let mut deep = s.clone();
+    deep.y = space.height - deep.pheno.size;
+    deep.energy = 50.0;
+    deep.step(&life_core::senses::Blind);
+    let paid = 50.0 - deep.energy;
+    assert!(paid < deep.pheno.upkeep * 0.62 && paid > deep.pheno.upkeep * 0.55, "paid {paid}");
 }
 
 #[test]
@@ -443,4 +518,22 @@ fn погибший_не_размножается() {
     let energy = p.energy;
     assert!(p.maybe_divide(&Space::default(), &Rules::default()).is_none());
     assert_eq!(p.energy, energy);
+}
+
+/// The corpse counters add up: every corpse that appeared was removed or still lies; in a living
+/// world some are eaten down to skeletons.
+#[test]
+fn счётчики_трупов_сходятся() {
+    use life_core::{World, WorldConfig};
+    let mut w = World::new(&WorldConfig { seed: 3, ..Default::default() });
+    for _ in 0..3000 {
+        w.step();
+    }
+    let c = w.counters;
+    assert_eq!(c.corpses, c.corpses_gone + w.corpses.len() as u64);
+    assert!(c.corpses_gone > 100, "{c:?}");
+    assert!(c.skeletons > 0 && c.skeletons <= c.corpses_gone, "{c:?}");
+    assert!(c.corpses_bottom <= c.corpses_gone);
+    assert!(c.corpse_ticks >= c.corpses_gone, "a corpse lies at least a tick");
+    assert!(w.corpses.iter().filter_map(|k| k.skeleton).all(|s| s.rest >= s.y1));
 }

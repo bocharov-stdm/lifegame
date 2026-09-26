@@ -7,7 +7,10 @@
 //! своё действие, а его цена дописывается в конец суммы расхода.
 
 use super::Strategy;
-use crate::config::{DIET_DIGESTION, DIET_STRIKE, ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, SLOW_PACE};
+use crate::config::{
+    DEEP_SAVING_FROM, DIET_DEEP_SAVING, DIET_DIGESTION, DIET_HEALTH, DIET_OWN, DIET_SIZE_COST, DIET_SMELL,
+    DIET_SPEED_COST, DIET_STRIKE, ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, SLOW_PACE,
+};
 use crate::flock::{FlockKind, Territoriality};
 use crate::genome::CreatureGenome;
 use crate::genome::creature::Gene;
@@ -40,6 +43,31 @@ impl Diet {
     pub fn strike_bonus(self) -> f64 {
         DIET_STRIKE[self as usize]
     }
+
+    /// Health per unit of size (`DIET_HEALTH`).
+    pub fn health(self) -> f64 {
+        DIET_HEALTH[self as usize]
+    }
+
+    /// Factors of the size and speed terms of upkeep (`DIET_SIZE_COST`, `DIET_SPEED_COST`).
+    pub fn upkeep_costs(self) -> [f64; 2] {
+        [DIET_SIZE_COST[self as usize], DIET_SPEED_COST[self as usize]]
+    }
+
+    /// Corpses are sensed this far, in shares of vision (`DIET_SMELL`).
+    pub fn smell(self) -> f64 {
+        DIET_SMELL[self as usize]
+    }
+
+    /// Upkeep saved on the bottom (`DIET_DEEP_SAVING`).
+    pub fn deep_saving(self) -> f64 {
+        DIET_DEEP_SAVING[self as usize]
+    }
+
+    /// Its own food among plants, fresh meat and rot (`DIET_OWN`).
+    pub fn own(self) -> [bool; 3] {
+        DIET_OWN[self as usize]
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -70,6 +98,18 @@ pub struct Phenotype {
     pub meat_efficiency: f64,
     /// Fully rotten meat; a rotting corpse is a mix by its rot share (`corpse_efficiency`).
     pub rot_efficiency: f64,
+    /// Fresh meat and rot are its own food: sated, it eats and goes only for its own
+    /// (`DIET_OWN`); below `picky` of its store, for any it digests.
+    pub own_meat: bool,
+    pub own_rot: bool,
+    pub picky: f64,
+    /// Health per unit of size (`DIET_HEALTH`).
+    pub health_bonus: f64,
+    /// How far it senses corpses (`DIET_SMELL` times vision).
+    pub smell: f64,
+    /// Upkeep saved at the bottom; the saving grows from `DEEP_SAVING_FROM` of the depth.
+    pub deep_saving: f64,
+    pub height: f64,
     pub prey_ratio: f64,
     /// How much a hunter weighs the strikes it expects from its prey and the prey's visible
     /// allies: 0 ignores them, 1 is the base, 2 is twice as careful.
@@ -163,6 +203,7 @@ impl Phenotype {
         let vision = genome[Gene::Vision];
         let diet = Diet::from_gene(genome[Gene::Diet]);
         let [plants, fresh, rot] = diet.digestion();
+        let [_, own_meat, own_rot] = diet.own();
         let slow_speed = speed * SLOW_PACE;
         Phenotype {
             size,
@@ -179,6 +220,13 @@ impl Phenotype {
             plant_efficiency: plants,
             meat_efficiency: fresh,
             rot_efficiency: rot,
+            own_meat,
+            own_rot,
+            picky: genome[Gene::Picky].clamp(0.0, 100.0) / 100.0,
+            health_bonus: diet.health(),
+            smell: vision * diet.smell(),
+            deep_saving: diet.deep_saving(),
+            height: space.height,
             prey_ratio: genome[Gene::PreyRatio].clamp(1.0, 5.0),
             caution: genome[Gene::Caution].clamp(0.0, 100.0) / 50.0,
             forage: genome[Gene::Forage].clamp(0.0, 100.0) / 100.0,
@@ -201,9 +249,9 @@ impl Phenotype {
             y_lo,
             y_hi,
             max_energy: size * ENERGY_PER_SIZE,
-            upkeep: rules.upkeep(size, speed, vision) * life_pace,
+            upkeep: rules.upkeep_diet(size, speed, vision, diet.upkeep_costs()) * life_pace,
             slow_speed,
-            slow_upkeep: rules.upkeep(size, slow_speed, vision) * life_pace,
+            slow_upkeep: rules.upkeep_diet(size, slow_speed, vision, diet.upkeep_costs()) * life_pace,
             vision2: vision * vision,
             size2: size * size,
             half: size / 2.0,
@@ -214,10 +262,34 @@ impl Phenotype {
 }
 
 impl Phenotype {
-    /// Efficiency on a corpse with rot share `rot`: fresh and rot mixed.
+    /// Efficiency on a corpse with rot share `rot`: fresh and rot mixed. A sated creature
+    /// (`hungry` false) does not touch a corpse that is mostly another niche's food (0): a sated
+    /// scavenger leaves the fresher half of the time to the hunters, a sated carnivore the rotten
+    /// half to the scavengers.
     #[inline]
-    pub fn corpse_efficiency(&self, rot: f64) -> f64 {
+    pub fn corpse_efficiency(&self, rot: f64, hungry: bool) -> f64 {
+        let own = if rot < 0.5 { self.own_meat } else { self.own_rot };
+        if !hungry && !own {
+            return 0.0;
+        }
         self.meat_efficiency * (1.0 - rot) + self.rot_efficiency * rot
+    }
+
+    /// Below `picky` of its store it eats another niche's food too.
+    #[inline]
+    pub fn hungry(&self, energy: f64) -> bool {
+        energy < self.max_energy * self.picky
+    }
+
+    /// The share of upkeep it pays at depth `y`: 1, or less for a deep dweller below
+    /// `DEEP_SAVING_FROM` of the depth, down to `1 − deep_saving` on the bottom.
+    #[inline]
+    pub fn depth_upkeep(&self, y: f64) -> f64 {
+        if self.deep_saving == 0.0 {
+            return 1.0;
+        }
+        let t = ((y / self.height - DEEP_SAVING_FROM) / (1.0 - DEEP_SAVING_FROM)).clamp(0.0, 1.0);
+        1.0 - self.deep_saving * t
     }
 
     /// Eats plants at all.
@@ -226,8 +298,6 @@ impl Phenotype {
         self.plant_efficiency > 0.0
     }
 
-    /// Eats fresh meat: it hunts, and others fear it.
-    #[inline]
     /// Its melee damage: a share of its size, times its diet's bonus. The energy a strike costs
     /// is the share without the bonus (`strike_cost`).
     pub fn strike(&self) -> f64 {
@@ -238,8 +308,16 @@ impl Phenotype {
         self.size * self.melee_damage_share
     }
 
+    /// Eats fresh meat, at least when hungry: others fear it.
+    #[inline]
     pub fn hunts(&self) -> bool {
         self.meat_efficiency > 0.0
+    }
+
+    /// Hunts now: fresh meat is its own food, or it is hungry.
+    #[inline]
+    pub fn hunts_now(&self, energy: f64) -> bool {
+        self.hunts() && (self.own_meat || self.hungry(energy))
     }
 
     /// Eats some corpse, fresh or rotten.

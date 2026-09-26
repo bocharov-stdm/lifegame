@@ -268,7 +268,7 @@ mod tests {
             CombatPolicy { territorial_targets: &[None, None], grace: &grace },
         );
         assert!(during.shots.is_empty());
-        assert_eq!(w.creatures[1].health, 15.0);
+        assert_eq!(w.creatures[1].health, w.creatures[1].max_health());
         let after = resolve_with_grace(
             &w.space,
             &w.rules,
@@ -295,7 +295,7 @@ mod tests {
             600,
             CombatPolicy { territorial_targets: &[None, None], grace: &grace },
         );
-        assert_eq!(close.creatures[1].health, 15.0);
+        assert_eq!(close.creatures[1].health, close.creatures[1].max_health());
     }
     #[test]
     fn удары_одновременны_и_погибший_не_получает_добычу() {
@@ -331,7 +331,10 @@ mod tests {
         w.spawn(CreatureGenome::BASE.with(Gene::Size, 100.0), 1000.0, 1000.0, Some(200.0));
         let prey = w.spawn(CreatureGenome::BASE.with(Gene::Size, 30.0), 1000.0, 1000.0, Some(50.0));
         w.creatures[0].mind.attack = Some(prey);
-        for _ in 0..5 {
+        // the hardy herbivore (health ×1.5) takes nine strikes of 5
+        let strikes = (w.creatures[1].max_health() / w.creatures[0].pheno.strike()).ceil() as usize;
+        assert_eq!(strikes, 9);
+        for _ in 0..strikes - 1 {
             hit(&mut w);
             assert!(w.creatures[1].alive);
         }
@@ -383,7 +386,7 @@ mod tests {
         }
         assert_eq!(total, 2);
         assert!((w.creatures[0].energy - 98.4).abs() < 1e-9);
-        assert!((w.creatures[1].health - 14.2).abs() < 1e-9);
+        assert!((w.creatures[1].max_health() - 0.8 - w.creatures[1].health).abs() < 1e-9, "two shots of 0.4");
     }
 
     #[test]
@@ -407,7 +410,7 @@ mod tests {
         );
         assert!(result.shots.is_empty());
         assert_eq!(w.creatures[0].energy, 98.0);
-        assert_eq!(w.creatures[1].health, 13.0);
+        assert_eq!(w.creatures[1].health, w.creatures[1].max_health() - 2.0);
     }
 
     #[test]
@@ -435,8 +438,8 @@ mod tests {
             &[None, None, None],
         );
         assert!(result.shots.is_empty());
-        assert_eq!(w.creatures[1].health, 13.0);
-        assert_eq!(w.creatures[2].health, 15.0);
+        assert_eq!(w.creatures[1].health, w.creatures[1].max_health() - 2.0);
+        assert_eq!(w.creatures[2].health, w.creatures[2].max_health());
         assert_eq!(w.creatures[0].energy, 78.0);
     }
 
@@ -582,7 +585,7 @@ mod tests {
         );
         assert!(result.shots.is_empty());
         assert_eq!(w.creatures[0].energy, 100.0);
-        assert_eq!(w.creatures[1].health, 80.0);
+        assert_eq!(w.creatures[1].health, w.creatures[1].max_health());
     }
 
     #[test]
@@ -654,7 +657,7 @@ mod tests {
             resolve(&w.space, &w.rules, &mut w.creatures, &mut grid, &mut w.counters, 1, &[None, None]);
         assert_eq!(first.shots.len(), 1);
         assert!((w.creatures[0].energy - 99.6).abs() < 1e-9);
-        assert!((w.creatures[1].health - 13.0).abs() < 1e-9);
+        assert!((w.creatures[1].max_health() - 2.0 - w.creatures[1].health).abs() < 1e-9);
         let second =
             resolve(&w.space, &w.rules, &mut w.creatures, &mut grid, &mut w.counters, 2, &[None, None]);
         assert!(second.shots.is_empty());

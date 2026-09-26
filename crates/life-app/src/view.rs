@@ -390,7 +390,8 @@ impl WorldView {
         for corpse in &f.corpses {
             let (x, y) = cam.to_screen(corpse.x, corpse.py + (corpse.y - corpse.py) * k as f64);
             let center = pos(x, y);
-            let radius = (corpse.size * 0.5 * cam.zoom) as f32;
+            let body = if corpse.skeleton { 0.3 } else { 0.5 };
+            let radius = (corpse.size * body * cam.zoom) as f32;
             if !Rect::from_center_size(center, Vec2::splat(radius * 2.0)).intersects(rect) {
                 continue;
             }

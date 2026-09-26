@@ -168,6 +168,38 @@ pub const DIET_JUMP_CHANCE: f64 = 0.0001;
 /// eaters are built to kill. The omnivore strikes a little harder than the herbivore, the
 /// scavenger harder still, the carnivore hardest. The energy a strike costs does not change.
 pub const DIET_STRIKE: [f64; 4] = [1.0, 1.15, 1.3, 1.5];
+/// Health by diet, times the body size: the herbivore is hardy. It cannot strike like a meat
+/// eater, so it outlasts one — a hunter needs half as many strikes again, and weighs that.
+pub const DIET_HEALTH: [f64; 4] = [1.5, 1.0, 1.0, 1.0];
+/// The size term of upkeep by diet: plants are a steady, bulky food, so a herbivore carries a
+/// big body cheaper — a little, so that size still has a price and selection, not the table,
+/// makes it bigger.
+pub const DIET_SIZE_COST: [f64; 4] = [0.85, 1.0, 1.0, 1.0];
+/// The speed term of upkeep by diet: the carnivore is a runner built to chase — it moves cheaper.
+/// Without an edge of its own it died out everywhere once the herbivore grew hardy and the
+/// scavenger learned to smell (16 of 16 worlds, 2026-09-26).
+pub const DIET_SPEED_COST: [f64; 4] = [1.0, 1.0, 1.0, 0.8];
+/// How far corpses are sensed, in shares of vision: the scavenger smells them twice as far as it
+/// sees. Smell is not paid for — only vision is (the scavenger's food lies scattered in the deep,
+/// and it would never find it by sight alone).
+pub const DIET_SMELL: [f64; 4] = [1.0, 1.0, 2.0, 1.0];
+/// Upkeep saved in the deep by diet: from `DEEP_SAVING_FROM` of the depth down to the bottom the
+/// share grows linearly to this. The scavenger lives slowly in the cold dark where rot settles
+/// and plants do not grow; above that depth it pays like everybody.
+pub const DIET_DEEP_SAVING: [f64; 4] = [0.0, 0.0, 0.4, 0.0];
+pub const DEEP_SAVING_FROM: f64 = 0.5;
+/// Which food is a diet's own (plants, fresh meat, rot): a sated creature eats and goes for only
+/// its own, and takes another niche's food only when hungry (the inherited `picky`). The omnivore
+/// has no foreign food: it is the generalist.
+pub const DIET_OWN: [[bool; 3]; 4] = [
+    [true, false, false], // травоядный
+    [true, true, true],   // всеядный
+    [false, false, true], // падальщик
+    [false, true, false], // мясоед
+];
+/// Founders dealt the scavenger diet start with this layer, % of depth (the `min_y`/`max_y`
+/// genes): in the deep, where rot will settle. A start condition, not a rule — the genes mutate.
+pub const SCAVENGER_START_LAYER: (f64, f64) = (50.0, 100.0);
 /// Digestibility by diet (order of `genome::creature::DIET_VARIANTS`): plants, fresh meat,
 /// rot. For plants 1 is the world's yield `plant_bite_yield`; for meat it is the whole raw
 /// portion — the diet alone decides how much of it is taken in (the old flat 10% fed a hunter
@@ -200,6 +232,16 @@ pub const CORPSE_ROTTEN_TICKS: u64 = 600;
 pub const CORPSE_DECAY_TICKS: u64 = 1800;
 /// Rot lies in this lowest share of the depth, %: the bottom, where no plants grow.
 pub const CORPSE_BOTTOM_PCT: f64 = 2.0;
+/// A corpse eaten down to this share of its meat becomes a skeleton: bones and scraps, rot from
+/// the start, that sink to the deep. The hunters' last tenth feeds the scavengers.
+pub const CORPSE_SKELETON_SHARE: f64 = 0.1;
+/// Skeletons settle in this lowest share of the depth, %: near the bottom, spread over the dead
+/// deep rather than all on it.
+pub const SKELETON_ZONE_PCT: f64 = 15.0;
+/// A skeleton sinks to its place in this many ticks,
+pub const SKELETON_SINK_TICKS: u64 = 300;
+/// and what is left of it decays evenly over this many ticks from the moment it was stripped.
+pub const SKELETON_TICKS: u64 = 1800;
 
 // ── Бегство ─────────────────────────────────────────────────────────────────
 /// Существо бежит от чужого (не родни), который может его съесть, когда до

@@ -720,6 +720,7 @@ fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; N]>) {
         ),
     )
     .on_hover_text(diet.about);
+    ui.colored_label(MUTED, diet_bonuses(s.genome[creature::Gene::Diet as usize]));
     if let Some(food) = s.eating {
         use life_core::creature::Morsel;
         ui.colored_label(
@@ -775,6 +776,35 @@ fn gene_rows(ui: &mut egui::Ui, genes: &[GeneSpec], g: &[f64], avg: Option<&[f64
         ui.colored_label(MUTED, delta.unwrap_or_default());
         ui.end_row();
     }
+}
+
+/// A diet's edges, from the engine's tables: «удар ×1,5 · скорость дешевле на 20%».
+fn diet_bonuses(gene: f64) -> String {
+    use life_core::config::{
+        DIET_DEEP_SAVING, DIET_HEALTH, DIET_SIZE_COST, DIET_SMELL, DIET_SPEED_COST, DIET_STRIKE,
+    };
+    let d = (gene.max(0.0) as usize).min(3);
+    let times = |x: f64| format!("{x}").replace('.', ",");
+    let mut parts = Vec::new();
+    if DIET_STRIKE[d] != 1.0 {
+        parts.push(format!("удар ×{}", times(DIET_STRIKE[d])));
+    }
+    if DIET_HEALTH[d] != 1.0 {
+        parts.push(format!("здоровье ×{}", times(DIET_HEALTH[d])));
+    }
+    if DIET_SIZE_COST[d] != 1.0 {
+        parts.push(format!("размер дешевле на {:.0}%", (1.0 - DIET_SIZE_COST[d]) * 100.0));
+    }
+    if DIET_SPEED_COST[d] != 1.0 {
+        parts.push(format!("скорость дешевле на {:.0}%", (1.0 - DIET_SPEED_COST[d]) * 100.0));
+    }
+    if DIET_SMELL[d] != 1.0 {
+        parts.push(format!("нюх ×{}", times(DIET_SMELL[d])));
+    }
+    if DIET_DEEP_SAVING[d] != 0.0 {
+        parts.push(format!("в глубине расход до −{:.0}%", DIET_DEEP_SAVING[d] * 100.0));
+    }
+    if parts.is_empty() { "без особых сил".into() } else { parts.join(" · ") }
 }
 
 #[cfg(test)]

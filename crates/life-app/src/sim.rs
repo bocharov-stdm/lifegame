@@ -753,11 +753,12 @@ impl Sim {
                             py: c.y_at(prev_tick.max(c.born)),
                             rot: c.rot(w.tick),
                             size: c.size,
-                            fullness: if c.initial > 0.0 {
-                                (c.remaining / c.initial).clamp(0.0, 1.0)
-                            } else {
-                                0.0
+                            fullness: match c.skeleton {
+                                Some(s) if s.store > 0.0 => (c.remaining / s.store).clamp(0.0, 1.0),
+                                None if c.initial > 0.0 => (c.remaining / c.initial).clamp(0.0, 1.0),
+                                _ => 0.0,
                             },
+                            skeleton: c.skeleton.is_some(),
                         })
                         .collect()
                 })

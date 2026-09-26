@@ -97,6 +97,13 @@ pub struct Counters {
     pub combat: u64,
     /// Съедены сородичами (каннибализм).
     pub cannibalized: u64,
+    /// Corpses that appeared, and of those removed: how many had lain fully rotten on the bottom
+    /// with meat left, how many had been eaten down to a skeleton, and their lifetimes summed.
+    pub corpses: u64,
+    pub corpses_gone: u64,
+    pub corpses_bottom: u64,
+    pub skeletons: u64,
+    pub corpse_ticks: u64,
 }
 
 impl Counters {
@@ -115,6 +122,11 @@ impl Counters {
             old_age: self.old_age - earlier.old_age,
             combat: self.combat - earlier.combat,
             cannibalized: self.cannibalized - earlier.cannibalized,
+            corpses: self.corpses - earlier.corpses,
+            corpses_gone: self.corpses_gone - earlier.corpses_gone,
+            corpses_bottom: self.corpses_bottom - earlier.corpses_bottom,
+            skeletons: self.skeletons - earlier.skeletons,
+            corpse_ticks: self.corpse_ticks - earlier.corpse_ticks,
         }
     }
 }
@@ -233,6 +245,16 @@ impl World {
                 .with(creature::Gene::FlockKind, kind as f64)
                 .with(creature::Gene::LayerBound, f64::from(free as u8))
                 .with(creature::Gene::Diet, diet as f64);
+            // Scavengers start held in the deep, where rot will settle.
+            let genome = if diet == crate::creature::Diet::Scavenger as usize {
+                let (top, bottom) = crate::config::SCAVENGER_START_LAYER;
+                genome
+                    .with(creature::Gene::MinY, top)
+                    .with(creature::Gene::MaxY, bottom)
+                    .with(creature::Gene::LayerBound, 0.0)
+            } else {
+                genome
+            };
             let v = Creature::new(&w.space, &w.rules, genome, None, None, None, rng.fork());
             w.add_creature(v);
         }
@@ -300,7 +322,17 @@ impl World {
         let now = self.tick + 1;
         self.grace.prune(now);
         self.shots.retain(|s| now.saturating_sub(s.tick) <= 8);
-        self.corpses.retain_mut(|c| c.decay(now));
+        let counters = &mut self.counters;
+        self.corpses.retain_mut(|c| {
+            let keep = c.decay(now);
+            if !keep {
+                counters.corpses_gone += 1;
+                counters.corpses_bottom += c.settled as u64;
+                counters.skeletons += c.skeleton.is_some() as u64;
+                counters.corpse_ticks += now - c.born;
+            }
+            keep
+        });
         crate::flock::food_goals(&mut self.flocks, &self.creatures, self.tick);
         self.social_counts.relocations +=
             crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.seed, true);
@@ -370,11 +402,13 @@ impl World {
         // порции трупов по ID: тот, кому остатка уже не хватит, может взять
         // растение сейчас, не получая второй порции в этом тике.
         let mut reserved = corpses.clone();
+        // Hunger is judged once, before the meal: the same in both feeding phases.
+        let hungry: Vec<bool> = creatures.iter().map(|v| v.pheno.hungry(v.energy)).collect();
         let plant_bite = rules.plant_energy * rules.plant_bite_yield / f64::from(crate::plant::PORTIONS);
         for (i, v) in creatures.iter_mut().enumerate().filter(|(_, v)| v.alive) {
             // Only what the diet digests is eaten at all: a meat-eater does not take a plant from
-            // a herbivore for nothing, a herbivore does not touch a corpse.
-            let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.rot(now)) > 0.0;
+            // a herbivore for nothing, a herbivore does not touch a corpse. Sated, only its own.
+            let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.rot(now), hungry[i]) > 0.0;
             let corpse = crate::corpse::contact(
                 corpse_grid,
                 &reserved,
@@ -386,7 +420,7 @@ impl World {
             );
             let prefer_corpse = corpse.is_some_and(|j| {
                 let c = &reserved[j];
-                c.portion(rules.plant_energy) * v.pheno.corpse_efficiency(c.rot(now))
+                c.portion(rules.plant_energy) * v.pheno.corpse_efficiency(c.rot(now), hungry[i])
                     > plant_bite * v.pheno.plant_efficiency
             });
             let plant = if prefer_corpse || !v.pheno.eats_plants() {
@@ -427,7 +461,7 @@ impl World {
             if !v.alive || fed[i] {
                 continue;
             }
-            let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.rot(now)) > 0.0;
+            let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.rot(now), hungry[i]) > 0.0;
             if let Some(bite) = crate::corpse::bite(
                 corpse_grid,
                 corpses,
@@ -438,7 +472,7 @@ impl World {
                 now,
                 eats,
             ) {
-                v.devour(bite.amount * v.pheno.corpse_efficiency(bite.rot), rules);
+                v.devour(bite.amount * v.pheno.corpse_efficiency(bite.rot, true), rules);
                 v.meal =
                     Some(Meal { tick: now, x: bite.x, y: bite.y, food: Morsel::Corpse { rot: bite.rot } });
                 counters.meat_bites += 1;
@@ -455,9 +489,11 @@ impl World {
                 offspring.push((child, v.flock, protect));
             }
         }
+        let before = corpses.len();
         corpses.extend(
             creatures.iter().filter(|v| !v.alive).map(|v| crate::corpse::Corpse::from_creature(v, now)),
         );
+        counters.corpses += (corpses.len() - before) as u64;
         creatures.retain(|v| v.alive);
         plants.retain(|p| {
             if !p.alive() {

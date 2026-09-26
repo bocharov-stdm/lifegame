@@ -35,6 +35,11 @@ fn counters(c: &Counters) -> Value {
         "old_age": c.old_age,
         "combat": c.combat,
         "cannibalized": c.cannibalized,
+        "corpses": c.corpses,
+        "corpses_gone": c.corpses_gone,
+        "corpses_bottom": c.corpses_bottom,
+        "skeletons": c.skeletons,
+        "corpse_ticks": c.corpse_ticks,
     })
 }
 
@@ -194,7 +199,18 @@ mod tests {
         assert_eq!(data["format"], "life-report/10");
         let run = &data["runs"][0];
         let snap = &run["snapshots"][0];
-        for key in ["plant_bites", "meat_bites", "rot_bites", "ranged_shots", "territorial_fights"] {
+        for key in [
+            "plant_bites",
+            "meat_bites",
+            "rot_bites",
+            "ranged_shots",
+            "territorial_fights",
+            "corpses",
+            "corpses_gone",
+            "corpses_bottom",
+            "skeletons",
+            "corpse_ticks",
+        ] {
             assert!(run["totals"][key].as_u64().is_some(), "нет итогового счётчика {key}");
             assert!(snap["counters"][key].as_u64().is_some(), "нет счётчика среза {key}");
         }

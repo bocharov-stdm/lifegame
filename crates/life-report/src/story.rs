@@ -45,6 +45,14 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
         "Питание: порций растений {}, мяса {} (из них гнили {}). Выстрелов {}, территориальных ударов {}.",
         c.plant_bites, c.meat_bites, c.rot_bites, c.ranged_shots, c.territorial_fights
     );
+    println!(
+        "Трупы: появилось {}, убрано {}; из убранных лежали сгнившими на дне {}, стали скелетом {}, лежали в среднем {:.0} тиков.",
+        c.corpses,
+        c.corpses_gone,
+        percent(c.corpses_bottom, c.corpses_gone),
+        percent(c.skeletons, c.corpses_gone),
+        c.corpse_ticks as f64 / c.corpses_gone.max(1) as f64
+    );
 
     println!(
         "Молодых {} из {}; стайный ген {} ({:.0}%), участников стай {}, стай {}.",

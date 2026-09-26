@@ -533,7 +533,11 @@ fn медленный_ход_дешевле() {
     let v = creature(1000.0, 1000.0, BASE);
     assert!((v.pheno.slow_speed - v.pheno.speed * SLOW_PACE).abs() < 1e-12);
     assert!(v.pheno.slow_upkeep < v.pheno.upkeep);
-    assert_eq!(v.pheno.slow_upkeep, Rules::default().upkeep(40.0, v.pheno.slow_speed, v.pheno.vision));
+    let costs = life_core::creature::Diet::Herbivore.upkeep_costs();
+    assert_eq!(
+        v.pheno.slow_upkeep,
+        Rules::default().upkeep_diet(40.0, v.pheno.slow_speed, v.pheno.vision, costs)
+    );
 }
 
 /// Затаившийся без еды бродит медленно и дёшево; стандартный — на полной.
@@ -794,10 +798,17 @@ fn диеты_основателей_раздаются_по_долям_впер
     assert!(diets[..10].iter().any(|&d| d != 0) && diets[10..].contains(&0), "spread: {diets:?}");
     let all_herbivores = World::new(&WorldConfig { seed: 4, diets: Vec::new(), ..Default::default() });
     assert!(all_herbivores.creatures.iter().all(|v| v.pheno.diet as usize == 0));
-    // the diets draw nothing: the founders stand where they stood
-    let same_places =
-        all_herbivores.creatures.iter().zip(&w.creatures).all(|(a, b)| (a.x, a.y) == (b.x, b.y));
-    assert!(same_places, "dealing diets must not shift the world's random numbers");
+    // the diets draw nothing: the founders stand where they stood — scavengers at the same x, but
+    // held in the deep (`SCAVENGER_START_LAYER`)
+    let height = w.space.height;
+    for (a, b) in all_herbivores.creatures.iter().zip(&w.creatures) {
+        if b.pheno.diet == life_core::creature::Diet::Scavenger {
+            assert_eq!(a.x, b.x, "dealing diets must not shift the world's random numbers");
+            assert!(b.y > height * 0.5 && b.pheno.layer_bound, "a scavenger starts in the deep: {}", b.y);
+        } else {
+            assert_eq!((a.x, a.y), (b.x, b.y), "dealing diets must not shift the world's random numbers");
+        }
+    }
 }
 
 #[test]
