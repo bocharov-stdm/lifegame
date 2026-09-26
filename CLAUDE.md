@@ -84,7 +84,11 @@ Looking at the game from an agent: don't take screenshots of the desktop (other 
 captured) and don't inject mouse/keyboard input. Render screens headless with `TINYLIFE_SHOTS`
 (egui_kittest), and drive state through `LifeApp` fields / `sim::Command` in `ui_tests.rs`.
 
-CI (`.github/workflows/ci.yml`, Windows + Linux) runs fmt, clippy, tests and `--compare`.
+CI (`.github/workflows/ci.yml`, Windows + Linux) runs fmt, clippy and tests on both, and
+`--compare` against both references (base and calm) on Windows only. The game and the
+references live on Windows; Linux is there for cloud agents, whose sandbox is Linux. Its libm
+differs in the last bits, so the same seeds grow into another realization of the world, and
+a Linux mean may fall outside the Windows per-seed range by chance.
 Dev builds use `opt-level = 2`: tests run real multi-thousand-tick simulations.
 
 Validating a model change: seeds 1–8 × 20 000 ticks with `cannibalism=0` and `cannibalism=1`,

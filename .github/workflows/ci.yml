@@ -1,5 +1,5 @@
-# Проверки на каждый push и PR: Rust на Windows и Linux (включая тесты экранов
-# игры) плюс сверка баланса с эталоном, снятым с Python-версии (тег python-final).
+# Checks on every push and PR: Rust on Windows and Linux (including the game's screen tests),
+# plus the balance comparison against the references on Windows only.
 name: CI
 
 on:
@@ -9,6 +9,7 @@ on:
 jobs:
   rust:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -26,5 +27,12 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
-      - name: Сверка с эталоном Python
+      # The references are recorded on Windows, where the game runs. Linux takes ln/cos/powf/hypot
+      # from its own libm, the last-bit differences grow, and the same seeds become another
+      # realization of the world, so its means may leave the Windows per-seed range by chance.
+      - name: Balance vs the reference
+        if: runner.os == 'Windows'
         run: cargo run -p life-report --release -- --compare reference/fingerprint.json
+      - name: Balance vs the calm reference
+        if: runner.os == 'Windows'
+        run: cargo run -p life-report --release -- --compare reference/calm-fingerprint.json --rule cost_scale=3 --rule cannibalism=1
