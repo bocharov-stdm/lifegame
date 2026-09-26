@@ -1,7 +1,7 @@
 //! Геном существа.
 
 use super::{GeneKind, GeneSpec, Genome, Mutation, Variant, bases};
-use crate::config::{SHOOTER_SWITCH_CHANCE, STRATEGY_SWITCH_CHANCE};
+use crate::config::{DIET_STEP_CHANCE, SHOOTER_SWITCH_CHANCE, STRATEGY_SWITCH_CHANCE};
 use crate::creature::strategy::VARIANTS as STRATEGIES;
 use crate::rng::Rng;
 
@@ -20,7 +20,7 @@ pub enum Gene {
     Mutability,
     LifePace,
     Bravery,
-    Carnivory,
+    Diet,
     PreyRatio,
     Sociability,
     Shooter,
@@ -49,7 +49,7 @@ impl Gene {
         Gene::Mutability,
         Gene::LifePace,
         Gene::Bravery,
-        Gene::Carnivory,
+        Gene::Diet,
         Gene::PreyRatio,
         Gene::Sociability,
         Gene::Shooter,
@@ -114,6 +114,31 @@ pub const FLOCK_KIND_VARIANTS: [Variant; 4] = [
     },
     Variant {
         key: "migrant", label: "мигранты", about: "Круг циклично ходит вверх и вниз по глубине."
+    },
+];
+
+/// What a creature can digest (`config::DIET_DIGESTION`). The order is the chain a mutation walks
+/// one step at a time: herbivore ↔ omnivore ↔ carnivore ↔ scavenger. Labels are game UI.
+pub const DIET_VARIANTS: [Variant; 4] = [
+    Variant {
+        key: "herbivore",
+        label: "травоядный",
+        about: "Ест только растения и усваивает их лучше всех.",
+    },
+    Variant {
+        key: "omnivore",
+        label: "всеядный",
+        about: "Ест растения, свежее мясо и гниль, но всё усваивает хуже специалистов.",
+    },
+    Variant {
+        key: "carnivore",
+        label: "мясоед",
+        about: "Ест только мясо: свежее усваивает полностью, гниль — едва.",
+    },
+    Variant {
+        key: "scavenger",
+        label: "падальщик",
+        about: "Ест только мясо: гниль усваивает лучше всех, свежее — чуть хуже мясоеда.",
     },
 ];
 
@@ -225,13 +250,14 @@ pub const GENES: [GeneSpec; N] = [
         base: 50.0,
         mutation: SCALE,
     },
+    // Replaced the numeric `carnivory` in place (see `genome/mod.rs`).
     GeneSpec {
-        key: "carnivory",
-        label: "плотоядность",
-        about: "Лучше усваивает добычу, хуже растения, %.",
-        kind: GeneKind::Percent,
-        base: 25.0,
-        mutation: SCALE,
+        key: "diet",
+        label: "питание",
+        about: "Что ест и как усваивает; потомок изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
+        kind: GeneKind::Choice(&DIET_VARIANTS),
+        base: 0.0,
+        mutation: Mutation::Step { chance: DIET_STEP_CHANCE },
     },
     GeneSpec {
         key: "prey_ratio",
@@ -412,6 +438,25 @@ mod tests {
         assert_eq!(CreatureGenome::BASE[Gene::PackInstinct], 1.0);
         assert_eq!(CreatureGenome::BASE[Gene::Territoriality], 1.0);
         assert_eq!(CreatureGenome::BASE[Gene::Care], 50.0);
+        assert_eq!(CreatureGenome::BASE[Gene::Diet], 0.0, "a spawned creature is a herbivore");
+    }
+
+    #[test]
+    fn диета_меняется_редко_и_только_на_шаг() {
+        let mut rng = Rng::new(21);
+        for start in 0..4 {
+            let parent = CreatureGenome::BASE.with(Gene::Diet, start as f64);
+            let mut changed = 0;
+            for _ in 0..20_000 {
+                let child = parent.mutate(0.3, &mut rng)[Gene::Diet];
+                assert_eq!(child.fract(), 0.0);
+                if child != start as f64 {
+                    changed += 1;
+                    assert_eq!((child - start as f64).abs(), 1.0, "{start} → {child}: one step only");
+                }
+            }
+            assert!((5..=45).contains(&changed), "rare: {changed} of 20000 from {start}");
+        }
     }
 
     /// Мутагенность родителя растягивает разброс всех генов, и свой тоже, и

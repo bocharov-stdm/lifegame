@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use life_core::config::CREATURES_AT_START;
+use life_core::config::{CREATURES_AT_START, DIET_START_MIX};
 use life_core::flora::{Along, Profile};
 use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::{Rules, Shape, Space, WorldConfig};
@@ -38,6 +38,10 @@ pub enum Key {
     SizePower,
     SightPower,
     Lurkers,
+    Herbivores,
+    Omnivores,
+    Carnivores,
+    Scavengers,
     PlantDepthProfile,
     PlantDepthSteepness,
     PlantDepthEnd,
@@ -121,7 +125,7 @@ fn percent(v: f64) -> String {
     format!("{v:.0}%")
 }
 
-pub const FIELDS: [Field; 26] = [
+pub const FIELDS: [Field; 30] = [
     // ── Мир ──────────────────────────────────────────────────────────────────
     Field {
         key: Key::Creatures,
@@ -161,6 +165,55 @@ pub const FIELDS: [Field; 26] = [
         hi: 100.0,
         step: 5.0,
         format: percent,
+        tab: Tab::World,
+        rule: None,
+        ..SLIDER
+    },
+    // Founders' diets: shares relative to the sum of the four sliders (all zero — herbivores).
+    Field {
+        key: Key::Herbivores,
+        label: "Травоядных на старте",
+        hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание                наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
+        lo: 0.0,
+        hi: 100.0,
+        step: 5.0,
+        format: int,
+        tab: Tab::World,
+        rule: None,
+        ..SLIDER
+    },
+    Field {
+        key: Key::Omnivores,
+        label: "Всеядных на старте",
+        hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание                наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
+        lo: 0.0,
+        hi: 100.0,
+        step: 5.0,
+        format: int,
+        tab: Tab::World,
+        rule: None,
+        ..SLIDER
+    },
+    Field {
+        key: Key::Carnivores,
+        label: "Мясоедов на старте",
+        hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание                наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
+        lo: 0.0,
+        hi: 100.0,
+        step: 5.0,
+        format: int,
+        tab: Tab::World,
+        rule: None,
+        ..SLIDER
+    },
+    Field {
+        key: Key::Scavengers,
+        label: "Падальщиков на старте",
+        hint: "Доли основателей по питанию считаются от суммы четырёх ползунков. Дальше питание                наследуется и изредка сдвигается на шаг: травоядный ↔ всеядный ↔ мясоед ↔ падальщик.",
+        lo: 0.0,
+        hi: 100.0,
+        step: 5.0,
+        format: int,
         tab: Tab::World,
         rule: None,
         ..SLIDER
@@ -502,6 +555,10 @@ impl Default for Settings {
                 Key::CostScale => 3.0,
                 Key::PlantGrowth => 1.0,
                 Key::Lurkers => 0.0,
+                Key::Herbivores => DIET_START_MIX[0],
+                Key::Omnivores => DIET_START_MIX[1],
+                Key::Carnivores => DIET_START_MIX[2],
+                Key::Scavengers => DIET_START_MIX[3],
                 _ => rules.get(f.rule.expect("правило")).expect("правило есть в Rules"),
             }),
             fullscreen: false,
@@ -571,6 +628,9 @@ impl Settings {
             rules: self.rules(),
             n_creatures: Some(per_area(Key::Creatures)),
             strategies: mix(Key::Lurkers),
+            diets: [Key::Herbivores, Key::Omnivores, Key::Carnivores, Key::Scavengers]
+                .map(|k| self.get(k))
+                .to_vec(),
         }
     }
 
@@ -684,6 +744,10 @@ fn json_key(key: Key) -> &'static str {
         Key::SizePower => "size_power",
         Key::SightPower => "sight_power",
         Key::Lurkers => "lurkers_percent",
+        Key::Herbivores => "diet_herbivores",
+        Key::Omnivores => "diet_omnivores",
+        Key::Carnivores => "diet_carnivores",
+        Key::Scavengers => "diet_scavengers",
         // у профилей еды ключ файла — имя правила
         _ => field(key).rule.expect("у поля есть правило"),
     }

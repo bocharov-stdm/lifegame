@@ -53,13 +53,15 @@ pub struct Reference {
     strategies: Vec<f64>,
     /// Гены существ, на которых снят эталон (у старого — семь).
     pub genes: Vec<String>,
+    /// Founders' diets (`WorldConfig::diets`).
+    pub diets: Vec<f64>,
 }
 
 impl Reference {
     pub fn load(path: &Path) -> Result<Reference, String> {
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         let data: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-        if data["model"].as_str() != Some("life-behavior/9") {
+        if data["model"].as_str() != Some("life-behavior/10") {
             return Err("Эталон другой модели поведения. Пересоздайте его через --save-reference после проверки баланса.".into());
         }
         let field = |v: &Value, k: &str| v.get(k).cloned().ok_or(format!("нет поля {k}"));
@@ -152,6 +154,10 @@ impl Reference {
                 Value::Null => mix(&start["vegetarian_strategies"])?,
                 new => mix(new)?,
             },
+            diets: match &start["diets"] {
+                Value::Null => world.diets.clone(),
+                saved => mix(saved)?,
+            },
             genes: data
                 .get("genes")
                 .and_then(Value::as_array)
@@ -186,6 +192,9 @@ impl Reference {
         }
         if cfg.strategies != self.strategies {
             diff.push(format!("смесь стратегий {:?} (в эталоне {:?})", cfg.strategies, self.strategies));
+        }
+        if cfg.diets != self.diets {
+            diff.push(format!("смесь диет {:?} (в эталоне {:?})", cfg.diets, self.diets));
         }
         if diff.is_empty() { Ok(()) } else { Err(diff.join(", ")) }
     }
@@ -263,7 +272,7 @@ pub fn save_reference(
         .collect();
     let data = json!({
         "source": "rust",
-        "model": "life-behavior/9",
+        "model": "life-behavior/10",
         "sample_every": sample_every,
         "ticks": ticks,
         "genes": GENES.iter().map(|g| g.key).collect::<Vec<_>>(),
@@ -273,6 +282,7 @@ pub fn save_reference(
         "start": {
             "creatures": cfg.creatures_at_start(),
             "strategies": cfg.strategies,
+            "diets": cfg.diets,
         },
         "runs": runs,
     });
@@ -382,6 +392,7 @@ mod tests {
             r#"{"model":"life-behavior/6"}"#,
             r#"{"model":"life-behavior/7"}"#,
             r#"{"model":"life-behavior/8"}"#,
+            r#"{"model":"life-behavior/9"}"#,
         ] {
             std::fs::write(&path, value).unwrap();
             assert!(Reference::load(&path).err().unwrap().contains("другой модели поведения"));
@@ -396,7 +407,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("life-combat-reference-{}.json", std::process::id()));
         let reference = |combat: f64| {
             format!(
-                r#"{{"model":"life-behavior/9","ticks":1,"sample_every":1,"runs":[],"rules":{{"cannibalism":{combat},"cost_scale":3}}}}"#
+                r#"{{"model":"life-behavior/10","ticks":1,"sample_every":1,"runs":[],"rules":{{"cannibalism":{combat},"cost_scale":3}}}}"#
             )
         };
         std::fs::write(&path, reference(0.0)).unwrap();

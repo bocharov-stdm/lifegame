@@ -1,18 +1,18 @@
 //! Состояние симуляции и один логический тик.
 //!
-//! Порядок тика: растения → существа (снимок стада, ходы, каннибализм) →
+//! Порядок тика: растения → существа (снимок стада, ходы, еда, бой, трупы) →
 //! счётчик тиков. Сородичей видят по снимку на начало фазы. Съеденный в этом
 //! тике и умерший на своём ходу не действуют дальше. Дети копятся в отдельном
 //! буфере и не ходят в тик рождения. Съеденные растения помечаются и
-//! выметаются раз за тик. Каннибализм (правило) — отдельный проход после хода
-//! всех существ, когда они уже стоят.
+//! выметаются раз за тик. Бой — отдельный проход после хода всех существ, когда
+//! они уже стоят; бои включены всегда.
 //!
 //! Хищники были отдельным видом до тега `predators-final`: их заменили мутации
 //! и каннибализм.
 
 use crate::config::*;
-use crate::creature::Creature;
 use crate::creature::strategy as creature_strategy;
+use crate::creature::{Creature, Meal, Morsel};
 use crate::flora::Flora;
 use crate::genome::{CreatureGenome, creature, variant_for};
 use crate::grid::Grid;
@@ -36,6 +36,9 @@ pub struct WorldConfig {
     /// Стартовая смесь стратегий: доли вариантов по порядку `VARIANTS`
     /// (пустая — у всех первый). Раздаётся без жребия (`variant_for`).
     pub strategies: Vec<f64>,
+    /// Founders' diets: shares in the order of `DIET_VARIANTS` (empty — all herbivores).
+    /// Dealt without a draw and spread over the founders (`spread_ranks`).
+    pub diets: Vec<f64>,
 }
 
 impl Default for WorldConfig {
@@ -47,6 +50,7 @@ impl Default for WorldConfig {
             rules: Rules::default(),
             n_creatures: None,
             strategies: Vec::new(),
+            diets: DIET_START_MIX.to_vec(),
         }
     }
 }
@@ -82,7 +86,9 @@ pub struct Counters {
     pub plants_grown: u64,
     pub plants_eaten: u64,
     pub plant_bites: u64,
+    /// Bites of corpses; `rot_bites` of them were mostly rot (rot share at least ½).
     pub meat_bites: u64,
+    pub rot_bites: u64,
     pub ranged_shots: u64,
     pub territorial_fights: u64,
     pub born: u64,
@@ -101,6 +107,7 @@ impl Counters {
             plants_eaten: self.plants_eaten - earlier.plants_eaten,
             plant_bites: self.plant_bites - earlier.plant_bites,
             meat_bites: self.meat_bites - earlier.meat_bites,
+            rot_bites: self.rot_bites - earlier.rot_bites,
             ranged_shots: self.ranged_shots - earlier.ranged_shots,
             territorial_fights: self.territorial_fights - earlier.territorial_fights,
             born: self.born - earlier.born,
@@ -186,8 +193,10 @@ impl World {
         // Flock kinds are dealt in turn among the flocking founders: any first part of them
         // has every kind in equal shares.
         let mut flocking = 0;
-        for i in 0..n_start {
+        let diet_ranks = crate::genome::spread_ranks(n_start);
+        for (i, &diet_rank) in diet_ranks.iter().enumerate() {
             let k = variant_for(i, n_start, &cfg.strategies, variants);
+            let diet = variant_for(diet_rank, n_start, &cfg.diets, creature::DIET_VARIANTS.len());
             // Независимые от потока мира жребии не меняют места рождения и растения.
             let mut founder = Rng::keyed(cfg.seed, 0x5A6C_5A6C_0000_0000 ^ i as u64);
             // Every other founder is flocking: a draw left 3 to 15 of 20 calm founders flocking,
@@ -221,7 +230,8 @@ impl World {
                 .with(creature::Gene::Territoriality, mode)
                 .with(creature::Gene::Shooter, f64::from(shooter as u8))
                 .with(creature::Gene::FlockKind, kind as f64)
-                .with(creature::Gene::LayerBound, f64::from(free as u8));
+                .with(creature::Gene::LayerBound, f64::from(free as u8))
+                .with(creature::Gene::Diet, diet as f64);
             let v = Creature::new(&w.space, &w.rules, genome, None, None, None, rng.fork());
             w.add_creature(v);
         }
@@ -360,7 +370,11 @@ impl World {
         // порции трупов по ID: тот, кому остатка уже не хватит, может взять
         // растение сейчас, не получая второй порции в этом тике.
         let mut reserved = corpses.clone();
+        let plant_bite = rules.plant_energy * rules.plant_bite_yield / f64::from(crate::plant::PORTIONS);
         for (i, v) in creatures.iter_mut().enumerate().filter(|(_, v)| v.alive) {
+            // Only what the diet digests is eaten at all: a meat-eater does not take a plant from
+            // a herbivore for nothing, a herbivore does not touch a corpse.
+            let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.rot(now)) > 0.0;
             let corpse = crate::corpse::contact(
                 corpse_grid,
                 &reserved,
@@ -368,25 +382,26 @@ impl World {
                 v.pheno.size,
                 max_corpse_half,
                 now,
+                eats,
             );
             let prefer_corpse = corpse.is_some_and(|j| {
-                reserved[j].portion(rules.plant_energy)
-                    * v.pheno.meat_efficiency
-                    * crate::config::CORPSE_BITE_YIELD
-                    > rules.plant_energy * rules.plant_bite_yield / f64::from(crate::plant::PORTIONS)
-                        * v.pheno.plant_efficiency
+                let c = &reserved[j];
+                c.portion(rules.plant_energy) * v.pheno.corpse_efficiency(c.rot(now))
+                    > plant_bite * v.pheno.plant_efficiency
             });
-            if prefer_corpse {
-                reserved[corpse.expect("prefer_corpse implies contact")].bite(now, rules.plant_energy);
-            } else if let Some(finished) =
+            let plant = if prefer_corpse || !v.pheno.eats_plants() {
+                None
+            } else {
                 bite_plant(food_grid, plants, bitten_plants, v.x, v.y, v.pheno.size)
-            {
+            };
+            if let Some((finished, px, py)) = plant {
                 counters.plant_bites += 1;
                 counters.plants_eaten += finished as u64;
                 v.feed(1, rules);
+                v.meal = Some(Meal { tick: now, x: px, y: py, food: Morsel::Plant });
                 fed[i] = true;
             } else if let Some(j) = corpse {
-                // Растение досталось более раннему ID; этот едок теперь
+                // Мясо выгоднее, или растение досталось более раннему ID: этот едок
                 // претендует на труп раньше следующих участников.
                 reserved[j].bite(now, rules.plant_energy);
             }
@@ -412,7 +427,8 @@ impl World {
             if !v.alive || fed[i] {
                 continue;
             }
-            if let Some(gain) = crate::corpse::bite(
+            let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.rot(now)) > 0.0;
+            if let Some(bite) = crate::corpse::bite(
                 corpse_grid,
                 corpses,
                 (v.x, v.y),
@@ -420,9 +436,13 @@ impl World {
                 max_corpse_half,
                 rules.plant_energy,
                 now,
+                eats,
             ) {
-                v.devour(gain * crate::config::CORPSE_BITE_YIELD, rules);
+                v.devour(bite.amount * v.pheno.corpse_efficiency(bite.rot), rules);
+                v.meal =
+                    Some(Meal { tick: now, x: bite.x, y: bite.y, food: Morsel::Corpse { rot: bite.rot } });
                 counters.meat_bites += 1;
+                counters.rot_bites += (bite.rot >= 0.5) as u64;
                 fed[i] = true;
             }
         }

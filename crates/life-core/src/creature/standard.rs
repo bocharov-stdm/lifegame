@@ -71,9 +71,14 @@ pub(super) fn plan(
     } else if fullness < me.pheno.forage {
         mind.social.foraging = true;
     }
-    let plant = senses.nearest_plant(me.x, me.y, me.pheno.vision2);
+    // A creature that does not digest plants neither looks for them nor reports them; it
+    // reports the corpse it would eat instead.
+    let plant =
+        if me.pheno.eats_plants() { senses.nearest_plant(me.x, me.y, me.pheno.vision2) } else { None };
     personal_plant(me, mind, senses, plant);
-    if let Some((x, y)) = plant {
+    let seen = plant
+        .or_else(|| (!me.pheno.eats_plants()).then(|| senses.best_corpse(me).map(|c| (c.x, c.y))).flatten());
+    if let Some((x, y)) = seen {
         mind.social.observed_food =
             Some(crate::social::Food { x, y, tick: mind.social.tick, observer: me.kinship.id });
     }
@@ -202,9 +207,11 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
         && c.score > plant_score
     {
         mind.social.personal_food = None;
-        return (Intent { tx: c.x, ty: c.y, slow: false, attack: None }, Mode::Food);
+        let (tx, ty) = approach(me, c.x, c.y, me.pheno.size + c.half);
+        return (Intent { tx, ty, slow: false, attack: None }, Mode::Food);
     }
-    if let Some((tx, ty)) = plant {
+    if let Some((px, py)) = plant {
+        let (tx, ty) = approach(me, px, py, me.pheno.size);
         return (Intent { tx, ty, slow: false, attack: None }, Mode::Food);
     }
 
@@ -252,6 +259,19 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
     }
     let (tx, ty) = mind.target.unwrap();
     (Intent { tx, ty, slow: false, attack: None }, Mode::Wander)
+}
+
+/// Where to stand to eat food at (fx, fy) that is reached within `reach` of the centre: on the
+/// line to it, `EAT_STOP_SHARE` of the reach away, so the food lies beside the body. Already
+/// that close — stay.
+fn approach(me: &Me, fx: f64, fy: f64, reach: f64) -> (f64, f64) {
+    let (dx, dy) = (me.x - fx, me.y - fy);
+    let d = dx.hypot(dy);
+    let stop = reach * crate::config::EAT_STOP_SHARE;
+    if d <= stop {
+        return (me.x, me.y);
+    }
+    (fx + dx / d * stop, fy + dy / d * stop)
 }
 
 /// The plant this creature feeds on: the one it already goes to while it lives, is seen and
@@ -317,30 +337,38 @@ fn pick_random_target(me: &Me, mind: &mut Mind, rng: &mut Rng) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::creature::Creature;
+    use crate::creature::{Creature, Diet};
     use crate::genome::creature::Gene;
     use crate::senses::{CorpseFood, Prey, Threat};
     use crate::{CreatureGenome, Rules, Space};
 
+    /// A plant 100 to the east and a corpse (radius 10) 100 to the west; like the world's senses,
+    /// a corpse or prey only for those that eat meat.
     struct FoodSense {
         prey: Option<Prey>,
     }
 
     impl Senses for FoodSense {
         fn nearest_plant(&self, _: f64, _: f64, _: f64) -> Option<(f64, f64)> {
-            Some((1010.0, 1000.0))
+            Some((1100.0, 1000.0))
         }
 
-        fn best_corpse(&self, _: &Me) -> Option<CorpseFood> {
-            Some(CorpseFood { owner: 2, x: 990.0, y: 1000.0, score: 3.0 })
+        fn best_corpse(&self, me: &Me) -> Option<CorpseFood> {
+            me.pheno.eats_corpses().then_some(CorpseFood {
+                owner: 2,
+                x: 900.0,
+                y: 1000.0,
+                half: 10.0,
+                score: 3.0,
+            })
         }
 
         fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
             None
         }
 
-        fn prey(&self, _: &Me, _: Option<u64>) -> Option<Prey> {
-            self.prey
+        fn prey(&self, me: &Me, _: Option<u64>) -> Option<Prey> {
+            self.prey.filter(|_| me.pheno.hunts())
         }
     }
 
@@ -420,7 +448,13 @@ mod tests {
                 Some(crate::territory::Area { flock: 99, x: 1150.0, y: 1000.0, radius: 80.0 });
             let (intent, mode) = plan(&me, &mut mind, &mut Rng::new(3), &TwoPlants, v.pheno.speed);
             assert_eq!(mode, Mode::Food, "fullness {share}");
-            assert_eq!(intent.tx, want, "fullness {share}: which plant it goes for");
+            // it walks up to the edge of its reach of that plant
+            let stop = want + (v.x - want).signum() * v.pheno.size * crate::config::EAT_STOP_SHARE;
+            assert!(
+                (intent.tx - stop).abs() < 1e-9,
+                "fullness {share}: which plant it goes for, {}",
+                intent.tx
+            );
         }
     }
 
@@ -492,12 +526,18 @@ mod tests {
     }
 
     #[test]
-    fn плотоядный_идёт_к_падали_травоядный_к_растению_начатый_бой_сохраняется() {
-        for (carnivory, target) in [(100.0, 990.0), (0.0, 1010.0)] {
+    fn мясоед_идёт_к_падали_травоядный_к_растению_оба_встают_у_края() {
+        use crate::config::EAT_STOP_SHARE;
+        let (size, half) = (40.0, 10.0);
+        for (diet, target) in [
+            (Diet::Carnivore, 900.0 + (size + half) * EAT_STOP_SHARE),
+            (Diet::Scavenger, 900.0 + (size + half) * EAT_STOP_SHARE),
+            (Diet::Herbivore, 1100.0 - size * EAT_STOP_SHARE),
+        ] {
             let v = Creature::new(
                 &Space::default(),
                 &Rules::default(),
-                CreatureGenome::BASE.with(Gene::Carnivory, carnivory),
+                CreatureGenome::BASE.with(Gene::Diet, diet as usize as f64),
                 Some(1000.0),
                 Some(1000.0),
                 Some(30.0),
@@ -517,8 +557,8 @@ mod tests {
             let mut mind = Mind::default();
             let mut rng = Rng::new(3);
             let (intent, mode) = plan(&me, &mut mind, &mut rng, &FoodSense { prey: None }, v.pheno.speed);
-            assert_eq!(mode, Mode::Food);
-            assert_eq!(intent.tx, target);
+            assert_eq!(mode, Mode::Food, "{diet:?}");
+            assert!((intent.tx - target).abs() < 1e-9, "{diet:?}: stops at the edge of reach, {}", intent.tx);
 
             mind.attack = Some(9);
             let (fight, _) = plan(
@@ -528,7 +568,41 @@ mod tests {
                 &FoodSense { prey: Some(Prey { id: 9, x: 1020.0, y: 1000.0, score: 0.1 }) },
                 v.pheno.speed,
             );
-            assert_eq!(fight.attack, Some(9));
+            let hunts = diet != Diet::Herbivore;
+            assert_eq!(
+                fight.attack.is_some(),
+                hunts,
+                "{diet:?}: a started hunt goes on, a herbivore has none"
+            );
         }
+    }
+
+    /// Food within the stop distance: it stays and eats, beside the food, not on it.
+    #[test]
+    fn у_еды_стоит_а_не_залезает_на_неё() {
+        let v = Creature::new(
+            &Space::default(),
+            &Rules::default(),
+            CreatureGenome::BASE,
+            Some(1080.0),
+            Some(1000.0),
+            Some(30.0),
+            Rng::new(1),
+        );
+        let me = Me {
+            x: v.x,
+            y: v.y,
+            energy: v.energy,
+            kinship: v.kinship(),
+            flock: v.flock,
+            circle: None,
+            pheno: &v.pheno,
+            health_share: 1.0,
+            health: v.pheno.size,
+        };
+        let (intent, mode) =
+            plan(&me, &mut Mind::default(), &mut Rng::new(3), &FoodSense { prey: None }, v.pheno.speed);
+        assert_eq!(mode, Mode::Food);
+        assert_eq!((intent.tx, intent.ty), (1080.0, 1000.0), "20 from the plant: already within reach");
     }
 }

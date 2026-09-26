@@ -215,6 +215,8 @@ struct Sim {
     /// Память прошлого кадра: движение, рождения, призраки.
     motion: Motion,
     recent_shots: VecDeque<(ShotTrail, Instant)>,
+    /// Tick of the last built frame: sinking corpses are drawn from where they lay then.
+    last_frame_tick: u64,
 }
 
 impl Sim {
@@ -264,6 +266,7 @@ impl Sim {
             last_minimap: None,
             motion: Motion::default(),
             recent_shots: VecDeque::new(),
+            last_frame_tick: 0,
         };
         sim.observe_start();
         sim
@@ -722,6 +725,8 @@ impl Sim {
         } else {
             flock_areas.clear();
         }
+        let prev_tick = self.last_frame_tick.min(w.tick);
+        self.last_frame_tick = w.tick;
         let corpses = if self.render_world {
             self.view
                 .map(|v| {
@@ -738,6 +743,8 @@ impl Sim {
                         .map(|c| CorpseMark {
                             x: c.x,
                             y: c.y,
+                            py: c.y_at(prev_tick.max(c.born)),
+                            rot: c.rot(w.tick),
                             size: c.size,
                             fullness: if c.initial > 0.0 {
                                 (c.remaining / c.initial).clamp(0.0, 1.0)

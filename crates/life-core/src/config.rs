@@ -25,8 +25,6 @@ pub const PLANT_RADIUS: f64 = 10.0;
 pub const ENERGY_FROM_PLANT: f64 = 50.0;
 /// Доля сырой порции, реально усваиваемая при пятишаговом поедании.
 pub const PLANT_BITE_YIELD: f64 = 0.44;
-/// Доля сырой порции падали, оставшаяся после разделки и потерь.
-pub const CORPSE_BITE_YIELD: f64 = 0.10;
 
 // Где растёт еда — профиль по глубине и по ширине (flora.rs), правила мира.
 // По умолчанию — как было всегда: экспонента по глубине, равномерно по ширине.
@@ -138,6 +136,43 @@ pub const SLOW_PACE: f64 = 1.0 / 3.0;
 
 // Combat and hunting are always on: the peaceful world (the old `cannibalism` rule) is gone.
 // There is no world size ratio either: whom one attacks first is its own `prey_ratio` gene.
+
+// ── Питание ─────────────────────────────────────────────────────────────────
+/// Chance that a child's diet steps to a neighbour in the chain herbivore ↔ omnivore ↔
+/// carnivore ↔ scavenger: as rare as the other choice genes.
+pub const DIET_STEP_CHANCE: f64 = 0.001;
+/// Digestibility by diet (order of `genome::creature::DIET_VARIANTS`): plants, fresh meat,
+/// rot. For plants 1 is the world's yield `plant_bite_yield`; for meat it is the whole raw
+/// portion — the diet alone decides how much of it is taken in (the old flat 10% fed a hunter
+/// less for a whole corpse than one plant). 0 means the creature neither eats that food nor
+/// goes for it. A specialist digests its own food fully; the
+/// omnivore takes everything, but worse; rot feeds well only the scavenger, the others barely.
+/// A piece of a rotting corpse is a mix: fresh and rot by the corpse's rot share.
+pub const DIET_DIGESTION: [[f64; 3]; 4] = [
+    [1.0, 0.0, 0.0],  // травоядный
+    [0.7, 0.6, 0.15], // всеядный
+    [0.0, 1.0, 0.1],  // мясоед
+    [0.0, 0.8, 0.9],  // падальщик
+];
+/// Founders' diets, shares in the same order. Dealt without a draw.
+pub const DIET_START_MIX: [f64; 4] = [55.0, 25.0, 10.0, 10.0];
+
+/// A creature eating stops at this share of its reach from the food's centre (a plant is reached
+/// within one body diameter, a corpse within that plus its radius) instead of walking onto it:
+/// the food lies beside the body, where the window draws the proboscis reaching it.
+pub const EAT_STOP_SHARE: f64 = 0.85;
+
+// ── Трупы ───────────────────────────────────────────────────────────────────
+/// A corpse stays fresh this long and lies where the creature died.
+pub const CORPSE_FRESH_TICKS: u64 = 150;
+/// By then it is fully rotten and has sunk to the bottom: rot share and depth follow one smooth
+/// step from the fresh time to this one.
+pub const CORPSE_ROTTEN_TICKS: u64 = 600;
+/// What is left disappears by then; the store decays evenly over the whole time, so a corpse
+/// reaching the bottom untouched still holds two thirds of its meat for the scavengers.
+pub const CORPSE_DECAY_TICKS: u64 = 1800;
+/// Rot lies in this lowest share of the depth, %: the bottom, where no plants grow.
+pub const CORPSE_BOTTOM_PCT: f64 = 2.0;
 
 // ── Бегство ─────────────────────────────────────────────────────────────────
 /// Существо бежит от чужого (не родни), который может его съесть, когда до

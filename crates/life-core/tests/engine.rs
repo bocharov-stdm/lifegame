@@ -18,6 +18,11 @@ fn genom(size: f64) -> CreatureGenome {
     BASE.with(Gene::Size, size)
 }
 
+/// A meat-eater: the base genome is a herbivore, which neither hunts nor frightens anyone.
+fn hunter(size: f64) -> CreatureGenome {
+    genom(size).with(Gene::Diet, life_core::creature::Diet::Carnivore as usize as f64)
+}
+
 /// Пустой мир: ни существ, ни растений.
 fn empty_world(rules: Rules) -> World {
     let mut w = World::new(&WorldConfig { seed: 3, rules, n_creatures: Some(0), ..Default::default() });
@@ -117,7 +122,7 @@ fn cleared_band_recovers() {
 fn cannibal_world(small: f64, dx: f64) -> World {
     let mut w = empty_world(Rules::default());
     w.tick = 1;
-    w.spawn(genom(100.0), 3000.0, 2000.0, Some(100.0));
+    w.spawn(hunter(100.0), 3000.0, 2000.0, Some(100.0));
     w.spawn(genom(small), 3000.0 + dx, 2000.0, None);
     w
 }
@@ -210,7 +215,7 @@ fn threat_world(big: f64, dx: f64, kin: impl Fn(&mut World)) -> World {
     let mut w = cannibal_world(30.0, dx);
     let small = w.creatures[1].id;
     let v = &mut w.creatures[0];
-    v.genome = genom(big);
+    v.genome = hunter(big);
     v.pheno = life_core::creature::Phenotype::of(&v.genome, &w.rules, &w.space);
     v.mind.attack = Some(small);
     kin(&mut w);
@@ -765,6 +770,23 @@ fn масштаб_меньше_базового_отвергается() {
 #[should_panic(expected = "масштаб мира")]
 fn масштаб_больше_предела_отвергается() {
     Space::scaled(1e7);
+}
+
+/// Founders get the diet mix exactly, dealt without draws and spread over them: not a block of
+/// herbivores followed by the rest.
+#[test]
+fn диеты_основателей_раздаются_по_долям_вперемешку() {
+    let w = World::new(&WorldConfig { seed: 4, ..Default::default() });
+    let diets: Vec<usize> = w.creatures.iter().map(|v| v.pheno.diet as usize).collect();
+    let count = |k| diets.iter().filter(|&&d| d == k).count();
+    assert_eq!([count(0), count(1), count(2), count(3)], [11, 5, 2, 2], "{diets:?}");
+    assert!(diets[..10].iter().any(|&d| d != 0) && diets[10..].contains(&0), "spread: {diets:?}");
+    let all_herbivores = World::new(&WorldConfig { seed: 4, diets: Vec::new(), ..Default::default() });
+    assert!(all_herbivores.creatures.iter().all(|v| v.pheno.diet as usize == 0));
+    // the diets draw nothing: the founders stand where they stood
+    let same_places =
+        all_herbivores.creatures.iter().zip(&w.creatures).all(|(a, b)| (a.x, a.y) == (b.x, b.y));
+    assert!(same_places, "dealing diets must not shift the world's random numbers");
 }
 
 #[test]

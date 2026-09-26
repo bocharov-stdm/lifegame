@@ -6,6 +6,9 @@
 //! **Таблица только дописывается в конец.** От порядка генов зависят порядок
 //! случайных чисел при мутации (значит, каждый сид), позиции генов в эталоне
 //! баланса и JSON отчёта.
+//! One deliberate exception: the numeric `carnivory` row was replaced in place by the choice
+//! gene `diet` (model `life-behavior/10`). A gene that no longer acts should not keep a dead row
+//! that still draws numbers, and replacing it in place keeps every later gene's position.
 //!
 //! Значение гена всегда f64: у гена-выбора это номер варианта (0, 1, 2…).
 
@@ -46,6 +49,11 @@ pub enum Mutation {
     /// Смена варианта с шансом `chance` на любой другой. С одним вариантом
     /// жребий не тянется вовсе: ген инертен и не сдвигает случайные числа.
     Switch { chance: f64 },
+    /// A step to a neighbouring variant in table order, with chance `chance`: the variants are
+    /// a chain (herbivore ↔ omnivore ↔ carnivore ↔ scavenger). An inner variant steps either
+    /// way with equal odds (one more draw), an end one only inwards. With one variant nothing
+    /// is drawn.
+    Step { chance: f64 },
 }
 
 /// Строка таблицы генов.
@@ -148,6 +156,25 @@ pub(crate) fn mutate_values(
                     *value = (k + (k >= current) as usize) as f64;
                 }
             }
+            Mutation::Step { chance } => {
+                let n = spec.variants().map_or(0, <[Variant]>::len);
+                if n < 2 {
+                    continue;
+                }
+                if rng.random() < chance * mutability {
+                    let current = (*value as usize).min(n - 1);
+                    let next = if current == 0 {
+                        1
+                    } else if current == n - 1 {
+                        n - 2
+                    } else if rng.random() < 0.5 {
+                        current - 1
+                    } else {
+                        current + 1
+                    };
+                    *value = next as f64;
+                }
+            }
         }
     }
 }
@@ -179,6 +206,23 @@ pub fn variant_for(i: usize, n: usize, shares: &[f64], variants: usize) -> usize
         }
     }
     (shares.len() - 1).min(variants - 1)
+}
+
+/// Order in which `n` founders take a start mix that must not line up with another one: two
+/// mixes dealt by `variant_for` over the same numbers match block by block (with lurkers dealt
+/// last, the first herbivores would all be standard). `ranks[i]` is founder `i`'s place in the
+/// order of the fractional parts of `(i + 0.5)·φ`, so `variant_for(ranks[i], n, …)` keeps the
+/// shares exact and spreads each variant over the founders. No draws.
+pub fn spread_ranks(n: usize) -> Vec<usize> {
+    const GOLDEN: f64 = 0.618_033_988_749_894_9;
+    let key = |i: usize| ((i as f64 + 0.5) * GOLDEN).fract();
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| key(a).total_cmp(&key(b)).then(a.cmp(&b)));
+    let mut ranks = vec![0; n];
+    for (rank, i) in order.into_iter().enumerate() {
+        ranks[i] = rank;
+    }
+    ranks
 }
 
 /// Базовые значения таблицы — стартовый геном.
@@ -252,6 +296,72 @@ mod tests {
             (0..5).all(|i| variant_for(i, 5, &[0.0, 1.0], 1) == 0),
             "вариантов меньше долей — последний есть"
         );
+    }
+
+    fn chain(chance: f64) -> GeneSpec {
+        GeneSpec { mutation: Mutation::Step { chance }, ..choice(&THREE, chance) }
+    }
+
+    #[test]
+    fn шаг_по_цепочке_только_к_соседу() {
+        let mut rng = Rng::new(11);
+        let mut seen = [[0usize; 3]; 3];
+        for (start, row) in seen.iter_mut().enumerate() {
+            for _ in 0..600 {
+                let mut v = [start as f64];
+                mutate_values(&mut v, &[chain(1.0)], 0.3, 1.0, &mut rng);
+                row[v[0] as usize] += 1;
+            }
+        }
+        assert_eq!(seen[0], [0, 600, 0], "from the first end only inwards");
+        assert_eq!(seen[2], [0, 600, 0], "from the last end only inwards");
+        assert_eq!(seen[1][1], 0, "an inner variant always steps");
+        assert!(seen[1][0] > 240 && seen[1][2] > 240, "both ways about equally: {:?}", seen[1]);
+    }
+
+    #[test]
+    fn шаг_по_цепочке_редок_и_растягивается_мутагенностью() {
+        let steps = |mutability: f64| {
+            let mut rng = Rng::new(13);
+            (0..100_000)
+                .filter(|_| {
+                    let mut v = [1.0];
+                    mutate_values(&mut v, &[chain(0.001)], 0.3, mutability, &mut rng);
+                    v[0] != 1.0
+                })
+                .count()
+        };
+        let (base, doubled) = (steps(1.0), steps(2.0));
+        assert!((60..=140).contains(&base), "about 0.1%: {base}");
+        assert!(doubled > base * 3 / 2, "mutability stretches the chance: {doubled} vs {base}");
+        let mut rng = Rng::new(5);
+        let before = rng.clone();
+        let mut v = [0.0];
+        mutate_values(
+            &mut v,
+            &[GeneSpec { mutation: Mutation::Step { chance: 1.0 }, ..choice(&ONE, 1.0) }],
+            0.3,
+            1.0,
+            &mut rng,
+        );
+        assert_eq!((v, rng), ([0.0], before), "one variant: nothing drawn");
+    }
+
+    #[test]
+    fn вперемешку_доли_те_же_а_блоки_не_совпадают() {
+        let n = 20;
+        let ranks = spread_ranks(n);
+        let mut sorted = ranks.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..n).collect::<Vec<_>>(), "a permutation");
+        let diet: Vec<usize> =
+            (0..n).map(|i| variant_for(ranks[i], n, &[55.0, 25.0, 10.0, 10.0], 4)).collect();
+        let count = |k| diet.iter().filter(|&&d| d == k).count();
+        assert_eq!([count(0), count(1), count(2), count(3)], [11, 5, 2, 2]);
+        // a 50/50 mix dealt in order: each half gets herbivores and the rest
+        for half in [0..10, 10..20] {
+            assert!(diet[half.clone()].contains(&0) && diet[half].iter().any(|&d| d != 0));
+        }
     }
 
     #[test]

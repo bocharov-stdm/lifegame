@@ -151,6 +151,8 @@ pub struct Selected {
     pub genome: [f64; creature::N],
     /// Слой по глубине (y от и до): где ему можно жить и есть.
     pub layer: (f64, f64),
+    /// What it bit on the frame's tick or the one before, if anything.
+    pub eating: Option<life_core::creature::Morsel>,
 }
 
 impl Selected {
@@ -180,6 +182,7 @@ impl Selected {
             upkeep: v.pheno.upkeep,
             genome: v.genome.to_values(),
             layer: (v.pheno.layer_lo, v.pheno.layer_hi),
+            eating: v.meal.filter(|m| m.tick + 1 >= world.tick).map(|m| m.food),
         })
     }
 }
@@ -221,13 +224,25 @@ pub fn flock_areas(world: &World) -> Vec<FlockArea> {
         .collect()
 }
 
-/// Видимый остаток трупа; его сытость определяет прозрачность отметки.
+/// Видимый остаток трупа; его сытость определяет прозрачность отметки, гнилость — цвет.
 #[derive(Clone, Copy, Debug)]
 pub struct CorpseMark {
     pub x: f64,
     pub y: f64,
+    /// Depth on the previous frame: a rotting corpse sinks, drawn between the two.
+    pub py: f64,
+    /// 0 fresh, 1 rotten.
+    pub rot: f64,
     pub size: f64,
     pub fullness: f64,
+}
+
+impl CorpseMark {
+    /// Fresh meat is red-brown, rot grey-green.
+    pub fn rgb(&self) -> [u8; 3] {
+        let (fresh, rotten) = ([176.0, 104.0, 88.0], [118.0, 128.0, 96.0]);
+        [0, 1, 2].map(|i| (fresh[i] + (rotten[i] - fresh[i]) * self.rot.clamp(0.0, 1.0)) as u8)
+    }
 }
 
 /// Короткий след удара, уже собранный потоком симуляции.

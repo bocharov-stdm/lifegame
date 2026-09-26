@@ -10,7 +10,7 @@ mod phenotype;
 mod standard;
 pub mod strategy;
 
-pub use phenotype::Phenotype;
+pub use phenotype::{Diet, Phenotype};
 pub use strategy::{Intent, Me, Mind, Strategy};
 
 use crate::config::*;
@@ -47,6 +47,27 @@ impl Kinship {
             || (other.parent == self.id && other.growth < self.knows_until)
             || (self.parent == other.id && self.growth < other.knows_until)
     }
+}
+
+/// What a creature bit last, and where — for the window's proboscis. The world writes it in the
+/// eating phase; nothing in the engine reads it (like `Plant::born`), so it is no part of the
+/// behaviour the golden test pins.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Meal {
+    pub tick: u64,
+    /// Centre of the food.
+    pub x: f64,
+    pub y: f64,
+    pub food: Morsel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Morsel {
+    Plant,
+    /// A piece of a corpse with this rot share (0 fresh, 1 rotten).
+    Corpse {
+        rot: f64,
+    },
 }
 
 /// Причина смерти задаётся ровно один раз.
@@ -88,6 +109,8 @@ pub struct Creature {
     /// Память между ходами: цель блуждания, бегство (`strategy.rs`).
     pub mind: Mind,
     pub rng: Rng,
+    /// The last bite (`Meal`); only the window reads it.
+    pub meal: Option<Meal>,
 }
 
 impl Creature {
@@ -132,7 +155,13 @@ impl Creature {
             pheno,
             mind: Mind::default(),
             rng,
+            meal: None,
         }
+    }
+
+    /// The world it lives in.
+    pub fn space(&self) -> &Space {
+        &self.space
     }
 
     /// Number, parent and growth: by them a parent knows its growing child.
@@ -289,7 +318,8 @@ impl Creature {
     }
 
     /// The inherited flock mode is the same: flocking, territoriality, strategy, shooting,
-    /// flock kind and layer switch. A child with another mode leaves the family flock.
+    /// flock kind, layer switch and diet. A child with another mode leaves the family flock: a
+    /// circle is a feeding place, and a meat-eater finds nothing to eat among its own.
     pub fn same_mode(&self, other: &Creature) -> bool {
         let (a, b) = (&self.pheno, &other.pheno);
         a.pack_instinct == b.pack_instinct
@@ -298,6 +328,7 @@ impl Creature {
             && a.shooter == b.shooter
             && a.flock_kind == b.flock_kind
             && a.layer_bound == b.layer_bound
+            && a.diet == b.diet
     }
 
     /// Достигнут наследственный размер.
@@ -310,9 +341,9 @@ impl Creature {
         self.mind.flee_ticks > 0 || self.mind.social.shared_flee
     }
 
-    /// Съеден сородич (каннибализм): его энергия — едоку, не выше полного бака.
+    /// Съеден кусок трупа: `energy` — уже усвоенное (порция × усвояемость по гнилости).
     pub fn devour(&mut self, energy: f64, rules: &Rules) {
-        self.nourish(energy * self.pheno.meat_efficiency, rules);
+        self.nourish(energy, rules);
     }
 
     /// Ребёнок, если после деления у родителя остаётся резерв. Номер ребёнку

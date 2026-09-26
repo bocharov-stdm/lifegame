@@ -6,6 +6,7 @@
 //!     cargo run -p life-report --release -- --scale 100 --ticks 2000   # мир в 100 раз больше
 //!     cargo run -p life-report --release -- --scale 100 --shape 1:1    # и квадратный
 //!     cargo run -p life-report --release -- --mix 1 1                # стратегии поровну
+//!     cargo run -p life-report --release -- --diet-mix 1             # все травоядные
 //!     cargo run -p life-report --release -- --compare reference/fingerprint.json
 //!     cargo run -p life-report --release -- --save-reference reference/fingerprint.json
 //!
@@ -70,6 +71,10 @@ struct Args {
     /// затаившийся). Например, `--mix 1 1` — поровну. Старое имя — `--veg-mix`.
     #[arg(long, alias = "veg-mix", num_args = 1.., value_name = "ДОЛИ")]
     mix: Vec<f64>,
+    /// Диеты основателей: доли по порядку (травоядный, всеядный, мясоед, падальщик).
+    /// По умолчанию 55 25 10 10; `--diet-mix 1` — все травоядные.
+    #[arg(long, num_args = 1.., value_name = "ДОЛИ")]
+    diet_mix: Vec<f64>,
     /// Правило мира: имя=число (можно несколько раз). Профиль еды — и именем:
     /// `--rule plant_width_profile=waves`.
     #[arg(long = "rule", value_name = "ИМЯ=ЧИСЛО")]
@@ -154,6 +159,8 @@ fn main() {
     };
     let rules = parse_rules(&args.rules).unwrap_or_else(|e| fail(e));
     check_mix("--mix", &args.mix, &creature_strategy::VARIANTS).unwrap_or_else(|e| fail(e));
+    check_mix("--diet-mix", &args.diet_mix, &life_core::genome::creature::DIET_VARIANTS)
+        .unwrap_or_else(|e| fail(e));
     // JSON в stdout — и больше ничего: текст сломал бы разбор
     let quiet = args.json.as_deref().is_some_and(|p| p.as_os_str() == "-");
     if quiet && (args.compare.is_some() || args.save_reference.is_some()) {
@@ -177,6 +184,7 @@ fn main() {
         rules: rules.clone(),
         n_creatures: args.creatures,
         strategies: args.mix.clone(),
+        diets: if args.diet_mix.is_empty() { WorldConfig::default().diets } else { args.diet_mix.clone() },
     };
 
     let reference = args.compare.as_ref().map(|path| {

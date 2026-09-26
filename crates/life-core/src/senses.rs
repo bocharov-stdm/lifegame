@@ -71,6 +71,8 @@ pub struct CorpseFood {
     pub owner: u64,
     pub x: f64,
     pub y: f64,
+    /// Radius of the body it was: a corpse is reached across it.
+    pub half: f64,
     pub score: f64,
 }
 
@@ -88,9 +90,7 @@ impl Prey {
         .ceil();
         let portion = (me.pheno.plant_energy / f64::from(crate::plant::PORTIONS)).max(s.nutrition / 12.0);
         let feeding = (s.nutrition / portion.max(0.001)).ceil();
-        let gain = (s.nutrition * me.pheno.meat_efficiency * crate::config::CORPSE_BITE_YIELD)
-            .min(me.pheno.max_energy - me.energy)
-            .max(0.0);
+        let gain = (s.nutrition * me.pheno.meat_efficiency).min(me.pheno.max_energy - me.energy).max(0.0);
         let cap = me.pheno.size * 0.25;
         let expected = s.strike.min(cap) * hits + allies * (hits + feeding);
         let risk = me.pheno.caution * expected / me.health.max(0.001);
@@ -144,15 +144,15 @@ impl Senses for GridSenses<'_> {
         self.corpse_grid?.for_each_near(me.x, me.y, me.pheno.vision, |i, cx, cy| {
             let c = &self.corpses[i];
             let distance = (cx - me.x).hypot(cy - me.y);
-            if c.born >= self.now || c.remaining <= 0.0 || distance >= me.pheno.vision {
+            let efficiency = me.pheno.corpse_efficiency(c.rot(self.now));
+            if c.born >= self.now || c.remaining <= 0.0 || distance >= me.pheno.vision || efficiency <= 0.0 {
                 return;
             }
             let portion = c.portion(me.pheno.plant_energy);
             let feeding = (c.remaining / portion).ceil();
             let travel = (distance - me.pheno.size - c.size * 0.5).max(0.0) / me.pheno.speed.max(0.01);
-            let score = c.remaining * me.pheno.meat_efficiency * crate::config::CORPSE_BITE_YIELD
-                / (travel + feeding).max(1.0);
-            let candidate = CorpseFood { owner: c.owner, x: cx, y: cy, score };
+            let score = c.remaining * efficiency / (travel + feeding).max(1.0);
+            let candidate = CorpseFood { owner: c.owner, x: cx, y: cy, half: c.size * 0.5, score };
             if best.is_none_or(|b| score > b.score || (score == b.score && c.owner < b.owner)) {
                 best = Some(candidate);
             }
@@ -175,6 +175,9 @@ impl Senses for GridSenses<'_> {
         Some(Threat { id, x: s.x, y: s.y, gap: distance - s.half })
     }
     fn prey(&self, me: &Me, previous: Option<u64>) -> Option<Prey> {
+        if !me.pheno.hunts() {
+            return None; // fresh meat is worth nothing to it
+        }
         let herd = self.herd?;
         let max_size = me.pheno.size / me.pheno.prey_ratio;
         // One look around: the strikes of every visible flock but one's own, and the candidates.
@@ -333,7 +336,7 @@ pub(crate) struct Seen {
     y: f64,
     /// Радиус тела: до чужака меряют расстояние до края тела, а не до центра.
     half: f64,
-    /// Самое крупное тело, какое он может съесть.
+    /// Самое крупное тело, какое он может съесть; 0 — он не ест свежего мяса и никому не угроза.
     eats_up_to: f64,
     health: f64,
     max_health: f64,
@@ -393,7 +396,7 @@ impl Herd {
             x: v.x,
             y: v.y,
             half: v.pheno.half,
-            eats_up_to: v.pheno.size / v.pheno.prey_ratio,
+            eats_up_to: if v.pheno.hunts() { v.pheno.size / v.pheno.prey_ratio } else { 0.0 },
             health: v.health,
             max_health: v.max_health(),
             nutrition: v.energy
@@ -505,7 +508,7 @@ pub(crate) fn nearest_plant_where(
 }
 
 /// Взять одну порцию ближайшего растения в радиусе питания.
-/// Возвращает `Some(true)` на пятой, последней порции.
+/// Возвращает, последняя ли это порция (пятая), и где растение.
 pub(crate) fn bite_plant(
     grid: &Grid,
     plants: &mut [Plant],
@@ -513,7 +516,7 @@ pub(crate) fn bite_plant(
     x: f64,
     y: f64,
     size: f64,
-) -> Option<bool> {
+) -> Option<(bool, f64, f64)> {
     debug_assert_eq!(plants.len(), bitten_this_tick.len());
     let r2 = size * size;
     let mut best: Option<(usize, f64)> = None;
@@ -531,7 +534,7 @@ pub(crate) fn bite_plant(
     });
     best.and_then(|(j, _)| {
         bitten_this_tick[j] = true;
-        plants[j].bite()
+        plants[j].bite().map(|finished| (finished, plants[j].x, plants[j].y))
     })
 }
 
@@ -559,13 +562,22 @@ mod tests {
         let mut eaten_today = vec![false; plants.len()];
         for _ in 0..4 {
             eaten_today.fill(false);
-            assert_eq!(bite_plant(&grid, &mut plants, &mut eaten_today, 1000.0, 1000.0, 20.0), Some(false));
+            assert_eq!(
+                bite_plant(&grid, &mut plants, &mut eaten_today, 1000.0, 1000.0, 20.0),
+                Some((false, 1010.0, 1000.0))
+            );
         }
         assert_eq!((plants[0].portions, plants[1].portions), (1, 5));
         eaten_today.fill(false);
-        assert_eq!(bite_plant(&grid, &mut plants, &mut eaten_today, 1000.0, 1000.0, 20.0), Some(true));
+        assert_eq!(
+            bite_plant(&grid, &mut plants, &mut eaten_today, 1000.0, 1000.0, 20.0),
+            Some((true, 1010.0, 1000.0))
+        );
         assert!(!plants[0].alive);
-        assert_eq!(bite_plant(&grid, &mut plants, &mut eaten_today, 1000.0, 1000.0, 20.0), Some(false));
+        assert_eq!(
+            bite_plant(&grid, &mut plants, &mut eaten_today, 1000.0, 1000.0, 20.0),
+            Some((false, 990.0, 1000.0))
+        );
         assert_eq!(plants[1].portions, 4);
         assert_eq!(bite_plant(&grid, &mut plants, &mut eaten_today, 1000.0, 1000.0, 20.0), None);
     }
@@ -576,18 +588,29 @@ mod tests {
         let mut grid = Grid::new(GRID_CELL);
         grid.rebuild(&Space::default(), plants.iter().map(|p| (p.x, p.y)));
         let mut bitten = [false];
-        assert_eq!(bite_plant(&grid, &mut plants, &mut bitten, 1000.0, 1000.0, 40.0), Some(false));
+        assert_eq!(
+            bite_plant(&grid, &mut plants, &mut bitten, 1000.0, 1000.0, 40.0).map(|b| b.0),
+            Some(false)
+        );
         assert_eq!(bite_plant(&grid, &mut plants, &mut bitten, 1000.0, 1000.0, 40.0), None);
         assert_eq!(plants[0].portions, 4);
         bitten.fill(false);
-        assert_eq!(bite_plant(&grid, &mut plants, &mut bitten, 1000.0, 1000.0, 40.0), Some(false));
+        assert_eq!(
+            bite_plant(&grid, &mut plants, &mut bitten, 1000.0, 1000.0, 40.0).map(|b| b.0),
+            Some(false)
+        );
         assert_eq!(plants[0].portions, 3);
     }
 
     #[test]
     fn падаль_выбирается_по_порциям_и_дороге_но_не_в_тик_смерти() {
         let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
-        w.spawn(crate::CreatureGenome::BASE, 1000.0, 1000.0, Some(40.0));
+        w.spawn(
+            crate::CreatureGenome::BASE.with(crate::genome::creature::Gene::Diet, 2.0),
+            1000.0,
+            1000.0,
+            Some(40.0),
+        );
         let v = &w.creatures[0];
         let me = Me {
             x: v.x,
@@ -624,11 +647,57 @@ mod tests {
         assert_eq!(view.best_corpse(&me).unwrap().owner, 3);
     }
 
+    /// Of a fresh and a rotten corpse at equal distance a carnivore picks the fresh one, a
+    /// scavenger the rot, and a herbivore sees neither.
+    #[test]
+    fn падальщик_выбирает_гниль_мясоед_свежее() {
+        use crate::genome::creature::Gene;
+        let now = 1000;
+        for (diet, want) in [(2.0, Some(1)), (3.0, Some(2)), (0.0, None), (1.0, Some(1))] {
+            let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
+            w.spawn(crate::CreatureGenome::BASE.with(Gene::Diet, diet), 1000.0, 1000.0, Some(40.0));
+            let v = &w.creatures[0];
+            let me = Me {
+                x: v.x,
+                y: v.y,
+                energy: v.energy,
+                kinship: v.kinship(),
+                flock: v.flock,
+                circle: None,
+                health_share: 1.0,
+                health: v.pheno.size,
+                pheno: &v.pheno,
+            };
+            let corpse = |owner: u64, x: f64, born: u64| {
+                let mut c = Corpse::from_creature(v, born);
+                (c.owner, c.x, c.bottom) = (owner, x, c.y0);
+                (c.initial, c.remaining) = (100.0, 60.0);
+                c
+            };
+            let corpses = [corpse(1, 1100.0, now - 10), corpse(2, 900.0, now - 700)];
+            assert_eq!((corpses[0].rot(now), corpses[1].rot(now)), (0.0, 1.0));
+            let mut cgrid = Grid::new(GRID_CELL);
+            cgrid.rebuild(&w.space, corpses.iter().map(|c| (c.x, c.y)));
+            let food = Grid::new(GRID_CELL);
+            let view = GridSenses {
+                food: &food,
+                plants: &[],
+                corpse_grid: Some(&cgrid),
+                corpses: &corpses,
+                now,
+                herd: None,
+            };
+            assert_eq!(view.best_corpse(&me).map(|c| c.owner), want, "diet {diet}");
+        }
+    }
+
     #[test]
     fn разделившиеся_стаи_не_видят_друг_друга_целью_охоты_или_угрозой_до_срока() {
         let mut world = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
         world.spawn(
-            crate::CreatureGenome::BASE.with(crate::genome::creature::Gene::Size, 80.0),
+            crate::CreatureGenome::BASE
+                .with(crate::genome::creature::Gene::Size, 80.0)
+                .with(crate::genome::creature::Gene::Diet, 2.0),
             1000.0,
             1000.0,
             None,
@@ -739,7 +808,8 @@ mod tests {
                         .map(|(i, _)| i);
                     let mut bitten = plants.clone();
                     let mut eaten_today = vec![false; plants.len()];
-                    let last = bite_plant(&food, &mut bitten, &mut eaten_today, v.x, v.y, v.pheno.size);
+                    let last =
+                        bite_plant(&food, &mut bitten, &mut eaten_today, v.x, v.y, v.pheno.size).map(|b| b.0);
                     assert_eq!(last, expected.map(|i| plants[i].portions == 1));
                     for (i, (before, after)) in plants.iter().zip(&bitten).enumerate() {
                         assert_eq!(after.portions, before.portions - u8::from(expected == Some(i)));
@@ -769,7 +839,8 @@ mod tests {
                     let can_eat_me = |u: &&Creature| {
                         let reach =
                             if u.mind.attack.is_some() { within } else { within * (1.0 - v.pheno.bravery) };
-                        size <= u.pheno.size / u.pheno.prey_ratio
+                        u.pheno.hunts()
+                            && size <= u.pheno.size / u.pheno.prey_ratio
                             && dist2(u.x, u.y, v.x, v.y) < (reach + u.pheno.half).powi(2)
                     };
                     let gap = |u: &Creature| dist2(u.x, u.y, v.x, v.y).sqrt() - u.pheno.half;
@@ -815,7 +886,8 @@ mod tests {
                     let mut candidates: Vec<usize> = (0..w.creatures.len())
                         .filter(|&j| {
                             let u = &w.creatures[j];
-                            sees(u)
+                            v.pheno.hunts()
+                                && sees(u)
                                 && !(v.flock != 0 && v.flock == u.flock)
                                 && u.pheno.size <= v.pheno.size / v.pheno.prey_ratio
                                 && !v.kinship().kin(u.kinship())
@@ -914,7 +986,10 @@ mod tests {
     fn best_prey(caution: f64, energy_share: f64, setup: impl Fn(&mut World)) -> Option<Prey> {
         use crate::genome::creature::Gene;
         let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
-        let hunter = crate::CreatureGenome::BASE.with(Gene::Size, 80.0).with(Gene::Caution, caution);
+        let hunter = crate::CreatureGenome::BASE
+            .with(Gene::Size, 80.0)
+            .with(Gene::Caution, caution)
+            .with(Gene::Diet, 2.0);
         w.spawn(hunter, 1000.0, 1000.0, None);
         w.creatures[0].energy = w.creatures[0].pheno.max_energy * energy_share;
         setup(&mut w);
@@ -1045,9 +1120,20 @@ mod tests {
     #[test]
     fn a_brave_creature_lets_a_passer_by_come_near_but_not_a_hunter() {
         use crate::genome::creature::Gene;
-        for (bravery, hunting, feared) in [(0.0, false, true), (50.0, false, false), (50.0, true, true)] {
+        for (diet, bravery, hunting, feared) in [
+            (2.0, 0.0, false, true),
+            (2.0, 50.0, false, false),
+            (2.0, 50.0, true, true),
+            (0.0, 0.0, true, false),
+        ] {
             let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
-            w.spawn(crate::CreatureGenome::BASE.with(Gene::Size, 80.0), 1000.0, 1000.0, None);
+            // a herbivore eats no one: nobody fears it, whatever it does
+            w.spawn(
+                crate::CreatureGenome::BASE.with(Gene::Size, 80.0).with(Gene::Diet, diet),
+                1000.0,
+                1000.0,
+                None,
+            );
             // 60 from the edge of the big body: inside a flight distance of 100, outside half of it
             w.spawn(
                 crate::CreatureGenome::BASE.with(Gene::Size, 15.0).with(Gene::Bravery, bravery),
@@ -1063,7 +1149,7 @@ mod tests {
             let v = &w.creatures[1];
             let got =
                 nearest_threat(&herd, v.kinship(), v.flock, v.x, v.y, v.pheno.size, 100.0, v.pheno.bravery);
-            assert_eq!(got.is_some(), feared, "bravery {bravery}, hunting {hunting}");
+            assert_eq!(got.is_some(), feared, "diet {diet}, bravery {bravery}, hunting {hunting}");
         }
     }
 }

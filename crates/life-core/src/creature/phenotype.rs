@@ -7,12 +7,35 @@
 //! своё действие, а его цена дописывается в конец суммы расхода.
 
 use super::Strategy;
-use crate::config::{ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, SLOW_PACE};
+use crate::config::{DIET_DIGESTION, ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, SLOW_PACE};
 use crate::flock::{FlockKind, Territoriality};
 use crate::genome::CreatureGenome;
 use crate::genome::creature::Gene;
 use crate::rules::Rules;
 use crate::space::Space;
+
+/// What a creature eats: the `diet` gene. The order is the gene's variants and the rows of
+/// `DIET_DIGESTION`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Diet {
+    Herbivore,
+    Omnivore,
+    Carnivore,
+    Scavenger,
+}
+
+impl Diet {
+    pub const ALL: [Diet; 4] = [Diet::Herbivore, Diet::Omnivore, Diet::Carnivore, Diet::Scavenger];
+
+    pub fn from_gene(value: f64) -> Diet {
+        Diet::ALL[(value.max(0.0) as usize).min(Diet::ALL.len() - 1)]
+    }
+
+    /// Digestibility of plants, fresh meat and rot (`DIET_DIGESTION`).
+    pub fn digestion(self) -> [f64; 3] {
+        DIET_DIGESTION[self as usize]
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Phenotype {
@@ -34,8 +57,14 @@ pub struct Phenotype {
     /// Bravery 0..1: a stranger that could eat it but hunts nobody is feared only within
     /// `1 − bravery` of the usual flight distance; a hunting one within all of it.
     pub bravery: f64,
+    /// What it eats; the three efficiencies are its row of `DIET_DIGESTION`. Zero: it neither
+    /// eats that food nor goes for it.
+    pub diet: Diet,
     pub plant_efficiency: f64,
+    /// Fresh meat: a corpse right after death, and so what a hunt is worth.
     pub meat_efficiency: f64,
+    /// Fully rotten meat; a rotting corpse is a mix by its rot share (`corpse_efficiency`).
+    pub rot_efficiency: f64,
     pub prey_ratio: f64,
     /// How much a hunter weighs the strikes it expects from its prey and the prey's visible
     /// allies: 0 ignores them, 1 is the base, 2 is twice as careful.
@@ -127,6 +156,8 @@ impl Phenotype {
 
         let speed = genome[Gene::Speed];
         let vision = genome[Gene::Vision];
+        let diet = Diet::from_gene(genome[Gene::Diet]);
+        let [plants, fresh, rot] = diet.digestion();
         let slow_speed = speed * SLOW_PACE;
         Phenotype {
             size,
@@ -139,8 +170,10 @@ impl Phenotype {
             flock_spacing: genome[Gene::FlockSpacing].clamp(50.0, 500.0),
             care: genome[Gene::Care].clamp(0.0, 100.0) / 100.0,
             life_pace,
-            plant_efficiency: 1.0 - 0.8 * genome[Gene::Carnivory].clamp(0.0, 100.0) / 100.0,
-            meat_efficiency: 0.2 + 0.8 * genome[Gene::Carnivory].clamp(0.0, 100.0) / 100.0,
+            diet,
+            plant_efficiency: plants,
+            meat_efficiency: fresh,
+            rot_efficiency: rot,
             prey_ratio: genome[Gene::PreyRatio].clamp(1.0, 5.0),
             caution: genome[Gene::Caution].clamp(0.0, 100.0) / 50.0,
             forage: genome[Gene::Forage].clamp(0.0, 100.0) / 100.0,
@@ -172,5 +205,31 @@ impl Phenotype {
             flee: vision * FLEE_SIGHT_SHARE,
             strategy: Strategy::from_gene(genome[Gene::Strategy]),
         }
+    }
+}
+
+impl Phenotype {
+    /// Efficiency on a corpse with rot share `rot`: fresh and rot mixed.
+    #[inline]
+    pub fn corpse_efficiency(&self, rot: f64) -> f64 {
+        self.meat_efficiency * (1.0 - rot) + self.rot_efficiency * rot
+    }
+
+    /// Eats plants at all.
+    #[inline]
+    pub fn eats_plants(&self) -> bool {
+        self.plant_efficiency > 0.0
+    }
+
+    /// Eats fresh meat: it hunts, and others fear it.
+    #[inline]
+    pub fn hunts(&self) -> bool {
+        self.meat_efficiency > 0.0
+    }
+
+    /// Eats some corpse, fresh or rotten.
+    #[inline]
+    pub fn eats_corpses(&self) -> bool {
+        self.meat_efficiency > 0.0 || self.rot_efficiency > 0.0
     }
 }

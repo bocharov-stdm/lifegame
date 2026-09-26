@@ -1,8 +1,12 @@
 //! Регрессии жизненного цикла.
-use life_core::creature::Creature;
+use life_core::creature::{Creature, Diet};
 use life_core::genome::creature::Gene;
 use life_core::rng::Rng;
 use life_core::{CreatureGenome, Rules, Space};
+
+fn with_diet(g: CreatureGenome, diet: Diet) -> CreatureGenome {
+    g.with(Gene::Diet, diet as usize as f64)
+}
 
 fn parent() -> Creature {
     let mut v = Creature::new(
@@ -16,6 +20,19 @@ fn parent() -> Creature {
     );
     v.reproduction_wait = 0;
     v
+}
+
+/// Diet is part of the flock mode: a child that stepped to another diet leaves the family
+/// flock, since the circle is a feeding place.
+#[test]
+fn ребёнок_с_другой_диетой_уходит_из_стаи() {
+    let r = Rules::default();
+    let p = parent();
+    let mut same = p.clone();
+    assert!(p.same_mode(&same));
+    same.genome = with_diet(same.genome, Diet::Omnivore);
+    same.apply_rules(&r, &Space::default());
+    assert!(!p.same_mode(&same), "another diet — another mode");
 }
 
 #[test]
@@ -139,25 +156,31 @@ fn раны_лечатся_за_энергию_после_паузы() {
     assert!((e - v.energy - upkeep - 0.08).abs() < 1e-9);
 }
 
+/// The diet table: a specialist digests its own food fully, the omnivore everything but worse,
+/// rot feeds well only the scavenger; a rotting corpse mixes fresh and rot.
 #[test]
-fn пищевые_крайности_имеют_компромисс() {
+fn диеты_усваивают_по_таблице() {
     let r = Rules::default();
-    let mut herb = parent();
-    herb.genome = herb.genome.with(Gene::Carnivory, 0.0);
-    herb.apply_rules(&r, &Space::default());
-    herb.energy = 0.0;
-    let mut meat = herb.clone();
-    meat.genome = meat.genome.with(Gene::Carnivory, 100.0);
-    meat.apply_rules(&r, &Space::default());
-    herb.feed(1, &r);
-    meat.feed(1, &r);
-    assert!((meat.energy / herb.energy - 0.2).abs() < 1e-9);
-    herb.energy = 0.0;
-    meat.energy = 0.0;
-    herb.devour(20.0, &r);
-    meat.devour(20.0, &r);
-    assert_eq!(herb.energy, 4.0);
-    assert_eq!(meat.energy, 20.0);
+    let plant_bite = r.plant_energy * r.plant_bite_yield / 5.0;
+    for (diet, plants, fresh, rot) in [
+        (Diet::Herbivore, 1.0, 0.0, 0.0),
+        (Diet::Omnivore, 0.7, 0.6, 0.15),
+        (Diet::Carnivore, 0.0, 1.0, 0.1),
+        (Diet::Scavenger, 0.0, 0.8, 0.9),
+    ] {
+        let mut v = parent();
+        v.genome = with_diet(v.genome, diet);
+        v.apply_rules(&r, &Space::default());
+        assert_eq!(v.pheno.diet, diet);
+        v.energy = 0.0;
+        v.feed(1, &r);
+        assert!((v.energy - plant_bite * plants).abs() < 1e-9, "{diet:?}: plants {}", v.energy);
+        assert_eq!(v.pheno.corpse_efficiency(0.0), fresh, "{diet:?}: fresh meat");
+        assert_eq!(v.pheno.corpse_efficiency(1.0), rot, "{diet:?}: rot");
+        assert!((v.pheno.corpse_efficiency(0.5) - (fresh + rot) / 2.0).abs() < 1e-12);
+        assert_eq!(v.pheno.eats_plants(), plants > 0.0);
+        assert_eq!(v.pheno.hunts(), fresh > 0.0);
+    }
 }
 
 #[test]
@@ -209,7 +232,7 @@ fn границы_новых_генов_сохраняются_при_мутац
         assert!((0.5..=2.0).contains(&g[Gene::LifePace]));
         assert!((1.0..=5.0).contains(&g[Gene::PreyRatio]));
         assert!((0.0..=100.0).contains(&g[Gene::Bravery]));
-        assert!((0.0..=100.0).contains(&g[Gene::Carnivory]));
+        assert!((0..4).contains(&(g[Gene::Diet] as usize)) && g[Gene::Diet].fract() == 0.0);
     }
 }
 
@@ -230,7 +253,10 @@ fn охота_выбирает_добычу_но_сытый_не_начинае�
             ..Default::default()
         });
         w.spawn(
-            CreatureGenome::BASE.with(Gene::Size, 100.0).with(Gene::PreyRatio, ratio),
+            with_diet(
+                CreatureGenome::BASE.with(Gene::Size, 100.0).with(Gene::PreyRatio, ratio),
+                Diet::Carnivore,
+            ),
             1000.0,
             1000.0,
             Some(energy),
@@ -248,7 +274,13 @@ fn охота_выбирает_добычу_но_сытый_не_начинае�
 fn близкое_растение_выгоднее_далёкой_добычи() {
     use life_core::{World, WorldConfig};
     let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
-    w.spawn(CreatureGenome::BASE.with(Gene::Size, 100.0), 1000.0, 1000.0, Some(100.0));
+    // an omnivore: it could take either
+    w.spawn(
+        with_diet(CreatureGenome::BASE.with(Gene::Size, 100.0), Diet::Omnivore),
+        1000.0,
+        1000.0,
+        Some(100.0),
+    );
     w.spawn(CreatureGenome::BASE.with(Gene::Size, 30.0), 1200.0, 1000.0, Some(50.0));
     w.plants.push(life_core::plant::Plant::at(1000.0, 1000.0));
     w.step();
@@ -267,7 +299,7 @@ fn один_остаток_трупа_получает_едок_с_меньши�
         ..Default::default()
     });
     for _ in 0..2 {
-        w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(30.0));
+        w.spawn(with_diet(CreatureGenome::BASE, Diet::Carnivore), 1000.0, 1000.0, Some(30.0));
         w.creatures.last_mut().unwrap().reproduction_wait = 1000;
     }
     w.creatures[1].flock = w.creatures[0].flock;
@@ -289,8 +321,9 @@ fn исчерпанный_труп_не_лишает_следующего_едо
         rules: Rules::default().with("plant_rate", 0.0).unwrap(),
         ..Default::default()
     });
+    // omnivores: the fresh corpse is worth more to them than the plant
     for _ in 0..2 {
-        w.spawn(CreatureGenome::BASE.with(Gene::Carnivory, 100.0), 1000.0, 1000.0, Some(30.0));
+        w.spawn(with_diet(CreatureGenome::BASE, Diet::Omnivore), 1000.0, 1000.0, Some(30.0));
         w.creatures.last_mut().unwrap().reproduction_wait = 1000;
     }
     w.creatures[1].flock = w.creatures[0].flock;
@@ -309,37 +342,43 @@ fn исчерпанный_труп_не_лишает_следующего_едо
     assert!(w.creatures[0].energy > w.creatures[1].energy);
 }
 
+/// One that loses its plant to an earlier id eats the corpse it touches instead, even a rotten
+/// one it likes less; a herbivore beside it never touches the corpse.
 #[test]
-fn после_чужого_укуса_растения_резерв_трупа_сохраняет_еду_следующему() {
+fn потерявший_растение_ест_труп_который_касается() {
     use life_core::{World, WorldConfig, corpse::Corpse, plant::Plant};
     let mut w = World::new(&WorldConfig {
         n_creatures: Some(0),
         rules: Rules::default().with("plant_rate", 0.0).unwrap(),
         ..Default::default()
     });
-    let plant_eater = CreatureGenome::BASE.with(Gene::Sociability, 0.0);
-    let meat_eater = plant_eater.with(Gene::Carnivory, 100.0);
-    w.spawn(plant_eater, 1000.0, 1000.0, Some(30.0));
-    w.spawn(plant_eater, 1000.0, 1000.0, Some(30.0));
-    w.spawn(meat_eater, 1080.0, 1000.0, Some(30.0));
+    let herbivore = CreatureGenome::BASE.with(Gene::Sociability, 0.0);
+    w.spawn(herbivore, 1000.0, 1000.0, Some(30.0));
+    w.spawn(with_diet(herbivore, Diet::Omnivore), 1000.0, 1000.0, Some(30.0));
+    w.spawn(herbivore, 1080.0, 1000.0, Some(30.0));
     let flock = w.creatures[0].flock;
     for v in &mut w.creatures {
         v.flock = flock;
         v.reproduction_wait = 1000;
     }
+    // long dead and fully rotten, but lying here: the omnivore prefers the plant
     let mut corpse = Corpse::from_creature(&w.creatures[0], 0);
     corpse.owner = 99;
     corpse.x = 1040.0;
-    corpse.remaining = 10.0;
+    corpse.bottom = corpse.y0;
+    corpse.remaining = 40.0;
     w.corpses.push(corpse);
     w.plants.push(Plant::at(1000.0, 1000.0));
-    w.plants.push(Plant::at(1080.0, 1000.0));
+    w.tick = 700;
 
     w.step();
 
-    assert_eq!(w.counters.meat_bites, 1);
-    assert_eq!(w.counters.plant_bites, 2);
-    assert_eq!(w.plants.iter().map(|p| p.portions).collect::<Vec<_>>(), [4, 4]);
+    assert_eq!((w.counters.plant_bites, w.counters.meat_bites, w.counters.rot_bites), (1, 1, 1));
+    assert_eq!(w.plants[0].portions, 4);
+    use life_core::creature::Morsel;
+    assert!(matches!(w.creatures[0].meal.map(|m| m.food), Some(Morsel::Plant)));
+    assert!(matches!(w.creatures[1].meal.map(|m| m.food), Some(Morsel::Corpse { rot }) if rot == 1.0));
+    assert!(w.creatures[2].meal.is_none(), "the herbivore beside the corpse ate nothing");
 }
 
 #[test]

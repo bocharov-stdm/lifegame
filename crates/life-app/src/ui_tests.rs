@@ -505,7 +505,8 @@ fn flock_scenes_and_card_without_a_window() {
     assert!(w.plants.is_empty());
     scenes.push(("переход", w));
     let mut w = fixture();
-    w.spawn(CreatureGenome::BASE.with(Gene::Size, 120.0), 2950.0, 2000.0, Some(180.0));
+    // a big meat-eater: a herbivore would frighten nobody
+    w.spawn(CreatureGenome::BASE.with(Gene::Size, 120.0).with(Gene::Diet, 2.0), 2950.0, 2000.0, Some(180.0));
     w.creatures.last_mut().unwrap().age = life_core::config::LIFESPAN - 12.0;
     let (mut alarm, mut back) = (false, false);
     for _ in 0..200 {
@@ -716,10 +717,12 @@ fn последовательность_обхода_предупреждени�
         rules: Rules::default().with("plant_rate", 0.0).unwrap(),
         ..Default::default()
     });
+    // meat-eaters: they eat the corpse they leave
     let shooter = CreatureGenome::BASE
         .with(Gene::Shooter, 1.0)
         .with(Gene::FirePreference, 100.0)
-        .with(Gene::FireReserve, 0.0);
+        .with(Gene::FireReserve, 0.0)
+        .with(Gene::Diet, 2.0);
     for x in [1000.0, 1020.0, 1040.0] {
         world.spawn(shooter, x, 1000.0, Some(100.0));
     }
@@ -784,6 +787,86 @@ fn последовательность_обхода_предупреждени�
             settle(&mut h);
             shot(&mut h, &format!("территория-{name}-{tag}"));
         }
+    }
+}
+
+/// Вблизи едящий тянет хоботок к еде: травоядный — к растению, падальщик — к гнилому трупу на
+/// дне, мясоед — к свежему. Каёмка — цвет диеты. Кадр несёт это в `meta` (бит «ест», направление
+/// и длина); сам рисунок виден на картинке с TINYLIFE_SHOTS.
+#[test]
+fn хоботок_тянется_к_еде_вблизи() {
+    use life_core::{CreatureGenome, Rules, World, corpse::Corpse, genome::creature::Gene, plant::Plant};
+    let _gpu = gpu();
+    let mut w = World::new(&WorldConfig {
+        seed: 3,
+        n_creatures: Some(0),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
+        ..Default::default()
+    });
+    w.plants.clear();
+    w.tick = 700;
+    let eaters = [(0.0, 1000.0), (3.0, 1300.0), (2.0, 1600.0)];
+    for (diet, y) in eaters {
+        w.spawn(CreatureGenome::BASE.with(Gene::Diet, diet), 1000.0, y, Some(40.0));
+        w.creatures.last_mut().unwrap().reproduction_wait = 10_000;
+    }
+    w.plants.push(Plant::at(1100.0, 1000.0));
+    for (y, born) in [(1300.0, 0), (1600.0, 699)] {
+        let mut corpse = Corpse::from_creature(&w.creatures[0], born);
+        (corpse.owner, corpse.x, corpse.y, corpse.y0, corpse.bottom) = (900 + born, 1110.0, y, y, y);
+        (corpse.initial, corpse.remaining) = (400.0, 400.0);
+        w.corpses.push(corpse);
+    }
+    for _ in 0..9 {
+        w.step();
+    }
+    for v in &w.creatures {
+        let meal = v.meal.expect("every one of them is eating");
+        assert_eq!(meal.tick, w.tick, "{:?} bites on this tick", v.pheno.diet);
+        assert!(
+            (meal.x - v.x).hypot(meal.y - v.y) > v.pheno.half,
+            "{:?}: the food lies beside the body",
+            v.pheno.diet
+        );
+    }
+
+    for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
+        let mut h = harness(size);
+        h.state_mut().side_open = false;
+        let generation = h.state().view.frame.as_ref().unwrap().world_gen;
+        h.state_mut().sim.send(Command::TestWorld(Box::new(w.clone())));
+        for _ in 0..100 {
+            h.step();
+            if h.state().view.frame.as_ref().is_some_and(|f| f.world_gen > generation) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if let Some(cam) = &mut h.state_mut().view.camera {
+            let (sx, sy) = cam.to_screen(1050.0, 1300.0);
+            cam.zoom_at(sx, sy, 6.0);
+            cam.center_on(1050.0, 1300.0);
+        }
+        settle(&mut h);
+        let creatures: Vec<_> = h
+            .state()
+            .view
+            .instances()
+            .iter()
+            .filter(|i| (i.meta >> 16) & 3 == crate::motion::KIND_CREATURE)
+            .copied()
+            .collect();
+        assert_eq!(creatures.len(), 3, "{tag}");
+        for i in &creatures {
+            assert!(i.meta & crate::motion::FEEDING != 0, "{tag}: the eating bit is set");
+            assert!(i.meta >> 28 > 0, "{tag}: the proboscis has a length");
+            // the food lies east of each of them: the direction is near 0 (or near a full turn)
+            let dir = (i.meta >> 21) & 127;
+            assert!(!(8..=120).contains(&dir), "{tag}: the proboscis points at the food, {dir}/128");
+        }
+        let diets: Vec<u32> = creatures.iter().map(|i| (i.meta >> 12) & 3).collect();
+        assert_eq!(diets, [0, 3, 2], "{tag}: the diet travels to the shader for the rim");
+        shot(&mut h, &format!("хоботок-{tag}"));
     }
 }
 

@@ -40,18 +40,21 @@ fn lab_group(field: &settings::Field) -> &'static str {
     }
 }
 
-/// Наследуемые охотничьи признаки в последнем срезе мира.
-pub(crate) fn predator_summary(history: &History) -> Option<(f64, f64, f64)> {
+/// What the world eats and how it hunts in the last snapshot: diet shares in %, the median prey
+/// size ratio and the share of shooters in %.
+pub(crate) fn predator_summary(history: &History) -> Option<([f64; 4], f64, f64)> {
     let genes = history.snapshots.last()?.genes.as_ref()?;
-    let median = |gene: creature::Gene| match genes[gene as usize] {
-        GeneStat::Number(spread) => Some(spread.p50),
+    let shares = |gene: creature::Gene| match genes[gene as usize] {
+        GeneStat::Shares(shares) => Some(shares),
         _ => None,
     };
-    let shooters = match genes[creature::Gene::Shooter as usize] {
-        GeneStat::Shares(shares) => shares[1] * 100.0,
+    let ratio = match genes[creature::Gene::PreyRatio as usize] {
+        GeneStat::Number(spread) => spread.p50,
         _ => return None,
     };
-    Some((median(creature::Gene::Carnivory)?, median(creature::Gene::PreyRatio)?, shooters))
+    let diets = shares(creature::Gene::Diet)?;
+    let diets = [0, 1, 2, 3].map(|k| diets[k] * 100.0);
+    Some((diets, ratio, shares(creature::Gene::Shooter)?[1] * 100.0))
 }
 
 /// Команда `life-report`, которая повторяет партию без окна.
@@ -370,9 +373,14 @@ impl LifeApp {
     }
 
     pub(crate) fn predator_status(&self, ui: &mut egui::Ui) {
-        if let Some((carnivory, ratio, shooters)) = predator_summary(&self.history) {
-            ui.label(format!("Адаптация: плотоядность {carnivory:.0}% · добыча ≤ 1/{ratio:.1} размера"))
-                .on_hover_text("Плотоядность и предел размера добычи наследуются каждым существом.");
+        if let Some((diets, ratio, shooters)) = predator_summary(&self.history) {
+            ui.label(format!(
+                "Питание: травоядные {:.0}% · всеядные {:.0}% · мясоеды {:.0}% · падальщики {:.0}% · добыча ≤ 1/{ratio:.1}",
+                diets[0], diets[1], diets[2], diets[3]
+            ))
+            .on_hover_text(
+                "Питание и предел размера добычи наследуются каждым существом. Охотятся и пугают                  других только те, кто ест свежее мясо.",
+            );
             ui.colored_label(
                 rgb(CREATURE_COLOR),
                 format!(
@@ -701,15 +709,27 @@ fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; N]>) {
     ));
     ui.label(format!("Здоровье {:.1} / {:.1} · {}", s.health, s.max_health, s.state));
     ui.label(s.flock.map_or("Одиночка".into(), |id| format!("Стая № {id}")));
+    let diet = &creature::DIET_VARIANTS[(s.genome[creature::Gene::Diet as usize] as usize).min(3)];
     ui.colored_label(
         color,
         format!(
-            "Плотоядность {:.0}% · добыча до 1/{:.1} своего размера",
-            s.genome[creature::Gene::Carnivory as usize],
+            "Питание: {} · добыча до 1/{:.1} своего размера",
+            diet.label,
             s.genome[creature::Gene::PreyRatio as usize],
         ),
     )
-    .on_hover_text("Эти признаки наследуются.");
+    .on_hover_text(diet.about);
+    if let Some(food) = s.eating {
+        use life_core::creature::Morsel;
+        ui.colored_label(
+            MUTED,
+            match food {
+                Morsel::Plant => "ест растение".to_string(),
+                Morsel::Corpse { rot } if rot < 0.5 => "ест свежее мясо".to_string(),
+                Morsel::Corpse { .. } => "ест гниль".to_string(),
+            },
+        );
+    }
     let frac = (s.energy / s.max_energy).clamp(0.0, 1.0);
     ui.horizontal(|ui| {
         ui.colored_label(MUTED, "энергия");

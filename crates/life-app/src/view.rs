@@ -338,30 +338,29 @@ impl WorldView {
         }
 
         for corpse in &f.corpses {
-            let (x, y) = cam.to_screen(corpse.x, corpse.y);
+            let (x, y) = cam.to_screen(corpse.x, corpse.py + (corpse.y - corpse.py) * k as f64);
             let center = pos(x, y);
             let radius = (corpse.size * 0.5 * cam.zoom) as f32;
             if !Rect::from_center_size(center, Vec2::splat(radius * 2.0)).intersects(rect) {
                 continue;
             }
             let alpha = (75.0 + 95.0 * corpse.fullness) as u8;
+            let [r, g, b] = corpse.rgb();
+            let fill = Color32::from_rgba_unmultiplied(r, g, b, alpha);
             if f.dots {
                 painter.rect_filled(
                     Rect::from_center_size(center, Vec2::splat(2.0 / ui.ctx().pixels_per_point())),
                     0.0,
-                    Color32::from_rgba_unmultiplied(168, 136, 108, alpha),
+                    fill,
                 );
                 continue;
             }
-            flock_painter.circle_filled(
-                center,
-                radius,
-                Color32::from_rgba_unmultiplied(168, 136, 108, alpha),
-            );
+            flock_painter.circle_filled(center, radius, fill);
+            let rim = |c: u8| c.saturating_add(50);
             flock_painter.circle_stroke(
                 center,
                 radius,
-                Stroke::new(1.0, Color32::from_rgba_unmultiplied(225, 193, 158, alpha)),
+                Stroke::new(1.0, Color32::from_rgba_unmultiplied(rim(r), rim(g), rim(b), alpha)),
             );
         }
 
@@ -404,6 +403,7 @@ impl WorldView {
                     pixels_per_point: ui.ctx().pixels_per_point(),
                     k,
                     since,
+                    time: (ui.ctx().input(|i| i.time) % 1000.0) as f32,
                 },
             ));
         }

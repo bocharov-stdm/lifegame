@@ -35,8 +35,20 @@ const STARVED: f32 = 0.05;
 /// Курс поворачивает к направлению сдвига не сразу: зигзаги не дёргают нос.
 const TURN: f32 = 0.5;
 
+// `meta`: курс 0–11 | диета 12–13 | ест 14 | ел в прошлом кадре 15 | вид 16–17 | призрак 18 |
+// с голоду 19 | точка 20 | направление к еде 21–27 | длина хоботка 28–31 (`creatures.wgsl`).
 pub const KIND_PLANT: u32 = 0;
 pub const KIND_CREATURE: u32 = 1;
+const DIET_SHIFT: u32 = 12;
+/// Бит `meta`: существо ест на тике кадра (или тиком раньше) — хоботок выдвинут.
+pub const FEEDING: u32 = 1 << 14;
+/// Бит `meta`: ело в прошлом кадре — выдвинутый хоботок не выдвигается заново, а
+/// переставший есть втягивает его.
+pub const FED: u32 = 1 << 15;
+const FOOD_DIR_SHIFT: u32 = 21;
+const REACH_SHIFT: u32 = 28;
+/// A proboscis is drawn from a bite this many ticks old at most (then it is retracting).
+const MEAL_TICKS: u64 = 3;
 /// Бит `meta`: призрак — существо уже умерло, `age` — время с его смерти.
 pub const GHOST: u32 = 1 << 18;
 /// Бит `meta`: призрак умер с голоду (сереет), а не съеден (сжимается).
@@ -54,6 +66,9 @@ struct Seen {
     r: f32,
     color: u32,
     fullness: f32,
+    feeding: bool,
+    /// Diet bits of `meta`: a ghost keeps its rim colour.
+    diet: u32,
 }
 
 /// Растение прошлого кадра: ключ (тик рождения, биты x) и y.
@@ -75,6 +90,7 @@ struct Ghost {
     heading: f32,
     starved: bool,
     died: Instant,
+    diet: u32,
 }
 
 /// Кольцо «значение в кадре → время кадра»: по нему видно, в каком кадре
@@ -121,9 +137,26 @@ pub struct Motion {
     ghosts: Vec<Ghost>,
 }
 
-/// Угол курса в u16: полный круг — 65 536.
+/// Угол курса в 12 битах: полный круг — 4096.
 fn pack_heading(a: f32) -> u32 {
-    ((a.rem_euclid(TAU) / TAU * 65536.0) as u32) & 0xFFFF
+    ((a.rem_euclid(TAU) / TAU * 4096.0) as u32) & 0xFFF
+}
+
+/// Diet bits and the proboscis of creature `v` on tick `tick`: which way the food lies and how
+/// far past the body edge (in body radii, 0–2 in 16 steps), and whether it is eating now. The tip
+/// reaches the food's centre: into the plant, into the carcass.
+fn feeding_bits(v: &life_core::creature::Creature, tick: u64) -> (u32, bool) {
+    let diet = ((v.pheno.diet as u32) & 3) << DIET_SHIFT;
+    let Some(meal) = v.meal.filter(|m| m.tick + MEAL_TICKS >= tick) else { return (diet, false) };
+    let (dx, dy) = (meal.x - v.x, meal.y - v.y);
+    let reach = (dx.hypot(dy) - v.pheno.half) / v.pheno.half.max(1e-9);
+    if reach <= 0.0 {
+        return (diet, false); // the food lies under the body: nothing to reach out for
+    }
+    let angle = (dy.atan2(dx) as f32).rem_euclid(TAU);
+    let dir = ((angle / TAU * 128.0) as u32) & 127;
+    let steps = ((reach * 7.5).round() as u32).clamp(1, 15);
+    (diet | dir << FOOD_DIR_SHIFT | steps << REACH_SHIFT, meal.tick + 1 >= tick)
 }
 
 fn meta(kind: u32, heading: f32) -> u32 {
@@ -229,6 +262,7 @@ impl Motion {
                     heading: 0.0,
                     starved: false,
                     died: now,
+                    diet: 0,
                 });
             }
         }
@@ -264,11 +298,19 @@ impl Motion {
                     heading: s.heading,
                     starved: s.fullness < STARVED,
                     died: now,
+                    diet: s.diet,
                 });
             }
         };
 
-        let mut body = |id: u64, x: f64, y: f64, half: f64, color: u32, fullness: f32| -> bool {
+        let mut body = |id: u64,
+                        x: f64,
+                        y: f64,
+                        half: f64,
+                        color: u32,
+                        fullness: f32,
+                        (bits, feeding): (u32, bool)|
+         -> bool {
             if !visible(x, y, half) {
                 return true;
             }
@@ -277,16 +319,18 @@ impl Motion {
                 j += 1;
             }
             let before = (j < prev.len() && prev[j].id == id).then(|| prev[j]);
-            let (px, py, heading) = match before {
+            let (px, py, heading, fed) = match before {
                 Some(b) => {
                     j += 1;
                     let (dx, dy) = ((x - b.x) as f32, (y - b.y) as f32);
                     let heading =
                         if dx != 0.0 || dy != 0.0 { turn(b.heading, dy.atan2(dx), TURN) } else { b.heading };
-                    (b.x, b.y, heading)
+                    (b.x, b.y, heading, b.feeding)
                 }
-                None => (x, y, initial_heading(id)),
+                None => (x, y, initial_heading(id), false),
             };
+            // without a record of the food there is nothing to retract towards
+            let fed = fed && bits >> REACH_SHIFT != 0;
             out.push(Instance {
                 x: (x - x0) as f32,
                 y: (y - y0) as f32,
@@ -295,9 +339,13 @@ impl Motion {
                 r: half as f32,
                 color,
                 age: self.ids.age(id, now),
-                meta: meta(kind, heading),
+                meta: meta(kind, heading)
+                    | bits
+                    | if feeding { FEEDING } else { 0 }
+                    | if fed { FED } else { 0 },
             });
-            seen.push(Seen { id, x, y, heading, r: half as f32, color, fullness });
+            let diet = bits & (3 << DIET_SHIFT);
+            seen.push(Seen { id, x, y, heading, r: half as f32, color, fullness, feeding, diet });
             out.len() <= MAX_INSTANCES
         };
 
@@ -307,7 +355,7 @@ impl Motion {
                 frame::creature_color(world, v.flock, self.flock_colors),
                 (fullness * 255.0) as u8,
             );
-            if !body(v.id, v.x, v.y, v.pheno.half, color, fullness) {
+            if !body(v.id, v.x, v.y, v.pheno.half, color, fullness, feeding_bits(v, world.tick)) {
                 return false;
             }
         }
@@ -329,7 +377,7 @@ impl Motion {
         let (x0, y0, ..) = rect;
         for g in self.ghosts.iter().filter(|g| g.kind == kind) {
             let (x, y) = ((g.x - x0) as f32, (g.y - y0) as f32);
-            let mut m = meta(kind, g.heading) | GHOST;
+            let mut m = meta(kind, g.heading) | g.diet | GHOST;
             if g.starved {
                 m |= STARVED_BIT;
             }
@@ -398,9 +446,9 @@ mod tests {
         assert_eq!((after.px, after.py), (before.x, before.y), "прошлая позиция — из прошлого кадра");
         assert_eq!(after.x, before.x + 10.0);
         // курс повернул к востоку (угол 0) от начального
-        let heading = (after.meta & 0xFFFF) as f32 / 65536.0 * TAU;
+        let heading = (after.meta & 0xFFF) as f32 / 4096.0 * TAU;
         let expected = turn(initial_heading(id), 0.0, TURN).rem_euclid(TAU);
-        assert!((heading - expected).abs() < 1e-3, "курс {heading}, ожидался {expected}");
+        assert!((heading - expected).abs() <= TAU / 4096.0, "курс {heading}, ожидался {expected}");
     }
 
     #[test]

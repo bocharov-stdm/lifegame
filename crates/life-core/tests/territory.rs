@@ -317,10 +317,12 @@ fn подтвержденное_нападение_вызывает_залп_и_
         rules: Rules::default().with("plant_rate", 0.0).unwrap(),
         ..Default::default()
     });
+    // meat-eaters: the base herbivore would leave the corpse to others
     let shooter = CreatureGenome::BASE
         .with(Gene::Shooter, 1.0)
         .with(Gene::FirePreference, 100.0)
-        .with(Gene::FireReserve, 0.0);
+        .with(Gene::FireReserve, 0.0)
+        .with(Gene::Diet, 2.0);
     for x in [1000.0, 1020.0, 1040.0] {
         w.spawn(shooter, x, 1000.0, Some(100.0));
     }

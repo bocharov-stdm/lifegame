@@ -42,8 +42,8 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     );
     println!("Растения за прогон: выросло {}, съедено {}.", c.plants_grown, c.plants_eaten);
     println!(
-        "Питание: порций растений {}, мяса {}. Выстрелов {}, территориальных ударов {}.",
-        c.plant_bites, c.meat_bites, c.ranged_shots, c.territorial_fights
+        "Питание: порций растений {}, мяса {} (из них гнили {}). Выстрелов {}, территориальных ударов {}.",
+        c.plant_bites, c.meat_bites, c.rot_bites, c.ranged_shots, c.territorial_fights
     );
 
     println!(

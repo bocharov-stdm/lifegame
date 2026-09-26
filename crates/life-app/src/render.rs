@@ -34,6 +34,8 @@ struct Uniforms {
     pixels_per_point: f32,
     k: f32,
     since: f32,
+    time: f32,
+    pad: [f32; 3],
 }
 
 /// Всё, что живёт в видеокарте между кадрами.
@@ -149,6 +151,8 @@ pub struct Circles {
     pub k: f32,
     /// Секунды с тех пор, как кадр собран: прибавляется к возрасту кружков.
     pub since: f32,
+    /// Секунды с начала программы, по модулю: фаза «глотков» хоботка.
+    pub time: f32,
 }
 
 impl egui_wgpu::CallbackTrait for Circles {
@@ -168,6 +172,8 @@ impl egui_wgpu::CallbackTrait for Circles {
             pixels_per_point: self.pixels_per_point,
             k: self.k,
             since: self.since,
+            time: self.time,
+            pad: [0.0; 3],
         };
         queue.write_buffer(&res.uniforms, 0, bytemuck::bytes_of(&u));
         if res.generation != self.generation {

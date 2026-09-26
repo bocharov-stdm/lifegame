@@ -1163,7 +1163,9 @@ pub(crate) fn food_goals(flocks: &mut BTreeMap<u64, Flock>, creatures: &[Creatur
         let Some(food) = v.mind.social.observed_food.filter(|f| f.fresh(tick)) else { continue };
         let Some(c) = flocks.get(&v.flock).and_then(|f| f.circle) else { continue };
         let travel = (food.x - c.x).hypot(food.y - c.y) / v.pheno.speed.max(0.01);
-        let score = v.pheno.plant_energy * v.pheno.plant_efficiency / (travel + 1.0);
+        // A member reports the food it eats itself: a plant, or a corpse for a meat-eater.
+        let digests = v.pheno.plant_efficiency.max(v.pheno.meat_efficiency).max(v.pheno.rot_efficiency);
+        let score = v.pheno.plant_energy * digests / (travel + 1.0);
         if best
             .get(&v.flock)
             .is_none_or(|(old, prior)| score > *old || (score == *old && food.observer < prior.observer))
