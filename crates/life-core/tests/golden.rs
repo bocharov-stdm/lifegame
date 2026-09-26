@@ -252,10 +252,10 @@ fn cases() -> Vec<Case> {
             ticks: 1000,
             before: |_| {},
         },
-        // Combat, as in the game by default.
+        // Another seed of the default world: combat is always on.
         Case {
-            name: "H: сид 8, каннибализм",
-            cfg: WorldConfig { seed: 8, rules: rules(&[("cannibalism", 1.0)]), ..Default::default() },
+            name: "H: сид 8, бои",
+            cfg: WorldConfig { seed: 8, ..Default::default() },
             ticks: 2000,
             before: |_| {},
         },
@@ -287,20 +287,20 @@ fn run(case: &Case) -> (Vec<(u64, u64)>, World, Seen) {
 #[rustfmt::skip]
 const GOLDEN: &[&[(u64, u64)]] = &[
     // A: сид 1, по умолчанию
-    &[(1, 0xdfcfa0e655f829ff), (2, 0x5babd0ff32f0a185), (10, 0xf32e1cb1470a1a45), (31, 0x49e048c04a760c4b), (100, 0xdc44304b4cbfffcf), (250, 0x89ac29ab2592e37e), (500, 0x08b5ddbbb498c4a0), (1000, 0xb4188978cf366506), (2000, 0xb342a4a00e733ceb), (3000, 0xfa9fc1779787fe5c), ],
+    &[(1, 0xdfcfa0e655f829ff), (2, 0x5babd0ff32f0a185), (10, 0xf32e1cb1470a1a45), (31, 0x49e048c04a760c4b), (100, 0xdc44304b4cbfffcf), (250, 0x3bba235bcc36f11a), (500, 0xbbdc7c82e8d6a1fc), (1000, 0x314f641c7cf0af2f), (2000, 0xc69c405b5943984c), (3000, 0x63320332be1d1856), ],
     // B: сид 3, гиганты
-    &[(1, 0x68152cc55e73e53a), (2, 0xe502cceeadd10c8f), (10, 0x6beaf262826a360b), (31, 0x943a1d1755a27b28), (100, 0x276797325d927e11), (250, 0x3c2cadb100192098), (500, 0xf3ce9d125452f1ee), (1000, 0x028cfb5902bd6cbd), (2000, 0x0ff5a66b0a8b614f), ],
+    &[(1, 0x68152cc55e73e53a), (2, 0xe502cceeadd10c8f), (10, 0x6beaf262826a360b), (31, 0x943a1d1755a27b28), (100, 0x030ec390d98fe77e), (250, 0x7bbf852bbd2fa344), (500, 0x28c6634a5d5ff341), (1000, 0x2002d13a81ebac58), (2000, 0x744a5073f3f48eaa), ],
     // C: сид 7, лаборатория
-    &[(1, 0x24484f087e2286cf), (2, 0x0805b9e015bab99e), (10, 0x3e2fef2e92469e67), (31, 0x5e7c11ebb9dde05f), (100, 0xb763957fba4a313b), (250, 0x337f65362d1adb44), (500, 0xa04ca0f23450c20f), (1000, 0xf61d92fda8cbf3a9), (2000, 0x8791bb8df9e97488), (3000, 0x0339d9e39c9f3e32), ],
+    &[(1, 0x24484f087e2286cf), (2, 0x0805b9e015bab99e), (10, 0x3e2fef2e92469e67), (31, 0x5e7c11ebb9dde05f), (100, 0x6e4a1ea87bb9c5c4), (250, 0x09a0f6314af1f117), (500, 0xef9d9d30fe025e67), (1000, 0x5572e78003d6e994), (2000, 0x986f215ff05b5591), (3000, 0x34d5de7e588f8ea9), ],
     // D: сид 2, масштаб 10
-    &[(1, 0xa809f2ad5a74e76d), (2, 0xe17bf0569266d86c), (10, 0x206f38f6f0c166b8), (31, 0x0ce728b342ed60c6), (100, 0x52ecd20f62080df4), (250, 0x3064b00acd7f7db5), (500, 0x14ec09f397782de9), ],
+    &[(1, 0xa809f2ad5a74e76d), (2, 0xe17bf0569266d86c), (10, 0x206f38f6f0c166b8), (31, 0x0ce728b342ed60c6), (100, 0xc068d1c4011d5ef3), (250, 0xc4cee27589e9bf66), (500, 0x0aff169a744a119f), ],
     // E: сид 3, правила на ходу и подсадка
-    &[(1, 0x68152cc55e73e53a), (2, 0xe502cceeadd10c8f), (10, 0x6beaf262826a360b), (31, 0x715c4dd517128c9b), (100, 0x4a855148c03570fe), (250, 0xe67129807bb2749b), (500, 0xc0e29504713788cb), (1000, 0xfffa7068d42169c1), ],
+    &[(1, 0x68152cc55e73e53a), (2, 0xe502cceeadd10c8f), (10, 0x6beaf262826a360b), (31, 0x715c4dd517128c9b), (100, 0x3da974fc44f8c75e), (250, 0x0e3f5228cc361734), (500, 0x8257e0de9e9d4f8f), (1000, 0x5ae32fc69437b106), ],
     // F: сид 5, смесь стратегий
-    &[(1, 0xded39bdab65fb9ce), (2, 0x305ddc760efbf188), (10, 0x134df36dbcce2267), (31, 0xcc057c1af7637bba), (100, 0x9be6393f7c4700fa), (250, 0xde11f57ab632fb46), (500, 0x066f0034be2d78c2), (1000, 0x24ec9075afc095ed), (2000, 0x9d52483c17585583), ],
+    &[(1, 0xded39bdab65fb9ce), (2, 0x305ddc760efbf188), (10, 0x134df36dbcce2267), (31, 0xcc057c1af7637bba), (100, 0xb244f4370451f99d), (250, 0x95e490f76ee7aea9), (500, 0xcb84582fea5a0f94), (1000, 0xc4e6781a4f17e590), (2000, 0xc1c06f65e98e5745), ],
     // G: сид 6, квадрат x10, еда линейно и волнами
-    &[(1, 0x65444fbaa2b1777e), (2, 0xf6d80b9ec995f42b), (10, 0x106d9a19a0c2922e), (31, 0xce01403cbac0883a), (100, 0xd2ca4ae2239e0c1e), (250, 0x7d74c07fbe189070), (500, 0xc70ba750bc225cab), (1000, 0x1f058236eea59dfb), ],
-    // H: сид 8, каннибализм
+    &[(1, 0x65444fbaa2b1777e), (2, 0xf6d80b9ec995f42b), (10, 0x106d9a19a0c2922e), (31, 0xce01403cbac0883a), (100, 0xde09ef11d6e9ad16), (250, 0x6722251c57bb804d), (500, 0x8ca4844ee97df402), (1000, 0xf4a0f24fb8ce0c86), ],
+    // H: сид 8, бои
     &[(1, 0x19a43174d0008123), (2, 0xf9d0fa268eaf7b26), (10, 0x22f5f295e5c8e221), (31, 0x9e5ba28e0b8bc0ac), (100, 0x1695254aee114714), (250, 0xbbb1cebe8e76a3d8), (500, 0xa9dac0371da96d05), (1000, 0x8762fc4477d1b7db), (2000, 0x1bfb38a0cc70c3da), ],
 ];
 
@@ -375,8 +375,7 @@ fn отпечатки_по_сидам() {
         for (name, r) in [
             ("умолч", Rules::default()),
             ("гиганты", rules(&[("size_power", 1.0)])),
-            ("combat", rules(&[("cannibalism", 1.0)])),
-            ("calm", rules(&[("cannibalism", 1.0), ("cost_scale", 3.0)])),
+            ("calm", rules(&[("cost_scale", 3.0)])),
         ] {
             let mut w = World::new(&WorldConfig { seed, rules: r, ..Default::default() });
             for _ in 0..1500 {
