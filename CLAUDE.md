@@ -30,7 +30,8 @@ at the git tag **`python-final`** (`python/` there) and is the behavioural spec 
 ported from. Open: phase 3 (parallel tick) and phase 6 (a separate machine benchmark).
 
 The behaviour reform is implemented: kinship and fleeing, food-driven growth, life pace and
-ageing, health and simultaneous fights, carnivory and hunting, inherited flocks. The engine is
+ageing, health and simultaneous fights, diets and hunting, inherited flocks. Combat is always on
+(the peaceful world and the `cannibalism` rule are gone; `with` names the reason). The engine is
 still sequential; the neighbour snapshot and the movement/feeding split do not mean it is
 parallelised. A family flock is a circle that moves as one object (settled, nomadic, scouts or
 vertical migrants — the inherited `flock_kind`), and its members feed inside it; a young family
@@ -38,7 +39,7 @@ vertical migrants — the inherited `flock_kind`), and its members feed inside i
 territoriality overlap freely, moderate ones push softly and are respected only in sight of a
 member, hard ones never overlap anything. Nobody aims at what lies behind a border it respects
 (food, a return or wander point), and a circle pressed against the world's edge is walked around
-on its open side. With combat on, a territorial flock squeezed with no room nearby fights every
+on its open side. A territorial flock squeezed with no room nearby fights every
 flock touching its circle that has adults; the beaten move away, young families included, and a
 battle ends as soon as no two of its flocks may strike each other (`battle.rs`). Flocks
 share local knowledge of food and alarm, rest and to a limited extent cover their own. Every
@@ -55,6 +56,17 @@ target, in defence or on a territorial assignment. Plants and corpses are eaten 
 shots are weaker than a contact strike and cost energy. There is no cooperative hunting, no
 leaders, no sharing of prey, no merging of flocks. Sociability is an inherited gene; groups
 that stay separated get a new label. The exact mechanics and their checks: `BEHAVIOR.md`.
+
+The food web (branch `food-web`): the `diet` choice gene — herbivore, omnivore, scavenger,
+carnivore — sets what a creature digests (`config::DIET_DIGESTION`: plants, fresh meat, rot; 0
+means it neither eats nor goes for that food) and how hard it strikes (`DIET_STRIKE`, ×1–1.5 on
+damage, not on the strike's energy cost). Only those that eat fresh meat hunt and are feared; a
+child of another diet leaves its flock. A corpse is the whole body's meat (`corpse::meat`: size ×
+`ENERGY_PER_SIZE` plus the tank) — hunters weigh prey by the same measure. It is fresh for 150
+ticks, then rots and sinks, fully rotten on the bottom at 600, gone at 1800 (in % of depth, a
+function of the tick only). Creatures stop at `EAT_STOP_SHARE` of their reach instead of standing
+on the food, and the game draws a proboscis to it. Plants grow in patches over a new default
+depth profile «игровое» (see "Where food grows").
 
 ## Commands
 
@@ -90,14 +102,18 @@ Windows: another platform's libm differs in the last bits, the same seeds grow i
 realization of the world, and its means may leave the Windows per-seed range by chance.
 Dev builds use `opt-level = 2`: tests run real multi-thousand-tick simulations.
 
-Validating a model change: seeds 1–8 × 20 000 ticks with `cannibalism=0` and `cannibalism=1`,
-for the base and the calm (`cost_scale=3`) profile. Runs must finish on their own, not stop on
-the work budget, so long runs need `--max-work 1e15` (`--compare` and `--save-reference` set it
-themselves). Acceptance: at least 7 of 8 worlds survive in every combination. Detailed social
-validation numbers: `reference/social-validation.json`, analysed in `BEHAVIOR.md`.
+Validating a model change: seeds 1–8 × 20 000 ticks for the base and the calm (`cost_scale=3`)
+profile. Runs must finish on their own, not stop on the work budget, so long runs need
+`--max-work 1e15` (`--compare` and `--save-reference` set it themselves). Acceptance: at least 7
+of 8 worlds survive in each profile. A single-seed run prints the genome start → end, including
+the diet shares (`питание`) — that is how to see which diets survived. Detailed social validation
+numbers: `reference/social-validation.json`, analysed in `BEHAVIOR.md`.
 
 ```bash
-cargo run -p life-report --release -- --seeds 1 2 3 4 5 6 7 8 --ticks 20000 --max-work 1e15 --rule cannibalism=1
+cargo run -p life-report --release -- --seeds 1 2 3 4 5 6 7 8 --ticks 20000 --max-work 1e15
+cargo run -p life-report --release -- --seeds 1 2 3 4 5 6 7 8 --ticks 20000 --max-work 1e15 --rule cost_scale=3
+cargo run -p life-report --release -- --seeds 3 --ticks 20000 --max-work 1e15 | grep "^  питание"
+cargo run -p life-report --release -- --diet-mix 50 0 0 50        # founders' diets: H O S C shares
 ```
 
 `CLAUDE.md`, `AGENTS.md` (short rules for other agents), `BEHAVIOR.md` and `README.md` describe
@@ -124,8 +140,8 @@ events (crashes and rises with their causes, extinction, plants hitting the cap,
 creatures squeezing into a thin layer); ASCII maps (top = surface, `O`/`o` creatures, `:`/`.`
 plants). The JSON has the same plus every snapshot (`life_sim::observe::Snapshot`: per-gene
 `GeneStat` — a spread for numeric genes, variant shares for choice genes —, depth and width
-histograms, cumulative counters). Format `life-report/9` (social counters, flocking-gene
-carriers, territories, corpses, feeding, shots, configurable action costs): top-level `genes`
+histograms, cumulative counters). Format `life-report/10` (social counters, flocking-gene
+carriers, territories, corpses, feeding and rot bites, shots, configurable action costs): top-level `genes`
 describes the gene table (key, label, kind, variants); keys are English (event `kind`), texts
 Russian. Long runs may stop on the work budget ("перегрузка") — raise it with `--max-work`.
 
@@ -138,14 +154,16 @@ and the event chronicle for its in-game event feed.
 60 ticks). It started as the last Python version's (`python/fingerprint.py` at `python-final`)
 and is re-taken from Rust after each deliberate balance change. It is a world of creatures
 and plants; metrics: creatures and plants mean, size max and final. The model is
-`life-behavior/9` (plant capacity in fertility cells); references without this version are
-rejected with an explanation.
+`life-behavior/10` (diets, rotting corpses, plant patches); references without this version are
+rejected with an explanation. On the `food-web` branch both references are still the /9 ones
+and are re-taken once the balance is settled.
 `--compare` reruns the same seeds in Rust and checks each metric's mean against the reference's
 per-seed range; any mismatch exits with code 1 (CI relies on it). It refuses (code 2) when the
 world differs from the one the reference was taken on (world size — compared as `Space`, not
 shape name, since at ×1 strip and 3:2 are the same 6000x4000 —, rules, start count, start
-strategy mix) or was taken with predators — a mismatch there would measure the conditions, not
-the balance. `predator_*` rules of old references are skipped. Gene tables are code, not
+strategy and diet mixes) or was taken with predators or in the peaceful world (`cannibalism: 0`)
+— a mismatch there would measure the conditions, not the balance. `predator_*` rules and
+`cannibalism: 1` of old references are skipped. Gene tables are code, not
 conditions: if the reference's `genes` list differs from ours (ignoring inert one-variant
 choice genes) it prints a note and still compares. The size metric is read from the reference
 by gene *key*, not position.
@@ -177,7 +195,7 @@ even on threads or I/O), `life-sim` adds only the bounded runner and the observe
   changes. `Rules::default()` is `config.rs` bit for bit (the factor is exactly
   `base ** 0.0`); tests guard that. `with()` rejects unknown keys, non-finite values (a NaN
   sigma would hang mutation's rejection loop) and values where a rule stops making sense
-  (negative costs, cannibalism not 0/1, a shot period below 1) — but not merely
+  (negative costs, a shot period below 1, a fractional patch count) — but not merely
   "unbalanced" ones: breaking the balance is what the lab is for.
 - `world.rs` — `WorldConfig`, `World` (populations, `step()` — the phase order only,
   `stats()`, `counters`, `spawn_*` for tests and the app).
@@ -192,7 +210,8 @@ even on threads or I/O), `life-sim` adds only the bounded runner and the observe
 - `grid.rs` — `Grid`: counting-sort spatial grid with a fixed cell, rebuilt each tick.
 - `rng.rs` — per-creature SplitMix64 streams; `space.rs` — world size, scale and shape.
 - The social layer (behaviour reform; details in `BEHAVIOR.md`): `combat.rs` — simultaneous
-  melee strikes and weak shots; `corpse.rs` — corpses as a finite meat supply; `flock.rs` —
+  melee strikes and weak shots; `corpse.rs` — corpses as a finite meat supply that rots and
+  sinks to the bottom; `flock.rs` —
   flock circles: membership, radius, movement by kind, pushing apart and shrinking, moves to a
   free place, stragglers; `battle.rs` — battles of flocks for room; `social.rs` — social memory
   and local decisions from a snapshot taken before movement; `territory.rs` — circles as
@@ -223,9 +242,10 @@ balance instead of diffing numbers. The plant spawner draws its random number ev
 ids, all genes, counters, an RNG probe of every creature and of the world) at checkpoints
 for eight configs (defaults, giants, lab rules, ×10 strip, live rules + spawning, a 50/50
 strategy mix — it also asserts both strategies coexist —, a ×10 square with tabulated food
-profiles, cannibalism). Removing predators was proven by recording a predator-free digest of
+profiles, seed 8). Removing predators was proven by recording a predator-free digest of
 all eight while predators were still in the code and getting the same bits after removal (plus
-`--ignored` over 50 seeds). A case without recorded digests fails too. Any refactor must keep
+`--ignored` over 50 seeds); removing the peaceful world the same way (combat-forced digests of
+the old code = the new code's, 150 worlds). A case without recorded digests fails too. Any refactor must keep
 it; a deliberate behaviour change re-records it (the test prints the table) in its own commit,
 together with `--save-reference`. The constants are asserted on Windows only: `ln`/`cos`/`powf`
 come from the platform libm, so Linux may differ in the last bit (there the test prints its
@@ -249,7 +269,8 @@ struct's compatibility; in the new model it is zero and does not duplicate `comb
 
 Children are added after fights and reproduction. A creature that died on its own turn does not
 eat; one killed in combat gets no prey and does not reproduce. Eaten plants are marked and
-removed after the phase. The genome is only extended at the end of the table.
+removed after the phase (a plant is alive while it has portions). The genome is only extended
+at the end of the table.
 
 ### Neighbour search
 
@@ -321,39 +342,49 @@ profile (density = their product). A profile (`FoodAxis` in `Rules::plant_depth`
 `plant_width`, six rules per axis `plant_{depth,width}_{profile,steepness,end,bend,waves,amplitude}`)
 is `f(t)` over the share of the axis from the near edge (surface / left): uniform, linear
 (`end` % at the far edge), exp (`steepness`), log (`bend`: plateau, then a cliff), waves
-(`waves` rich bands, peaks mid-band, `amplitude` %). Each parameter is read by its profile only;
+(`waves` rich bands, peaks mid-band, `amplitude` %), and «игровое» (`Profile::Game`, no
+parameters: flat to 20% of depth, a straight slope to 15% at 85%, a cosine fall to a dead
+bottom — `GAME_*` in `config.rs`). The default is «игровое» down, uniform across (before
+`food-web` it was exp, steepness 8). Each parameter is read by its profile only;
 the UI shows it only then (`Field::shown`). `--rule plant_width_profile=waves` takes names
 (`Rules::with_text`). The dead zone at the surface (`PLANT_TOP_MARGIN_PCT` = 5% — 200 at height
 4000) belongs to the surface and applies to every profile. The distribution is a world property;
 layer genes don't adapt to it.
 
-`Flora` is derived from rules + space like a phenotype from a genome: built in `World::new` and
-in `set_rules` (plants already grown stay put). Exactly **two random numbers per plant** for any
-profile (x then y); uniform and exp keep the pre-profile expressions (`rng.uniform`, the
-analytic inverse CDF), so the default world is bit for bit the old one — a unit test compares
-10 000 plants against a copy of the old formula. Linear, log and waves sample a tabulated
-inverse CDF (4096 bins; empty bins never picked). `flora::density(rules, tx, ty)` is the
-preview the game paints; `flora::describe(rules)` is the story's line. Limits in `with`: profile
-an integer index, waves an integer 1‒100 (table resolution), steepness ≤ 100 (`e^-k` underflow),
-percents 0‒100. Profiles are not balanced: at ×1 with each non-default profile at its default
-parameters (6 seeds × 20 000 ticks), 6 of 48 runs died out (depth log 2, width linear 2, width
-exp 1, width log 1); the default profile — 0 of 12.
+`Flora` is derived from rules + space + the world's seed like a phenotype from a genome: built
+in `World::new` and in `set_rules` (plants already grown stay put). Uniform and exp keep the
+pre-profile expressions (`rng.uniform`, the analytic inverse CDF) — a unit test compares 10 000
+scattered exp plants against a copy of the old formula; the others sample a tabulated inverse CDF
+(4096 bins; empty bins never picked). `flora::density(rules, tx, ty)` is the preview the game
+paints; `flora::describe(rules)` is the story's line. Limits in `with`: profile an integer index,
+waves an integer 1‒100 (table resolution), steepness ≤ 100 (`e^-k` underflow), percents 0‒100,
+patches an integer 0‒300, patch size ≥ the plant radius. Profiles are not balanced: with the
+pre-`food-web` model, 6 of 48 runs died out at ×1 with each non-exp profile at its defaults.
 
-Capacity is shaped by the same profiles. `Flora` splits the world into `PLANT_MAX` (per area)
-**cells of equal fertility**: an `nx × ny` grid in the coordinates of each axis's distribution
-function (`Axis::cdf`, the inverse of sampling), rows by the world's proportions, `nx·ny ≥ cap`.
-Where food is rich the cells are narrow, where it is poor they are wide; every cell gets a seed
-with the same chance. A cell holds at most one plant, and a seed that lands in an occupied cell
-does not sprout (its two random numbers are still drawn). So a full world follows the profile
-exactly, growth is logistic (`cap·(1 − e^(−rate·t/cap))` in an empty world), and a grazed surface
-cannot hand its room to the deep sea. Plant energy does not affect capacity.
+Capacity is `PLANT_MAX` (per area) **slots**, one plant each; a seed that lands in an occupied
+slot does not sprout (its numbers are still drawn), so growth is logistic
+(`cap·(1 − e^(−rate·t/cap))` in an empty world), a full world follows the profile and a grazed
+surface cannot hand its room to the deep sea. Plant energy does not affect capacity.
+- `plant_patches = 0` — scattered: slots are cells of equal fertility, an `nx × ny` grid in the
+  coordinates of each axis's distribution function (`Axis::cdf`); a plant draws **two** numbers
+  (x, then y) by the profile and takes its cell.
+- `plant_patches > 0` (default 24 per base world, radius ~`plant_patch_size` 200) — patches:
+  coarse regions of equal fertility, ~2 patches each; every region holds the same number of slots
+  (so region by region the profile holds — `заросли_не_ломают_профиль`). A region has 1–3 patches
+  with their own size (×0.5–1.5), stretch and weight (a heavier patch takes more of the region's
+  slots); centres are drawn by the profile inside the region from `Rng::keyed(seed, PATCH_STREAM)`,
+  never the world stream. Ellipses are squashed, not clipped, against the plant zone. Slots lie on
+  a sunflower spiral; a plant draws **three** numbers: the slot (uniform), then a jitter inside it.
 
-Occupied cells are a bitset (`world::Occupancy`) updated per birth and per eaten plant, not
-rebuilt from every plant each tick: a full rebuild doubled the tick of a plant-saturated ×100
+`Plant` stays 24 bytes: `alive` is `portions > 0`, and the slot (24 bits, `NO_SLOT` for plants put
+in by hand) fills the padding next to `born`. Occupied slots are a bitset (`world::Occupancy`)
+updated per birth and per eaten plant: a full rebuild doubled the tick of a plant-saturated ×100
 world. It is rebuilt when the plant count stops matching it (tests and the app edit `plants`
-directly — keep such edits changing the count, or the stale set goes unnoticed) and after
-`set_rules`, since the cells follow the profile. After a profile change two old plants may share a
-cell; the first one eaten frees it. `incremental_cells_match_a_rebuild` guards the bookkeeping.
+directly — keep such edits changing the count, or the stale set goes unnoticed). When
+`set_rules` changes the layout, every grown plant loses its slot (`Plant::lose_slot`) and new ones
+fill the new slots as the old are eaten; rules that do not touch food keep the layout.
+`incremental_slots_match_a_rebuild` guards the bookkeeping. The game gets the patch list in the
+frame after a new world or new rules (`Frame::patches`) and tints them under the sprouts.
 
 ### Balance: exponents, not coefficients
 
@@ -373,19 +404,21 @@ fitter on average), variation dries up and they lost to predators. Without preda
 12, ~2000 creatures, mutability settles near 0.4. The user chose deliberately: mutability has
 no energy cost.
 
-The current model (`life-behavior/9`, plant capacity in fertility cells): 8/8 worlds survived in
-each of the four modes over 20 000 ticks (seeds 1–8). Median population: base profile — 1139
-without fights, 925 with fights; calm — 732.5 and 564. The previous model (`life-behavior/8`,
-seeds 1–16): 16/16 in every mode; medians 1214.5 / 816 (base) and 848 / 632 (calm). The flock
-figures below were measured on `life-behavior/8` and not re-measured for the plant cells. Balance
-criterion (combat is on by default): flocks persist — at least two flocks and 10% flocking
-carriers — in ≥ 75% of the worlds of each profile with combat (base 14/16, calm 13/16; before:
-13/16 and 16/16); loners may vanish, a flock takeover is a legitimate outcome. Judge it on 16+
-seeds: on 8 the lottery of a few worlds decides, and the share of members inside their circle
-swings by ±0.1 between two RNG realisations of one model — compare it on 16+ seeds, averaged over
-time. Members inside their circle with combat, median of the final snapshots: base 0.83, calm
-0.80. No `repro_cost` in 10–20 lowers all four medians by 15–25%; it stays 10. Old size-race
-results refer to instant eating and no longer describe the model. See `BEHAVIOR.md`.
+The `food-web` model (`life-behavior/10`, measured 2026-09-26, seeds 1–8 × 20 000): 8/8 worlds
+survived in both profiles; median population 824 (base) and 544 (calm). Founder meat-eaters
+always starve by tick ~400 (no corpses yet, equal-sized founders are no prey); meat diets that
+persist are later mutants of omnivores. Carnivores took 41% of one base world; scavengers appear
+but barely hold — rot is rare, since corpses are eaten fresh. Balance is still being tuned with
+the user; the history of what was tried is in the commit messages of `e158f9e` and before.
+
+The previous model (`life-behavior/9`, cells, exp profile, one diet): 8/8 in each of the four
+modes (with and without the then-optional combat); medians base 1139 / 925, calm 732.5 / 564.
+Flock criterion, measured on `life-behavior/8` and not re-measured since: flocks persist — at
+least two flocks and 10% flocking carriers — in ≥ 75% of the worlds of each profile (base 14/16,
+calm 13/16); loners may vanish, a flock takeover is a legitimate outcome. Judge it on 16+ seeds:
+on 8 the lottery of a few worlds decides, and the share of members inside their circle swings by
+±0.1 between two RNG realisations of one model. No `repro_cost` in 10–20 lowers all medians by
+15–25%; it stays 10. See `BEHAVIOR.md`.
 
 Behaviour genes are free (the user's rule): no upkeep for a gene that gives no physical stat
 boost. What restrains one is behaviour and the limits of its effect — e.g. `flock_spacing` is
@@ -412,14 +445,14 @@ bounded by a tick count. Preserve this property in new tests.
 food grows the body. Distances are compared squared. The grid reuses its buffers between ticks.
 Strategy dispatch is a `match` on an enum (static, inlined), never `Box<dyn>`.
 
-The 20 ms guard below only catches catastrophes. For refactors, compare ms/tick against the
+The guard below only catches catastrophes. For refactors, compare ms/tick against the
 previous version built in a `git worktree`, running both alternately (single runs are noisy):
 `life-report --scale 100 --ticks 1000 --seeds 1 2 --threads 1` (the summary's last column).
 
-`тик_укладывается_в_бюджет_на_фиксированной_нагрузке` guards against regressions at a fixed
-4000 creatures / 4000 plants load in a x10 world: ~2 ms/tick with the grid, ~80 ms if queries
-degrade to a full scan, threshold 20 ms. (At the old 400-creature load Rust is fast enough even
-by brute force, so the guard would not catch anything there.)
+`тик_растёт_линейно_с_численностью` (engine tests) compares ms/tick at equal density on the same
+machine: a ×10 world with 4000 creatures / 4000 plants against a ×2.5 one with 1000 / 1000,
+alternating, best of four. The ratio is ≈4 with the grid and ≈21 when queries degrade to a full
+scan; the limit is 8. A ratio, not absolute milliseconds, so a slow machine does not fail it.
 
 ## Genes and strategies
 
@@ -428,7 +461,17 @@ The gene table (`genome/creature.rs`): `GeneSpec { key, label, about, kind, base
 is a variant index). Everything that walks genes — mutation, `Stats`, observer, story, JSON,
 charts, creature card, help — iterates the table, never positions. **Tables are append-only**:
 the order fixes the RNG draw order of mutation (every seed), positions in the reference
-fingerprint and JSON.
+fingerprint and JSON. The one deliberate exception: row 11, the numeric `carnivory`, was
+replaced in place by the `diet` choice gene (`food-web`), so no other gene moved.
+
+Mutation laws (`genome::Mutation`): `Scale` for numeric genes (× (1 + gauss(0, σ·mutability)),
+multiplier ≥ 0.1); `Switch { chance }` to any other variant (0.1% for the choice genes);
+`Neighbours { chance, jump, of }` for the diet — a step to a neighbour in `DIET_NEIGHBOURS`
+(0.1%; the omnivore forks to herbivore / scavenger / carnivore, scavenger ↔ carnivore) or, on the
+same first draw, a jump to any other diet (0.01%). All chances are multiplied by the parent's
+mutability. A founders' diet mix (`WorldConfig::diets`, 55/25/10/10 in variant order H/O/S/C,
+`--diet-mix`) is dealt without draws through `genome::spread_ranks`, so it does not line up with
+the strategy mix.
 
 A creature's step is split: its **strategy decides** (`strategy::decide(&Me, &mut Mind, &mut
 Rng, &senses) -> Intent`) and the **creature acts** (`act`: movement, clamps, upkeep, death).
@@ -483,10 +526,10 @@ Adding a strategy:
 
 **The window never waits for the simulation** — that is the rule every change must keep.
 
-Default game profile: `cost_scale=3`, cannibalism on, starts at 30 ticks/s. «Спокойнее» applies
-the profile to an old game; saved settings are not rewritten automatically. The profile's
-reference is `reference/calm-fingerprint.json` (compare with `--rule cost_scale=3 --rule
-cannibalism=1`); the engine's base reference is separate.
+Default game profile: `cost_scale=3`, starts at 30 ticks/s. «Спокойнее» applies the profile to
+an old game; saved settings are not rewritten automatically (an old file's `cannibalism` key is
+ignored). The profile's reference is `reference/calm-fingerprint.json` (compare with `--rule
+cost_scale=3`); the engine's base reference is separate.
 
 «Стаи» toggles flock circles and flock colouring, including the minimap and the density raster.
 One circle per flock (its feeding place and territory), gliding between frames like the bodies;
@@ -517,14 +560,23 @@ cleared area.
   birth age (a ring "max id / tick in frame → time"; a creature panned into view is not
   "born"), ghosts of the dead (eaten vs starved). Plants have no id: matched by
   (`Plant::born` tick, x bits); `born` sits in padding, `Plant` stays 24 bytes (tested).
-  All linear in visible count; reset with a new world or render mode switch.
+  All linear in visible count; reset with a new world or render mode switch. `meta` packs 32
+  bits (see the comment at its top; the shader reads the same layout): heading 12 bits, diet 2,
+  «eating» and «ate last frame», kind, ghost/starved/dot flags, the food direction (7 bits) and
+  the proboscis length (4 bits) from `Creature::meal` — a record the engine writes and never
+  reads, outside the golden digest. A plant's heading bits are a hash of its position: the
+  sprout's turn and leaf count.
 - `render.rs` + `creatures.wgsl` — one instanced draw call through `egui_wgpu::CallbackTrait`.
   The shader draws each creature between its previous and new position (`k`, from
   `view.rs`: time since the frame arrived / smoothed frame interval — one frame of latency),
   grows newborns, shrinks the eaten and greys the starved (age + `since`), keeps sub-pixel
-  dots at 1 px with area-scaled alpha (no shimmer), and only above ~4 px draws detail: rim,
-  fullness core, an eye along the heading. Selection ring and follow camera use the
-  same interpolated position. The buffer is uploaded only when a new frame arrives.
+  dots at 1 px with area-scaled alpha (no shimmer), and only above ~4 px draws detail: a rim in
+  the diet's colour, fullness core, an eye along the heading, and while eating a proboscis to
+  the food (a capsule SDF, extends and retracts with `k`, «gulps» run along it by `time`).
+  Plants are dark 3–5-leaf sprouts, a dark dot from afar. Selection ring and follow camera use
+  the same interpolated position. The buffer is uploaded only when a new frame arrives.
+  `view.rs` paints corpses (red-brown fresh → grey-green rot, sinking between frames) and the
+  faint patch tint under the flock circles.
 - `app.rs` — `LifeApp`: screens and transitions, owns the settings and the `SimHandle`;
   `theme.rs` — palette (port of `app/theme.py`).
 - `stats.rs` — the «Статистика» window (key I): «Энергия» (fullness, plants vs cap),
@@ -539,12 +591,13 @@ cleared area.
   (game screen, lab window with «Правила»/«Еда» tabs, creature card, `report_command`),
   `screens.rs` (menu, «Новый мир» with tabs «Мир»/«Еда»/«Лаборатория» and buttons pinned in a
   bottom panel, prefs, help; `field_input` — a slider or, for a field with `choices`, a combo
-  box; `food_preview` — the world in its proportions shaded by `flora::density`),
+  box; `food_preview` — the world in its proportions shaded by `flora::density`, with the
+  seed's patches when there are at most 3000),
   `charts.rs` (drawn with the painter — no plot crate; `lines` for any series, `genome` for a
   gene table), `history.rs` (port of `history.py`), `settings.rs` (`FIELDS`, the single field
-  spec — label, hint, range, `choices`, `shown`, `toggle`; start counts are *per base area* and
-  scale with the world; the game starts **with cannibalism** (the engine's default is off); the
-  strategy slider is the share of the second variant; the shape is `Settings::shape`; file in
+  spec — label, hint, range, `choices`, `shown`; start counts are *per base area* and scale with
+  the world; the strategy slider is the share of the second variant, the four diet sliders are
+  shares of the founders; the shape is `Settings::shape`; file in
   `%APPDATA%\TinyLife`, atomic, clamped; settings tests write only to temp dirs).
 - Chronicle texts come from `life_sim::observe::EventTracker` — the same incremental tracker
   the report's `events()` wraps, so game and report print identical events.
