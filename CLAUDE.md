@@ -136,8 +136,7 @@ and the event chronicle for its in-game event feed.
 and is re-taken from Rust after each deliberate balance change. It is a world of creatures
 and plants; metrics: creatures and plants mean, size max and final. The model is
 `life-behavior/9` (plant capacity in fertility cells); references without this version are
-rejected with an explanation. The checked-in references are still `life-behavior/8` (0 of 8 seeds
-extinct, 954–1963 creatures at the end without combat in the base profile) until re-recorded.
+rejected with an explanation.
 `--compare` reruns the same seeds in Rust and checks each metric's mean against the reference's
 per-seed range; any mismatch exits with code 1 (CI relies on it). It refuses (code 2) when the
 world differs from the one the reference was taken on (world size — compared as `Space`, not
@@ -371,9 +370,11 @@ fitter on average), variation dries up and they lost to predators. Without preda
 12, ~2000 creatures, mutability settles near 0.4. The user chose deliberately: mutability has
 no energy cost.
 
-The current model (`life-behavior/8`): 16/16 worlds survived in each of the four modes over
-20 000 ticks (seeds 1–16). Median population: base profile — 1214.5 without fights, 816 with
-fights; calm — 848 and 632 (`life-behavior/7`, same seeds with fights: 707.5 and 586). Balance
+The current model (`life-behavior/9`, plant capacity in fertility cells): 8/8 worlds survived in
+each of the four modes over 20 000 ticks (seeds 1–8). Median population: base profile — 1139
+without fights, 925 with fights; calm — 732.5 and 564. The previous model (`life-behavior/8`,
+seeds 1–16): 16/16 in every mode; medians 1214.5 / 816 (base) and 848 / 632 (calm). The flock
+figures below were measured on `life-behavior/8` and not re-measured for the plant cells. Balance
 criterion (combat is on by default): flocks persist — at least two flocks and 10% flocking
 carriers — in ≥ 75% of the worlds of each profile with combat (base 14/16, calm 13/16; before:
 13/16 and 16/16); loners may vanish, a flock takeover is a legitimate outcome. Judge it on 16+

@@ -18,10 +18,20 @@ in an occupied cell does not sprout. Consequences:
 - plant energy does not affect capacity (as before `life-behavior/9`); two random numbers per
   seed as before, positions of sprouting plants unchanged.
 
-Not validated yet: golden digests and both references (`fingerprint.json`,
-`calm-fingerprint.json`) have to be re-recorded, and the balance checked on seeds 1–8 × 20 000
-ticks in all four modes. A short check (seeds 1–3 × 3000 ticks, base): 329/385/273 creatures
-against 339/317/295 with the old cap.
+Validated on seeds 1–8 × 20 000 ticks (`--max-work 1e15`), every run finished by itself; all
+32 worlds survived:
+
+| Mode | Alive | Median | Range |
+|---|---:|---:|---:|
+| base, no combat | 8/8 | 1139 | 703–1805 |
+| base, combat | 8/8 | 925 | 678–1191 |
+| calm, no combat | 8/8 | 732.5 | 544–1108 |
+| calm, combat | 8/8 | 564 | 314–875 |
+
+Golden digests and both references (`fingerprint.json`, `calm-fingerprint.json`) are re-recorded
+for `life-behavior/9`. On Windows the giants of seed 4 stopped at size 99 (just under the tests'
+threshold of 100; on Linux they passed it), while the other seeds of 1–10 pass 100 by tick 1500
+and reach 132–534 by tick 2000; the giant worlds of the golden and the senses tests use seed 3 now.
 
 ## Review fixes, borders and inherited hunger and fear (previous stage)
 

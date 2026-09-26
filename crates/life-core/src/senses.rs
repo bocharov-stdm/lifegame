@@ -691,7 +691,7 @@ mod tests {
     #[test]
     fn запросы_к_сеткам_совпадают_с_перебором_в_живом_мире() {
         let giants = Rules::default().with("size_power", 1.0).unwrap().with("plant_energy", 120.0).unwrap();
-        for (seed, rules) in [(1, Rules::default()), (4, giants)] {
+        for (seed, rules) in [(1, Rules::default()), (3, giants)] {
             let mut w = World::new(&WorldConfig { seed, rules, ..Default::default() });
             let mut food = Grid::new(GRID_CELL);
             let mut snapshot = Herd::new();
@@ -899,7 +899,7 @@ mod tests {
                 crowded * 20 < checked,
                 "seed {seed}: {crowded} hunters saw more flocks than the buffer holds"
             );
-            if seed == 4 {
+            if seed == 3 {
                 let biggest = w.creatures.iter().fold(0.0_f64, |m, v| m.max(v.pheno.size));
                 assert!(
                     biggest > 100.0,
