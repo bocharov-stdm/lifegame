@@ -446,7 +446,7 @@ pub struct Flock {
     pub blocked: u32,
     /// Share of the nominal radius the circle has under pressure of strict neighbours.
     pub compress: f64,
-    /// Squeezed with no room nearby and ready to fight for the place (combat on).
+    /// Squeezed with no room nearby and ready to fight for the place.
     pub cornered: bool,
     /// Moves made because of squeezing into a place without room; a moderate flock fights
     /// only after such a move. Reset when the circle has its full radius again.
@@ -723,7 +723,8 @@ pub fn overlap_stats(flocks: &BTreeMap<u64, Flock>, space: &Space) -> OverlapSta
 
 /// Recount flock membership, give new flocks a circle and, with `advance`, move the circles
 /// one tick and push apart the ones that must not overlap. Every creature gets its flock's
-/// circle. Returns how many flocks started a move to a new place.
+/// circle. A cornered territorial flock gets ready to fight instead of moving
+/// (`Flock::cornered`). Returns how many flocks started a move to a new place.
 #[doc(hidden)]
 pub fn update(
     flocks: &mut BTreeMap<u64, Flock>,
@@ -731,20 +732,6 @@ pub fn update(
     space: &Space,
     seed: u64,
     advance: bool,
-) -> u64 {
-    update_full(flocks, creatures, space, seed, advance, false)
-}
-
-/// `update`, where with `combat` a cornered territorial flock gets ready to fight instead of
-/// moving (`Flock::cornered`).
-#[doc(hidden)]
-pub fn update_full(
-    flocks: &mut BTreeMap<u64, Flock>,
-    creatures: &mut [Creature],
-    space: &Space,
-    seed: u64,
-    advance: bool,
-    combat: bool,
 ) -> u64 {
     for f in flocks.values_mut() {
         f.members = 0;
@@ -799,7 +786,7 @@ pub fn update_full(
     place_new(flocks, space);
     let mut moves = 0;
     if advance {
-        moves += start_moves(flocks, space, combat);
+        moves += start_moves(flocks, space);
         move_circles(flocks, space);
         resolve(flocks, space);
     } else {
@@ -843,9 +830,9 @@ fn place_new(flocks: &mut BTreeMap<u64, Flock>, space: &Space) {
 }
 
 /// Flocks that must move: settled ones out of food, any flock squeezed by strict neighbours.
-/// With `combat`, a squeezed territorial flock with no room nearby stays and gets ready to
-/// fight (a hard one at once, a moderate one after one such move did not help).
-fn start_moves(flocks: &mut BTreeMap<u64, Flock>, space: &Space, combat: bool) -> u64 {
+/// A squeezed territorial flock with no room nearby stays and gets ready to fight (a hard one
+/// at once, a moderate one after one such move did not help).
+fn start_moves(flocks: &mut BTreeMap<u64, Flock>, space: &Space) -> u64 {
     let mut wanted = Vec::new();
     for (&id, f) in flocks.iter_mut().filter(|(_, f)| f.circle.is_some()) {
         f.hungry = if f.fullness < HUNGRY_FULLNESS { f.hungry + 1 } else { 0 };
@@ -881,8 +868,7 @@ fn start_moves(flocks: &mut BTreeMap<u64, Flock>, space: &Space, combat: bool) -
         let away = (!squeezed).then_some((c.x, c.y, 1.5 * c.radius));
         let spot = circles.free_spot(id, from, prefer, away, r, f.territoriality, bounds, &mut f.rng);
         if squeezed && circles.conflict(id, spot.0, spot.1, r, f.territoriality) > OVERLAP_TOLERANCE {
-            let fights = combat
-                && f.calm == 0
+            let fights = f.calm == 0
                 && match f.territoriality {
                     Territoriality::Hard => true,
                     Territoriality::Moderate => f.cornered_moves >= 1,
@@ -1443,32 +1429,28 @@ mod tests {
     }
 
     #[test]
-    fn crowded_hard_flocks_get_cornered_only_with_combat() {
-        for combat in [true, false] {
-            let mut w = world();
-            // a thin layer: every circle stands on one line
-            let g = CreatureGenome::BASE
-                .with(Gene::Territoriality, 2.0)
-                .with(Gene::FlockSpacing, 500.0)
-                .with(Gene::MinY, 10.0)
-                .with(Gene::MaxY, 10.0);
-            for i in 0..12 {
-                flock_at(&mut w, g, 4, 500.0 + i as f64 * 450.0, 600.0);
-            }
-            let (mut cornered, mut moves) = (false, 0);
-            for _ in 0..300 {
-                moves += update_full(&mut w.flocks, &mut w.creatures, &w.space, 1, true, combat);
-                cornered |= w.flocks.values().any(|f| f.cornered);
-                for v in &mut w.creatures {
-                    let c = v.circle.unwrap();
-                    (v.x, v.y) = (c.x, c.y);
-                }
-                assert_eq!(overlap_stats(&w.flocks, &w.space).strict_pairs, 0);
-            }
-            assert_eq!(cornered, combat, "combat {combat}");
-            // while there is room nearby, both move; without combat a squeezed flock only moves
-            assert!(combat || moves > 0, "without combat the squeezed move instead");
+    fn crowded_hard_flocks_get_cornered() {
+        let mut w = world();
+        // a thin layer: every circle stands on one line
+        let g = CreatureGenome::BASE
+            .with(Gene::Territoriality, 2.0)
+            .with(Gene::FlockSpacing, 500.0)
+            .with(Gene::MinY, 10.0)
+            .with(Gene::MaxY, 10.0);
+        for i in 0..12 {
+            flock_at(&mut w, g, 4, 500.0 + i as f64 * 450.0, 600.0);
         }
+        let mut cornered = false;
+        for _ in 0..300 {
+            update(&mut w.flocks, &mut w.creatures, &w.space, 1, true);
+            cornered |= w.flocks.values().any(|f| f.cornered);
+            for v in &mut w.creatures {
+                let c = v.circle.unwrap();
+                (v.x, v.y) = (c.x, c.y);
+            }
+            assert_eq!(overlap_stats(&w.flocks, &w.space).strict_pairs, 0);
+        }
+        assert!(cornered, "a squeezed hard flock with no room nearby gets ready to fight");
     }
 
     #[test]

@@ -195,7 +195,7 @@ fn пустое_кормовое_место_забывается() {
 }
 
 #[test]
-fn тревога_не_ретранслируется_и_выключается_правилом() {
+fn тревога_не_ретранслируется() {
     use life_core::{
         grid::Grid,
         social::{Alarm, prepare},
@@ -215,11 +215,6 @@ fn тревога_не_ретранслируется_и_выключается_
         assert!(w.creatures[2].mind.social.alarm.is_none());
     }
     assert!(w.creatures[1].mind.social.alarm.is_none());
-    w.creatures[0].mind.social.alarm = w.creatures[0].mind.social.observed_alarm;
-    w.set_rules(w.rules.clone());
-    assert!(
-        w.creatures.iter().all(|v| v.mind.social.alarm.is_none() && v.mind.social.observed_alarm.is_none())
-    );
 }
 
 #[test]

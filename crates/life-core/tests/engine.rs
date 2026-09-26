@@ -114,9 +114,8 @@ fn cleared_band_recovers() {
 
 /// Мир с большим существом и соседом заданного размера на заданном расстоянии.
 /// Тик 1 — не тик деления: считаем только поедание.
-fn cannibal_world(on: bool, small: f64, dx: f64) -> World {
-    let rules = Rules::default().with("cannibalism", if on { 1.0 } else { 0.0 }).unwrap();
-    let mut w = empty_world(rules);
+fn cannibal_world(small: f64, dx: f64) -> World {
+    let mut w = empty_world(Rules::default());
     w.tick = 1;
     w.spawn(genom(100.0), 3000.0, 2000.0, Some(100.0));
     w.spawn(genom(small), 3000.0 + dx, 2000.0, None);
@@ -125,7 +124,7 @@ fn cannibal_world(on: bool, small: f64, dx: f64) -> World {
 
 #[test]
 fn каннибал_съедает_мелкого_рядом() {
-    let mut w = cannibal_world(true, 30.0, 10.0);
+    let mut w = cannibal_world(30.0, 10.0);
     w.step();
     assert_eq!(w.creatures.len(), 2, "полное здоровье не теряется за один удар");
     assert!(w.creatures[1].health < w.creatures[1].max_health());
@@ -133,39 +132,16 @@ fn каннибал_съедает_мелкого_рядом() {
 }
 
 #[test]
-fn каннибал_не_ест_крупного_дальнего_и_при_выключенном_правиле() {
-    for (on, small, dx, why) in [
-        (true, 50.0, 10.0, "only half the size: not prey for the base prey_ratio 2.5"),
-        (true, 30.0, 400.0, "далеко — каннибал не ищет, а ест того, кто рядом"),
-        (false, 30.0, 10.0, "правило выключено"),
+fn каннибал_не_ест_крупного_и_дальнего() {
+    for (small, dx, why) in [
+        (50.0, 10.0, "only half the size: not prey for the base prey_ratio 2.5"),
+        (30.0, 400.0, "далеко — каннибал не ищет, а ест того, кто рядом"),
     ] {
-        let mut w = cannibal_world(on, small, dx);
+        let mut w = cannibal_world(small, dx);
         w.step();
         assert_eq!(w.creatures.len(), 2, "{why}");
         assert_eq!(w.counters.cannibalized, 0, "{why}");
     }
-}
-
-/// Выключенный каннибализм — тот же мир бит в бит, что и без правила вовсе:
-/// проход не тянет случайных чисел. Включённый — другой мир, и счётчики сходятся.
-#[test]
-fn каннибализм_выключен_бит_в_бит_и_счётчики_сходятся() {
-    let run = |rules: Rules| {
-        let mut w = World::new(&WorldConfig { seed: 3, rules, ..Default::default() });
-        for _ in 0..3000 {
-            w.step();
-        }
-        w
-    };
-    let off = Rules::default().with("cannibalism", 0.0).unwrap().with("melee_damage_share", 0.2).unwrap();
-    assert_eq!(run(off).stats(), run(Rules::default()).stats());
-
-    let on = Rules::default().with("cannibalism", 1.0).unwrap();
-    let w = run(on);
-    let c = w.counters;
-    assert!(c.combat > 0, "someone died in combat within 3000 ticks: {c:?}");
-    let n0 = CREATURES_AT_START as u64;
-    assert_eq!(w.creatures.len() as u64, n0 + c.born - c.starved - c.cannibalized - c.old_age - c.combat);
 }
 
 // ── родство и бегство ──────────────────────────────────────────────────────
@@ -230,8 +206,8 @@ fn a_careless_parent_knows_only_its_tiny_children() {
 /// A world with a big creature of size `big`, hunting, and a small one (30) `dx` to the right;
 /// `kin` sets their kinship by hand. The big one is on the hunt: a passer-by that hunts nobody
 /// is feared only closer (`bravery`).
-fn threat_world(cannibals: bool, big: f64, dx: f64, kin: impl Fn(&mut World)) -> World {
-    let mut w = cannibal_world(cannibals, 30.0, dx);
+fn threat_world(big: f64, dx: f64, kin: impl Fn(&mut World)) -> World {
+    let mut w = cannibal_world(30.0, dx);
     let small = w.creatures[1].id;
     let v = &mut w.creatures[0];
     v.genome = genom(big);
@@ -252,7 +228,7 @@ fn small_step(mut w: World) -> (f64, f64, bool) {
 #[test]
 fn мелкий_бежит_от_крупного_чужака() {
     // до края тела крупного 150 - 50 = 100: ближе трети зрения (133)
-    let w = threat_world(true, 100.0, 150.0, |_| {});
+    let w = threat_world(100.0, 150.0, |_| {});
     let speed = w.creatures[1].pheno.speed;
     let (dx, dy, fleeing) = small_step(w);
     assert!(fleeing, "мелкий не испугался");
@@ -271,11 +247,10 @@ fn does_not_flee_a_parent_that_knows_it_nor_an_equal_or_distant_one() {
         growing(w);
         w.creatures[1].parent = w.creatures[0].id;
     };
-    let cases: [(World, &str); 4] = [
-        (threat_world(true, 100.0, 150.0, parent), "from its parent"),
-        (threat_world(true, 70.0, 150.0, |_| {}), "from one only 2.3 times bigger"),
-        (threat_world(true, 100.0, 250.0, |_| {}), "from one 200 away, beyond a third of its vision"),
-        (threat_world(false, 100.0, 150.0, |_| {}), "when eating one another is off"),
+    let cases: [(World, &str); 3] = [
+        (threat_world(100.0, 150.0, parent), "from its parent"),
+        (threat_world(70.0, 150.0, |_| {}), "from one only 2.3 times bigger"),
+        (threat_world(100.0, 250.0, |_| {}), "from one 200 away, beyond a third of its vision"),
     ];
     for (w, why) in cases {
         let (_, _, fleeing) = small_step(w);
@@ -289,10 +264,10 @@ fn does_not_flee_a_parent_that_knows_it_nor_an_equal_or_distant_one() {
     };
     let strangers = |w: &mut World| w.creatures[1].parent = 999;
     for (w, why) in [
-        (threat_world(true, 100.0, 150.0, strangers), "a stranger"),
-        (threat_world(true, 100.0, 150.0, brothers), "a brother"),
-        (threat_world(true, 100.0, 150.0, grown_child), "a parent that forgot it"),
-        (threat_world(true, 100.0, 150.0, adult_child), "its own adult child"),
+        (threat_world(100.0, 150.0, strangers), "a stranger"),
+        (threat_world(100.0, 150.0, brothers), "a brother"),
+        (threat_world(100.0, 150.0, grown_child), "a parent that forgot it"),
+        (threat_world(100.0, 150.0, adult_child), "its own adult child"),
     ] {
         let (_, _, fleeing) = small_step(w);
         assert!(fleeing, "does not flee {why}");
@@ -335,7 +310,7 @@ fn a_hunter_spares_its_growing_child_but_not_a_brother() {
         growing(w);
         w.creatures[1].parent = w.creatures[0].id;
     };
-    let mut w = threat_world(true, 100.0, 10.0, as_child);
+    let mut w = threat_world(100.0, 10.0, as_child);
     w.creatures[0].energy = w.creatures[0].pheno.max_energy * 0.3;
     w.step();
     assert_eq!(w.creatures[1].health, w.creatures[1].max_health(), "the hunter struck its own growing child");
@@ -343,7 +318,7 @@ fn a_hunter_spares_its_growing_child_but_not_a_brother() {
         w.creatures[0].parent = 999;
         w.creatures[1].parent = 999;
     };
-    let mut w = threat_world(true, 100.0, 10.0, as_brother);
+    let mut w = threat_world(100.0, 10.0, as_brother);
     w.creatures[0].energy = w.creatures[0].pheno.max_energy * 0.3;
     w.step();
     assert!(w.creatures[1].health < w.creatures[1].max_health(), "a hungry hunter spared a brother");
@@ -352,9 +327,8 @@ fn a_hunter_spares_its_growing_child_but_not_a_brother() {
 /// Мир с бегством детерминирован: сородичей видят по снимку на начало фазы.
 #[test]
 fn мир_с_бегством_детерминирован() {
-    let rules = Rules::default().with("cannibalism", 1.0).unwrap();
     let run = || {
-        let mut w = World::new(&WorldConfig { seed: 9, rules: rules.clone(), ..Default::default() });
+        let mut w = World::new(&WorldConfig { seed: 9, ..Default::default() });
         let mut fled = 0;
         for _ in 0..2000 {
             w.step();
@@ -656,12 +630,10 @@ fn не_конечные_правила_отвергаются() {
 #[test]
 fn бессмысленные_правила_отвергаются() {
     let r = Rules::default();
-    for (key, bad) in
-        [("cost_scale", -1.0), ("plant_energy", -5.0), ("mutation_sigma", -0.1), ("cannibalism", 0.5)]
-    {
+    for (key, bad) in [("cost_scale", -1.0), ("plant_energy", -5.0), ("mutation_sigma", -0.1)] {
         assert!(r.with(key, bad).is_err(), "{key}={bad} принято");
     }
-    for (key, ok) in [("cost_scale", 0.0), ("plant_rate", 0.0), ("cannibalism", 1.0)] {
+    for (key, ok) in [("cost_scale", 0.0), ("plant_rate", 0.0)] {
         assert!(r.with(key, ok).is_ok(), "{key}={ok} отвергнуто");
     }
 }
@@ -746,8 +718,7 @@ fn один_сид_один_мир() {
 /// отчёт стал бы объяснять численность неверными причинами.
 #[test]
 fn счётчики_сходятся_с_численностью() {
-    let rules = Rules::default().with("cannibalism", 1.0).unwrap();
-    let mut w = World::new(&WorldConfig { seed: 3, rules, ..Default::default() });
+    let mut w = World::new(&WorldConfig { seed: 3, ..Default::default() });
     let (n0, plants0) = (w.creatures.len() as u64, w.plants.len() as u64);
     for _ in 0..3000 {
         w.step();
@@ -810,47 +781,64 @@ fn стартовые_численности_известны_до_постро�
 
 // ── производительность ─────────────────────────────────────────────────────
 
-/// Страж от обвала скорости: мир x10 на фиксированной нагрузке 4000 существ
-/// и 4000 растений. На 400 существах (как было в Python-версии) Rust
-/// и полным перебором успевал бы, а здесь перебор — десятки миллионов пар за тик.
-/// Порог с большим запасом: тест ловит поломку вроде «сетка перестала работать
-/// и всё стало O(n²)», а не шум машины CI: с сеткой ~2 мс, без неё ~80 мс,
-/// порог 20. Растения подсыпаются каждый тик, чтобы нагрузка не таяла.
-/// Боевой вариант дополнительно собирает 80 живых стай по 50 участников.
+/// Страж от обвала скорости: сетка держит тик почти линейным по численности, полный
+/// перебор делает его квадратичным. Два мира одной плотности — ×2,5 с 1000 существ и 1000
+/// растений и ×10 с 4000/4000, оба со стаями по 50 участников, — и отношение их тиков: с
+/// сеткой большой дороже примерно вчетверо, при переборе — примерно в 16 раз. Порог 8 ловит
+/// поломку вроде «сетка перестала работать и всё стало O(n²)», а не скорость машины:
+/// абсолютные миллисекунды на медленном CI гуляли больше, чем вдвое. Замеры чередуются, от
+/// каждого мира берётся лучший (шум только замедляет). Растения подсыпаются каждый тик, чтобы
+/// нагрузка не таяла.
 #[test]
-fn тик_укладывается_в_бюджет_на_фиксированной_нагрузке() {
-    for combat in [0.0, 1.0] {
+fn тик_растёт_линейно_с_численностью() {
+    fn world(n: usize) -> World {
         let mut w = World::new(&WorldConfig {
             seed: 9,
-            scale: 10.0,
-            n_creatures: Some(4000),
-            rules: Rules::default().with("cannibalism", combat).unwrap(),
+            scale: n as f64 / 400.0,
+            n_creatures: Some(n),
             ..Default::default()
         });
-        if combat == 1.0 {
-            for (i, v) in w.creatures.iter_mut().enumerate() {
-                let pack = i / 50;
-                v.flock = pack as u64 + 1;
-                v.x = 500.0 + (pack % 10) as f64 * (w.space.width - 1000.0) / 9.0 + (i % 10) as f64 * 8.0;
-                v.y =
-                    500.0 + (pack / 10) as f64 * (w.space.height - 1000.0) / 7.0 + (i % 50 / 10) as f64 * 8.0;
-            }
+        let packs = n / 50;
+        let cols = ((packs as f64 * w.space.width / w.space.height).sqrt().ceil() as usize).max(1);
+        let rows = packs.div_ceil(cols);
+        let (dx, dy) = ((w.space.width - 1000.0) / cols as f64, (w.space.height - 1000.0) / rows as f64);
+        for (i, v) in w.creatures.iter_mut().enumerate() {
+            let pack = i / 50;
+            v.flock = pack as u64 + 1;
+            v.x = 500.0 + (pack % cols) as f64 * dx + (i % 10) as f64 * 8.0;
+            v.y = 500.0 + (pack / cols) as f64 * dy + (i % 50 / 10) as f64 * 8.0;
         }
-        let mut rng = Rng::new(9);
-        let ticks = 100;
+        w
+    }
+    fn ms_per_tick(w: &mut World, n: usize, rng: &mut Rng) -> f64 {
+        let ticks = 20;
         let started = std::time::Instant::now();
         for _ in 0..ticks {
-            while w.plants.len() < 4000 {
-                let p = w.flora().plant(&mut rng);
+            for _ in w.plants.len()..n {
+                let p = w.flora().plant(rng);
                 w.plants.push(p);
             }
             w.step();
         }
-        let ms = started.elapsed().as_secs_f64() * 1000.0 / ticks as f64;
-        eprintln!("  [скорость] {ms:.3} мс/тик при 4000/4000, бои {combat:.0}");
-        assert!(w.creatures.len() > 1000, "нагрузка растаяла — замер бессмыслен");
-        assert!(ms < 20.0, "тик {ms:.2} мс при 4000/4000: где-то перебор вместо сетки?");
+        started.elapsed().as_secs_f64() * 1000.0 / ticks as f64
     }
+    let (mut small, mut big) = (world(1000), world(4000));
+    let mut rng = Rng::new(9);
+    let (mut best_small, mut best_big) = (f64::INFINITY, f64::INFINITY);
+    for _ in 0..4 {
+        best_small = best_small.min(ms_per_tick(&mut small, 1000, &mut rng));
+        best_big = best_big.min(ms_per_tick(&mut big, 4000, &mut rng));
+    }
+    let ratio = best_big / best_small;
+    eprintln!("  [скорость] {best_small:.3} мс/тик при 1000/1000, {best_big:.3} при 4000/4000: ×{ratio:.2}");
+    assert!(
+        small.creatures.len() > 250 && big.creatures.len() > 1000,
+        "нагрузка растаяла — замер бессмыслен"
+    );
+    assert!(
+        ratio < 8.0,
+        "вчетверо больше существ — тик дороже в {ratio:.1} раза: где-то перебор вместо сетки?"
+    );
 }
 
 // ── игра: выбор, слежение, правила на ходу ──────────────────────────────────
@@ -936,15 +924,6 @@ fn профиль_еды_меняется_на_ходу() {
     let left = |ps: &[Plant]| ps.iter().filter(|p| p.x < third).count() as f64 / ps.len() as f64;
     assert!(left(fresh) > 0.99, "новые — у левого края: {:.3}", left(fresh));
     assert!(left(old) < 0.5, "старые остались равномерными: {:.3}", left(old));
-}
-
-#[test]
-fn выключение_каннибализма_сбрасывает_испуг() {
-    let mut w = threat_world(true, 100.0, 150.0, |_| {});
-    w.step();
-    assert!(w.creatures[1].fleeing());
-    w.set_rules(Rules::default());
-    assert!(w.creatures.iter().all(|v| !v.fleeing()));
 }
 
 #[test]

@@ -34,7 +34,7 @@ fn lab_group(field: &settings::Field) -> &'static str {
         return "Распределение растений";
     }
     match field.key {
-        Key::Cannibalism | Key::MeleeDamage | Key::ShotDamage | Key::ShotCost | Key::ShotPeriod => "Бой",
+        Key::MeleeDamage | Key::ShotDamage | Key::ShotCost | Key::ShotPeriod => "Бой",
         Key::MutationSigma => "Эволюция",
         _ => "Питание и энергия",
     }
@@ -243,7 +243,6 @@ impl LifeApp {
         let (seed, scale) = (f.seed, f.scale);
         let (tick_ms, snapshot_ms, build_ms, draw_ms) =
             (f.tick_ms, f.snapshot_ms, f.build_ms, self.view.draw_ms);
-        let cannibals = f.rules.cannibals();
         ui.horizontal(|ui| {
             let (icon, hint) = if st.paused {
                 ("▶", "Пуск (Пробел)")
@@ -276,11 +275,6 @@ impl LifeApp {
             ui.label(format!("тик {}", spaced(tick)));
             ui.colored_label(rgb(PLANT_COLOR), format!("растения {}", spaced(counts[0] as u64)));
             ui.colored_label(rgb(CREATURE_COLOR), format!("существа {}", spaced(counts[1] as u64)));
-            ui.colored_label(
-                if cannibals { DANGER } else { MUTED },
-                if cannibals { "бои: вкл" } else { "бои: выкл" },
-            )
-            .on_hover_text("Каннибализм — общее правило мира: включает охоту и бои, но не меняет гены.");
             ui.separator();
             if st.lagging {
                 let target = SPEEDS[st.speed_index].unwrap_or(0.0);
@@ -376,17 +370,6 @@ impl LifeApp {
     }
 
     pub(crate) fn predator_status(&self, ui: &mut egui::Ui) {
-        if let Some(f) = &self.view.frame {
-            ui.colored_label(
-                if f.rules.cannibals() { DANGER } else { MUTED },
-                if f.rules.cannibals() {
-                    "Бои/каннибализм: включены"
-                } else {
-                    "Бои/каннибализм: выключены"
-                },
-            )
-            .on_hover_text("Общий выключатель охоты и боёв для всего мира.");
-        }
         if let Some((carnivory, ratio, shooters)) = predator_summary(&self.history) {
             ui.label(format!("Адаптация: плотоядность {carnivory:.0}% · добыча ≤ 1/{ratio:.1} размера"))
                 .on_hover_text("Плотоядность и предел размера добычи наследуются каждым существом.");
@@ -726,7 +709,7 @@ fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; N]>) {
             s.genome[creature::Gene::PreyRatio as usize],
         ),
     )
-    .on_hover_text("Эти признаки наследуются и работают, когда мировое правило боёв включено.");
+    .on_hover_text("Эти признаки наследуются.");
     let frac = (s.energy / s.max_energy).clamp(0.0, 1.0);
     ui.horizontal(|ui| {
         ui.colored_label(MUTED, "энергия");

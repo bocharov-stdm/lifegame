@@ -163,11 +163,7 @@ fn пищевые_крайности_имеют_компромисс() {
 #[test]
 fn стая_защищает_неродных_и_исчезает_без_участников() {
     use life_core::{World, WorldConfig};
-    let mut w = World::new(&WorldConfig {
-        n_creatures: Some(0),
-        rules: Rules::default().with("cannibalism", 1.0).unwrap(),
-        ..Default::default()
-    });
+    let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
     let a = w.spawn(CreatureGenome::BASE.with(Gene::Size, 100.0), 1000.0, 1000.0, Some(200.0));
     w.spawn(CreatureGenome::BASE.with(Gene::Size, 30.0), 1000.0, 1000.0, None);
     w.creatures[1].flock = a;
@@ -230,7 +226,7 @@ fn охота_выбирает_добычу_но_сытый_не_начинае�
     ] {
         let mut w = World::new(&WorldConfig {
             n_creatures: Some(0),
-            rules: Rules::default().with("cannibalism", 1.0).unwrap().with("plant_rate", 0.0).unwrap(),
+            rules: Rules::default().with("plant_rate", 0.0).unwrap(),
             ..Default::default()
         });
         w.spawn(
@@ -251,11 +247,7 @@ fn охота_выбирает_добычу_но_сытый_не_начинае�
 #[test]
 fn близкое_растение_выгоднее_далёкой_добычи() {
     use life_core::{World, WorldConfig};
-    let mut w = World::new(&WorldConfig {
-        n_creatures: Some(0),
-        rules: Rules::default().with("cannibalism", 1.0).unwrap(),
-        ..Default::default()
-    });
+    let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
     w.spawn(CreatureGenome::BASE.with(Gene::Size, 100.0), 1000.0, 1000.0, Some(100.0));
     w.spawn(CreatureGenome::BASE.with(Gene::Size, 30.0), 1200.0, 1000.0, Some(50.0));
     w.plants.push(life_core::plant::Plant::at(1000.0, 1000.0));
@@ -271,7 +263,7 @@ fn один_остаток_трупа_получает_едок_с_меньши�
     use life_core::{World, WorldConfig, corpse::Corpse};
     let mut w = World::new(&WorldConfig {
         n_creatures: Some(0),
-        rules: Rules::default().with("plant_rate", 0.0).unwrap().with("cannibalism", 1.0).unwrap(),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
         ..Default::default()
     });
     for _ in 0..2 {
@@ -294,7 +286,7 @@ fn исчерпанный_труп_не_лишает_следующего_едо
     use life_core::{World, WorldConfig, corpse::Corpse, plant::Plant};
     let mut w = World::new(&WorldConfig {
         n_creatures: Some(0),
-        rules: Rules::default().with("plant_rate", 0.0).unwrap().with("cannibalism", 1.0).unwrap(),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
         ..Default::default()
     });
     for _ in 0..2 {
@@ -322,7 +314,7 @@ fn после_чужого_укуса_растения_резерв_трупа_�
     use life_core::{World, WorldConfig, corpse::Corpse, plant::Plant};
     let mut w = World::new(&WorldConfig {
         n_creatures: Some(0),
-        rules: Rules::default().with("plant_rate", 0.0).unwrap().with("cannibalism", 1.0).unwrap(),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
         ..Default::default()
     });
     let plant_eater = CreatureGenome::BASE.with(Gene::Sociability, 0.0);
@@ -376,11 +368,7 @@ fn a_pair_gets_a_family_circle_a_loner_none() {
 fn новые_состояния_конечны_и_смерти_сходятся() {
     use life_core::{World, WorldConfig};
     for seed in 1..=3 {
-        let mut w = World::new(&WorldConfig {
-            seed,
-            rules: Rules::default().with("cannibalism", 1.0).unwrap(),
-            ..Default::default()
-        });
+        let mut w = World::new(&WorldConfig { seed, ..Default::default() });
         let start = w.creatures.len() as u64;
         for _ in 0..2000 {
             w.step();

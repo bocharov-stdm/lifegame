@@ -21,4 +21,4 @@ jobs:
       - name: Balance vs the reference
         run: cargo run -p life-report --release -- --compare reference/fingerprint.json
       - name: Balance vs the calm reference
-        run: cargo run -p life-report --release -- --compare reference/calm-fingerprint.json --rule cost_scale=3 --rule cannibalism=1
+        run: cargo run -p life-report --release -- --compare reference/calm-fingerprint.json --rule cost_scale=3

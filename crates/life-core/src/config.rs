@@ -136,11 +136,8 @@ pub const SHOT_RANGE_SIZES: f64 = 4.0;
 /// такое существо втрое медленнее.
 pub const SLOW_PACE: f64 = 1.0 / 3.0;
 
-// ── Каннибализм ─────────────────────────────────────────────────────────────
-/// The switch for hunting and combat; off by default in reports. There is no world size ratio
-/// any more: whom one attacks first is its own `prey_ratio` gene (the old `cannibal_ratio`
-/// rule came from swallowing prey whole and only set a floor under the gene).
-pub const CANNIBALISM: f64 = 0.0;
+// Combat and hunting are always on: the peaceful world (the old `cannibalism` rule) is gone.
+// There is no world size ratio either: whom one attacks first is its own `prey_ratio` gene.
 
 // ── Бегство ─────────────────────────────────────────────────────────────────
 /// Существо бежит от чужого (не родни), который может его съесть, когда до

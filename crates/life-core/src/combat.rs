@@ -229,11 +229,7 @@ mod tests {
     use crate::genome::creature::Gene;
     use crate::{CreatureGenome, World, WorldConfig};
     fn world() -> World {
-        World::new(&WorldConfig {
-            n_creatures: Some(0),
-            rules: Rules::default().with("cannibalism", 1.0).unwrap(),
-            ..Default::default()
-        })
+        World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() })
     }
     fn hit(w: &mut World) {
         let territorial_targets = vec![None; w.creatures.len()];

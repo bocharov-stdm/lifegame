@@ -396,12 +396,6 @@ fn статистика_помещается_в_окно() {
             assert!(h.state().view.area.is_some(), "смена вкладки сохраняет область");
             if tab == SideTab::Charts {
                 assert!(h.query_by_label("Последние 10 000 тиков").is_some());
-                let battle = if h.state().view.frame.as_ref().unwrap().rules.cannibals() {
-                    "Бои/каннибализм: включены"
-                } else {
-                    "Бои/каннибализм: выключены"
-                };
-                assert!(h.query_by_label(battle).is_some());
                 assert!(h.query_by_label("Недавнее").is_none());
                 assert!(h.query_by_label("Вся партия").is_none());
             }
@@ -487,7 +481,7 @@ fn flock_scenes_and_card_without_a_window() {
         let mut w = World::new(&WorldConfig {
             seed: 42,
             n_creatures: Some(0),
-            rules: Rules::default().with("plant_rate", 0.0).unwrap().with("cannibalism", 1.0).unwrap(),
+            rules: Rules::default().with("plant_rate", 0.0).unwrap(),
             ..Default::default()
         });
         for (x, y) in [(2800.0, 1900.0), (2900.0, 2000.0), (3000.0, 2100.0), (3100.0, 1900.0)] {
@@ -662,7 +656,7 @@ fn следы_залпа_и_труп_рисуются_без_окна() {
     let mut scene = World::new(&WorldConfig {
         seed: 43,
         n_creatures: Some(0),
-        rules: Rules::default().with("plant_rate", 0.0).unwrap().with("cannibalism", 1.0).unwrap(),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
         ..Default::default()
     });
     for x in [1000.0, 1020.0, 1040.0] {
@@ -719,7 +713,7 @@ fn последовательность_обхода_предупреждени�
     let mut world = World::new(&WorldConfig {
         seed: 43,
         n_creatures: Some(0),
-        rules: Rules::default().with("plant_rate", 0.0).unwrap().with("cannibalism", 1.0).unwrap(),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
         ..Default::default()
     });
     let shooter = CreatureGenome::BASE
@@ -790,23 +784,6 @@ fn последовательность_обхода_предупреждени�
             settle(&mut h);
             shot(&mut h, &format!("территория-{name}-{tag}"));
         }
-    }
-}
-
-/// Игра по умолчанию — с каннибализмом: галочка есть в лаборатории.
-#[test]
-fn каннибализм_в_лаборатории() {
-    let _gpu = gpu();
-    let settings = crate::settings::Settings::default();
-    for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
-        let cfg = settings.world_config(7);
-        assert!(cfg.rules.cannibals());
-        let mut h = harness_with(size, cfg);
-        h.state_mut().lab_open = true;
-        h.state_mut().lab_tab = Tab::Lab;
-        settle(&mut h);
-        assert!(h.query_by_label("Каннибализм").is_some(), "{tag}: галочка каннибализма в лаборатории");
-        shot(&mut h, &format!("лаборатория-каннибализм-{tag}"));
     }
 }
 

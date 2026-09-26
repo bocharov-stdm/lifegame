@@ -107,11 +107,10 @@ impl State {
     ) -> Vec<Option<u64>> {
         let mut herd = Grid::new(crate::config::GRID_CELL);
         herd.rebuild(space, creatures.iter().map(|v| (v.x, v.y)));
-        self.prepare_full(flocks, creatures, space, tick, grace, true, &herd)
+        self.prepare_full(flocks, creatures, space, tick, grace, &herd)
     }
 
-    /// Areas of this tick and every creature's reaction to them. Without `combat` creatures
-    /// still walk around circles, but nobody is warned or struck. `herd` is a grid over the
+    /// Areas of this tick and every creature's reaction to them. `herd` is a grid over the
     /// creatures, in their order.
     #[allow(clippy::too_many_arguments)]
     pub fn prepare_full(
@@ -121,7 +120,6 @@ impl State {
         space: &Space,
         tick: u64,
         grace: &Grace,
-        combat: bool,
         herd: &Grid,
     ) -> Vec<Option<u64>> {
         self.areas.clear();
@@ -134,18 +132,10 @@ impl State {
         }
         self.max_radius = self.areas.iter().fold(0.0, |m, a| m.max(a.radius));
         self.grid.rebuild(space, self.areas.iter().map(|a| (a.x, a.y)));
-        let owners: Vec<_> = if combat {
-            creatures
-                .iter()
-                .map(|v| self.owner_where(v.x, v.y, |a| !grace.contains(a.flock, v.flock, tick)))
-                .collect()
-        } else {
-            vec![None; creatures.len()]
-        };
-        if !combat {
-            self.encounters.clear();
-            self.attacks.clear();
-        }
+        let owners: Vec<_> = creatures
+            .iter()
+            .map(|v| self.owner_where(v.x, v.y, |a| !grace.contains(a.flock, v.flock, tick)))
+            .collect();
         let by_id: BTreeMap<_, _> = creatures.iter().enumerate().map(|(i, v)| (v.id, i)).collect();
         let mut active = BTreeSet::new();
         let mut immediate = BTreeSet::new();
@@ -155,7 +145,7 @@ impl State {
                 immediate.insert((tag, enemy));
             }
         }
-        for victim in creatures.iter().filter(|_| combat) {
+        for victim in creatures.iter() {
             if let Some(hit) = victim.mind.social.hit.filter(|h| h.tick == tick)
                 && let Some(&j) = by_id.get(&hit.enemy)
                 && !grace.contains(victim.flock, creatures[j].flock, tick)
@@ -210,7 +200,7 @@ impl State {
         for i in 0..creatures.len() {
             let v = &creatures[i];
             let mut guard = None;
-            if combat && let Some(enemy) = battle_enemy(i, creatures, flocks, herd, grace, tick) {
+            if let Some(enemy) = battle_enemy(i, creatures, flocks, herd, grace, tick) {
                 let u = &creatures[enemy];
                 targets[i] = Some(u.id);
                 guard = Some(Guard { enemy: u.id, x: u.x, y: u.y, half: u.pheno.half });

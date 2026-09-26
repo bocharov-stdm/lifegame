@@ -104,6 +104,15 @@ impl Reference {
                     continue;
                 }
                 let value = value.as_f64().ok_or(format!("правило {key} — не число"))?;
+                // Бои были правилом `cannibalism`. Теперь они всегда включены: боевой
+                // эталон — наш мир, а мирный сравнивать не с чем.
+                if key == "cannibalism" {
+                    if value != 1.0 {
+                        return Err("эталон снят в мирном мире (cannibalism = 0), которого больше нет —                                     переснимите его (--save-reference)"
+                            .into());
+                    }
+                    continue;
+                }
                 rules = rules.with(key, value)?;
             }
         }
@@ -377,6 +386,24 @@ mod tests {
             std::fs::write(&path, value).unwrap();
             assert!(Reference::load(&path).err().unwrap().contains("другой модели поведения"));
         }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    /// Combat used to be the rule `cannibalism`: a combat reference is our world, a peaceful
+    /// one no longer exists.
+    #[test]
+    fn peaceful_reference_is_refused_and_combat_one_is_read() {
+        let path = std::env::temp_dir().join(format!("life-combat-reference-{}.json", std::process::id()));
+        let reference = |combat: f64| {
+            format!(
+                r#"{{"model":"life-behavior/9","ticks":1,"sample_every":1,"runs":[],"rules":{{"cannibalism":{combat},"cost_scale":3}}}}"#
+            )
+        };
+        std::fs::write(&path, reference(0.0)).unwrap();
+        assert!(Reference::load(&path).err().unwrap().contains("мирном мире"));
+        std::fs::write(&path, reference(1.0)).unwrap();
+        let loaded = Reference::load(&path).expect("a combat reference is read");
+        assert_eq!(loaded.rules, Rules::default().with("cost_scale", 3.0).unwrap());
         std::fs::remove_file(path).unwrap();
     }
 

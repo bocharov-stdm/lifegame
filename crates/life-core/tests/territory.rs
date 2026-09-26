@@ -7,11 +7,7 @@ use life_core::territory::{Area, State, steer};
 use life_core::{CreatureGenome, Rules, World, WorldConfig};
 
 fn world() -> World {
-    World::new(&WorldConfig {
-        n_creatures: Some(0),
-        rules: Rules::default().with("cannibalism", 1.0).unwrap(),
-        ..Default::default()
-    })
+    World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() })
 }
 
 #[test]
@@ -147,18 +143,6 @@ fn пришелец_выходит_из_зоны_и_не_застревает_у
     let moved = steer(v, intent);
     assert!((moved.tx - 5800.0).hypot(moved.ty - 2000.0) > 150.0);
     assert!(moved.tx <= v.pheno.x_hi && moved.ty <= v.pheno.y_hi);
-}
-
-#[test]
-fn мирный_режим_сразу_очищает_территориальную_память() {
-    let mut w = world();
-    w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(100.0));
-    w.territory.encounters.insert((1, 2), 7);
-    w.territory.attacks.insert((1, 2, 7));
-    w.creatures[0].mind.social.territory_avoid = Some(Area { flock: 2, x: 1000.0, y: 1000.0, radius: 120.0 });
-    w.set_rules(Rules::default());
-    assert!(w.territory.encounters.is_empty() && w.territory.attacks.is_empty());
-    assert!(w.creatures[0].mind.social.territory_avoid.is_none());
 }
 
 #[test]
@@ -330,7 +314,7 @@ fn касательная_на_границе_мира_меняет_сторон
 fn подтвержденное_нападение_вызывает_залп_и_оставляет_труп_для_следующего_тика() {
     let mut w = World::new(&WorldConfig {
         n_creatures: Some(0),
-        rules: Rules::default().with("cannibalism", 1.0).unwrap().with("plant_rate", 0.0).unwrap(),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
         ..Default::default()
     });
     let shooter = CreatureGenome::BASE

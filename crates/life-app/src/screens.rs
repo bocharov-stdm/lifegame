@@ -328,12 +328,6 @@ fn ui_scale_label(v: f64) -> String {
 /// Поле из `FIELDS`: ползунок или, если у поля есть варианты, выпадающий
 /// список. true — значение изменилось.
 pub fn field_input(ui: &mut egui::Ui, f: &Field, value: &mut f64) -> bool {
-    if f.toggle {
-        let mut on = *value != 0.0;
-        let changed = ui.checkbox(&mut on, "").on_hover_text(f.hint).changed();
-        *value = on as u8 as f64;
-        return changed;
-    }
     if f.choices.is_empty() {
         let slider =
             egui::Slider::new(value, f.lo..=f.hi).step_by(f.step).custom_formatter(|v, _| (f.format)(v));

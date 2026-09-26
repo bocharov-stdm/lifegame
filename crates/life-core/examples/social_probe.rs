@@ -1,30 +1,23 @@
-//! Ограниченный прогон: баланс и доля разворотов без боя и бегства.
+//! Ограниченный прогон: баланс и доля разворотов. Бои включены всегда.
 use life_core::{Rules, World, WorldConfig};
 use std::collections::BTreeMap;
 fn main() {
     let seeds: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(8);
     assert!((1..=8).contains(&seeds), "проверка рассчитана на 1–8 seed");
     println!(
-        "cost,combat,seed,ticks,population,turns,moves,territory_turns,territory_moves,route_turns,route_moves,inside_turns,inside_moves,ms"
+        "cost,seed,ticks,population,turns,moves,territory_turns,territory_moves,route_turns,route_moves,inside_turns,inside_moves,ms"
     );
     for cost in [1.0, 3.0] {
         if std::env::args().nth(2).is_some_and(|s| s.parse::<f64>().ok() != Some(cost)) {
             continue;
         }
-        for combat in [0.0, 1.0] {
-            if std::env::args().nth(3).is_some_and(|s| s.parse::<f64>().ok() != Some(combat)) {
-                continue;
-            }
+        {
             let tasks: Vec<_> = (1..=seeds)
                 .map(|seed| {
                     std::thread::spawn(move || {
                         let mut w = World::new(&WorldConfig {
                             seed,
-                            rules: Rules::default()
-                                .with("cost_scale", cost)
-                                .unwrap()
-                                .with("cannibalism", combat)
-                                .unwrap(),
+                            rules: Rules::default().with("cost_scale", cost).unwrap(),
                             ..Default::default()
                         });
                         let start_count = w.creatures.len() as u64;
@@ -89,7 +82,7 @@ fn main() {
                             );
                         }
                         format!(
-                            "{cost},{combat},{seed},{},{},{turns},{moves},{territory_turns},{territory_moves},{route_turns},{route_moves},{inside_turns},{inside_moves},{:.0}",
+                            "{cost},{seed},{},{},{turns},{moves},{territory_turns},{territory_moves},{route_turns},{route_moves},{inside_turns},{inside_moves},{:.0}",
                             w.tick,
                             w.creatures.len(),
                             start.elapsed().as_secs_f64() * 1000.0

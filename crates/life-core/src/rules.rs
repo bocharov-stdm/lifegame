@@ -13,7 +13,7 @@ const BASE_VISION: f64 = GENES[Gene::Vision as usize].base;
 
 /// Имена настраиваемых правил — для отчёта (`--rule имя=число`) и настроек.
 /// Профили еды — по шесть на ось, по порядку `flora::AXIS_PARAMS`.
-pub const RULE_KEYS: [&str; 26] = [
+pub const RULE_KEYS: [&str; 25] = [
     "plant_rate",
     "plant_energy",
     "mutation_sigma",
@@ -33,7 +33,6 @@ pub const RULE_KEYS: [&str; 26] = [
     "plant_width_bend",
     "plant_width_waves",
     "plant_width_amplitude",
-    "cannibalism",
     "repro_cost",
     "melee_damage_share",
     "shot_damage_share",
@@ -71,8 +70,6 @@ pub struct Rules {
     /// Где растёт еда: профиль по глубине и по ширине (`flora.rs`).
     pub plant_depth: FoodAxis,
     pub plant_width: FoodAxis,
-    /// Combat and hunting: 0 off, 1 on. Whom one attacks first is its own `prey_ratio` gene.
-    pub cannibalism: f64,
     /// Цена рождения и сила/стоимость боя; умолчания берутся из config.rs.
     pub repro_cost: f64,
     pub melee_damage_share: f64,
@@ -103,7 +100,6 @@ impl Default for Rules {
                 ..FOOD_AXIS
             },
             plant_width: FoodAxis { profile: Profile::Uniform.index(), ..FOOD_AXIS },
-            cannibalism: CANNIBALISM,
             repro_cost: REPRO_COST,
             melee_damage_share: MELEE_DAMAGE_SHARE,
             shot_damage_share: SHOT_DAMAGE_SHARE,
@@ -117,6 +113,15 @@ impl Default for Rules {
         r.renormalize();
         r
     }
+}
+
+/// Error for a key `Rules` does not know. Combat used to be the rule `cannibalism`; there is no
+/// peaceful world any more, so it gets a reason instead of the bare list.
+fn unknown(key: &str) -> String {
+    if key == "cannibalism" {
+        return "правила cannibalism больше нет: бои включены всегда".to_string();
+    }
+    format!("нет такого правила: {key}; есть {}", RULE_KEYS.join(", "))
 }
 
 impl Rules {
@@ -142,27 +147,24 @@ impl Rules {
             "size_power" => r.size_power = value,
             "speed_power" => r.speed_power = value,
             "sight_power" => r.sight_power = value,
-            "cannibalism" => r.cannibalism = value,
             "repro_cost" => r.repro_cost = value,
             "melee_damage_share" => r.melee_damage_share = value,
             "shot_damage_share" => r.shot_damage_share = value,
             "shot_energy_share" => r.shot_energy_share = value,
             "shot_period" => r.shot_period = value,
             "plant_bite_yield" => r.plant_bite_yield = value,
-            _ => return Err(format!("нет такого правила: {key}; есть {}", RULE_KEYS.join(", "))),
+            _ => return Err(unknown(key)),
         }
         // Пределы — только те, за которыми правило теряет смысл, а не «разумные»:
         // лаборатория для того и нужна, чтобы ломать баланс. Отрицательная цена
         // статов кормила бы существ за то, что они живут.
         let allowed = match key {
-            "cannibalism" => value == 0.0 || value == 1.0,
             "shot_period" => value >= 1.0 && value.fract() == 0.0,
             "plant_bite_yield" => (0.0..=1.0).contains(&value),
             _ => value >= 0.0,
         };
         if !allowed {
             let need = match key {
-                "cannibalism" => "0 (нет) или 1 (да)",
                 "shot_period" => "целое число не меньше 1",
                 "plant_bite_yield" => "число от 0 до 1",
                 _ => "число не меньше 0",
@@ -178,7 +180,7 @@ impl Rules {
     pub fn with_text(&self, key: &str, text: &str) -> Result<Rules, String> {
         let text = text.trim();
         if !RULE_KEYS.contains(&key) {
-            return Err(format!("нет такого правила: {key}; есть {}", RULE_KEYS.join(", ")));
+            return Err(unknown(key));
         }
         if let Ok(value) = text.parse::<f64>() {
             return self.with(key, value);
@@ -206,7 +208,6 @@ impl Rules {
             "size_power" => self.size_power,
             "speed_power" => self.speed_power,
             "sight_power" => self.sight_power,
-            "cannibalism" => self.cannibalism,
             "repro_cost" => self.repro_cost,
             "melee_damage_share" => self.melee_damage_share,
             "shot_damage_share" => self.shot_damage_share,
@@ -215,11 +216,6 @@ impl Rules {
             "plant_bite_yield" => self.plant_bite_yield,
             _ => return None,
         })
-    }
-
-    /// Едят ли существа мелких сородичей.
-    pub fn cannibals(&self) -> bool {
-        self.cannibalism != 0.0
     }
 
     pub fn food_axis(&self, along: Along) -> &FoodAxis {
@@ -319,12 +315,12 @@ mod tests {
     }
 
     #[test]
-    fn combat_is_off_by_default_and_rejects_nonsense() {
+    fn removed_rules_are_rejected_with_a_reason() {
         let r = Rules::default();
-        assert!(!r.cannibals());
-        assert!(r.with("cannibalism", 1.0).unwrap().cannibals());
-        for v in [0.5, 2.0] {
-            assert!(r.with("cannibalism", v).is_err(), "cannibalism={v} must be rejected");
+        for v in [0.0, 1.0] {
+            let err = r.with("cannibalism", v).unwrap_err();
+            assert!(err.contains("всегда"), "cannibalism={v}: {err}");
+            assert!(r.with_text("cannibalism", "1").unwrap_err().contains("всегда"));
         }
         // the prey size ratio is the `prey_ratio` gene now, not a world rule
         assert!(r.with("cannibal_ratio", 2.5).is_err());

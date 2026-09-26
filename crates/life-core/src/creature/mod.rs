@@ -241,26 +241,6 @@ impl Creature {
     pub fn apply_rules(&mut self, rules: &Rules, space: &Space) {
         self.pheno = Phenotype::at_size(&self.genome, rules, space, self.pheno.size);
         self.space = *space;
-        if !rules.cannibals() {
-            self.mind.social.territory_avoid = None;
-            self.mind.social.territory_guard = None;
-            self.mind.social.territory_side = None;
-            self.mind.social.territory_escape = None;
-            self.mind.social.alarm = None;
-            self.mind.social.observed_alarm = None;
-            self.mind.social.hit = None;
-            self.mind.social.aid = None;
-            self.mind.social.context.alarm = None;
-            self.mind.social.gathering = false;
-            self.mind.social.shared_flee = false;
-            if self.mind.social.activity == crate::social::Activity::Alarm {
-                self.mind.social.activity = crate::social::Activity::Travelling;
-            }
-            self.mind.attack = None;
-            self.mind.flee_ticks = 0;
-            self.mind.flee_dx = 0.0;
-            self.mind.flee_dy = 0.0;
-        }
     }
 
     /// Съедено `eaten` растений: энергия, и стратегия узнаёт, что поело.

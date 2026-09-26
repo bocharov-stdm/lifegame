@@ -50,7 +50,6 @@ pub enum Key {
     PlantWidthBend,
     PlantWidthWaves,
     PlantWidthAmplitude,
-    Cannibalism,
     ReproCost,
     MeleeDamage,
     ShotDamage,
@@ -75,8 +74,6 @@ pub struct Field {
     /// Показывать ли поле сейчас: параметр профиля еды виден, только когда
     /// выбран его профиль.
     pub shown: fn(&Settings) -> bool,
-    /// Галочка (значение 0 или 1), а не ползунок.
-    pub toggle: bool,
 }
 
 /// Общее у полей-ползунков: всегда видны, вариантов нет.
@@ -92,15 +89,7 @@ const SLIDER: Field = Field {
     rule: None,
     choices: &[],
     shown: |_| true,
-    toggle: false,
 };
-
-/// Общее у галочек: 0 — нет, 1 — да.
-const TOGGLE: Field = Field { lo: 0.0, hi: 1.0, step: 1.0, format: yes_no, toggle: true, ..SLIDER };
-
-fn yes_no(v: f64) -> String {
-    if v != 0.0 { "да" } else { "нет" }.into()
-}
 
 /// Подписи профилей еды — по порядку `Profile::ALL` (сверено тестом).
 const PROFILES: [&str; 5] = ["равномерно", "линейно", "экспонента", "логарифм", "волны"];
@@ -132,7 +121,7 @@ fn percent(v: f64) -> String {
     format!("{v:.0}%")
 }
 
-pub const FIELDS: [Field; 27] = [
+pub const FIELDS: [Field; 26] = [
     // ── Мир ──────────────────────────────────────────────────────────────────
     Field {
         key: Key::Creatures,
@@ -401,16 +390,6 @@ pub const FIELDS: [Field; 27] = [
         shown: |s| s.food(Along::Width) == Profile::Waves,
         ..SLIDER
     },
-    // ── Каннибализм (лаборатория) ───────────────────────────────────────────
-    Field {
-        key: Key::Cannibalism,
-        label: "Каннибализм",
-        hint: "Включает активную охоту и бои при соприкосновении тел. \
-               Родню и участников своей стаи атаковать нельзя.",
-        tab: Tab::Lab,
-        rule: Some("cannibalism"),
-        ..TOGGLE
-    },
     Field {
         key: Key::ReproCost,
         label: "Цена рождения",
@@ -519,8 +498,6 @@ impl Default for Settings {
             shape: WorldConfig::default().shape,
             values: FIELDS.map(|f| match f.key {
                 Key::Creatures => CREATURES_AT_START as f64,
-                // Упор игры — на каннибализм; у движка он по умолчанию выключен.
-                Key::Cannibalism => 1.0,
                 // Меньше плотность популяции при прежней модели жизненного цикла.
                 Key::CostScale => 3.0,
                 Key::PlantGrowth => 1.0,
@@ -707,7 +684,7 @@ fn json_key(key: Key) -> &'static str {
         Key::SizePower => "size_power",
         Key::SightPower => "sight_power",
         Key::Lurkers => "lurkers_percent",
-        // у профилей еды и каннибализма ключ файла — имя правила
+        // у профилей еды ключ файла — имя правила
         _ => field(key).rule.expect("у поля есть правило"),
     }
 }
@@ -750,13 +727,12 @@ mod tests {
         assert!(hint(Key::PlantEnergy).contains(&format!("существа — {tank:.0}")));
     }
 
-    /// Игровой профиль включает бои и более дорогую жизнь для меньшей плотности.
+    /// Игровой профиль — более дорогая жизнь для меньшей плотности.
     #[test]
     fn по_умолчанию_спокойный_игровой_профиль() {
-        let want = Rules::default().with("cannibalism", 1.0).unwrap().with("cost_scale", 3.0).unwrap();
+        let want = Rules::default().with("cost_scale", 3.0).unwrap();
         assert_eq!(Settings::default().rules(), want);
         let mut s = Settings::default();
-        s.set(Key::Cannibalism, 0.0);
         s.set(Key::CostScale, 1.0);
         assert_eq!(s.rules(), Rules::default());
     }
@@ -885,23 +861,17 @@ mod tests {
         assert_eq!(describe_change(&old, &old), None);
     }
 
-    /// Combat is a toggle. An old file (with predator keys, «n_vegetarians» and the removed
-    /// `cannibal_ratio` rule) is read, with combat on.
+    /// An old file (with predator keys, «n_vegetarians», the removed `cannibal_ratio` rule and
+    /// the removed combat switch `cannibalism`) is read; combat is always on anyway.
     #[test]
-    fn галочка_каннибализма() {
-        assert!(field(Key::Cannibalism).toggle);
-
+    fn старый_файл_настроек_читается() {
         let old = Settings::from_json(&serde_json::json!({
-            "n_predators": 10, "plant_energy": 80, "n_vegetarians": 50, "cannibal_ratio": 1.5
+            "n_predators": 10, "plant_energy": 80, "n_vegetarians": 50, "cannibal_ratio": 1.5,
+            "cannibalism": 0
         }));
-        assert!(old.get(Key::Cannibalism) == 1.0 && old.get(Key::PlantEnergy) == 80.0);
+        assert_eq!(old.get(Key::PlantEnergy), 80.0);
         assert_eq!(old.get(Key::Creatures), 50.0, "старый ключ численности читается");
-        let mut new = Settings::default();
-        new.set(Key::Cannibalism, 0.0);
-        assert_eq!(
-            describe_change(&Settings::default(), &new).as_deref(),
-            Some("правила: каннибализм да → нет")
-        );
+        assert_eq!(old.rules(), Settings::default().rules().with("plant_energy", 80.0).unwrap());
     }
 
     #[test]
