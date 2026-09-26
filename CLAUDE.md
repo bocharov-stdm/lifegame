@@ -84,11 +84,10 @@ Looking at the game from an agent: don't take screenshots of the desktop (other 
 captured) and don't inject mouse/keyboard input. Render screens headless with `TINYLIFE_SHOTS`
 (egui_kittest), and drive state through `LifeApp` fields / `sim::Command` in `ui_tests.rs`.
 
-CI (`.github/workflows/ci.yml`, Windows + Linux) runs fmt, clippy and tests on both, and
-`--compare` against both references (base and calm) on Windows only. The game and the
-references live on Windows; Linux is there for cloud agents, whose sandbox is Linux. Its libm
-differs in the last bits, so the same seeds grow into another realization of the world, and
-a Linux mean may fall outside the Windows per-seed range by chance.
+CI (`.github/workflows/ci.yml`, Windows only) runs fmt, clippy, tests and `--compare` against
+both references (base and calm). The game, the golden digests and the references live on
+Windows: another platform's libm differs in the last bits, the same seeds grow into another
+realization of the world, and its means may leave the Windows per-seed range by chance.
 Dev builds use `opt-level = 2`: tests run real multi-thousand-tick simulations.
 
 Validating a model change: seeds 1–8 × 20 000 ticks with `cannibalism=0` and `cannibalism=1`,
@@ -554,7 +553,7 @@ cleared area.
   follow (the creature vec stays sorted by id — tested).
 - `ui_tests.rs` — egui_kittest: every screen at 960×600 and 1600×900, buttons/sliders inside
   the window and not overlapping (scrolled-away side-panel content excluded). They share one
-  GPU lock: parallel wgpu renderers crash the driver on Windows. CI installs lavapipe on Linux.
+  GPU lock: parallel wgpu renderers crash the driver on Windows. CI renders through WARP.
 - Release on Windows builds with `windows_subsystem = "windows"` (no console on double-click)
   and attaches to the parent console so flag errors still print.
 
