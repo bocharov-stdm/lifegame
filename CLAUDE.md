@@ -86,8 +86,9 @@ that food) and its edges. The edges are world rules (`Rules::diets`, one `DietEd
 
 Scavengers digest plants at 15%, carnivores at 20% (`DIET_DIGESTION`), so a lone meat-eater
 does not starve outright. Until a creature grows to its own size (the size gene) it digests plants
-at its diet's `young_plants` edge (`DIET_YOUNG_PLANTS`, «Растения в детстве»; the grown value for
-every diet but the carnivore): a carnivore mutant is born half grown with its herbivore parent's
+at least at its diet's `young_plants` edge — `max(plants, young_plants)`, a floor under the grown
+value, so a lab change of `plants` reaches the young too (`DIET_YOUNG_PLANTS` 0/0/0/0.7, «Растения в
+детстве»; 0 means "young as grown", and only the carnivore has one): a carnivore mutant is born half grown with its herbivore parent's
 prey ratio, sees no prey that much smaller, and starved on plants at 20%; now it grows on plants
 like an omnivore and hunts once grown. Staying young is no loophole: only the grown divide. There are no meat founders by default (`DIET_START_MIX` 70/30/0/0): at the
 start there are neither corpses nor prey small enough, and every one starved without a strike. The
@@ -252,12 +253,14 @@ diet shares, late and minimum population, carnivore births and kills, plus any `
 slowed run is cut and left out of the medians, never counted as finished), a watchdog that kills a
 process `--grace` seconds past it, the worst case printed before the start and the time left after
 every run. Results in `--out`: `runs.csv`, `summary.csv`, `summary.md` and each run's JSON and text;
-a run whose JSON and command line are there already is reused, so a stopped sweep resumes.
+a run whose JSON and `.cmd` are there already is reused, so a stopped sweep resumes; the `.cmd` holds the
+command line and the report build's size and time, so a rebuilt report runs everything anew (a
+plan's own flags are caught in the `--flag=value` spelling too).
 Comments describe: the plan's top block, a block above variants, a comment ending a variant's line.
 Progress goes to `OUT/progress.json` every second, and a small always-on-top window
 (`life-progress`, a `life-app` bin next to `life-sweep`, or `--viewer`; `--no-window` for none)
 shows the bar (finished runs plus the running ones' ticks: each run rewrites `s<seed>.tick` about once a second
-through the report's `--progress FILE`), the time left (from those ticks even before a run ends),
+through the report's `--progress FILE` — one seed only, written aside and renamed over), the time left (from those ticks even before a run ends),
 what runs now with its description, tick and time against the run limit, the last runs, and the same bar
 on its taskbar button. Its buttons pause, resume and stop the sweep through `OUT/control.txt` (`run`,
 `pause`, `stop`, read four times a second): a pause takes the running runs off at once and puts them
@@ -650,12 +653,14 @@ multiplier ≥ 0.1); `Switch { chance }` to any other variant (0.1% for the choi
 towards meat (`DIET_TOWARDS_MEAT`: herbivore → omnivore, omnivore → scavenger or carnivore) with
 `DIET_MEAT_STEP_CHANCE` 2%, to any other neighbour with `DIET_STEP_CHANCE` 0.5%; or, on the same
 first draw, a leap past the neighbours: the herbivore's own leaps (`DIET_LEAPS`: to the carnivore
-`HERBIVORE_LEAP_CARNIVORE` 0.1%, to the scavenger `HERBIVORE_LEAP_SCAVENGER` 0.01%, config only, no
-lab rule) replace its general jump; the other diets jump to any other diet (`DIET_JUMP_CHANCE` 0.01%). Switch
+`HERBIVORE_LEAP_CARNIVORE` 0.1%, to the scavenger `HERBIVORE_LEAP_SCAVENGER` 0.01%, rules
+`diet_leap_carnivore` / `diet_leap_scavenger`, lab «Скачок травоядного в …») replace its general jump,
+so `diet_jump` does not touch the herbivore; the other diets jump to any other diet (`DIET_JUMP_CHANCE` 0.01%). Switch
 chances are multiplied by the parent's mutability; the diet's are not. Before any of it,
 `CLONE_CHANCE` (50%) of children are exact copies, and after it mutability is clamped to
 `MIN_MUTABILITY` (0.1). All of this is `genome::Heredity`, built from the rules (`clone_share`,
-`min_mutability`, `diet_step`, `diet_meat_step`, `diet_jump`) and applied by `CreatureGenome::mutate_by`. Then `picky` («разборчивость», %, base 30, free): the own-niche threshold; the last row
+`min_mutability`, `diet_step`, `diet_meat_step`, `diet_jump`, `diet_leap_*`; `genome::DietChances`
+carries the diet's into `mutate_values`) and applied by `CreatureGenome::mutate_by`. Then `picky` («разборчивость», %, base 30, free): the own-niche threshold; the last row
 is `rivalry` («задиристость», %, base 30, free): below it a creature fights for its food. A founders' diet mix (`WorldConfig::diets`, 70/30/0/0 in variant order H/O/S/C,
 `--diet-mix`) is dealt without draws through `genome::spread_ranks`, so it does not line up with
 the strategy mix.

@@ -446,14 +446,15 @@ impl CreatureGenome {
             return child; // an exact copy: no gene mutates
         }
         let mutability = super::mutability_of(self[Gene::Mutability], h.min_mutability);
-        super::mutate_values(
-            &mut child.0,
-            &GENES,
-            h.sigma,
-            mutability,
-            rng,
-            Some((h.diet_step, h.diet_meat_step, h.diet_jump)),
-        );
+        // `DIET_LEAPS` with the world's chances, in the same order
+        let herbivore = [(3, h.diet_leap_carnivore), (2, h.diet_leap_scavenger)];
+        let diet = super::DietChances {
+            step: h.diet_step,
+            rise: h.diet_meat_step,
+            jump: h.diet_jump,
+            leaps: [&herbivore, &[], &[], &[]],
+        };
+        super::mutate_values(&mut child.0, &GENES, h.sigma, mutability, rng, Some(diet));
         child.0[Gene::Mutability as usize] = super::mutability_of(child[Gene::Mutability], h.min_mutability);
         child.0[Gene::LifePace as usize] = child[Gene::LifePace].clamp(0.5, 2.0);
         child.0[Gene::PreyRatio as usize] = child[Gene::PreyRatio].clamp(1.0, 5.0);

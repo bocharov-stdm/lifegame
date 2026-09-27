@@ -123,14 +123,15 @@ pub fn index_of(genes: &[GeneSpec], key: &str) -> Option<usize> {
 /// gauss до множителя не ниже 0.1 (`reject_below`), с `keep_above` — ещё жребий
 /// «оставить» перед ним.
 ///
-/// `diet` replaces the chances of the `Neighbours` law (step, step up, jump) with the world's rules.
+/// `diet` replaces the chances of the `Neighbours` law (step, step up, jump, own leaps) with the
+/// world's rules.
 pub(crate) fn mutate_values(
     values: &mut [f64],
     genes: &[GeneSpec],
     sigma: f64,
     mutability: f64,
     rng: &mut Rng,
-    diet: Option<(f64, f64, f64)>,
+    diet: Option<DietChances>,
 ) {
     let sigma = sigma * mutability;
     for (value, spec) in values.iter_mut().zip(genes) {
@@ -171,7 +172,10 @@ pub(crate) fn mutate_values(
                 }
             }
             Mutation::Neighbours { chance, rise, jump, of, up, leaps } => {
-                let (chance, rise, jump) = diet.unwrap_or((chance, rise, jump));
+                let (chance, rise, jump, leaps) = match &diet {
+                    Some(d) => (d.step, d.rise, d.jump, &d.leaps[..]),
+                    None => (chance, rise, jump, leaps),
+                };
                 let n = spec.variants().map_or(0, <[Variant]>::len);
                 if n < 2 {
                     continue;
@@ -217,6 +221,16 @@ pub(crate) fn mutate_values(
     }
 }
 
+/// The diet's chances from the world's rules, in place of the `Neighbours` law's own: a step, a
+/// step up, the general jump and each variant's own leaps (`Mutation::Neighbours`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DietChances<'a> {
+    pub step: f64,
+    pub rise: f64,
+    pub jump: f64,
+    pub leaps: [&'a [(usize, f64)]; 4],
+}
+
 /// Mutability from the gene's value, from `floor` (`MIN_MUTABILITY` by default) to `MAX_MUTABILITY`.
 /// Without the ceiling the multiplier could grow generation by generation to infinity and the sigma
 /// become NaN; without the floor selection drove it to zero and evolution stopped.
@@ -234,6 +248,9 @@ pub struct Heredity {
     pub diet_step: f64,
     pub diet_meat_step: f64,
     pub diet_jump: f64,
+    /// The herbivore's own leaps to the carnivore and to the scavenger (`DIET_LEAPS`).
+    pub diet_leap_carnivore: f64,
+    pub diet_leap_scavenger: f64,
 }
 
 impl Heredity {
@@ -245,6 +262,8 @@ impl Heredity {
             diet_step: rules.diet_step,
             diet_meat_step: rules.diet_meat_step,
             diet_jump: rules.diet_jump,
+            diet_leap_carnivore: rules.diet_leap_carnivore,
+            diet_leap_scavenger: rules.diet_leap_scavenger,
         }
     }
 
@@ -257,6 +276,8 @@ impl Heredity {
             diet_step: crate::config::DIET_STEP_CHANCE,
             diet_meat_step: crate::config::DIET_MEAT_STEP_CHANCE,
             diet_jump: crate::config::DIET_JUMP_CHANCE,
+            diet_leap_carnivore: crate::config::HERBIVORE_LEAP_CARNIVORE,
+            diet_leap_scavenger: crate::config::HERBIVORE_LEAP_SCAVENGER,
         }
     }
 }

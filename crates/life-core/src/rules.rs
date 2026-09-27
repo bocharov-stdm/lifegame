@@ -82,8 +82,8 @@ pub const DIET_RULE_KEYS: [[&str; 10]; 4] = [
 
 /// Имена настраиваемых правил — для отчёта (`--rule имя=число`) и настроек.
 /// Профили еды — по шесть на ось, по порядку `flora::AXIS_PARAMS`; the diet edges come last.
-pub const RULE_KEYS: [&str; 83] = {
-    let mut all = [""; 83];
+pub const RULE_KEYS: [&str; 85] = {
+    let mut all = [""; 85];
     let mut i = 0;
     while i < WORLD_RULE_KEYS.len() {
         all[i] = WORLD_RULE_KEYS[i];
@@ -103,7 +103,7 @@ pub const RULE_KEYS: [&str; 83] = {
 };
 
 /// The rules that are not a diet's edges.
-const WORLD_RULE_KEYS: [&str; 43] = [
+const WORLD_RULE_KEYS: [&str; 45] = [
     "plant_rate",
     "plant_energy",
     "mutation_sigma",
@@ -147,6 +147,8 @@ const WORLD_RULE_KEYS: [&str; 43] = [
     "corpse_decay",
     "corpse_rest",
     "diet_meat_step",
+    "diet_leap_carnivore",
+    "diet_leap_scavenger",
 ];
 
 /// Patches per base world — no more than this: at 1500 slots that is five places a patch, and
@@ -179,7 +181,8 @@ pub struct DietEdges {
     pub deep_saving: f64,
     /// Digestibility of plants, fresh meat and rot (`DIET_DIGESTION`), 0‒1.
     pub digestion: [f64; 3],
-    /// Digestibility of plants while not grown to its own size (`DIET_YOUNG_PLANTS`), 0‒1.
+    /// Digestibility of plants while not grown to its own size, at least (`DIET_YOUNG_PLANTS`), 0‒1:
+    /// the young digest `max(digestion[0], young_plants)`.
     pub young_plants: f64,
 }
 
@@ -272,6 +275,10 @@ pub struct Rules {
     pub diet_jump: f64,
     /// The chance of a step towards meat (`config::DIET_MEAT_STEP_CHANCE`).
     pub diet_meat_step: f64,
+    /// The herbivore's own leaps past the omnivore, to the carnivore and to the scavenger; they
+    /// replace its `diet_jump` (`config::HERBIVORE_LEAP_*`).
+    pub diet_leap_carnivore: f64,
+    pub diet_leap_scavenger: f64,
     /// A corpse's clock, ticks from death: fresh until, fully rotten at, gone at; how far it sinks
     /// a tick; and the lowest share of the depth, %, where it comes to rest (`corpse.rs`).
     pub corpse_fresh: f64,
@@ -322,6 +329,8 @@ impl Default for Rules {
             diet_step: DIET_STEP_CHANCE,
             diet_jump: DIET_JUMP_CHANCE,
             diet_meat_step: DIET_MEAT_STEP_CHANCE,
+            diet_leap_carnivore: HERBIVORE_LEAP_CARNIVORE,
+            diet_leap_scavenger: HERBIVORE_LEAP_SCAVENGER,
             corpse_fresh: CORPSE_FRESH_TICKS as f64,
             corpse_rotten: CORPSE_ROTTEN_TICKS as f64,
             corpse_sink: CORPSE_SINK_SPEED,
@@ -404,6 +413,8 @@ impl Rules {
             "diet_step" => r.diet_step = value,
             "diet_jump" => r.diet_jump = value,
             "diet_meat_step" => r.diet_meat_step = value,
+            "diet_leap_carnivore" => r.diet_leap_carnivore = value,
+            "diet_leap_scavenger" => r.diet_leap_scavenger = value,
             "corpse_fresh" => r.corpse_fresh = value,
             "corpse_rotten" => r.corpse_rotten = value,
             "corpse_sink" => r.corpse_sink = value,
@@ -420,7 +431,12 @@ impl Rules {
             "plant_patches" => value.fract() == 0.0 && (0.0..=MAX_PATCHES).contains(&value),
             "plant_patch_size" => value >= PLANT_RADIUS,
             "plant_patch_share" | "corpse_rest" => (0.0..=100.0).contains(&value),
-            "clone_share" | "diet_step" | "diet_jump" | "diet_meat_step" => (0.0..=1.0).contains(&value),
+            "clone_share"
+            | "diet_step"
+            | "diet_jump"
+            | "diet_meat_step"
+            | "diet_leap_carnivore"
+            | "diet_leap_scavenger" => (0.0..=1.0).contains(&value),
             "min_mutability" => (0.0..=MAX_MUTABILITY).contains(&value),
             "corpse_fresh" | "corpse_rotten" | "corpse_decay" => value >= 1.0 && value.fract() == 0.0,
             "corpse_sink" => value > 0.0,
@@ -433,7 +449,12 @@ impl Rules {
                 "plant_patches" => "целое число от 0 до 300",
                 "plant_patch_size" => "число не меньше радиуса растения (10)",
                 "plant_patch_share" | "corpse_rest" => "число от 0 до 100",
-                "clone_share" | "diet_step" | "diet_jump" | "diet_meat_step" => "доля от 0 до 1",
+                "clone_share"
+                | "diet_step"
+                | "diet_jump"
+                | "diet_meat_step"
+                | "diet_leap_carnivore"
+                | "diet_leap_scavenger" => "доля от 0 до 1",
                 "min_mutability" => "число от 0 до 10",
                 "corpse_fresh" | "corpse_rotten" | "corpse_decay" => "целое число тиков не меньше 1",
                 "corpse_sink" => "число больше 0",
@@ -500,6 +521,8 @@ impl Rules {
             "diet_step" => self.diet_step,
             "diet_jump" => self.diet_jump,
             "diet_meat_step" => self.diet_meat_step,
+            "diet_leap_carnivore" => self.diet_leap_carnivore,
+            "diet_leap_scavenger" => self.diet_leap_scavenger,
             "corpse_fresh" => self.corpse_fresh,
             "corpse_rotten" => self.corpse_rotten,
             "corpse_sink" => self.corpse_sink,
@@ -590,6 +613,8 @@ mod tests {
             ("melee_size_power", -0.5),
             ("plant_patch_share", -1.0),
             ("plant_patch_share", 100.5),
+            ("diet_leap_carnivore", 1.5),
+            ("diet_leap_scavenger", -0.1),
         ] {
             assert!(rules.with(key, value).is_err(), "{key}={value}");
         }

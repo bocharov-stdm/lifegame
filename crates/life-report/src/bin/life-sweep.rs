@@ -39,6 +39,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -146,7 +147,7 @@ fn parse_plan(text: &str) -> Result<Plan, String> {
         let at = |e: String| format!("plan line {}: {e}", n + 1);
         let tokens = |s: &str| -> Result<Vec<String>, String> {
             let t: Vec<String> = s.split_whitespace().map(str::to_string).collect();
-            match t.iter().find(|t| OWN_FLAGS.contains(&t.as_str())) {
+            match t.iter().find(|t| OWN_FLAGS.contains(&flag_name(t))) {
                 Some(f) => Err(at(format!("{f} is set by the sweep itself"))),
                 None => Ok(t),
             }
@@ -189,6 +190,14 @@ fn parse_plan(text: &str) -> Result<Plan, String> {
     Ok(plan)
 }
 
+/// A token's flag without its value: `--max-work=1e14` is `--max-work` too.
+fn flag_name(token: &str) -> &str {
+    match token.split_once('=') {
+        Some((flag, _)) if flag.starts_with("--") => flag,
+        _ => token,
+    }
+}
+
 struct Job {
     variant: Variant,
     seed: u64,
@@ -206,7 +215,7 @@ fn command_line(exe: &Path, plan: &Plan, job: &Job, seconds: u64, json: &Path) -
     line.extend(["--seed".into(), job.seed.to_string()]);
     line.extend(plan.args.iter().cloned());
     line.extend(job.variant.args.iter().cloned());
-    if !line.iter().any(|t| t == "--max-work") {
+    if !line.iter().any(|t| flag_name(t) == "--max-work") {
         line.extend(["--max-work".into(), "1e15".into()]);
     }
     line.extend(["--seconds".into(), seconds.to_string(), "--threads".into(), "1".into()]);
@@ -247,10 +256,24 @@ fn read_control(out: &Path) -> u8 {
     }
 }
 
+/// Which build of the report ran: its size and modification time. A rebuilt report (a model
+/// change, another experiment build) runs everything again instead of reusing the old model's
+/// numbers under the same command line.
+fn build_stamp(exe: &Path) -> String {
+    let Ok(meta) = fs::metadata(exe) else { return "unknown build".into() };
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos());
+    format!("build {} bytes, modified {modified}", meta.len())
+}
+
 fn run_job(exe: &Path, plan: &Plan, job: &Job, args: &Args, control: &AtomicU8) -> Outcome {
     let (json, txt, cmd) = job_paths(&args.out, job);
     let line = command_line(exe, plan, job, args.seconds, &json);
-    let joined = line.join(" ");
+    // the key a result is reused by: the command line and the build that ran it
+    let joined = format!("{}\n{}", line.join(" "), build_stamp(exe));
     if !args.fresh
         && fs::read_to_string(&cmd).is_ok_and(|c| c == joined)
         && read_json(&json).is_some_and(|v| v["runs"][0]["stop"].is_string())
@@ -593,15 +616,23 @@ struct Progress {
     done: bool,
 }
 
+/// «Tick of ticks» of each running run, in the order of `Progress::running`, when it has said.
+type Ticks = Vec<Option<(u64, u64)>>;
+
+/// Share of its ticks a running run has done.
+fn share_of(ticks: Option<(u64, u64)>) -> Option<f64> {
+    ticks.map(|(tick, total)| (tick as f64 / total as f64).min(1.0))
+}
+
 impl Progress {
-    /// Share of its ticks a running run has done, when it has said so.
-    fn share_of(&self, r: &(String, u64, Instant)) -> Option<f64> {
-        tick_of(&self.out, &r.0, r.1).map(|(tick, total)| (tick as f64 / total as f64).min(1.0))
+    /// The running runs' ticks, read once per update (`Ticks`).
+    fn ticks(&self) -> Ticks {
+        self.running.iter().map(|r| tick_of(&self.out, &r.0, r.1)).collect()
     }
 
     /// The whole sweep's share done, the running runs' ticks included.
-    fn share(&self) -> f64 {
-        let partial: f64 = self.running.iter().filter_map(|r| self.share_of(r)).sum();
+    fn share(&self, ticks: &Ticks) -> f64 {
+        let partial: f64 = ticks.iter().filter_map(|&t| share_of(t)).sum();
         if self.total == 0 {
             0.0
         } else {
@@ -612,7 +643,7 @@ impl Progress {
     /// Seconds left: the queued runs and the unfinished part of the running ones, spread over the
     /// slots — but never less than the slowest running one still needs. A run's time is the mean
     /// of the runs that ran here, or, before the first ends, what the running ones' ticks promise.
-    fn left(&self) -> Option<f64> {
+    fn left(&self, ticks: &Ticks) -> Option<f64> {
         let ran: Vec<f64> = self
             .finished
             .iter()
@@ -625,7 +656,8 @@ impl Progress {
         let told: Vec<(f64, f64)> = self
             .running
             .iter()
-            .filter_map(|r| self.share_of(r).map(|s| (r.2.elapsed().as_secs_f64(), s)))
+            .zip(ticks)
+            .filter_map(|(r, &t)| share_of(t).map(|s| (r.2.elapsed().as_secs_f64(), s)))
             .filter(|&(_, s)| s >= 0.02)
             .collect();
         let avg = if !ran.is_empty() {
@@ -639,9 +671,10 @@ impl Progress {
         let running: Vec<f64> = self
             .running
             .iter()
-            .map(|r| {
+            .zip(ticks)
+            .map(|(r, &ticks)| {
                 let t = r.2.elapsed().as_secs_f64();
-                match self.share_of(r).filter(|&s| s >= 0.02) {
+                match share_of(ticks).filter(|&s| s >= 0.02) {
                     Some(s) => t / s - t,
                     None => (avg - t).max(0.0),
                 }
@@ -651,23 +684,26 @@ impl Progress {
         Some((work / self.jobs as f64).max(running.iter().copied().fold(0.0, f64::max)))
     }
 
-    fn to_json(&self, plan: &Plan, out: &Path) -> Value {
-        // per running variant: seeds, its oldest run's seconds, ticks done and to do over its runs
-        let mut groups: Vec<(String, Vec<u64>, f64, u64, u64)> = Vec::new();
-        for r in &self.running {
-            let (name, seed, since) = r;
+    fn to_json(&self, plan: &Plan) -> Value {
+        let ticks = self.ticks();
+        // per running variant: seeds, its oldest run's seconds, and over the runs that have said how
+        // far they are, their count, ticks done and to do
+        let mut groups: Vec<(String, Vec<u64>, f64, u64, u64, u64)> = Vec::new();
+        for ((name, seed, since), told) in self.running.iter().zip(&ticks) {
             let t = since.elapsed().as_secs_f64();
-            let (tick, total) = tick_of(&self.out, name, *seed).unwrap_or((0, 0));
+            let (n, tick, total) = told.map_or((0, 0, 0), |(tick, total)| (1, tick, total));
             match groups.iter_mut().find(|g| &g.0 == name) {
                 Some(g) => {
                     g.1.push(*seed);
                     g.2 = g.2.max(t);
-                    g.3 += tick;
-                    g.4 += total;
+                    g.3 += n;
+                    g.4 += tick;
+                    g.5 += total;
                 }
-                None => groups.push((name.clone(), vec![*seed], t, tick, total)),
+                None => groups.push((name.clone(), vec![*seed], t, n, tick, total)),
             }
         }
+        let out = &self.out;
         let about =
             |name: &str| plan.variants.iter().find(|v| v.name == name).map_or("", |v| v.about.as_str());
         let last: Vec<Value> = self
@@ -686,20 +722,19 @@ impl Progress {
             "cut": self.finished.iter().filter(|f| f.cut()).count(),
             "jobs": self.jobs,
             "elapsed_s": self.started.elapsed().as_secs_f64().round(),
-            "left_s": self.left().map(f64::round),
+            "left_s": self.left(&ticks).map(f64::round),
             "worst_case_s": self.worst_case.as_secs(),
             "started_unix": self.started_unix,
             "updated_unix": unix_now(),
-            "progress": self.share(),
+            "progress": self.share(&ticks),
             "limit_s": self.limit_s,
             "running": groups
                 .iter()
-                .map(|(name, seeds, longest, tick, total)| {
-                    let n = seeds.len() as u64;
+                .map(|(name, seeds, longest, told, tick, total)| {
                     json!({
                         "variant": name, "about": about(name), "seeds": seeds, "longest_s": longest.round(),
-                        // the mean run's tick and length, once they have said
-                        "tick": (*total > 0).then(|| tick / n), "ticks": (*total > 0).then(|| total / n),
+                        // the mean tick and length of the runs that have said
+                        "tick": (*told > 0).then(|| tick / told), "ticks": (*told > 0).then(|| total / told),
                     })
                 })
                 .collect::<Vec<_>>(),
@@ -713,10 +748,10 @@ impl Progress {
 
     /// Written aside and renamed over, so the window never reads half a file. A failed write (the
     /// window holding the file that very moment) is simply retried a second later.
-    fn write(&self, plan: &Plan, out: &Path) {
-        let tmp = out.join("progress.json.tmp");
-        if fs::write(&tmp, self.to_json(plan, out).to_string()).is_ok() {
-            let _ = fs::rename(&tmp, out.join("progress.json"));
+    fn write(&self, plan: &Plan) {
+        let tmp = self.out.join("progress.json.tmp");
+        if fs::write(&tmp, self.to_json(plan).to_string()).is_ok() {
+            let _ = fs::rename(&tmp, self.out.join("progress.json"));
         }
     }
 }
@@ -807,7 +842,7 @@ fn main() {
     // a pause or stop left over from an earlier sweep in the same folder must not stop this one
     let _ = fs::write(args.out.join("control.txt"), "run");
     let control = Arc::new(AtomicU8::new(RUN));
-    progress.lock().expect("progress").write(&plan, &args.out);
+    progress.lock().expect("progress").write(&plan);
     if !args.no_window {
         open_window(&args);
     }
@@ -837,7 +872,9 @@ fn main() {
                         started,
                     ));
                     let outcome = run_job(&exe, &plan, &job, &args, &control);
-                    let _ = fs::remove_file(job_paths(&args.out, &job).0.with_extension("tick"));
+                    let json = job_paths(&args.out, &job).0;
+                    let _ = fs::remove_file(json.with_extension("tick"));
+                    let _ = fs::remove_file(json.with_extension("tick.tmp"));
                     let stop = read_json(&job_paths(&args.out, &job).0)
                         .and_then(|j| j["runs"][0]["stop"].as_str().map(str::to_string));
                     let mut p = progress.lock().expect("progress");
@@ -853,7 +890,7 @@ fn main() {
                         outcome,
                         stop,
                     });
-                    let left = p.left().map_or(String::new(), |s| {
+                    let left = p.left(&p.ticks()).map_or(String::new(), |s| {
                         format!(", about {} left", minutes(Duration::from_secs_f64(s)))
                     });
                     println!(
@@ -890,13 +927,12 @@ fn main() {
                 _ => format!("RESUMED by the user in the window: {} of {total} runs done", p.finished.len()),
             };
             println!("{what}");
-            let mut log = fs::read_to_string(args.out.join("events.log")).unwrap_or_default();
-            log += &format!("{} {what}\n", unix_now());
-            let _ = fs::write(args.out.join("events.log"), log);
-            p.write(&plan, &args.out);
+            let log = fs::OpenOptions::new().create(true).append(true).open(args.out.join("events.log"));
+            let _ = log.and_then(|mut f| writeln!(f, "{} {what}", unix_now()));
+            p.write(&plan);
         }
         if last_write.elapsed() >= Duration::from_secs(1) {
-            progress.lock().expect("progress").write(&plan, &args.out);
+            progress.lock().expect("progress").write(&plan);
             last_write = Instant::now();
         }
         std::thread::sleep(Duration::from_millis(250));
@@ -910,7 +946,7 @@ fn main() {
     if p.state != "stopped" {
         p.state = "finished";
     }
-    p.write(&plan, &args.out);
+    p.write(&plan);
 }
 
 fn report(plan: &Plan, args: &Args) {
@@ -979,12 +1015,13 @@ mod tests {
             state: "running",
             done: false,
         };
-        assert_eq!(p.left(), None, "nothing to go by before the first run ends");
+        assert_eq!(p.left(&p.ticks()), None, "nothing to go by before the first run ends");
         for (seed, outcome) in [(1, Outcome::Exited(Duration::from_secs(100))), (2, Outcome::Reused)] {
             p.finished.push(Finished { variant: "a".into(), seed, outcome, stop: Some("done".into()) });
         }
         // 8 queued at 100 s each over 2 slots; reused runs do not count towards the mean
-        assert!((p.left().unwrap() - 400.0).abs() < 1.0, "{:?}", p.left());
+        let left = p.left(&p.ticks()).unwrap();
+        assert!((left - 400.0).abs() < 1.0, "{left}");
         p.finished.push(Finished {
             variant: "a".into(),
             seed: 3,
@@ -1015,7 +1052,8 @@ mod tests {
         fs::remove_dir_all(&out).unwrap();
     }
 
-    /// Before any run ends, the running runs' ticks already give the share done and the time left.
+    /// Before any run ends, the running runs' ticks already give the share done and the time left;
+    /// a run that has not said yet does not halve its variant's tick.
     #[test]
     fn ticks_of_running_runs_count() {
         let out = std::env::temp_dir().join(format!("life-sweep-ticks-{}", std::process::id()));
@@ -1030,7 +1068,10 @@ mod tests {
             started: Instant::now(),
             started_unix: 0,
             finished: Vec::new(),
-            running: vec![("a".into(), 1, Instant::now() - Duration::from_secs(10))],
+            running: vec![
+                ("a".into(), 1, Instant::now() - Duration::from_secs(10)),
+                ("a".into(), 2, Instant::now()),
+            ],
             out: out.clone(),
             limit_s: 300,
             state: "running",
@@ -1038,18 +1079,30 @@ mod tests {
         };
         assert_eq!(tick_of(&out, "a", 1), Some((5000, 20000)));
         assert_eq!(tick_of(&out, "a", 2), None);
-        assert!((p.share() - 0.0625).abs() < 1e-9, "a quarter of one run of four: {}", p.share());
-        // a quarter in 10 s: 40 s a run; 30 s left of it and 3 queued at 40 s, over 2 slots
-        let left = p.left().expect("the ticks promise a time");
+        let ticks = p.ticks();
+        assert_eq!(ticks, [Some((5000, 20000)), None]);
+        assert!((p.share(&ticks) - 0.0625).abs() < 1e-9, "a quarter of one run of four: {}", p.share(&ticks));
+        // a quarter in 10 s: 40 s a run; 30 s left of it, 40 of the silent one and 2 queued at 40 s,
+        // over 2 slots
+        let left = p.left(&ticks).expect("the ticks promise a time");
         assert!((left - 75.0).abs() < 1.0, "{left}");
-        let json = p.to_json(&parse_plan("seeds: 1\nvariant a:\n").unwrap(), &out);
-        assert_eq!((json["running"][0]["tick"].as_u64(), json["limit_s"].as_u64()), (Some(5000), Some(300)));
+        let json = p.to_json(&parse_plan("seeds: 1 2\nvariant a:\n").unwrap());
+        let run = &json["running"][0];
+        assert_eq!(run["seeds"], json!([1, 2]));
+        assert_eq!((run["tick"].as_u64(), run["ticks"].as_u64()), (Some(5000), Some(20000)), "{run}");
+        assert_eq!(json["limit_s"].as_u64(), Some(300));
         fs::remove_dir_all(&out).unwrap();
     }
 
     #[test]
     fn a_plan_may_not_touch_the_guards() {
-        for bad in ["args: --seconds 9999", "variant a: --threads 8", "variant b: --seed 3"] {
+        for bad in [
+            "args: --seconds 9999",
+            "variant a: --threads 8",
+            "variant b: --seed 3",
+            "variant c: --seconds=9999",
+            "args: --progress=x.tick",
+        ] {
             let err = parse_plan(&format!("seeds: 1\n{bad}\nvariant ok:\n")).unwrap_err();
             assert!(err.contains("set by the sweep"), "{bad}: {err}");
         }
@@ -1069,6 +1122,28 @@ mod tests {
             "r.exe --seed 3 --ticks 50 --rule x=2 --max-work 1e15 --seconds 120 --threads 1 --json o.json \
              --progress o.tick"
         );
+        // a budget of the plan's own, in either spelling, is not doubled
+        for own in ["--max-work 1e14", "--max-work=1e14"] {
+            let plan = parse_plan(&format!("seeds: 3\nvariant v: {own}\n")).unwrap();
+            let job = Job { variant: plan.variants[0].clone(), seed: 3 };
+            let line = command_line(Path::new("r.exe"), &plan, &job, 120, Path::new("o.json"));
+            assert_eq!(line.iter().filter(|t| flag_name(t) == "--max-work").count(), 1, "{own}: {line:?}");
+        }
+    }
+
+    /// A rebuilt report is another build: its results are not reused under the same command line.
+    #[test]
+    fn a_rebuilt_report_is_not_reused() {
+        let dir = std::env::temp_dir().join(format!("life-sweep-stamp-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("r.exe");
+        fs::write(&exe, "one").unwrap();
+        let first = build_stamp(&exe);
+        assert_eq!(build_stamp(&exe), first, "the same build");
+        fs::write(&exe, "a longer one").unwrap();
+        assert_ne!(build_stamp(&exe), first, "rebuilt");
+        assert_eq!(build_stamp(&dir.join("gone.exe")), "unknown build");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -98,6 +98,8 @@ pub enum Key {
     DietStep,
     DietJump,
     DietMeatStep,
+    DietLeapCarnivore,
+    DietLeapScavenger,
     CorpseFresh,
     CorpseRotten,
     CorpseSink,
@@ -189,8 +191,8 @@ fn percent(v: f64) -> String {
 
 /// Every field: the world's and the rules' (`BASE_FIELDS`), then the diet edges, diet by diet
 /// (`diet_field`).
-pub const FIELDS: [Field; 90] = {
-    let mut all = [NUMBER; 90];
+pub const FIELDS: [Field; 92] = {
+    let mut all = [NUMBER; 92];
     let mut i = 0;
     while i < BASE_FIELDS.len() {
         all[i] = BASE_FIELDS[i];
@@ -230,7 +232,8 @@ pub const DIET_ROWS: [(&str, &str); 10] = [
     ("Гниль", "Какую долю гнили усваивает. Гниющий труп — смесь свежего мяса и гнили."),
     (
         "Растения в детстве",
-        "Какую долю энергии растения усваивает, пока не дорос до своего размера. Детёныш мясоеда \
+        "Не меньше какой доли энергии растения усваивает, пока не дорос до своего размера; 0 — как \
+         взрослый. Детёныш мясоеда \
          растёт на растениях и охотится взрослым; делятся только взрослые.",
     ),
 ];
@@ -338,7 +341,7 @@ const fn diet_field(d: usize, e: usize) -> Field {
     }
 }
 
-const BASE_FIELDS: [Field; 50] = [
+const BASE_FIELDS: [Field; 52] = [
     // ── Мир: с чего начинается партия ───────────────────────────────────────────
     Field {
         key: Key::Creatures,
@@ -1030,7 +1033,7 @@ const BASE_FIELDS: [Field; 50] = [
     Field {
         key: Key::DietJump,
         label: "Скачок питания",
-        hint: "Шанс, что у мутирующего ребёнка питание сменится на любое другое, не только соседнее.",
+        hint: "Шанс, что у мутирующего ребёнка питание сменится на любое другое, не только соседнее.                У травоядного вместо него свои скачки — в мясоеда и в падальщика.",
         lo: 0.0,
         hi: 0.1,
         step: 0.00001,
@@ -1057,6 +1060,36 @@ const BASE_FIELDS: [Field; 50] = [
         decimals: 2,
         tab: Tab::Evolution,
         rule: Some("diet_meat_step"),
+        ..NUMBER
+    },
+    Field {
+        key: Key::DietLeapCarnivore,
+        label: "Скачок травоядного в мясоеда",
+        hint: "Шанс, что у мутирующего травоядного ребёнок сразу станет мясоедом, минуя всеядного.                Всеядных в мире мало, и мясоеды не должны зависеть только от них. От мутагенности не                зависит.",
+        lo: 0.0,
+        hi: 0.1,
+        step: 0.00001,
+        format: |v| format!("{:.3}%", v * 100.0),
+        shown: 100.0,
+        unit: " %",
+        decimals: 3,
+        tab: Tab::Evolution,
+        rule: Some("diet_leap_carnivore"),
+        ..NUMBER
+    },
+    Field {
+        key: Key::DietLeapScavenger,
+        label: "Скачок травоядного в падальщика",
+        hint: "Шанс, что у мутирующего травоядного ребёнок сразу станет падальщиком, минуя всеядного.                От мутагенности не зависит.",
+        lo: 0.0,
+        hi: 0.1,
+        step: 0.00001,
+        format: |v| format!("{:.3}%", v * 100.0),
+        shown: 100.0,
+        unit: " %",
+        decimals: 3,
+        tab: Tab::Evolution,
+        rule: Some("diet_leap_scavenger"),
         ..NUMBER
     },
 ];

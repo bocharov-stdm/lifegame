@@ -218,6 +218,9 @@ fn main() {
 
     let ticks = args.ticks.unwrap_or(600);
     let seeds = if args.seeds.is_empty() { vec![args.seed] } else { args.seeds.clone() };
+    if args.progress.is_some() && seeds.len() > 1 {
+        fail("--progress: один сид — иначе все сиды пишут в один файл".into());
+    }
     let sample = args.sample.unwrap_or((ticks / 50).max(1));
     let limits = Limits {
         ticks,
@@ -256,7 +259,12 @@ fn main() {
                     && w.tick.is_multiple_of(50)
                     && written.elapsed() >= Duration::from_secs(1)
                 {
-                    let _ = std::fs::write(path, format!("{} {ticks}", w.tick));
+                    // aside and renamed over: the sweep reads it several times a second and must
+                    // never see half a line (a total of 2 would put the run at its end)
+                    let tmp = path.with_extension("tick.tmp");
+                    if std::fs::write(&tmp, format!("{} {ticks}", w.tick)).is_ok() {
+                        let _ = std::fs::rename(&tmp, path);
+                    }
                     written = Instant::now();
                 }
             });

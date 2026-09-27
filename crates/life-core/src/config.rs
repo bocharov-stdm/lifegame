@@ -192,7 +192,8 @@ pub const DIET_STEP_CHANCE: f64 = 0.005;
 /// at 0.5% a world saw about three in 20 000 ticks, too few to take hold.
 pub const DIET_MEAT_STEP_CHANCE: f64 = 0.02;
 /// Chances that a mutating herbivore's child leaps straight to the carnivore or the scavenger,
-/// past the omnivore (`genome::creature::DIET_LEAPS`; they replace its general jump): the omnivores
+/// past the omnivore (`genome::creature::DIET_LEAPS`, rules `diet_leap_carnivore` and
+/// `diet_leap_scavenger`; they replace its general jump): the omnivores
 /// dwindle to 1–2% of a world, and the meat diets hung on them alone (user's choice, 2026-09-27).
 pub const HERBIVORE_LEAP_CARNIVORE: f64 = 0.001;
 pub const HERBIVORE_LEAP_SCAVENGER: f64 = 0.0001;
@@ -269,8 +270,10 @@ pub const DIET_DIGESTION: [[f64; 3]; 4] = [
 /// mutant is born half grown with its herbivore parent's prey ratio, sees no prey that much
 /// smaller than itself and starved on plants at 20%. Grown, it is back at `DIET_DIGESTION`. No
 /// loophole in staying young: only the grown divide (57‒67% of carnivores were grown in every
-/// variant of the sweep). The others digest plants young as grown.
-pub const DIET_YOUNG_PLANTS: [f64; 4] = [1.0, 0.7, 0.15, 0.7];
+/// variant of the sweep). It is a floor under the grown value, not a value of its own: 0 means
+/// "young as grown", so the others follow their grown `plants` rule when the lab changes it (a copy
+/// of it here kept young scavengers on plants after `scavenger_plants=0`).
+pub const DIET_YOUNG_PLANTS: [f64; 4] = [0.0, 0.0, 0.0, 0.7];
 /// Founders' diets, shares in the same order. Dealt without a draw. No meat eaters: at the start
 /// there are neither corpses nor prey small enough, and every such founder starved (none struck
 /// once in the user's world, 2026-09-27); the meat diets arise from mutants

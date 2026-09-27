@@ -213,7 +213,7 @@ fn diet_edges_follow_the_rules() {
         ("carnivore_plants", 0.5),
         ("carnivore_meat", 0.6),
         ("carnivore_rot", 0.7),
-        ("carnivore_young_plants", 0.4),
+        ("carnivore_young_plants", 0.8),
     ]
     .iter()
     .fold(r.clone(), |r, (k, v)| r.with(k, *v).unwrap());
@@ -229,7 +229,7 @@ fn diet_edges_follow_the_rules() {
     assert_eq!((new.health_bonus, new.smell, new.deep_saving), (2.0, 3.0 * new.vision, 0.5));
     assert_eq!((new.plant_efficiency, new.meat_efficiency, new.rot_efficiency), (0.5, 0.6, 0.7));
     let young = Phenotype::at_size(&with_diet(parent().genome, Diet::Carnivore), &lab, &space, 10.0);
-    assert_eq!(young.plant_efficiency, 0.4, "the juvenile gut is a rule too");
+    assert_eq!(young.plant_efficiency, 0.8, "the juvenile gut is a rule too");
     assert_eq!(new.upkeep, lab.upkeep_diet(new.size, new.speed, new.vision, [0.5, 0.5]) * new.life_pace);
     assert!(new.upkeep < base.upkeep);
     for diet in [Diet::Herbivore, Diet::Omnivore, Diet::Scavenger] {
@@ -239,21 +239,40 @@ fn diet_edges_follow_the_rules() {
 
 /// A carnivore grows on plants like an omnivore until it reaches its own size (the juvenile gut),
 /// then digests them at its grown 20% and must hunt; the other diets digest plants young as grown.
+/// The juvenile gut is a floor under the grown `plants` rule, so a lab change of that rule reaches
+/// the young too: `scavenger_plants=0` leaves no young scavenger on plants.
 #[test]
 fn a_young_carnivore_grows_on_plants() {
-    let (r, space) = (Rules::default(), Space::default());
-    for diet in [Diet::Herbivore, Diet::Omnivore, Diet::Scavenger, Diet::Carnivore] {
+    let space = Space::default();
+    let plants = |r: &Rules, diet: Diet, share: f64| {
         let g = with_diet(parent().genome, diet);
-        let full = g[Gene::Size];
-        let (young, grown) =
-            (Phenotype::at_size(&g, &r, &space, full * 0.5), Phenotype::at_size(&g, &r, &space, full));
-        let d = diet as usize;
-        assert_eq!(young.plant_efficiency, life_core::config::DIET_YOUNG_PLANTS[d], "{diet:?} young");
-        assert_eq!(grown.plant_efficiency, life_core::config::DIET_DIGESTION[d][0], "{diet:?} grown");
+        Phenotype::at_size(&g, r, &space, g[Gene::Size] * share).plant_efficiency
+    };
+    let r = Rules::default();
+    for diet in [Diet::Herbivore, Diet::Omnivore, Diet::Scavenger] {
+        let grown = life_core::config::DIET_DIGESTION[diet as usize][0];
+        assert_eq!(
+            (plants(&r, diet, 0.5), plants(&r, diet, 1.0)),
+            (grown, grown),
+            "{diet:?}: young as grown"
+        );
     }
+    assert_eq!((plants(&r, Diet::Carnivore, 0.5), plants(&r, Diet::Carnivore, 1.0)), (0.7, 0.2));
     let c = with_diet(parent().genome, Diet::Carnivore);
     let almost = Phenotype::at_size(&c, &r, &space, c[Gene::Size] - 0.01);
     assert_eq!((almost.plant_efficiency, Phenotype::of(&c, &r, &space).plant_efficiency), (0.7, 0.2));
+    // the lab's `plants` reaches the young
+    let lab = r
+        .with("scavenger_plants", 0.0)
+        .unwrap()
+        .with("herbivore_plants", 0.8)
+        .unwrap()
+        .with("carnivore_plants", 0.9)
+        .unwrap();
+    assert_eq!(plants(&lab, Diet::Scavenger, 0.5), 0.0, "a young scavenger leaves plants alone");
+    assert_eq!(plants(&lab, Diet::Herbivore, 0.5), 0.8);
+    assert_eq!(plants(&lab, Diet::Carnivore, 0.5), 0.9, "the floor never lowers the grown value");
+    assert_eq!(plants(&lab.with("carnivore_young_plants", 0.0).unwrap(), Diet::Carnivore, 0.5), 0.9);
 }
 
 /// Sated, a creature eats and goes only for its own food: the scavenger leaves the fresher half
@@ -653,6 +672,32 @@ fn heredity_follows_the_rules() {
         assert_ne!(child[Gene::Diet], parent[Gene::Diet], "the diet always steps");
         assert!(child[Gene::Mutability] >= rules.min_mutability, "the floor holds");
     }
+    assert_eq!(Heredity::of(&rules), Heredity::with_sigma(rules.mutation_sigma), "defaults are config's");
+}
+
+/// The herbivore's leaps past the omnivore are rules: at 0 it never leaps, whatever `diet_jump`
+/// says (they replace its general jump), and a certain leap always lands where the rule says.
+#[test]
+fn herbivore_leaps_follow_the_rules() {
+    use life_core::genome::Heredity;
+    let base = Rules::default().with("clone_share", 0.0).unwrap().with("diet_step", 0.0).unwrap();
+    let base = base.with("diet_meat_step", 0.0).unwrap();
+    let herbivore = CreatureGenome::BASE;
+    let mut rng = Rng::new(5);
+    let children = |rules: &Rules, rng: &mut Rng| {
+        let h = Heredity::of(rules);
+        let mut seen = [0; 4];
+        for _ in 0..20_000 {
+            seen[herbivore.mutate_by(&h, rng)[Gene::Diet] as usize] += 1;
+        }
+        seen
+    };
+    let none = base.with("diet_leap_carnivore", 0.0).unwrap().with("diet_leap_scavenger", 0.0).unwrap();
+    assert_eq!(children(&none.with("diet_jump", 1.0).unwrap(), &mut rng), [20_000, 0, 0, 0]);
+    let to_carnivore = none.with("diet_leap_carnivore", 1.0).unwrap();
+    assert_eq!(children(&to_carnivore, &mut rng), [0, 0, 0, 20_000]);
+    let seen = children(&none.with("diet_leap_scavenger", 0.25).unwrap(), &mut rng);
+    assert!(seen[1] == 0 && seen[3] == 0 && (4500..5500).contains(&seen[2]), "{seen:?}");
 }
 
 /// A corpse keeps the clock of the rules it died under.

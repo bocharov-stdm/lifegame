@@ -481,8 +481,9 @@ struct Viewer {
     placed: bool,
     confirm_stop: bool,
     asked: Option<Asked>,
+    /// The taskbar button's bar: None until tried, then kept, a failure too (no retry every frame).
     #[cfg(windows)]
-    taskbar: Option<taskbar::Taskbar>,
+    taskbar: Option<Option<taskbar::Taskbar>>,
 }
 
 impl Viewer {
@@ -498,7 +499,7 @@ impl Viewer {
             let answered = match self.asked {
                 Some(Asked::Pause) => view.state != State::Running,
                 Some(Asked::Resume) => view.state != State::Paused,
-                Some(Asked::Stop) => view.state.over() || view.state == State::Stopped,
+                Some(Asked::Stop) => view.state.over(),
                 None => true,
             };
             if answered {
@@ -542,11 +543,9 @@ impl eframe::App for Viewer {
                 }
                 #[cfg(windows)]
                 {
-                    if self.taskbar.is_none() {
-                        self.taskbar = taskbar::Taskbar::of(frame);
-                    }
-                    if let Some(t) = &self.taskbar {
-                        t.show(view.done, view.total, view.state, view.cut > 0 || view.silent.is_some());
+                    let bar = self.taskbar.get_or_insert_with(|| taskbar::Taskbar::of(frame));
+                    if let Some(t) = bar {
+                        t.show(view.share(), view.state, view.cut > 0 || view.silent.is_some());
                     }
                 }
                 if let Some(ask) = draw(ui, view, &mut self.confirm_stop, self.asked) {
@@ -597,7 +596,8 @@ mod taskbar {
             }
         }
 
-        pub fn show(&self, done: u64, total: u64, state: State, trouble: bool) {
+        /// `share` is the window's own bar: finished runs plus the running ones' ticks.
+        pub fn show(&self, share: f32, state: State, trouble: bool) {
             let flag = match state {
                 State::Finished => TBPF_NOPROGRESS,
                 State::Stopped => TBPF_ERROR,
@@ -609,7 +609,7 @@ mod taskbar {
             unsafe {
                 let _ = self.list.SetProgressState(self.hwnd, flag);
                 if state != State::Finished {
-                    let _ = self.list.SetProgressValue(self.hwnd, done, total.max(1));
+                    let _ = self.list.SetProgressValue(self.hwnd, (share * 1000.0).round() as u64, 1000);
                 }
             }
         }
@@ -717,8 +717,9 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// The window at its default size, running, paused, asking to stop and finished; with
-    /// TINYLIFE_SHOTS=dir also as PNGs.
+    /// The window at its default size, running, paused, asking to stop and finished, each with its
+    /// own buttons and no others; a press on «Пауза» asks for a pause. With TINYLIFE_SHOTS=dir also
+    /// as PNGs.
     #[test]
     fn the_window_draws_a_sweep() {
         let mut paused = running_sweep();
@@ -728,27 +729,51 @@ mod tests {
             "updated_unix": 0, "summary": "sweep1/summary.md", "out": "sweep1",
             "last": [{ "variant": "young07_smell15_scav3", "seed": 8, "what": "170 s, done", "cut": false }],
         });
-        for (name, p, confirm) in [
-            ("progress-running", running_sweep(), false),
-            ("progress-paused", paused, false),
-            ("progress-confirm-stop", running_sweep(), true),
-            ("progress-finished", finished, false),
+        use egui_kittest::kittest::Queryable;
+        const PAUSE: &str = "⏸  Пауза";
+        const BUTTONS: [&str; 7] = [
+            PAUSE,
+            "▶  Продолжить",
+            "⏹  Остановить",
+            "Да, остановить",
+            "Нет",
+            "Открыть сводку",
+            "Папка с результатами",
+        ];
+        for (name, p, confirm, buttons) in [
+            ("progress-running", running_sweep(), false, &[PAUSE, "⏹  Остановить"][..]),
+            ("progress-paused", paused, false, &["▶  Продолжить", "⏹  Остановить"]),
+            ("progress-confirm-stop", running_sweep(), true, &["Да, остановить", "Нет"]),
+            ("progress-finished", finished, false, &["Открыть сводку", "Папка с результатами"]),
         ] {
             let view = View::of(&p, 1005);
             let mut confirm_stop = confirm;
+            let pressed = std::rc::Rc::new(std::cell::Cell::new(None));
+            let got = pressed.clone();
             let mut h =
                 egui_kittest::Harness::builder().with_size(vec2(500.0, 380.0)).wgpu().build_ui(move |ui| {
                     style(ui.ctx());
                     egui::CentralPanel::default()
                         .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin::same(14)))
                         .show(ui, |ui| {
-                            draw(ui, &view, &mut confirm_stop, None);
+                            if let Some(ask) = draw(ui, &view, &mut confirm_stop, None) {
+                                got.set(Some(ask));
+                            }
                         });
                 });
             h.run_steps(4);
             if let Ok(dir) = std::env::var("TINYLIFE_SHOTS") {
                 std::fs::create_dir_all(&dir).expect("a folder for the pictures");
                 h.render().expect("a picture").save(format!("{dir}/{name}.png")).expect("saved");
+            }
+            for label in BUTTONS {
+                let shown = h.query_by_label(label).is_some();
+                assert_eq!(shown, buttons.contains(&label), "{name}: «{label}»");
+            }
+            if buttons.contains(&PAUSE) {
+                h.get_by_label(PAUSE).click();
+                h.run_steps(2);
+                assert_eq!(pressed.get(), Some(Asked::Pause), "{name}: the press reaches the sweep");
             }
         }
     }

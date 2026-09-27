@@ -698,49 +698,77 @@ mod tests {
         }
     }
 
-    /// The scavenger smells corpses three times as far as it sees; the omnivore finds them by sight.
-    /// Sated, it leaves a fresh corpse to the hunters; hungry, it goes for it too.
-    #[test]
-    fn падальщик_чует_издалека_и_сытым_не_берёт_свежее() {
+    /// Whether a creature of `diet` with `energy` finds, through the corpse grid at tick 1000, a
+    /// corpse that died at `born` lying `far` of its vision away on its level.
+    fn finds_corpse(diet: f64, energy: f64, born: u64, far: f64) -> bool {
         use crate::genome::creature::Gene;
         let now = 1000;
-        for (diet, energy, born, want) in [
-            (SCAVENGER, 40.0, now - 700, true),
-            (1.0, 40.0, now - 700, false),
-            (SCAVENGER, 40.0, now - 10, false),
-            (SCAVENGER, 10.0, now - 10, true),
+        let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
+        w.spawn(crate::CreatureGenome::BASE.with(Gene::Diet, diet), 1000.0, 1000.0, Some(energy));
+        let v = &w.creatures[0];
+        let me = Me {
+            x: v.x,
+            y: v.y,
+            energy: v.energy,
+            kinship: v.kinship(),
+            flock: v.flock,
+            circle: None,
+            health_share: 1.0,
+            health: v.pheno.size,
+            pheno: &v.pheno,
+        };
+        let mut c = Corpse::from_creature(v, born);
+        (c.owner, c.x, c.bottom) = (1, 1000.0 + far * v.pheno.vision, c.y0);
+        let corpses = [c];
+        let mut cgrid = Grid::new(GRID_CELL);
+        cgrid.rebuild(&w.space, corpses.iter().map(|c| (c.x, c.y)));
+        let food = Grid::new(GRID_CELL);
+        let view = GridSenses {
+            food: &food,
+            plants: &[],
+            corpse_grid: Some(&cgrid),
+            corpses: &corpses,
+            now,
+            herd: None,
+        };
+        view.best_corpse(&me).is_some()
+    }
+
+    /// The scavenger smells corpses from afar; the omnivore finds them by sight. Sated, it leaves a
+    /// fresh corpse to the hunters; hungry, it goes for it too.
+    #[test]
+    fn падальщик_чует_издалека_и_сытым_не_берёт_свежее() {
+        let now = 1000;
+        for (diet, energy, born, far, want) in [
+            (SCAVENGER, 40.0, now - 700, 1.8, true),
+            (1.0, 40.0, now - 700, 1.8, false),
+            (SCAVENGER, 40.0, now - 10, 0.5, false),
+            (SCAVENGER, 10.0, now - 10, 0.5, true),
         ] {
-            let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
-            w.spawn(crate::CreatureGenome::BASE.with(Gene::Diet, diet), 1000.0, 1000.0, Some(energy));
-            let v = &w.creatures[0];
-            let me = Me {
-                x: v.x,
-                y: v.y,
-                energy: v.energy,
-                kinship: v.kinship(),
-                flock: v.flock,
-                circle: None,
-                health_share: 1.0,
-                health: v.pheno.size,
-                pheno: &v.pheno,
-            };
-            let mut c = Corpse::from_creature(v, born);
-            let far = if born == now - 700 { 1.8 } else { 0.5 } * v.pheno.vision;
-            (c.owner, c.x, c.bottom) = (1, 1000.0 + far, c.y0);
-            let corpses = [c];
-            let mut cgrid = Grid::new(GRID_CELL);
-            cgrid.rebuild(&w.space, corpses.iter().map(|c| (c.x, c.y)));
-            let food = Grid::new(GRID_CELL);
-            let view = GridSenses {
-                food: &food,
-                plants: &[],
-                corpse_grid: Some(&cgrid),
-                corpses: &corpses,
-                now,
-                herd: None,
-            };
-            assert_eq!(view.best_corpse(&me).is_some(), want, "diet {diet}, energy {energy}, born {born}");
+            assert_eq!(
+                finds_corpse(diet, energy, born, far),
+                want,
+                "diet {diet}, energy {energy}, born {born}"
+            );
         }
+    }
+
+    /// Each diet smells corpses as far as its `DIET_SMELL` edge says, and no farther, through the
+    /// corpse grid itself: the scavenger at 3× its vision, the carnivore at 1.5×, the omnivore by
+    /// sight; the herbivore, eating no meat, never goes for one. Hungry, so any corpse will do.
+    #[test]
+    fn each_diet_smells_as_far_as_its_edge() {
+        use crate::config::DIET_SMELL;
+        for diet in [1.0, SCAVENGER, CARNIVORE] {
+            let smell = DIET_SMELL[diet as usize];
+            assert!(finds_corpse(diet, 10.0, 990, smell - 0.05), "diet {diet} smells at {smell}× vision");
+            assert!(
+                !finds_corpse(diet, 10.0, 990, smell + 0.05),
+                "diet {diet} smells no farther than {smell}×"
+            );
+        }
+        assert_eq!(DIET_SMELL, [1.0, 1.0, 3.0, 1.5], "the ranges the niches were measured with");
+        assert!(!finds_corpse(0.0, 10.0, 990, 0.5), "a herbivore does not go for meat");
     }
 
     #[test]

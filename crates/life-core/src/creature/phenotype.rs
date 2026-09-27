@@ -197,8 +197,9 @@ impl Phenotype {
             care: genome[Gene::Care].clamp(0.0, 100.0) / 100.0,
             life_pace,
             diet,
-            // a juvenile gut until grown to its own size (`DietEdges::young_plants`)
-            plant_efficiency: if size < genome[Gene::Size] { edges.young_plants } else { plants },
+            // a juvenile gut until grown to its own size: never below the grown one
+            // (`DietEdges::young_plants`)
+            plant_efficiency: if size < genome[Gene::Size] { plants.max(edges.young_plants) } else { plants },
             meat_efficiency: fresh,
             rot_efficiency: rot,
             own_meat,
