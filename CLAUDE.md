@@ -139,16 +139,16 @@ default depth profile «игровое» (see "Where food grows").
 ## Where the food-web work stands
 
 The user asked for the work on `main` (2026-09-27): `main` was fast-forwarded to the `food-web`
-branch (up to `ed14091`, three niches and the sweep tools); not pushed yet. Commit to `main` from
-now on unless told otherwise. What is left:
+branch (up to `ed14091`, three niches and the sweep tools) and pushed with the review fixes
+(`022c594`). Commit to `main` from now on unless told otherwise. What is left:
 - `AGENTS.md`, `BEHAVIOR.md`, `README.md` still describe the pre-`food-web` model (this file is
   current): diets and their edges, own niche and `picky`, rot, skeletons, patches, «игровое».
 - The golden digests fail by design until re-recorded; re-record them and both references
   (`--save-reference reference/fingerprint.json`, and `reference/calm-fingerprint.json` with
   `--rule cost_scale=3`) in
   one separate commit once the user accepts the balance; golden case H can become "all four diets".
-- Then push `main` (on the user's word). Until the digests and references are re-taken, CI on
-  `main` fails on the golden test and `--compare`.
+- Until the digests and references are re-taken, CI on `main` fails on the golden test and
+  `--compare` (by design; last green run: before `food-web` came to `main`).
 - Open (2026-09-26): the meat niches.
   - With meat = grown body + tank, the niches collapsed (seeds 1–8: no carnivores or scavengers
     anywhere, herbivores 79–100%, medians 925 / 755).
@@ -226,6 +226,12 @@ both references (base and calm). The game, the golden digests and the references
 Windows: another platform's libm differs in the last bits, the same seeds grow into another
 realization of the world, and its means may leave the Windows per-seed range by chance.
 Dev builds use `opt-level = 2`: tests run real multi-thousand-tick simulations.
+
+**In a cloud container (Linux) run no simulations and no tests** (the user's rule, 2026-09-27):
+no `life-report` / `life-sweep` / `life-app` runs, no balance measurements, no `cargo test`. The
+user works on Windows, and a Linux result says nothing about their world. What is fine there:
+reading code, editing, `cargo build`, `cargo fmt --all --check`, `cargo clippy`. Leave the checks
+to the user's Windows machine or to CI, and say plainly which checks were not run.
 
 Validating a model change: seeds 1–8 × 20 000 ticks for the base and the calm (`cost_scale=3`)
 profile. Runs must finish on their own, not stop on the work budget, so long runs need
