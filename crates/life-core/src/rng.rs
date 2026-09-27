@@ -72,12 +72,6 @@ impl Rng {
         let u2 = self.random();
         mu + sigma * (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
     }
-
-    /// Равновероятный выбор из двух.
-    #[inline]
-    pub fn choose2(&mut self, a: f64, b: f64) -> f64 {
-        if self.random() < 0.5 { a } else { b }
-    }
 }
 
 #[cfg(test)]

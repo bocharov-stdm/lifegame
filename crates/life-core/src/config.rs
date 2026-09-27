@@ -3,8 +3,8 @@
 //!
 //! Значения подобраны перебором через headless-прогоны. Критерии: существа
 //! доживают до конца, численность держится в играбельном коридоре, геном
-//! приходит к оптимуму (а не убегает вверх). Хищников как отдельного вида больше
-//! нет (тег `predators-final`): их заменили мутации и каннибализм.
+//! приходит к оптимуму (а не убегает вверх). Predators as a species of their own are gone (tag
+//! `predators-final`): the meat diets (`DIET_*` below) and corpses took their place.
 //!
 //! Крутить баланс удобно так:
 //!     cargo run -p life-report --release -- --seeds 1 2 3 --ticks 3000
@@ -42,10 +42,6 @@ pub const PLANT_DEPTH_DECAY: f64 = 8.0;
 /// Крутизна экспоненты по ширине, если её выбрать. Мягче, чем по глубине: при 8
 /// почти вся еда жалась бы к левому краю, и мир справа пустовал бы.
 pub const PLANT_WIDTH_DECAY: f64 = 3.0;
-/// Dead zone at the very surface, % of depth; a property of the surface, so it applies to every
-/// profile. It was 5% (200 at height 4000) and left an empty strip along the top; now plants grow
-/// up to the surface.
-pub const PLANT_TOP_MARGIN_PCT: f64 = 0.0;
 /// Параметры остальных профилей, пока их не тронули: линейный — у дальнего
 /// края 10% еды ближнего; логарифм — изгиб 20 (на середине оси ещё 79% еды, к
 /// дальнему краю — обрыв до нуля); волны — 3 богатые полосы с размахом 80%
@@ -151,11 +147,11 @@ pub const CLONE_CHANCE: f64 = 0.5;
 pub const GRID_CELL: f64 = 256.0;
 
 // ── Стратегии ───────────────────────────────────────────────────────────────
-/// Шанс, что потомок получит другую стратегию поведения (ген-выбор). Пока у
-/// вида один вариант, ген инертен и жребий не тянется (`Mutation::Switch`).
+/// Chance that a child gets another behaviour strategy (a choice gene, `Mutation::Switch`; with a
+/// single variant the gene would be inert and draw nothing).
 pub const STRATEGY_SWITCH_CHANCE: f64 = 0.001;
-/// Такой же редкий переход способности к дальнему бою.
-pub const SHOOTER_SWITCH_CHANCE: f64 = 0.001;
+/// The same rare switch for the other choice genes: shooting, territoriality, flock kind, layer.
+pub const CHOICE_SWITCH_CHANCE: f64 = 0.001;
 /// Ближний удар: доля диаметра, одновременно базовый урон и цена энергии.
 pub const MELEE_DAMAGE_SHARE: f64 = 0.05;
 /// A bigger body strikes disproportionately harder: melee damage is times (attacker's size /

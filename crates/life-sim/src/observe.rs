@@ -213,7 +213,8 @@ impl Snapshot {
         let herd = &world.creatures;
 
         let genes = gene_stats(&creature::GENES, herd.iter().map(|v| &v.genome));
-        let mut depth: Vec<f64> = herd.iter().map(|v| v.y / h * 100.0).collect();
+        // everyone by the diets' measures: the world's fullness and depth are its
+        let all = DietStat::of(herd.iter(), h);
 
         let (mut creatures_by_depth, mut creatures_by_width) = ([0; DEPTH_BANDS], [0; WIDTH_BANDS]);
         let mut pack_carriers = 0;
@@ -273,14 +274,14 @@ impl Snapshot {
             flocks,
             counters: world.counters,
             genes,
-            depth: Spread::of(&mut depth),
+            depth: all.depth,
             creatures_by_depth,
             plants_by_depth,
             creatures_by_width,
             plants_by_width,
-            fullness: average(herd.iter().map(|v| v.energy / v.pheno.max_energy)),
+            fullness: all.fullness,
             diets: Diet::ALL.map(|d| DietStat::of(herd.iter().filter(|v| v.pheno.diet == d), h)),
-            all: DietStat::of(herd.iter(), h),
+            all,
         }
     }
 }
@@ -365,10 +366,6 @@ pub fn describe_flows(c: &Counters) -> String {
     }
     if c.combat > 0 {
         text += &format!(", в бою {}", c.combat);
-    }
-    // без каннибализма строка короче
-    if c.cannibalized > 0 {
-        text += &format!(", съедено своими {}", c.cannibalized);
     }
     text
 }
@@ -703,7 +700,7 @@ mod tests {
     fn носители_стайности_отличаются_от_участников_настоящих_стай() {
         let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
         for x in [1000.0, 1100.0, 2000.0] {
-            w.spawn(CreatureGenome::BASE, x, 1000.0, None);
+            w.spawn(CreatureGenome::BASE.with(Gene::PackInstinct, 1.0), x, 1000.0, None);
         }
         w.spawn(CreatureGenome::BASE.with(Gene::PackInstinct, 0.0), 3000.0, 1000.0, None);
         w.creatures[1].flock = w.creatures[0].flock;

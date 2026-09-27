@@ -214,7 +214,7 @@ fn диеты_усваивают_по_таблице() {
         v.apply_rules(&r, &Space::default());
         assert_eq!(v.pheno.diet, diet);
         v.energy = 0.0;
-        v.feed(1, &r);
+        v.feed(&r);
         assert!((v.energy - plant_bite * plants).abs() < 1e-9, "{diet:?}: plants {}", v.energy);
         // hungry, it eats whatever it digests
         assert_eq!(v.pheno.corpse_efficiency(0.0, true), fresh, "{diet:?}: fresh meat");
@@ -402,9 +402,13 @@ fn стая_защищает_неродных_и_исчезает_без_уча�
     assert_eq!(w.counters.old_age, 2);
 }
 
+/// A flocking parent's children keep its label, a few leave (flocks are off: the base genome is a
+/// loner, so the parent is made flocking by hand).
 #[test]
 fn метка_наследуется_с_редким_отделением() {
     let mut p = parent();
+    p.genome = p.genome.with(Gene::PackInstinct, 1.0);
+    p.apply_rules(&Rules::default(), &Space::default());
     p.flock = 17;
     let mut same = 0;
     let mut split = 0;

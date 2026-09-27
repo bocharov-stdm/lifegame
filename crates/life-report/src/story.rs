@@ -55,22 +55,24 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     );
     print_diets(&c.by_diet, last);
 
-    println!(
-        "Молодых {} из {}; стайный ген {} ({:.0}%), участников стай {}, стай {}.",
-        last.juveniles,
-        last.creatures,
-        last.pack_carriers,
-        last.pack_share * 100.0,
-        last.pack_members,
-        last.flocks
-    );
-    let social = last.social_counts;
-    println!(
-        "Стаи: тревог {}, завершено {}, вмешательств {}, отделений {}, ушедших взрослых {}.",
-        social.alarms, social.alarm_ends, social.interventions, social.splits, social.departures
-    );
+    println!("Молодых {} из {}.", last.juveniles, last.creatures);
     for (i, a) in life_core::social::Activity::ALL.iter().enumerate() {
         println!("  {}: {}", a.label(), percent(last.activities[i] as u64, last.creatures as u64));
+    }
+    // flocks are off (`config::FLOCKS`): the flock lines would only say zero
+    let social = last.social_counts;
+    if life_core::config::FLOCKS {
+        println!(
+            "Стайный ген {} ({:.0}%), участников стай {}, стай {}.",
+            last.pack_carriers,
+            last.pack_share * 100.0,
+            last.pack_members,
+            last.flocks
+        );
+        println!(
+            "Стаи: тревог {}, завершено {}, вмешательств {}, отделений {}, ушедших взрослых {}.",
+            social.alarms, social.alarm_ends, social.interventions, social.splits, social.departures
+        );
     }
     if let Some(s) = last.flock_spread {
         println!("Разброс стай: {}.", spread(&s));

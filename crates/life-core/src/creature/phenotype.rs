@@ -109,6 +109,8 @@ pub struct Phenotype {
     pub melee_damage_share: f64,
     /// A bigger body's strike is times (size ratio) ** this (`Rules::melee_size_power`).
     pub melee_size_power: f64,
+    /// The shot's energy cost per unit of size (`Rules::shot_energy_share`), read where the rules
+    /// are not at hand (`territory::steer`).
     pub shot_energy_share: f64,
     /// Below this share of its store it strikes a smaller stranger eating beside it (`rivals`).
     pub rivalry: f64,
@@ -138,7 +140,7 @@ pub struct Phenotype {
     pub slow_upkeep: f64,
     pub vision2: f64,
     pub size2: f64,
-    /// Радиус тела: по нему съедают сородичи (каннибализм).
+    /// Body radius: contact is the sum of two radii.
     pub half: f64,
     /// С какого расстояния до края тела опасного чужака бежать
     /// (`FLEE_SIGHT_SHARE` зрения).
@@ -346,11 +348,5 @@ impl Phenotype {
     #[inline]
     pub fn hunts_now(&self, energy: f64) -> bool {
         self.hunts() && (self.own_meat || self.hungry(energy))
-    }
-
-    /// Eats some corpse, fresh or rotten.
-    #[inline]
-    pub fn eats_corpses(&self) -> bool {
-        self.meat_efficiency > 0.0 || self.rot_efficiency > 0.0
     }
 }

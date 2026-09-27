@@ -72,7 +72,6 @@ fn digest(w: &World) -> u64 {
         c.territorial_fights,
         c.born,
         c.starved,
-        c.cannibalized,
         c.old_age,
         c.combat,
     ] {

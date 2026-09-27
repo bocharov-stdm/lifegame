@@ -1,14 +1,12 @@
 //! Эталонный отпечаток баланса: сверка (`--compare`) и запись нового (`--save-reference`).
 //!
-//! Первый эталон снят с Python-версии (`python/fingerprint.py`, тег python-final).
-//! Бит в бит ядра не совпадают (другой генератор случайных чисел), поэтому
-//! сравнивается статистика: для каждой метрики берётся разброс по сидам у
+//! Сравнивается статистика, не биты: для каждой метрики берётся разброс по сидам у
 //! эталона и среднее у текущего прогона. Метрика «сходится», если среднее
 //! попадает в диапазон значений отдельных сидов эталона.
 //!
-//! После намеренной смены баланса эталон переснимается уже с Rust тем же
-//! форматом; в нём записаны условия мира, и сверка на других условиях
-//! отказывается работать — иначе «расхождение» мерило бы разницу условий.
+//! После намеренной смены баланса эталон переснимается тем же форматом; в нём записаны
+//! условия мира, и сверка на других условиях отказывается работать — иначе «расхождение»
+//! мерило бы разницу условий. An older model's reference is refused outright.
 
 use std::path::Path;
 
@@ -37,13 +35,11 @@ struct Run {
 }
 
 pub struct Reference {
-    /// Откуда эталон: «Python» или «Rust».
-    pub source: String,
     pub seeds: Vec<u64>,
     pub ticks: u64,
     pub sample_every: u64,
     runs: Vec<Run>,
-    /// Условия мира. У Python-эталона их нет — он снят на умолчаниях.
+    /// Условия мира.
     scale: f64,
     /// Размеры мира. Сравниваются они, а не имя формы: при x1 полоса и 3:2 —
     /// один и тот же мир 6000x4000.
@@ -51,7 +47,7 @@ pub struct Reference {
     rules: Rules,
     start: usize,
     strategies: Vec<f64>,
-    /// Гены существ, на которых снят эталон (у старого — семь).
+    /// Гены существ, на которых снят эталон.
     pub genes: Vec<String>,
     /// Founders' diets (`WorldConfig::diets`).
     pub diets: Vec<f64>,
@@ -87,12 +83,11 @@ impl Reference {
                 .map(|s| Point {
                     tick: s["tick"].as_u64().unwrap_or(0),
                     plants: s["plants"].as_f64().unwrap_or(0.0),
-                    // до переименования в «существ» — «vegetarians»
-                    creatures: s["creatures"].as_f64().or(s["vegetarians"].as_f64()).unwrap_or(0.0),
+                    creatures: s["creatures"].as_f64().unwrap_or(0.0),
                     size: s["genom"].get(size_at).and_then(Value::as_f64),
                 })
                 .collect();
-            // Python писал причину остановки русским текстом — формат сохранён
+            // the stop reason is saved as its text (`StopReason::Display`)
             runs.push(Run { extinct: run["stop"] == StopReason::Extinct.to_string().as_str(), series });
         }
 
@@ -100,47 +95,18 @@ impl Reference {
         let mut rules = Rules::default();
         if let Some(saved) = data.get("rules").and_then(Value::as_object) {
             for (key, value) in saved {
-                // правила хищников остались в эталонах до тега predators-final:
-                // вида больше нет, и правила о нём ничего не значат
-                if key.starts_with("predator_") {
-                    continue;
-                }
                 let value = value.as_f64().ok_or(format!("правило {key} — не число"))?;
-                // Бои были правилом `cannibalism`. Теперь они всегда включены: боевой
-                // эталон — наш мир, а мирный сравнивать не с чем.
-                if key == "cannibalism" {
-                    if value != 1.0 {
-                        return Err("эталон снят в мирном мире (cannibalism = 0), которого больше нет —                                     переснимите его (--save-reference)"
-                            .into());
-                    }
-                    continue;
-                }
                 rules = rules.with(key, value)?;
             }
         }
         let start = &data["start"];
         let num = |v: &Value, default: f64| v.as_f64().unwrap_or(default);
-        // старые эталоны сняты с хищниками: с ними сравнивать нечего
-        if num(&start["predators"], 0.0) > 0.0 {
-            return Err(
-                "эталон снят с хищниками, а их больше нет — переснимите его (--save-reference)".into()
-            );
-        }
         let scale = num(&data["scale"], 1.0);
-        // у эталонов до форм поля нет: они сняты на полосе
-        let shape = match data["shape"].as_str() {
-            Some(key) => Shape::parse(key)?,
-            None => Shape::Strip,
-        };
+        let shape = Shape::parse(data["shape"].as_str().ok_or("нет поля shape")?)?;
         if !(MIN_SCALE..=MAX_SCALE).contains(&scale) {
             return Err(format!("масштаб {scale} вне пределов {MIN_SCALE}‒{MAX_SCALE}"));
         }
         Ok(Reference {
-            source: match data["source"].as_str() {
-                Some("rust") => "Rust",
-                _ => "Python", // первый эталон поля source не имел
-            }
-            .to_string(),
             seeds,
             ticks,
             sample_every,
@@ -148,12 +114,8 @@ impl Reference {
             scale,
             space: Space::new(scale, shape),
             rules,
-            start: num(&start["creatures"], num(&start["vegetarians"], world.creatures_at_start() as f64))
-                as usize,
-            strategies: match &start["strategies"] {
-                Value::Null => mix(&start["vegetarian_strategies"])?,
-                new => mix(new)?,
-            },
+            start: num(&start["creatures"], world.creatures_at_start() as f64) as usize,
+            strategies: mix(&start["strategies"])?,
             diets: match &start["diets"] {
                 Value::Null => world.diets.clone(),
                 saved => mix(saved)?,
@@ -217,7 +179,7 @@ impl Reference {
     }
 }
 
-/// Стартовая смесь стратегий из эталона: список долей, у старого эталона — пустой.
+/// A start mix (strategies, diets) of the reference: a list of shares; missing — empty.
 fn mix(v: &Value) -> Result<Vec<f64>, String> {
     match v {
         Value::Null => Ok(Vec::new()),
@@ -327,15 +289,14 @@ pub fn print_comparison(reference: &Reference, results: &[(u64, SimResult)]) -> 
         .iter()
         .map(|(_, r)| Run { extinct: r.stop == StopReason::Extinct, series: from_stats(&r.history) })
         .collect();
-    let source = &reference.source;
 
     for window in [Some(3000), None] {
         let cut = |s: &[Point]| -> Vec<Point> {
             s.iter().filter(|p| window.is_none_or(|w| p.tick <= w)).cloned().collect()
         };
         match window {
-            Some(w) => println!("\nСверка с эталоном ({source}), первые {w} тиков"),
-            None => println!("\nСверка с эталоном ({source}), весь прогон"),
+            Some(w) => println!("\nСверка с эталоном, первые {w} тиков"),
+            None => println!("\nСверка с эталоном, весь прогон"),
         }
         println!(
             "{:<28} {:>24} {:>10} {:>9}",
@@ -379,43 +340,33 @@ mod tests {
     use life_core::World;
     use life_sim::{Limits, run};
 
+    /// A reference of another model (or of none) is refused before its series are read.
     #[test]
-    fn старый_эталон_отклоняется_до_чтения_рядов() {
+    fn a_reference_of_another_model_is_refused() {
         let path = std::env::temp_dir().join(format!("life-old-reference-{}.json", std::process::id()));
-        for value in [
-            "{}",
-            r#"{"model":"life-behavior/1"}"#,
-            r#"{"model":"life-behavior/2"}"#,
-            r#"{"model":"life-behavior/3"}"#,
-            r#"{"model":"life-behavior/4"}"#,
-            r#"{"model":"life-behavior/5"}"#,
-            r#"{"model":"life-behavior/6"}"#,
-            r#"{"model":"life-behavior/7"}"#,
-            r#"{"model":"life-behavior/8"}"#,
-            r#"{"model":"life-behavior/9"}"#,
-            r#"{"model":"life-behavior/10"}"#,
-        ] {
+        for value in ["{}", r#"{"model":"life-behavior/1"}"#, r#"{"model":"life-behavior/10"}"#] {
             std::fs::write(&path, value).unwrap();
             assert!(Reference::load(&path).err().unwrap().contains("другой модели поведения"));
         }
         std::fs::remove_file(path).unwrap();
     }
 
-    /// Combat used to be the rule `cannibalism`: a combat reference is our world, a peaceful
-    /// one no longer exists.
+    /// The rules and the world's shape of a reference are read; a rule it names that no longer
+    /// exists (combat used to be the rule `cannibalism`) refuses the whole reference.
     #[test]
-    fn peaceful_reference_is_refused_and_combat_one_is_read() {
-        let path = std::env::temp_dir().join(format!("life-combat-reference-{}.json", std::process::id()));
-        let reference = |combat: f64| {
+    fn the_rules_of_a_reference_are_read_and_a_removed_rule_refuses_it() {
+        let path = std::env::temp_dir().join(format!("life-rules-reference-{}.json", std::process::id()));
+        let reference = |rules: &str| {
             format!(
-                r#"{{"model":"life-behavior/11","ticks":1,"sample_every":1,"runs":[],"rules":{{"cannibalism":{combat},"cost_scale":3}}}}"#
+                r#"{{"model":"life-behavior/11","ticks":1,"sample_every":1,"shape":"3:2","runs":[],"rules":{{{rules}}}}}"#
             )
         };
-        std::fs::write(&path, reference(0.0)).unwrap();
-        assert!(Reference::load(&path).err().unwrap().contains("мирном мире"));
-        std::fs::write(&path, reference(1.0)).unwrap();
-        let loaded = Reference::load(&path).expect("a combat reference is read");
+        std::fs::write(&path, reference(r#""cost_scale":3"#)).unwrap();
+        let loaded = Reference::load(&path).expect("a reference with a rule is read");
         assert_eq!(loaded.rules, Rules::default().with("cost_scale", 3.0).unwrap());
+        assert_eq!(loaded.space, Space::default());
+        std::fs::write(&path, reference(r#""cannibalism":1"#)).unwrap();
+        assert!(Reference::load(&path).err().unwrap().contains("нет такого правила"));
         std::fs::remove_file(path).unwrap();
     }
 

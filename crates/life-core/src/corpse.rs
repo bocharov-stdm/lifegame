@@ -245,34 +245,24 @@ fn resting_place(space: &Space, id: u64, half: f64, pct: f64, salt: u64) -> f64 
     (space.height - half.min(space.height / 2.0) - spread * band).max(0.0)
 }
 
-/// Ближайший видимый труп. Свежий труп станет целью лишь на следующем тике.
-pub fn nearest(
-    grid: &Grid,
-    corpses: &[Corpse],
-    x: f64,
-    y: f64,
-    r2: f64,
-    now: u64,
-) -> Option<(usize, f64, f64)> {
-    let mut best: Option<(usize, f64)> = None;
-    grid.for_each_near(x, y, r2.sqrt(), |i, cx, cy| {
-        let c = &corpses[i];
-        let d2 = (cx - x).powi(2) + (cy - y).powi(2);
-        if c.remaining > 0.0
-            && c.born < now
-            && d2 < r2
-            && best.is_none_or(|(j, old)| d2 < old || (d2 == old && c.owner < corpses[j].owner))
-        {
-            best = Some((i, d2));
-        }
-    });
-    best.map(|(i, _)| (i, corpses[i].x, corpses[i].y))
-}
-
 /// Ближайший доступный труп, которого касается едок и который он может есть (`eats`).
 pub fn contact(
     grid: &Grid,
     corpses: &[Corpse],
+    pos: (f64, f64),
+    reach: f64,
+    max_half: f64,
+    now: u64,
+    eats: impl Fn(&Corpse) -> bool,
+) -> Option<usize> {
+    contact_by(grid, |i| &corpses[i], pos, reach, max_half, now, eats)
+}
+
+/// `contact` with the corpses read through `corpse(i)`: the world's eating phase reads a corpse
+/// somebody already claimed this tick from its copy, the others as they lie.
+pub fn contact_by<'a>(
+    grid: &Grid,
+    corpse: impl Fn(usize) -> &'a Corpse,
     (x, y): (f64, f64),
     reach: f64,
     max_half: f64,
@@ -281,12 +271,12 @@ pub fn contact(
 ) -> Option<usize> {
     let mut best: Option<(usize, f64)> = None;
     grid.for_each_near(x, y, reach + max_half, |i, cx, cy| {
-        let c = &corpses[i];
+        let c = corpse(i);
         let d2 = (cx - x).powi(2) + (cy - y).powi(2);
         if c.remaining > 0.0
             && c.born < now
             && d2 <= (reach + c.size * 0.5).powi(2)
-            && best.is_none_or(|(j, old)| d2 < old || (d2 == old && c.owner < corpses[j].owner))
+            && best.is_none_or(|(j, old)| d2 < old || (d2 == old && c.owner < corpse(j).owner))
             && eats(c)
         {
             best = Some((i, d2));
@@ -368,8 +358,10 @@ mod tests {
         assert!(!c.decay(10 + CORPSE_DECAY_TICKS));
     }
 
+    /// Two corpses in contact at the same distance: the one with the smaller owner id is bitten,
+    /// and neither on the tick of its death.
     #[test]
-    fn ближайший_труп_и_одна_порция_при_двух_едоках() {
+    fn the_nearest_corpse_and_one_portion_between_two_eaters() {
         let mut corpses = vec![Corpse::from_creature(&body(), 3), Corpse::from_creature(&body(), 3)];
         corpses[0].owner = 8;
         corpses[1].owner = 7;
@@ -377,8 +369,8 @@ mod tests {
         corpses[1].x = 995.0;
         let mut grid = Grid::new(256.0);
         grid.rebuild(&Space::default(), corpses.iter().map(|c| (c.x, c.y)));
-        assert_eq!(nearest(&grid, &corpses, 1000.0, 1000.0, 100.0, 3), None);
-        assert_eq!(nearest(&grid, &corpses, 1000.0, 1000.0, 100.0, 4).unwrap().0, 1);
+        assert_eq!(contact(&grid, &corpses, (1000.0, 1000.0), 30.0, 20.0, 3, |_| true), None);
+        assert_eq!(contact(&grid, &corpses, (1000.0, 1000.0), 30.0, 20.0, 4, |_| true), Some(1));
         // a portion: a fifth of a plant or a twelfth of the body, whichever is more
         let portion = (50.0 / 5.0_f64).max(corpses[1].initial / 12.0);
         let value = bite(&grid, &mut corpses, (1000.0, 1000.0), 30.0, 20.0, 50.0, 4, |_| true).unwrap();

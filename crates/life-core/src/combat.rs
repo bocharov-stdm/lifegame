@@ -193,10 +193,11 @@ pub(crate) fn resolve_with_grace(
             {
                 return;
             }
+            // a shot weakens with old age like the melee strike (`Phenotype::strike`)
             hits.push(Hit {
                 attacker: i,
                 victim: j,
-                damage: (v.pheno.size * rules.shot_damage_share * v.pheno.strike_bonus)
+                damage: (v.pheno.size * rules.shot_damage_share * v.pheno.strike_bonus * v.pheno.vigour)
                     .min(u.max_health() * 0.25),
                 cost: shot_cost,
                 ranged: true,
@@ -561,7 +562,7 @@ mod tests {
         );
         assert!(result.shots.is_empty());
         assert_eq!(w.creatures[0].energy, 98.0);
-        // a strike of 2, times (40 / 15) ** 1.75 for the bigger body
+        // a strike of 2, times (40 / 15) ** `MELEE_SIZE_POWER` for the bigger body
         let damage = 2.0 * (40.0_f64 / 15.0).powf(crate::config::MELEE_SIZE_POWER);
         assert_eq!(w.creatures[1].health, w.creatures[1].max_health() - damage);
     }

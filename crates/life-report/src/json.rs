@@ -50,7 +50,6 @@ fn counters(c: &Counters) -> Value {
         "starved": c.starved,
         "old_age": c.old_age,
         "combat": c.combat,
-        "cannibalized": c.cannibalized,
         "corpses": c.corpses,
         "corpses_gone": c.corpses_gone,
         "corpses_bottom": c.corpses_bottom,
@@ -159,7 +158,7 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
     let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(rules.get(k)))).collect();
     let space = cfg.space();
     json!({
-        "format": "life-report/10",
+        "format": "life-report/11",
         "world": { "scale": cfg.scale, "shape": cfg.shape.key(), "width": space.width, "height": space.height },
         "ticks": ticks,
         "sample_every": sample_every,
@@ -217,7 +216,7 @@ mod tests {
         let runs =
             [Run { seed: cfg.seed, res: &res, events: &[], maps: &[], pace: &[(500, 2.5), (1000, 7.25)] }];
         let data = report(&cfg, &cfg.rules, 0, 1, &runs);
-        assert_eq!(data["format"], "life-report/10");
+        assert_eq!(data["format"], "life-report/11");
         let run = &data["runs"][0];
         assert_eq!(run["pace"], json!([[500, 2.5], [1000, 7.25]]), "the tick rate by laps");
         let snap = &run["snapshots"][0];

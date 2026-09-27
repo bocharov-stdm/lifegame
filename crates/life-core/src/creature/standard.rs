@@ -384,13 +384,8 @@ mod tests {
         }
 
         fn best_corpse(&self, me: &Me) -> Option<CorpseFood> {
-            me.pheno.eats_corpses().then_some(CorpseFood {
-                owner: 2,
-                x: 900.0,
-                y: 1000.0,
-                half: 10.0,
-                score: 3.0,
-            })
+            let eats_corpses = me.pheno.meat_efficiency > 0.0 || me.pheno.rot_efficiency > 0.0;
+            eats_corpses.then_some(CorpseFood { owner: 2, x: 900.0, y: 1000.0, half: 10.0, score: 3.0 })
         }
 
         fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {

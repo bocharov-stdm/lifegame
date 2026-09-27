@@ -11,7 +11,7 @@ sweeps `crates/life-report`, the game (wgpu/egui) `crates/life-app`. Open: phase
 (design, no code: `docs/phase3-parallel-tick.md`, written against `life-behavior/7`), and phase 6, a
 machine benchmark. Removed things live under git tags: the Python version (`python-final`, the
 behavioural spec the game was ported from), predators (`predators-final`; old names still read:
-`--vegetarians`, `--veg-mix`, settings key `n_vegetarians`, reference keys `vegetarians*`).
+`--vegetarians`, `--veg-mix`, settings key `n_vegetarians`).
 
 **Language.** Code, comments, docs, CLI/report output, test names and commit messages in
 **English**; translate Russian comments and test names you touch, don't mass-rewrite. Only the
@@ -30,10 +30,17 @@ behavioural spec the game was ported from), predators (`predators-final`; old na
 - **Behaviour genes are free**: no upkeep for a gene that gives no physical stat. A behaviour gene
   needs a behavioural catch, not a price (the free «испуг»/«голод» genes once ran away and were
   removed).
-- **Flocks are off** (`config::FLOCKS = false`): every founder is a loner, the game hides «Стаи».
-  The code still runs every tick (`social::prepare`, `flock::update`, battles, territories); it is
-  to be removed under a tag `flocks-final`, proven by golden digests recorded with `FLOCKS = false`
-  before removal. Never measure balance with flocks.
+- **Flocks are off** (`config::FLOCKS = false`): every founder is a loner, so is the base genome
+  (`pack_instinct` base follows `FLOCKS`: a spawned creature founds no flock), the game hides
+  «Стаи». The code still runs every tick (`social::prepare_in`, `flock::update`, battles,
+  territories); it is to be removed under a tag `flocks-final`. Never measure balance with flocks.
+  **The social layer is not inert for loners** (kept on purpose, user's call 2026-09-27, until the
+  layer goes): `social::adjust` lets a creature over 95% full rest in its layer 60–120 ticks at
+  `slow_upkeep` (then 180 ticks off), holds a wander course 30 ticks, turns at most 1.2 rad a tick,
+  and `standard::personal_plant` keeps the plant it chose while it stays visible; a child of another
+  mode gets `kin_grace` 600 ticks with its parent's label (`world.rs`, `protect`). Removing the
+  layer therefore shifts every seed: `flocks-final` needs the balance validation, and golden proves
+  only the flock-only parts inert.
 - **Commit straight to `main`**, only when asked; push only on the user's word. `main` also moves
   from cloud sessions: `git fetch` and fast-forward before starting.
 - **In a cloud (Linux) container run no simulations and no tests** — no `life-report`,
@@ -111,7 +118,9 @@ it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{diet}_{ed
 - Golden digests and both references (`reference/fingerprint.json`, `calm-fingerprint.json`) are
   still the `/9` ones: re-record them in one separate commit once the user accepts the balance
   (golden case H can become "all four diets"). Until then CI fails on the golden test and
-  `--compare` by design.
+  `--compare` by design. The cleanup of 2026-09-27 also moved the digest inputs (the dead counter
+  `cannibalized` is gone, the base `pack_instinct` is 0, a shot weakens with `vigour` like the
+  strike), so that re-record covers it.
 - `AGENTS.md`, `BEHAVIOR.md`, `README.md` still describe the pre-food-web model; this file is
   current. When a mechanic changes, update all four.
 
@@ -214,7 +223,7 @@ runner and the observer, `life-app` alone knows the screen.
 
 `life-sim`: `simulate()`/`run()` under limits; `observe.rs` — snapshots, the event chronicle (the
 game reuses it), ASCII maps. `life-report`: `main.rs`, `story.rs`, `json.rs` (format
-`life-report/10`), `metrics.rs` (`--compare`), `bin/life-sweep.rs`.
+`life-report/11`), `metrics.rs` (`--compare`), `bin/life-sweep.rs`.
 
 ### Determinism and the golden test
 
@@ -251,7 +260,9 @@ A creature killed in combat gets no prey and does not reproduce.
   distance. The grid copies coordinates, valid only because queried entities don't move within the
   phase. Keep the brute-force checks in `senses.rs` tests.
 - `Creature::step` is the hot path: genome-derived values are precomputed in `Phenotype::of`,
-  distances compared squared, strategy dispatch is a `match`, never `Box<dyn>`. For refactors,
+  distances compared squared, strategy dispatch is a `match`, never `Box<dyn>`. The eating phase
+  copies only the corpses claimed that tick (`world.rs`, `claimed`), and `social::prepare_in` skips
+  the neighbour scan of a creature whose label counts one member. For refactors,
   compare ms/tick against the previous build in a worktree, alternating runs
   (`life-report --scale 100 --ticks 1000 --seeds 1 2 --threads 1`).
   `тик_растёт_линейно_с_численностью` guards against queries degrading to a full scan.

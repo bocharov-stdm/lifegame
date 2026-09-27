@@ -50,14 +50,19 @@ impl LifeApp {
         self.diets_line(ui);
         let snaps = self.history.snapshots.points();
         if let Some(s) = snaps.last() {
-            ui.label(format!(
-                "Молодых {:.0}% · стайный ген {} ({:.0}%) · в стаях {} · стай {}",
-                100.0 * s.juveniles as f64 / s.creatures.max(1) as f64,
-                s.pack_carriers,
-                s.pack_share * 100.0,
-                s.pack_members,
-                s.flocks
-            ));
+            let young = format!("Молодых {:.0}%", 100.0 * s.juveniles as f64 / s.creatures.max(1) as f64);
+            // flocks are off (`config::FLOCKS`): the game hides them
+            ui.label(if life_core::config::FLOCKS {
+                format!(
+                    "{young} · стайный ген {} ({:.0}%) · в стаях {} · стай {}",
+                    s.pack_carriers,
+                    s.pack_share * 100.0,
+                    s.pack_members,
+                    s.flocks
+                )
+            } else {
+                young
+            });
             if let Some(first) = snaps.first() {
                 ui.label(life_sim::observe::describe_flows(&s.counters.since(&first.counters)));
             }

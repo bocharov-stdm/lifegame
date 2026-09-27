@@ -206,7 +206,7 @@ impl Motion {
 
         out.clear();
         let full =
-            self.collect_plants(world, rect, now, out) && self.collect_vegetarians(world, rect, now, out);
+            self.collect_plants(world, rect, now, out) && self.collect_creatures(world, rect, now, out);
         if !full {
             // Кадр недособран: сопоставлять следующий не с чем.
             self.creatures.clear();
@@ -282,7 +282,7 @@ impl Motion {
         self.push_ghosts(KIND_PLANT, rect, now, out)
     }
 
-    fn collect_vegetarians(
+    fn collect_creatures(
         &mut self,
         world: &World,
         rect: (f64, f64, f64, f64),

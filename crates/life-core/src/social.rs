@@ -140,10 +140,17 @@ pub fn neighbors(i: usize, creatures: &[Creature], grid: &Grid) -> Vec<usize> {
 }
 
 pub fn prepare(creatures: &mut [Creature], grid: &Grid, tick: u64) {
+    prepare_in(creatures, grid, tick, |_| false);
+}
+
+/// `prepare` that skips the neighbour scan of a creature `alone(v)` says has no flockmates: with
+/// flocks off nearly everyone is alone, and the scan would only find nobody. The caller answers
+/// from the flock roll it has just taken (`flock::update`: a flock of one has no neighbours).
+pub fn prepare_in(creatures: &mut [Creature], grid: &Grid, tick: u64, alone: impl Fn(&Creature) -> bool) {
     let contexts: Vec<_> = (0..creatures.len())
         .map(|i| {
             let me = &creatures[i];
-            let near = neighbors(i, creatures, grid);
+            let near = if alone(me) { Vec::new() } else { neighbors(i, creatures, grid) };
             let mut c = Context::default();
             let (mut x, mut y) = (0.0, 0.0);
             for &j in &near {

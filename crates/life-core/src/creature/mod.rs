@@ -175,11 +175,6 @@ impl Creature {
         }
     }
 
-    /// Базовое существо из конфига в случайном месте.
-    pub fn base(space: &Space, rules: &Rules, rng: Rng) -> Self {
-        Creature::new(space, rules, CreatureGenome::BASE, None, None, None, rng)
-    }
-
     /// Один ход: стратегия решает, куда идти, существо делает шаг.
     ///
     /// Что вокруг — стратегия спрашивает у `senses`.
@@ -282,14 +277,11 @@ impl Creature {
         }
     }
 
-    /// Съедено `eaten` растений: энергия, и стратегия узнаёт, что поело.
-    pub fn feed(&mut self, eaten: usize, rules: &Rules) {
-        if eaten == 0 {
-            return;
-        }
+    /// One bite of a plant: a portion's energy at its plant efficiency, and the strategy learns it
+    /// has eaten.
+    pub fn feed(&mut self, rules: &Rules) {
         self.nourish(
             rules.plant_energy * rules.plant_bite_yield / f64::from(crate::plant::PORTIONS)
-                * eaten as f64
                 * self.pheno.plant_efficiency,
             rules,
         );
@@ -354,11 +346,6 @@ impl Creature {
     /// Бежит ли сейчас от кого-то (для окна игры и наблюдателя).
     pub fn fleeing(&self) -> bool {
         self.mind.flee_ticks > 0 || self.mind.social.shared_flee
-    }
-
-    /// Съеден кусок трупа: `energy` — уже усвоенное (порция × усвояемость по гнилости).
-    pub fn devour(&mut self, energy: f64, rules: &Rules) {
-        self.nourish(energy, rules);
     }
 
     /// Ребёнок, если после деления у родителя остаётся резерв. Номер ребёнку

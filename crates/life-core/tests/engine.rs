@@ -1,6 +1,5 @@
-//! Тесты движка — перенос по смыслу `python/tests/test_simulation.py` (тег python-final).
-//! Каждый тест на регрессию закрывает баг, который уже был в Python-коде.
-//! Циклов без границы нет: все прогоны ограничены числом тиков.
+//! Engine tests: regressions (each closes a bug that once happened) and invariants.
+//! No unbounded loops: every run is capped by a tick count.
 
 use life_core::config::*;
 use life_core::creature::Creature;
@@ -126,11 +125,11 @@ fn cleared_band_recovers() {
     assert!(after * 10 >= band * 8, "band {band} -> {after}");
 }
 
-// ── каннибализм ────────────────────────────────────────────────────────────
+// ── hunting ────────────────────────────────────────────────────────────────
 
-/// Мир с большим существом и соседом заданного размера на заданном расстоянии.
-/// Тик 1 — не тик деления: считаем только поедание.
-fn cannibal_world(small: f64, dx: f64) -> World {
+/// A world with a big hunter and a neighbour of the given size at the given distance. Tick 1 is
+/// no division tick: only the strikes count.
+fn hunter_world(small: f64, dx: f64) -> World {
     let mut w = empty_world(Rules::default());
     w.tick = 1;
     w.spawn(hunter(100.0), 3000.0, 2000.0, Some(100.0));
@@ -141,28 +140,29 @@ fn cannibal_world(small: f64, dx: f64) -> World {
 /// A hunter strikes the small one beside it: 2.5 times smaller it survives the first strike,
 /// 6.7 times smaller it dies of it (`MELEE_SIZE_POWER`) and leaves a corpse.
 #[test]
-fn каннибал_съедает_мелкого_рядом() {
-    let mut w = cannibal_world(40.0, 10.0);
+fn a_hunter_strikes_the_small_one_beside_it() {
+    let mut w = hunter_world(40.0, 10.0);
     w.step();
     assert_eq!(w.creatures.len(), 2, "2.5 times smaller, full health survives one strike");
     assert!(w.creatures[1].health < w.creatures[1].max_health());
     assert_eq!(w.counters.combat, 0);
-    let mut w = cannibal_world(15.0, 10.0);
+    let mut w = hunter_world(15.0, 10.0);
     w.step();
     assert_eq!(w.creatures.len(), 1, "6.7 times smaller, one strike kills");
     assert_eq!((w.counters.combat, w.corpses.len()), (1, 1));
 }
 
 #[test]
-fn каннибал_не_ест_крупного_и_дальнего() {
+fn a_hunter_leaves_the_big_and_the_distant_alone() {
     for (small, dx, why) in [
         (70.0, 10.0, "only 1.4 times smaller: not prey for the base prey_ratio 1.5"),
-        (30.0, 400.0, "далеко — каннибал не ищет, а ест того, кто рядом"),
+        (30.0, 400.0, "far away: a strike needs contact"),
     ] {
-        let mut w = cannibal_world(small, dx);
+        let mut w = hunter_world(small, dx);
         w.step();
         assert_eq!(w.creatures.len(), 2, "{why}");
-        assert_eq!(w.counters.cannibalized, 0, "{why}");
+        assert_eq!(w.counters.combat, 0, "{why}");
+        assert!(w.creatures[1].health == w.creatures[1].max_health(), "{why}");
     }
 }
 
@@ -229,7 +229,7 @@ fn a_careless_parent_knows_only_its_tiny_children() {
 /// `kin` sets their kinship by hand. The big one is on the hunt: a passer-by that hunts nobody
 /// is feared only closer (`bravery`).
 fn threat_world(big: f64, dx: f64, kin: impl Fn(&mut World)) -> World {
-    let mut w = cannibal_world(30.0, dx);
+    let mut w = hunter_world(30.0, dx);
     let small = w.creatures[1].id;
     let v = &mut w.creatures[0];
     v.genome = hunter(big);
@@ -636,7 +636,7 @@ fn смешанный_мир_детерминирован() {
 fn сетка_совпадает_с_перебором() {
     let mut rng = Rng::new(42);
     for scale in [1.0, 3.5] {
-        let s = Space::scaled(scale);
+        let s = Space::new(scale, Shape::Strip);
         for cell in [64.0, 256.0, 1000.0] {
             let mut pts: Vec<(f64, f64)> =
                 (0..800).map(|_| (rng.uniform(0.0, s.width), rng.uniform(0.0, s.height))).collect();
@@ -774,7 +774,7 @@ fn счётчики_сходятся_с_численностью() {
     }
     let c = w.counters;
     assert!(c.born > 0 && c.combat > 0 && c.starved > 0, "{c:?}");
-    assert_eq!(w.creatures.len() as u64, n0 + c.born - c.starved - c.cannibalized - c.old_age - c.combat);
+    assert_eq!(w.creatures.len() as u64, n0 + c.born - c.starved - c.old_age - c.combat);
     assert_eq!(w.plants.len() as u64, plants0 + c.plants_grown - c.plants_eaten);
     assert_eq!(c.since(&c), Counters::default());
 }
@@ -806,14 +806,14 @@ fn масштаб_растит_площадь() {
 #[test]
 #[should_panic(expected = "масштаб мира")]
 fn масштаб_меньше_базового_отвергается() {
-    Space::scaled(0.01);
+    Space::new(0.01, Shape::Strip);
 }
 
 /// Гигантский масштаб — внятная ошибка, а не падение на выделении памяти.
 #[test]
 #[should_panic(expected = "масштаб мира")]
 fn масштаб_больше_предела_отвергается() {
-    Space::scaled(1e7);
+    Space::new(1e7, Shape::Strip);
 }
 
 /// Founders get the diet mix exactly, dealt without draws and spread over them: not a block of

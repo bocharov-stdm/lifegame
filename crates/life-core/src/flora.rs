@@ -40,8 +40,8 @@
 use std::f64::consts::{PI, TAU};
 
 use crate::config::{
-    GAME_PLATEAU, PATCH_DARK_SIZE, PATCH_STRETCH, PATCH_WEIGHT_MIN, PLANT_MAX, PLANT_RADIUS,
-    PLANT_TOP_MARGIN_PCT, WORLD_HEIGHT, WORLD_WIDTH,
+    GAME_PLATEAU, PATCH_DARK_SIZE, PATCH_STRETCH, PATCH_WEIGHT_MIN, PLANT_MAX, PLANT_RADIUS, WORLD_HEIGHT,
+    WORLD_WIDTH,
 };
 use crate::plant::Plant;
 use crate::rng::Rng;
@@ -411,15 +411,13 @@ const GOLDEN_ANGLE: f64 = 2.399_963_229_728_653;
 
 impl Flora {
     pub fn new(rules: &Rules, space: &Space, seed: u64) -> Flora {
-        // Мёртвая зона у поверхности — свойство поверхности, а не профиля.
-        // Считается как 5 * 4000 / 100 — ровно 200, как было до профилей.
-        let margin = PLANT_TOP_MARGIN_PCT * space.height / 100.0;
+        // plants grow up to the surface: the plant zone is the world less a plant's radius
         let r = PLANT_RADIUS;
         // rows by the world's proportions: with uniform food the cells are near squares
         let cap = space.per_area(PLANT_MAX);
         let ny = rows(cap, space);
         let x = Axis::new(&rules.plant_width, space.width, r, space.width - r);
-        let y = Axis::new(&rules.plant_depth, space.height, r + margin, space.height - r);
+        let y = Axis::new(&rules.plant_depth, space.height, r, space.height - r);
         let Layout { patches, scatters, rx, ry } = layout(&x, &y, rules, space, seed, cap);
         let nx = cap.div_ceil(ny);
         let scattered = patches.is_empty() && scatters.is_empty();
@@ -591,12 +589,8 @@ fn layout(x: &Axis, y: &Axis, rules: &Rules, space: &Space, seed: u64, cap: usiz
 }
 
 /// Плотность еды в точке (доли ширины и глубины) по правилам, от 0 до 1 — для
-/// предпросмотра: окну не нужно строить таблицы. Мёртвая зона у поверхности
-/// тоже видна.
+/// предпросмотра: окну не нужно строить таблицы.
 pub fn density(rules: &Rules, tx: f64, ty: f64) -> f64 {
-    if ty < PLANT_TOP_MARGIN_PCT / 100.0 {
-        return 0.0;
-    }
     rules.plant_width.density(tx) * rules.plant_depth.density(ty)
 }
 
@@ -665,8 +659,7 @@ mod tests {
         for _ in 0..10_000 {
             // прежний Plant::random
             let lambda = PLANT_DEPTH_DECAY / space.height;
-            // the surface's dead zone was 200 then; the formula is the same with it at any width
-            let e_top = (-lambda * (PLANT_RADIUS + PLANT_TOP_MARGIN_PCT * space.height / 100.0)).exp();
+            let e_top = (-lambda * PLANT_RADIUS).exp();
             let e_bottom = (-lambda * (space.height - PLANT_RADIUS)).exp();
             let x = a.uniform(PLANT_RADIUS, space.width - PLANT_RADIUS);
             let u = a.random();
@@ -701,7 +694,6 @@ mod tests {
     fn растения_в_границах_при_любых_профилях() {
         for shape in Shape::ALL {
             let space = Space::new(7.0, shape);
-            let margin = PLANT_TOP_MARGIN_PCT * space.height / 100.0;
             for r in every_profile().into_iter().flat_map(|r| [scattered(&r), r]) {
                 let flora = Flora::new(&r, &space, 3);
                 let mut rng = Rng::new(3);
@@ -714,7 +706,7 @@ mod tests {
                         p.x
                     );
                     assert!(
-                        p.y >= PLANT_RADIUS + margin - eps && p.y <= space.height - PLANT_RADIUS + eps,
+                        p.y >= PLANT_RADIUS - eps && p.y <= space.height - PLANT_RADIUS + eps,
                         "y={} {r:?}",
                         p.y
                     );
@@ -728,11 +720,8 @@ mod tests {
         let space = Space::new(1.0, Shape::R3x2);
         let flora = Flora::new(&scattered(r), &space, 1);
         let spec = if axis == "depth" { r.plant_depth } else { r.plant_width };
-        let (len, lo) = if axis == "depth" {
-            (space.height, PLANT_RADIUS + PLANT_TOP_MARGIN_PCT * space.height / 100.0)
-        } else {
-            (space.width, PLANT_RADIUS)
-        };
+        let (len, lo) =
+            if axis == "depth" { (space.height, PLANT_RADIUS) } else { (space.width, PLANT_RADIUS) };
         let hi = len - PLANT_RADIUS;
         const BANDS: usize = 20;
         const N: usize = 200_000;
@@ -789,7 +778,7 @@ mod tests {
         }
     }
 
-    /// Preview: full at the rich edge, right up to the surface (no dead zone there any more).
+    /// Preview: full at the rich edge, right up to the surface.
     #[test]
     fn плотность_для_предпросмотра_от_нуля_до_единицы() {
         let r = Rules::default();
@@ -984,7 +973,7 @@ mod tests {
     #[test]
     fn заросли_не_ломают_профиль() {
         let space = Space::default();
-        let top = (PLANT_RADIUS + PLANT_TOP_MARGIN_PCT * space.height / 100.0) / space.height;
+        let top = PLANT_RADIUS / space.height;
         const BANDS: usize = 5;
         // the profile's mass over a share of its axis
         let mass = |spec: &FoodAxis, from: f64, to: f64| -> f64 {

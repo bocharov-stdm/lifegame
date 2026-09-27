@@ -7,8 +7,8 @@
 //! выметаются раз за тик. Бой — отдельный проход после хода всех существ, когда
 //! они уже стоят; бои включены всегда.
 //!
-//! Хищники были отдельным видом до тега `predators-final`: их заменили мутации
-//! и каннибализм.
+//! Predators were a species of their own until the tag `predators-final`; the meat diets and
+//! corpses took their place.
 
 use crate::config::*;
 use crate::creature::strategy as creature_strategy;
@@ -98,8 +98,6 @@ pub struct Counters {
     pub starved: u64,
     pub old_age: u64,
     pub combat: u64,
-    /// Съедены сородичами (каннибализм).
-    pub cannibalized: u64,
     /// Corpses that appeared, and of those removed: how many had lain fully rotten on the bottom
     /// with meat left, how many had been eaten down to a skeleton, and their lifetimes summed.
     pub corpses: u64,
@@ -155,7 +153,6 @@ impl Counters {
             starved: self.starved - earlier.starved,
             old_age: self.old_age - earlier.old_age,
             combat: self.combat - earlier.combat,
-            cannibalized: self.cannibalized - earlier.cannibalized,
             corpses: self.corpses - earlier.corpses,
             corpses_gone: self.corpses_gone - earlier.corpses_gone,
             corpses_bottom: self.corpses_bottom - earlier.corpses_bottom,
@@ -386,7 +383,12 @@ impl World {
         self.social_counts.battles += outcome.started;
         self.social_counts.battle_retreats += outcome.retreats;
         self.prey_grid.rebuild(&self.space, self.creatures.iter().map(|v| (v.x, v.y)));
-        crate::social::prepare(&mut self.creatures, &self.prey_grid, self.tick);
+        // a creature whose label counts one member (the roll `flock::update` just took) has no
+        // flockmates to look for
+        let flocks = &self.flocks;
+        crate::social::prepare_in(&mut self.creatures, &self.prey_grid, self.tick, |v| {
+            flocks.get(&v.flock).is_none_or(|f| f.members < 2)
+        });
         let territorial_targets = self.territory.prepare_full(
             &mut self.flocks,
             &mut self.creatures,
@@ -447,8 +449,17 @@ impl World {
         let max_corpse_half = corpses.iter().fold(0.0_f64, |m, c| m.max(c.size * 0.5));
         // Растения идут до боя, трупы — после. На копии заранее распределяем
         // порции трупов по ID: тот, кому остатка уже не хватит, может взять
-        // растение сейчас, не получая второй порции в этом тике.
-        let mut reserved = corpses.clone();
+        // растение сейчас, не получая второй порции в этом тике. Only the corpses somebody claims
+        // are copied (a few a tick); the rest are read as they lie.
+        let mut claimed: Vec<(usize, crate::corpse::Corpse)> = Vec::new();
+        let lying: &[crate::corpse::Corpse] = corpses;
+        fn shadow<'a>(
+            claimed: &'a [(usize, crate::corpse::Corpse)],
+            corpses: &'a [crate::corpse::Corpse],
+            j: usize,
+        ) -> &'a crate::corpse::Corpse {
+            claimed.iter().find(|(k, _)| *k == j).map_or(&corpses[j], |(_, c)| c)
+        }
         // Hunger is judged once, before the meal: the same in both feeding phases.
         let hungry: Vec<bool> = creatures.iter().map(|v| v.pheno.hungry(v.energy)).collect();
         let rivals: Vec<bool> = creatures.iter().map(|v| v.pheno.rivals(v.energy)).collect();
@@ -459,9 +470,9 @@ impl World {
             // Only what the diet digests is eaten at all: a meat-eater does not take a plant from
             // a herbivore for nothing, a herbivore does not touch a corpse. Sated, only its own.
             let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.rot(now), hungry[i]) > 0.0;
-            let corpse = crate::corpse::contact(
+            let corpse = crate::corpse::contact_by(
                 corpse_grid,
-                &reserved,
+                |j| shadow(&claimed, lying, j),
                 (v.x, v.y),
                 v.pheno.size,
                 max_corpse_half,
@@ -469,7 +480,7 @@ impl World {
                 eats,
             );
             let prefer_corpse = corpse.is_some_and(|j| {
-                let c = &reserved[j];
+                let c = shadow(&claimed, lying, j);
                 c.portion(rules.plant_energy) * v.pheno.corpse_efficiency(c.rot(now), hungry[i])
                     > plant_bite * v.pheno.plant_efficiency
             });
@@ -481,15 +492,20 @@ impl World {
             if let Some((finished, px, py)) = plant {
                 counters.plant_bites += 1;
                 counters.plants_eaten += finished as u64;
-                v.feed(1, rules);
+                v.feed(rules);
                 v.meal = Some(Meal { tick: now, x: px, y: py, food: Morsel::Plant });
                 fed[i] = true;
                 feeding[i] = crate::combat::Feeding::Plants;
             } else if let Some(j) = corpse {
-                feeding[i] = crate::combat::Feeding::Corpse(reserved[j].owner);
                 // Мясо выгоднее, или растение досталось более раннему ID: этот едок
                 // претендует на труп раньше следующих участников.
-                reserved[j].bite(now, rules.plant_energy);
+                let at = claimed.iter().position(|(k, _)| *k == j).unwrap_or_else(|| {
+                    claimed.push((j, lying[j].clone()));
+                    claimed.len() - 1
+                });
+                let c = &mut claimed[at].1;
+                feeding[i] = crate::combat::Feeding::Corpse(c.owner);
+                c.bite(now, rules.plant_energy);
             }
         }
         // Все уже сходили; новорождённых ещё нет. Удары одновременны.
@@ -529,7 +545,7 @@ impl World {
                 now,
                 eats,
             ) {
-                v.devour(bite.amount * v.pheno.corpse_efficiency(bite.rot, true), rules);
+                v.nourish(bite.amount * v.pheno.corpse_efficiency(bite.rot, true), rules);
                 v.meal =
                     Some(Meal { tick: now, x: bite.x, y: bite.y, food: Morsel::Corpse { rot: bite.rot } });
                 counters.meat_bites += 1;

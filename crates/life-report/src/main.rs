@@ -71,8 +71,8 @@ struct Args {
     /// затаившийся). Например, `--mix 1 1` — поровну. Старое имя — `--veg-mix`.
     #[arg(long, alias = "veg-mix", num_args = 1.., value_name = "ДОЛИ")]
     mix: Vec<f64>,
-    /// Диеты основателей: доли по порядку (травоядный, всеядный, мясоед, падальщик).
-    /// По умолчанию 55 25 10 10; `--diet-mix 1` — все травоядные.
+    /// Диеты основателей: доли по порядку (травоядный, всеядный, падальщик, мясоед).
+    /// По умолчанию 70 30 0 0 — мясные диеты возникают из мутантов; `--diet-mix 1` — все травоядные.
     #[arg(long, num_args = 1.., value_name = "ДОЛИ")]
     diet_mix: Vec<f64>,
     /// How many times bigger the meat-eating founders (scavengers, carnivores) start; default 2.
@@ -349,8 +349,7 @@ fn print_summary(results: &[(u64, SimResult)]) {
     );
     for (seed, r) in results {
         let last = r.last();
-        // Доля боевых смертей среди всех умерших. `cannibalized` — подмножество
-        // `combat`, поэтому в знаменатель повторно не входит.
+        // the share of combat deaths among all deaths
         let c = r.world.counters;
         let deaths = c.starved + c.old_age + c.combat;
         let combat_share = c.combat as f64 / deaths.max(1) as f64;

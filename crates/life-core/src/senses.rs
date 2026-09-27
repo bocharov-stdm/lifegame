@@ -138,11 +138,11 @@ pub struct Threat {
 pub(crate) struct GridSenses<'a> {
     pub food: &'a Grid,
     pub plants: &'a [Plant],
+    /// The corpse grid; None — no corpses to look for (tests of the other queries).
     pub corpse_grid: Option<&'a Grid>,
     pub corpses: &'a [Corpse],
     pub now: u64,
-    /// Снимок стада. None — съесть друг друга нельзя (каннибализм выключен),
-    /// и смотреть на сородичей незачем.
+    /// The snapshot of the herd; None — nobody to hunt or fear (tests of the corpse queries).
     pub herd: Option<&'a Herd>,
 }
 

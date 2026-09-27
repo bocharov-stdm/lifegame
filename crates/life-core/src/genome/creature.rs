@@ -2,8 +2,8 @@
 
 use super::{GeneKind, GeneSpec, Genome, Mutation, Variant, bases};
 use crate::config::{
-    DIET_JUMP_CHANCE, DIET_MEAT_STEP_CHANCE, DIET_STEP_CHANCE, FLOCKS, HERBIVORE_LEAP_CARNIVORE,
-    HERBIVORE_LEAP_SCAVENGER, LIFESPAN_BASE, LIFESPAN_MAX, LIFESPAN_MIN, SHOOTER_SWITCH_CHANCE,
+    CHOICE_SWITCH_CHANCE, DIET_JUMP_CHANCE, DIET_MEAT_STEP_CHANCE, DIET_STEP_CHANCE, FLOCKS,
+    HERBIVORE_LEAP_CARNIVORE, HERBIVORE_LEAP_SCAVENGER, LIFESPAN_BASE, LIFESPAN_MAX, LIFESPAN_MIN,
     STRATEGY_SWITCH_CHANCE,
 };
 use crate::creature::strategy::VARIANTS as STRATEGIES;
@@ -317,7 +317,7 @@ pub const GENES: [GeneSpec; N] = [
         about: "Редко наследуемая способность стрелять на расстоянии.",
         kind: GeneKind::Choice(&SHOOTER_VARIANTS),
         base: 0.0,
-        mutation: Mutation::Switch { chance: SHOOTER_SWITCH_CHANCE },
+        mutation: Mutation::Switch { chance: CHOICE_SWITCH_CHANCE },
     },
     GeneSpec {
         key: "fire_preference",
@@ -340,9 +340,10 @@ pub const GENES: [GeneSpec; N] = [
         label: "стайность",
         about: "Живёт в семейной стае или отдельно от потомков.",
         kind: GeneKind::Choice(&PACK_VARIANTS),
-        base: 1.0,
-        // flocks are off: a loner's child never turns flocking (the draw stays)
-        mutation: Mutation::Switch { chance: if FLOCKS { SHOOTER_SWITCH_CHANCE } else { 0.0 } },
+        // flocks are off: the base genome (a spawned creature, the founders' start) is a loner, and
+        // a loner's child never turns flocking (the draw stays)
+        base: if FLOCKS { 1.0 } else { 0.0 },
+        mutation: Mutation::Switch { chance: if FLOCKS { CHOICE_SWITCH_CHANCE } else { 0.0 } },
     },
     GeneSpec {
         key: "territoriality",
@@ -350,7 +351,7 @@ pub const GENES: [GeneSpec; N] = [
         about: "Не защищает территорию, предупреждает чужака или нападает сразу.",
         kind: GeneKind::Choice(&TERRITORIALITY_VARIANTS),
         base: 1.0,
-        mutation: Mutation::Switch { chance: SHOOTER_SWITCH_CHANCE },
+        mutation: Mutation::Switch { chance: CHOICE_SWITCH_CHANCE },
     },
     GeneSpec {
         key: "care",
@@ -366,7 +367,7 @@ pub const GENES: [GeneSpec; N] = [
         about: "Как перемещается круг семейной стаи.",
         kind: GeneKind::Choice(&FLOCK_KIND_VARIANTS),
         base: 0.0,
-        mutation: Mutation::Switch { chance: SHOOTER_SWITCH_CHANCE },
+        mutation: Mutation::Switch { chance: CHOICE_SWITCH_CHANCE },
     },
     GeneSpec {
         key: "layer_bound",
@@ -374,7 +375,7 @@ pub const GENES: [GeneSpec; N] = [
         about: "Держится ли своего слоя глубины или бродит по всей глубине.",
         kind: GeneKind::Choice(&LAYER_VARIANTS),
         base: 0.0,
-        mutation: Mutation::Switch { chance: SHOOTER_SWITCH_CHANCE },
+        mutation: Mutation::Switch { chance: CHOICE_SWITCH_CHANCE },
     },
     GeneSpec {
         key: "flock_spacing",
@@ -513,7 +514,11 @@ mod tests {
         assert_eq!(CreatureGenome::BASE[Gene::Shooter], 0.0);
         assert_eq!(CreatureGenome::BASE[Gene::FirePreference], 50.0);
         assert_eq!(CreatureGenome::BASE[Gene::FireReserve], 50.0);
-        assert_eq!(CreatureGenome::BASE[Gene::PackInstinct], 1.0);
+        assert_eq!(
+            CreatureGenome::BASE[Gene::PackInstinct],
+            f64::from(FLOCKS),
+            "a loner while flocks are off"
+        );
         assert_eq!(CreatureGenome::BASE[Gene::Territoriality], 1.0);
         assert_eq!(CreatureGenome::BASE[Gene::Care], 50.0);
         assert_eq!(CreatureGenome::BASE[Gene::Diet], 0.0, "a spawned creature is a herbivore");

@@ -30,7 +30,7 @@ fn speed_label(index: usize) -> String {
 
 /// What the world eats and how it hunts in the last snapshot: diet shares in %, the median prey
 /// size ratio and the share of shooters in %.
-pub(crate) fn predator_summary(history: &History) -> Option<([f64; 4], f64, f64)> {
+pub(crate) fn hunting_summary(history: &History) -> Option<([f64; 4], f64, f64)> {
     let genes = history.snapshots.last()?.genes.as_ref()?;
     let shares = |gene: creature::Gene| match genes[gene as usize] {
         GeneStat::Shares(shares) => Some(shares),
@@ -379,7 +379,7 @@ impl LifeApp {
     /// Hunting, shooting and flocks: minor facts, folded away.
     fn other_facts(&self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("Прочее").default_open(false).show(ui, |ui| {
-            if let Some((_, ratio, shooters)) = predator_summary(&self.history) {
+            if let Some((_, ratio, shooters)) = hunting_summary(&self.history) {
                 ui.label(format!("Охотятся на тех, кто мельче хотя бы в {ratio:.1} раза")).on_hover_text(
                     "Медиана по всем: этот ген есть у каждого, но работает только у тех, кто ест свежее мясо.",
                 );
@@ -873,6 +873,5 @@ mod tests {
         assert!(cmd.contains("--rule plant_width_profile=waves"));
         assert!(!cmd.contains("plant_depth"), "профиль по глубине не трогали");
         assert!(cmd.contains("--mix 70 30"));
-        assert!(!cmd.contains("--pred-mix"));
     }
 }

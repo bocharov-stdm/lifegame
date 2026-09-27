@@ -346,12 +346,8 @@ impl Default for Rules {
     }
 }
 
-/// Error for a key `Rules` does not know. Combat used to be the rule `cannibalism`; there is no
-/// peaceful world any more, so it gets a reason instead of the bare list.
+/// Error for a key `Rules` does not know.
 fn unknown(key: &str) -> String {
-    if key == "cannibalism" {
-        return "правила cannibalism больше нет: бои включены всегда".to_string();
-    }
     format!("нет такого правила: {key}; есть {}", RULE_KEYS.join(", "))
 }
 
@@ -686,18 +682,6 @@ mod tests {
         }
         assert!(r.with("plant_width_amplitude", 100.0).is_ok());
         assert!(r.with("plant_depth_steepness", 0.0).is_ok(), "ноль — равномерно, это осмысленно");
-    }
-
-    #[test]
-    fn removed_rules_are_rejected_with_a_reason() {
-        let r = Rules::default();
-        for v in [0.0, 1.0] {
-            let err = r.with("cannibalism", v).unwrap_err();
-            assert!(err.contains("всегда"), "cannibalism={v}: {err}");
-            assert!(r.with_text("cannibalism", "1").unwrap_err().contains("всегда"));
-        }
-        // the prey size ratio is the `prey_ratio` gene now, not a world rule
-        assert!(r.with("cannibal_ratio", 2.5).is_err());
     }
 
     #[test]
