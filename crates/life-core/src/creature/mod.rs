@@ -364,7 +364,7 @@ impl Creature {
         // Пробуем наследование на копии генератора: неудачная попытка рождения
         // не тратит случайные числа, а вместимость ребёнка уже известна.
         let mut next_rng = self.rng.clone();
-        let genome = self.genome.mutate(rules.mutation_sigma, &mut next_rng);
+        let genome = self.genome.mutate_by(&crate::genome::Heredity::of(rules), &mut next_rng);
         let child_energy = (self.energy * (self.genome[Gene::ReproShare] / 100.0))
             .min(genome[Gene::Size] * 0.5 * ENERGY_PER_SIZE);
         let left = self.energy - child_energy - rules.repro_cost;

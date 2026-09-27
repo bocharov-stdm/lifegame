@@ -7,14 +7,11 @@
 //! своё действие, а его цена дописывается в конец суммы расхода.
 
 use super::Strategy;
-use crate::config::{
-    DEEP_SAVING_FROM, DIET_DEEP_SAVING, DIET_DIGESTION, DIET_HEALTH, DIET_OWN, DIET_SIZE_COST, DIET_SMELL,
-    DIET_SPEED_COST, DIET_STRIKE, ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, SLOW_PACE,
-};
+use crate::config::{DEEP_SAVING_FROM, DIET_OWN, ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, SLOW_PACE};
 use crate::flock::{FlockKind, Territoriality};
 use crate::genome::CreatureGenome;
 use crate::genome::creature::Gene;
-use crate::rules::Rules;
+use crate::rules::{DietEdges, Rules};
 use crate::space::Space;
 
 /// What a creature eats: the `diet` gene. The order is the gene's variants and the rows of
@@ -34,34 +31,9 @@ impl Diet {
         Diet::ALL[(value.max(0.0) as usize).min(Diet::ALL.len() - 1)]
     }
 
-    /// Digestibility of plants, fresh meat and rot (`DIET_DIGESTION`).
-    pub fn digestion(self) -> [f64; 3] {
-        DIET_DIGESTION[self as usize]
-    }
-
-    /// How much harder than a herbivore it strikes (`DIET_STRIKE`).
-    pub fn strike_bonus(self) -> f64 {
-        DIET_STRIKE[self as usize]
-    }
-
-    /// Health per unit of size (`DIET_HEALTH`).
-    pub fn health(self) -> f64 {
-        DIET_HEALTH[self as usize]
-    }
-
-    /// Factors of the size and speed terms of upkeep (`DIET_SIZE_COST`, `DIET_SPEED_COST`).
-    pub fn upkeep_costs(self) -> [f64; 2] {
-        [DIET_SIZE_COST[self as usize], DIET_SPEED_COST[self as usize]]
-    }
-
-    /// Corpses are sensed this far, in shares of vision (`DIET_SMELL`).
-    pub fn smell(self) -> f64 {
-        DIET_SMELL[self as usize]
-    }
-
-    /// Upkeep saved on the bottom (`DIET_DEEP_SAVING`).
-    pub fn deep_saving(self) -> f64 {
-        DIET_DEEP_SAVING[self as usize]
+    /// What it is good at, by the world's rules (`Rules::diets`, defaults `config::DIET_*`).
+    pub fn edges(self, rules: &Rules) -> &DietEdges {
+        &rules.diets[self as usize]
     }
 
     /// Its own food among plants, fresh meat and rot (`DIET_OWN`).
@@ -90,8 +62,8 @@ pub struct Phenotype {
     /// Bravery 0..1: a stranger that could eat it but hunts nobody is feared only within
     /// `1 − bravery` of the usual flight distance; a hunting one within all of it.
     pub bravery: f64,
-    /// What it eats; the three efficiencies are its row of `DIET_DIGESTION`. Zero: it neither
-    /// eats that food nor goes for it.
+    /// What it eats; the three efficiencies are its diet's digestion (`Rules::diets`). Zero: it
+    /// neither eats that food nor goes for it.
     pub diet: Diet,
     pub plant_efficiency: f64,
     /// Fresh meat: a corpse right after death, and so what a hunt is worth.
@@ -103,9 +75,11 @@ pub struct Phenotype {
     pub own_meat: bool,
     pub own_rot: bool,
     pub picky: f64,
-    /// Health per unit of size (`DIET_HEALTH`).
+    /// Health per unit of size (`DietEdges::health`).
     pub health_bonus: f64,
-    /// How far it senses corpses (`DIET_SMELL` times vision).
+    /// Strike damage times this (`DietEdges::strike`); the energy a strike costs does not change.
+    pub strike_bonus: f64,
+    /// How far it senses corpses (`DietEdges::smell` times vision).
     pub smell: f64,
     /// Upkeep saved at the bottom; the saving grows from `DEEP_SAVING_FROM` of the depth.
     pub deep_saving: f64,
@@ -206,7 +180,9 @@ impl Phenotype {
         let speed = genome[Gene::Speed];
         let vision = genome[Gene::Vision];
         let diet = Diet::from_gene(genome[Gene::Diet]);
-        let [plants, fresh, rot] = diet.digestion();
+        let edges = *diet.edges(rules);
+        let [plants, fresh, rot] = edges.digestion;
+        let diet_upkeep = [edges.size_upkeep, edges.speed_upkeep];
         let [_, own_meat, own_rot] = diet.own();
         let slow_speed = speed * SLOW_PACE;
         Phenotype {
@@ -227,9 +203,10 @@ impl Phenotype {
             own_meat,
             own_rot,
             picky: genome[Gene::Picky].clamp(0.0, 100.0) / 100.0,
-            health_bonus: diet.health(),
-            smell: vision * diet.smell(),
-            deep_saving: diet.deep_saving(),
+            health_bonus: edges.health,
+            strike_bonus: edges.strike,
+            smell: vision * edges.smell,
+            deep_saving: edges.deep_saving,
             height: space.height,
             prey_ratio: genome[Gene::PreyRatio].clamp(1.0, 5.0),
             caution: genome[Gene::Caution].clamp(0.0, 100.0) / 50.0,
@@ -255,9 +232,9 @@ impl Phenotype {
             y_lo,
             y_hi,
             max_energy: size * ENERGY_PER_SIZE,
-            upkeep: rules.upkeep_diet(size, speed, vision, diet.upkeep_costs()) * life_pace,
+            upkeep: rules.upkeep_diet(size, speed, vision, diet_upkeep) * life_pace,
             slow_speed,
-            slow_upkeep: rules.upkeep_diet(size, slow_speed, vision, diet.upkeep_costs()) * life_pace,
+            slow_upkeep: rules.upkeep_diet(size, slow_speed, vision, diet_upkeep) * life_pace,
             vision2: vision * vision,
             size2: size * size,
             half: size / 2.0,
@@ -314,7 +291,7 @@ impl Phenotype {
     /// Its melee damage: a share of its size, times its diet's bonus. The energy a strike costs
     /// is the share without the bonus (`strike_cost`).
     pub fn strike(&self) -> f64 {
-        self.strike_cost() * self.diet.strike_bonus()
+        self.strike_cost() * self.strike_bonus
     }
 
     pub fn strike_cost(&self) -> f64 {

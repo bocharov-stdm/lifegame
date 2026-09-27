@@ -14,7 +14,7 @@
 
 pub mod creature;
 
-use crate::config::MAX_MUTABILITY;
+use crate::config::{MAX_MUTABILITY, MIN_MUTABILITY};
 use crate::rng::Rng;
 
 pub use creature::CreatureGenome;
@@ -49,12 +49,20 @@ pub enum Mutation {
     /// Смена варианта с шансом `chance` на любой другой. С одним вариантом
     /// жребий не тянется вовсе: ген инертен и не сдвигает случайные числа.
     Switch { chance: f64 },
-    /// A step to a neighbouring variant, with chance `chance`: `of[k]` lists the neighbours of
-    /// variant `k` (the diets: the omnivore is a fork to the herbivore, the scavenger and the
-    /// carnivore). One of several neighbours is picked with equal odds (one more draw); with one
-    /// neighbour there is no second draw. With chance `jump` instead it leaps to any other variant
-    /// (one more draw); the same first draw decides both. With one variant nothing is drawn.
-    Neighbours { chance: f64, jump: f64, of: &'static [&'static [usize]] },
+    /// A step to a neighbouring variant: `of[k]` lists the neighbours of variant `k` (the diets:
+    /// the omnivore is a fork to the herbivore, the scavenger and the carnivore), `up[k]` those of
+    /// them up the chain (the diets: towards meat). A step up has chance `rise`, a step to any
+    /// other neighbour `chance`. One of several neighbours is picked with equal odds (one more
+    /// draw); with one there is no second draw. With chance `jump` instead it leaps to any other
+    /// variant (one more draw); the same first draw decides all three. With one variant nothing is
+    /// drawn.
+    Neighbours {
+        chance: f64,
+        rise: f64,
+        jump: f64,
+        of: &'static [&'static [usize]],
+        up: &'static [&'static [usize]],
+    },
 }
 
 /// Строка таблицы генов.
@@ -112,12 +120,15 @@ pub fn index_of(genes: &[GeneSpec], key: &str) -> Option<usize> {
 /// Порядок и число случайных чисел — часть поведения мира: у существ цикл
 /// gauss до множителя не ниже 0.1 (`reject_below`), с `keep_above` — ещё жребий
 /// «оставить» перед ним.
+///
+/// `diet` replaces the chances of the `Neighbours` law (step, step up, jump) with the world's rules.
 pub(crate) fn mutate_values(
     values: &mut [f64],
     genes: &[GeneSpec],
     sigma: f64,
     mutability: f64,
     rng: &mut Rng,
+    diet: Option<(f64, f64, f64)>,
 ) {
     let sigma = sigma * mutability;
     for (value, spec) in values.iter_mut().zip(genes) {
@@ -157,21 +168,30 @@ pub(crate) fn mutate_values(
                     *value = (k + (k >= current) as usize) as f64;
                 }
             }
-            Mutation::Neighbours { chance, jump, of } => {
+            Mutation::Neighbours { chance, rise, jump, of, up } => {
+                let (chance, rise, jump) = diet.unwrap_or((chance, rise, jump));
                 let n = spec.variants().map_or(0, <[Variant]>::len);
                 if n < 2 {
                     continue;
                 }
+                // the diet changes regardless of mutability: its chances are small anyway
                 let u = rng.random();
                 let current = (*value as usize).min(n - 1);
-                if u < chance * mutability {
-                    let near = of.get(current).copied().unwrap_or(&[]);
-                    *value = match near.len() {
-                        0 => *value,
-                        1 => near[0] as f64,
-                        k => near[rng.randint(0, k as i64 - 1) as usize] as f64,
-                    };
-                } else if u < (chance + jump) * mutability {
+                let ups = up.get(current).copied().unwrap_or(&[]);
+                let near = of.get(current).copied().unwrap_or(&[]);
+                let rise = if ups.is_empty() { 0.0 } else { rise };
+                // one of the listed neighbours, with a draw only when there is a choice
+                let mut pick = |mut options: std::iter::Peekable<std::slice::Iter<usize>>, k: usize| match k {
+                    0 => *value,
+                    1 => *options.peek().copied().expect("one option") as f64,
+                    k => *options.nth(rng.randint(0, k as i64 - 1) as usize).expect("in range") as f64,
+                };
+                if u < rise {
+                    *value = pick(ups.iter().peekable(), ups.len());
+                } else if u < rise + chance {
+                    let others: Vec<usize> = near.iter().copied().filter(|j| !ups.contains(j)).collect();
+                    *value = pick(others.iter().peekable(), others.len());
+                } else if u < rise + chance + jump {
                     // any other variant, as `Switch` picks it
                     let k = rng.randint(0, n as i64 - 2) as usize;
                     *value = (k + (k >= current) as usize) as f64;
@@ -181,11 +201,48 @@ pub(crate) fn mutate_values(
     }
 }
 
-/// Мутагенность из значения гена: не выше `MAX_MUTABILITY`. Без потолка
-/// множитель, уходя вверх поколение за поколением, мог бы дорасти до
-/// бесконечности, а сигма — стать NaN.
-pub(crate) fn mutability_of(gene: f64) -> f64 {
-    gene.min(MAX_MUTABILITY)
+/// Mutability from the gene's value, from `floor` (`MIN_MUTABILITY` by default) to `MAX_MUTABILITY`.
+/// Without the ceiling the multiplier could grow generation by generation to infinity and the sigma
+/// become NaN; without the floor selection drove it to zero and evolution stopped.
+pub(crate) fn mutability_of(gene: f64, floor: f64) -> f64 {
+    gene.clamp(floor.min(MAX_MUTABILITY), MAX_MUTABILITY)
+}
+
+/// How children inherit, from the world's rules: the mutation sigma, the share of exact copies,
+/// the floor of mutability and the diet's chances.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Heredity {
+    pub sigma: f64,
+    pub clone_share: f64,
+    pub min_mutability: f64,
+    pub diet_step: f64,
+    pub diet_meat_step: f64,
+    pub diet_jump: f64,
+}
+
+impl Heredity {
+    pub fn of(rules: &crate::Rules) -> Heredity {
+        Heredity {
+            sigma: rules.mutation_sigma,
+            clone_share: rules.clone_share,
+            min_mutability: rules.min_mutability,
+            diet_step: rules.diet_step,
+            diet_meat_step: rules.diet_meat_step,
+            diet_jump: rules.diet_jump,
+        }
+    }
+
+    /// config.rs's heredity with another sigma: for tests and tools.
+    pub fn with_sigma(sigma: f64) -> Heredity {
+        Heredity {
+            sigma,
+            clone_share: crate::config::CLONE_CHANCE,
+            min_mutability: MIN_MUTABILITY,
+            diet_step: crate::config::DIET_STEP_CHANCE,
+            diet_meat_step: crate::config::DIET_MEAT_STEP_CHANCE,
+            diet_jump: crate::config::DIET_JUMP_CHANCE,
+        }
+    }
 }
 
 /// Какой вариант гена-выбора получит существо `i` из `n` при стартовой смеси
@@ -266,7 +323,7 @@ mod tests {
         let before = rng.clone();
         let mut v = [0.0];
         for _ in 0..100 {
-            mutate_values(&mut v, &[choice(&ONE, 1.0)], 0.3, 1.0, &mut rng);
+            mutate_values(&mut v, &[choice(&ONE, 1.0)], 0.3, 1.0, &mut rng, None);
         }
         assert_eq!(v, [0.0]);
         assert_eq!(rng, before, "ген с одним вариантом не сдвигает случайные числа");
@@ -279,7 +336,7 @@ mod tests {
         for start in 0..3 {
             for _ in 0..300 {
                 let mut v = [start as f64];
-                mutate_values(&mut v, &[choice(&THREE, 1.0)], 0.3, 1.0, &mut rng);
+                mutate_values(&mut v, &[choice(&THREE, 1.0)], 0.3, 1.0, &mut rng, None);
                 let k = v[0] as usize;
                 assert!(k < 3 && k != start, "с шансом 1 вариант меняется на другой: {start} → {k}");
                 assert_eq!(v[0], k as f64, "номер варианта — целое");
@@ -305,7 +362,7 @@ mod tests {
 
     fn chain(chance: f64) -> GeneSpec {
         GeneSpec {
-            mutation: Mutation::Neighbours { chance, jump: 0.0, of: &CHAIN },
+            mutation: Mutation::Neighbours { chance, rise: 0.0, jump: 0.0, of: &CHAIN, up: &[] },
             ..choice(&THREE, chance)
         }
     }
@@ -317,7 +374,7 @@ mod tests {
         for (start, row) in seen.iter_mut().enumerate() {
             for _ in 0..600 {
                 let mut v = [start as f64];
-                mutate_values(&mut v, &[chain(1.0)], 0.3, 1.0, &mut rng);
+                mutate_values(&mut v, &[chain(1.0)], 0.3, 1.0, &mut rng, None);
                 row[v[0] as usize] += 1;
             }
         }
@@ -332,14 +389,14 @@ mod tests {
     fn прыжок_в_любой_другой_вариант() {
         const FAR: [&[usize]; 3] = [&[1], &[0, 2], &[1]];
         let spec = GeneSpec {
-            mutation: Mutation::Neighbours { chance: 0.0, jump: 1.0, of: &FAR },
+            mutation: Mutation::Neighbours { chance: 0.0, rise: 0.0, jump: 1.0, of: &FAR, up: &[] },
             ..choice(&THREE, 1.0)
         };
         let mut rng = Rng::new(8);
         let mut seen = [0usize; 3];
         for _ in 0..3000 {
             let mut v = [0.0];
-            mutate_values(&mut v, &[spec], 0.3, 1.0, &mut rng);
+            mutate_values(&mut v, &[spec], 0.3, 1.0, &mut rng, None);
             seen[v[0] as usize] += 1;
         }
         assert_eq!(seen[0], 0, "a jump always leaves");
@@ -358,52 +415,85 @@ mod tests {
         ];
         const FORK: [&[usize]; 4] = [&[1], &[0, 2, 3], &[1, 3], &[1, 2]];
         let spec = GeneSpec {
-            mutation: Mutation::Neighbours { chance: 1.0, jump: 0.0, of: &FORK },
+            mutation: Mutation::Neighbours { chance: 1.0, rise: 0.0, jump: 0.0, of: &FORK, up: &[] },
             ..choice(&FOUR, 1.0)
         };
         let mut rng = Rng::new(3);
         let mut seen = [0usize; 4];
         for _ in 0..3000 {
             let mut v = [1.0];
-            mutate_values(&mut v, &[spec], 0.3, 1.0, &mut rng);
+            mutate_values(&mut v, &[spec], 0.3, 1.0, &mut rng, None);
             seen[v[0] as usize] += 1;
         }
         assert_eq!(seen[1], 0);
         assert!(seen.iter().enumerate().all(|(k, &n)| k == 1 || (850..=1150).contains(&n)), "{seen:?}");
         let (mut a, mut b) = (Rng::new(4), Rng::new(4));
         let mut v = [0.0];
-        mutate_values(&mut v, &[spec], 0.3, 1.0, &mut a);
+        mutate_values(&mut v, &[spec], 0.3, 1.0, &mut a, None);
         b.random();
         assert_eq!((v, a), ([1.0], b), "a single neighbour: only the chance is drawn");
     }
 
+    /// A step up the chain has its own chance; from a variant with nothing above only the others
+    /// remain, and a step down never goes up.
     #[test]
-    fn шаг_по_цепочке_редок_и_растягивается_мутагенностью() {
+    fn a_step_up_has_its_own_chance() {
+        const FORK: [&[usize]; 4] = [&[1], &[0, 2, 3], &[1, 3], &[1, 2]];
+        const UP: [&[usize]; 4] = [&[1], &[2, 3], &[], &[]];
+        const FOUR: [Variant; 4] = [
+            Variant { key: "a", label: "а", about: "" },
+            Variant { key: "b", label: "б", about: "" },
+            Variant { key: "c", label: "в", about: "" },
+            Variant { key: "d", label: "г", about: "" },
+        ];
+        let spec = GeneSpec {
+            mutation: Mutation::Neighbours { chance: 0.1, rise: 0.4, jump: 0.0, of: &FORK, up: &UP },
+            ..choice(&FOUR, 1.0)
+        };
+        let mut rng = Rng::new(9);
+        let mut seen = [[0usize; 4]; 4];
+        for (start, row) in seen.iter_mut().enumerate() {
+            for _ in 0..10_000 {
+                let mut v = [start as f64];
+                mutate_values(&mut v, &[spec], 0.3, 1.0, &mut rng, None);
+                row[v[0] as usize] += 1;
+            }
+        }
+        assert!((3700..=4300).contains(&seen[0][1]), "up 40%: {:?}", seen[0]);
+        assert!((3700..=4300).contains(&(seen[1][2] + seen[1][3])), "up to either: {:?}", seen[1]);
+        assert!(seen[1][2] > 1700 && seen[1][3] > 1700, "{:?}", seen[1]);
+        assert!((850..=1150).contains(&seen[1][0]), "down 10%: {:?}", seen[1]);
+        assert!((850..=1150).contains(&(seen[2][1] + seen[2][3])), "nothing above: 10%: {:?}", seen[2]);
+    }
+
+    #[test]
+    fn a_diet_step_is_rare_and_ignores_mutability() {
         let steps = |mutability: f64| {
             let mut rng = Rng::new(13);
             (0..100_000)
                 .filter(|_| {
                     let mut v = [1.0];
-                    mutate_values(&mut v, &[chain(0.001)], 0.3, mutability, &mut rng);
+                    mutate_values(&mut v, &[chain(0.001)], 0.3, mutability, &mut rng, None);
                     v[0] != 1.0
                 })
                 .count()
         };
         let (base, doubled) = (steps(1.0), steps(2.0));
         assert!((60..=140).contains(&base), "about 0.1%: {base}");
-        assert!(doubled > base * 3 / 2, "mutability stretches the chance: {doubled} vs {base}");
+        assert_eq!(doubled, base, "mutability does not touch the diet's chances");
         let mut rng = Rng::new(5);
         let before = rng.clone();
         let mut v = [0.0];
         mutate_values(
             &mut v,
             &[GeneSpec {
-                mutation: Mutation::Neighbours { chance: 1.0, jump: 1.0, of: &[&[]] },
+                mutation: Mutation::Neighbours { chance: 1.0, rise: 1.0, jump: 1.0, of: &[&[]], up: &[&[]] },
                 ..choice(&ONE, 1.0)
             }],
             0.3,
             1.0,
             &mut rng,
+            None,
         );
         assert_eq!((v, rng), ([0.0], before), "one variant: nothing drawn");
     }
@@ -430,7 +520,7 @@ mod tests {
         let mut rng = Rng::new(1);
         let mut v = [2.0];
         for _ in 0..100 {
-            mutate_values(&mut v, &[choice(&THREE, 0.0)], 0.3, 1.0, &mut rng);
+            mutate_values(&mut v, &[choice(&THREE, 0.0)], 0.3, 1.0, &mut rng, None);
         }
         assert_eq!(v, [2.0]);
     }

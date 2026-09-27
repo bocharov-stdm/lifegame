@@ -68,6 +68,8 @@ pub struct WorldView {
     pub area: Option<Area>,
     /// Время построения команд отрисовки мира на CPU, мс.
     pub draw_ms: f64,
+    /// Diets highlighted in the world, a bit per diet in `Diet` order (0 — none).
+    pub highlight: u32,
 }
 
 fn pos(x: f64, y: f64) -> Pos2 {
@@ -455,6 +457,7 @@ impl WorldView {
                     k,
                     since,
                     time: (ui.ctx().input(|i| i.time) % 1000.0) as f32,
+                    highlight: self.highlight,
                 },
             ));
         }

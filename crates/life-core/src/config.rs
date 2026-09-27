@@ -30,12 +30,11 @@ pub const PLANT_BITE_YIELD: f64 = 0.44;
 // By default: the «игровое» profile down, uniform across, in patches.
 
 /// The «игровое» depth profile (`flora::Profile::Game`), a rough real sea: nutritious upper
-/// layers and a dead bottom, where the rot settles. Full food down to 20% of depth (the dead zone
-/// at the very surface still applies), a straight slope to 15% of it at 85% of depth, then a
-/// cosine fall to nothing on the bottom. Before it the default was the exponent with steepness 8.
+/// layers and a nearly dead bottom, where the rot settles. Full food down to this share of the
+/// depth, then the exponent with the profile's steepness over the rest, so at the default 8 the
+/// bottom holds ~3000 times less food, like the plain exponent. Before it the default was the plain
+/// exponent with steepness 8; the first «игровое» fell along a straight slope and a cosine.
 pub const GAME_PLATEAU: f64 = 0.2;
-pub const GAME_SLOPE_END: f64 = 0.85;
-pub const GAME_SLOPE_LEVEL: f64 = 0.15;
 
 /// Крутизна экспоненты по глубине: чем больше, тем плотнее еда прижата к
 /// поверхности. При 8 у дна еды в e^8 ≈ 3000 раз меньше, чем наверху.
@@ -43,9 +42,10 @@ pub const PLANT_DEPTH_DECAY: f64 = 8.0;
 /// Крутизна экспоненты по ширине, если её выбрать. Мягче, чем по глубине: при 8
 /// почти вся еда жалась бы к левому краю, и мир справа пустовал бы.
 pub const PLANT_WIDTH_DECAY: f64 = 3.0;
-/// Мёртвая зона у самой поверхности, % глубины: при высоте 4000 это 200, как
-/// было до профилей. Свойство поверхности, поэтому действует при любом профиле.
-pub const PLANT_TOP_MARGIN_PCT: f64 = 5.0;
+/// Dead zone at the very surface, % of depth; a property of the surface, so it applies to every
+/// profile. It was 5% (200 at height 4000) and left an empty strip along the top; now plants grow
+/// up to the surface.
+pub const PLANT_TOP_MARGIN_PCT: f64 = 0.0;
 /// Параметры остальных профилей, пока их не тронули: линейный — у дальнего
 /// края 10% еды ближнего; логарифм — изгиб 20 (на середине оси ещё 79% еды, к
 /// дальнему краю — обрыв до нуля); волны — 3 богатые полосы с размахом 80%
@@ -131,6 +131,16 @@ pub const SPEED_MASS_POWER: f64 = 1.0;
 /// стратегии). При 10 сигма существ 3.0: геном потомка почти случаен —
 /// дальше расти незачем, а без потолка множитель мог бы уйти в бесконечность.
 pub const MAX_MUTABILITY: f64 = 10.0;
+/// Flocks are off for now (the user's call, 2026-09-26: they spoiled more than they gave): every
+/// founder is a loner and the pack gene never switches on, so no flock of two ever forms. The flock
+/// code stays until it is removed under the tag `flocks-final`.
+pub const FLOCKS: bool = false;
+/// Floor of the mutability gene. Selection pulls it down (a less mutated child is fitter on
+/// average), and at 0 evolution froze: one diet, one strategy, one flock kind, forever.
+pub const MIN_MUTABILITY: f64 = 0.1;
+/// Share of children born an exact copy of their parent, no gene mutated. A lineage keeps its
+/// proven genome through them, so selection has less reason to push mutability down.
+pub const CLONE_CHANCE: f64 = 0.5;
 
 // ── Поиск соседей ───────────────────────────────────────────────────────────
 /// Размер клетки сетки (grid.rs). В Python клетка равнялась самому большому
@@ -172,16 +182,24 @@ pub const SLOW_PACE: f64 = 1.0 / 3.0;
 // There is no world size ratio either: whom one attacks first is its own `prey_ratio` gene.
 
 // ── Питание ─────────────────────────────────────────────────────────────────
-/// Chance that a child's diet steps to a neighbour (`genome::creature::DIET_NEIGHBOURS`): as rare
-/// as the other choice genes.
-pub const DIET_STEP_CHANCE: f64 = 0.001;
-/// Chance that a child's diet jumps to any other diet, neighbour or not: ten times rarer than a
-/// step, so a line is not locked into its branch forever.
+/// Chance that a mutating child's diet steps to a neighbour (`genome::creature::DIET_NEIGHBOURS`),
+/// whatever its parent's mutability: at 0.1% × mutability meat-eating mutants hardly ever
+/// appeared, and the meat niches stayed empty.
+pub const DIET_STEP_CHANCE: f64 = 0.005;
+/// Chance that a mutating child's diet steps towards meat (`genome::creature::DIET_TOWARDS_MEAT`:
+/// herbivore → omnivore, omnivore → scavenger or carnivore), also whatever the mutability. The meat
+/// diets have no founders (they starved before there was meat), so they arise from these mutants;
+/// at 0.5% a world saw about three in 20 000 ticks, too few to take hold.
+pub const DIET_MEAT_STEP_CHANCE: f64 = 0.02;
+/// Chance that a mutating child's diet jumps to any other diet, neighbour or not, also whatever
+/// the mutability: so a line is not locked into its branch forever.
 pub const DIET_JUMP_CHANCE: f64 = 0.0001;
 /// Strike damage by diet, times the world's `melee_damage_share` (and `shot_damage_share`): meat
 /// eaters are built to kill. The omnivore strikes a little harder than the herbivore, the
-/// scavenger harder still, the carnivore hardest. The energy a strike costs does not change.
-pub const DIET_STRIKE: [f64; 4] = [1.0, 1.15, 1.3, 1.5];
+/// scavenger harder still, the carnivore hardest: at ×1.5 a carnivore could hold only the newborns
+/// it caught, and hunting did not pay (user's choice, 2026-09-27). The energy a strike costs does
+/// not change.
+pub const DIET_STRIKE: [f64; 4] = [1.0, 1.15, 1.3, 3.0];
 /// Health by diet, times the body size: the herbivore is hardy. It cannot strike like a meat
 /// eater, so it outlasts one — a hunter needs half as many strikes again, and weighs that.
 pub const DIET_HEALTH: [f64; 4] = [1.5, 1.0, 1.0, 1.0];
@@ -191,8 +209,9 @@ pub const DIET_HEALTH: [f64; 4] = [1.5, 1.0, 1.0, 1.0];
 pub const DIET_SIZE_COST: [f64; 4] = [0.85, 1.0, 1.0, 1.0];
 /// The speed term of upkeep by diet: the carnivore is a runner built to chase — it moves cheaper.
 /// Without an edge of its own it died out everywhere once the herbivore grew hardy and the
-/// scavenger learned to smell (16 of 16 worlds, 2026-09-26).
-pub const DIET_SPEED_COST: [f64; 4] = [1.0, 1.0, 1.0, 0.8];
+/// scavenger learned to smell (16 of 16 worlds, 2026-09-26); at ×0.8 it still spent more on the
+/// chase than it caught (0.12 energy a tick against 0.15), at half the price it about held.
+pub const DIET_SPEED_COST: [f64; 4] = [1.0, 1.0, 1.0, 0.5];
 /// How far corpses are sensed, in shares of vision: the scavenger smells them twice as far as it
 /// sees. Smell is not paid for — only vision is (the scavenger's food lies scattered in the deep,
 /// and it would never find it by sight alone).
@@ -214,21 +233,31 @@ pub const DIET_OWN: [[bool; 3]; 4] = [
 /// Founders dealt the scavenger diet start with this layer, % of depth (the `min_y`/`max_y`
 /// genes): in the deep, where rot will settle. A start condition, not a rule — the genes mutate.
 pub const SCAVENGER_START_LAYER: (f64, f64) = (50.0, 100.0);
+/// Founders dealt a meat diet (scavenger, carnivore) start this many times bigger. Equal to the
+/// others they had no prey (a hunter takes prey `prey_ratio` ≈ 3 times smaller, and newborns are
+/// half grown) and starved by tick ~400 without a single strike. A start condition: the gene
+/// mutates.
+pub const MEAT_FOUNDER_SIZE: f64 = 2.0;
 /// Digestibility by diet (order of `genome::creature::DIET_VARIANTS`): plants, fresh meat,
 /// rot. For plants 1 is the world's yield `plant_bite_yield`; for meat it is the whole raw
 /// portion — the diet alone decides how much of it is taken in (the old flat 10% fed a hunter
 /// less for a whole corpse than one plant). 0 means the creature neither eats that food nor
 /// goes for it. A specialist digests its own food fully; the
 /// omnivore takes everything, but worse; rot feeds well only the scavenger, the others barely.
+/// Meat-eaters get a little from plants (not their own food: they eat it only when hungry), so a
+/// line of them is not starved out before it finds meat.
 /// A piece of a rotting corpse is a mix: fresh and rot by the corpse's rot share.
 pub const DIET_DIGESTION: [[f64; 3]; 4] = [
     [1.0, 0.0, 0.0],  // травоядный
     [0.7, 0.3, 0.05], // всеядный
-    [0.0, 0.8, 0.9],  // падальщик
-    [0.0, 1.0, 0.1],  // мясоед
+    [0.15, 0.8, 0.9], // падальщик
+    [0.2, 1.0, 0.1],  // мясоед
 ];
-/// Founders' diets, shares in the same order. Dealt without a draw.
-pub const DIET_START_MIX: [f64; 4] = [55.0, 25.0, 10.0, 10.0];
+/// Founders' diets, shares in the same order. Dealt without a draw. No meat eaters: at the start
+/// there are neither corpses nor prey small enough, and every such founder starved (none struck
+/// once in the user's world, 2026-09-27); the meat diets arise from mutants
+/// (`DIET_MEAT_STEP_CHANCE`).
+pub const DIET_START_MIX: [f64; 4] = [70.0, 30.0, 0.0, 0.0];
 
 /// A creature eating stops at this share of its reach from the food's centre (a plant is reached
 /// within one body diameter, a corpse within that plus its radius) instead of walking onto it:
@@ -238,22 +267,24 @@ pub const EAT_STOP_SHARE: f64 = 0.85;
 // ── Трупы ───────────────────────────────────────────────────────────────────
 /// A corpse stays fresh this long and lies where the creature died.
 pub const CORPSE_FRESH_TICKS: u64 = 150;
-/// By then it is fully rotten and has sunk to the bottom: rot share and depth follow one smooth
-/// step from the fresh time to this one.
+/// By then it is fully rotten: the rot share follows a smooth step from the fresh time to this one.
 pub const CORPSE_ROTTEN_TICKS: u64 = 600;
+/// After the fresh time it sinks this far a tick, straight down, and can be eaten all the way. A
+/// speed, not a time to the bottom: with a time, a corpse in a world 15 500 deep (×20, 2:1) fell
+/// 10‒15 a tick, as fast as a scavenger swims, and the scavengers never caught one. At 2 a fifth of
+/// a base creature's speed, in a world of any height; in a tall one a corpse may decay on the way.
+pub const CORPSE_SINK_SPEED: f64 = 2.0;
 /// What is left disappears by then; the store decays evenly over the whole time, so a corpse
-/// reaching the bottom untouched still holds two thirds of its meat for the scavengers.
+/// reaching its resting place untouched still holds a third of its meat for the scavengers.
 pub const CORPSE_DECAY_TICKS: u64 = 1800;
-/// Rot lies in this lowest share of the depth, %: the bottom, where no plants grow.
-pub const CORPSE_BOTTOM_PCT: f64 = 2.0;
+/// Rot and skeletons rest in this lowest share of the depth, %, each at its own place (a hash of
+/// the id): spread over the dead deep, not a line on the bottom (at 2% it was a thin strip).
+pub const CORPSE_REST_PCT: f64 = 25.0;
 /// A corpse eaten down to this share of its meat becomes a skeleton: bones and scraps, rot from
-/// the start, that sink to the deep. The hunters' last tenth feeds the scavengers.
+/// the start, that sink to the corpse's resting place. The hunters' last tenth feeds the scavengers.
 pub const CORPSE_SKELETON_SHARE: f64 = 0.1;
-/// Skeletons settle in this lowest share of the depth, %: near the bottom, spread over the dead
-/// deep rather than all on it.
-pub const SKELETON_ZONE_PCT: f64 = 15.0;
-/// A skeleton sinks to its place in this many ticks,
-pub const SKELETON_SINK_TICKS: u64 = 300;
+/// A skeleton sinks to its place this far a tick: bones are heavier than a whole corpse,
+pub const SKELETON_SINK_SPEED: f64 = 4.0;
 /// and what is left of it decays evenly over this many ticks from the moment it was stripped.
 pub const SKELETON_TICKS: u64 = 1800;
 

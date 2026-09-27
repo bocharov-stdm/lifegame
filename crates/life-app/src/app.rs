@@ -61,6 +61,8 @@ pub struct LifeApp {
     // ── состояние интерфейса ────────────────────────────────────────────────
     pub side_open: bool,
     pub side_tab: SideTab,
+    /// Which diets have their details open on the panel, in `Diet` order.
+    pub diet_open: [bool; 4],
     /// Показывать ли тела и окружение мира; история и карточка обновляются всегда.
     pub render_world: bool,
     pub lab_open: bool,
@@ -123,9 +125,10 @@ impl LifeApp {
             log: Vec::new(),
             side_open: true,
             side_tab: SideTab::Charts,
+            diet_open: [false; 4],
             render_world: true,
             lab_open: false,
-            lab_tab: Tab::Lab,
+            lab_tab: Tab::Food,
             lab_reset_selected: HashSet::new(),
             stats_open: false,
             stats_tab: StatsTab::Energy,

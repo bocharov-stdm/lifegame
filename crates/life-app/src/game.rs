@@ -28,18 +28,6 @@ fn speed_label(index: usize) -> String {
     }
 }
 
-fn lab_group(field: &settings::Field) -> &'static str {
-    use settings::Key;
-    if field.tab == Tab::Food {
-        return "Распределение растений";
-    }
-    match field.key {
-        Key::MeleeDamage | Key::MeleeSizePower | Key::ShotDamage | Key::ShotCost | Key::ShotPeriod => "Бой",
-        Key::MutationSigma => "Эволюция",
-        _ => "Питание и энергия",
-    }
-}
-
 /// What the world eats and how it hunts in the last snapshot: diet shares in %, the median prey
 /// size ratio and the share of shooters in %.
 pub(crate) fn predator_summary(history: &History) -> Option<([f64; 4], f64, f64)> {
@@ -72,6 +60,13 @@ pub fn report_command(cfg: &WorldConfig, ticks: u64) -> String {
     if !cfg.strategies.is_empty() {
         let shares: Vec<String> = cfg.strategies.iter().map(|s| s.to_string()).collect();
         cmd += &format!(" --mix {}", shares.join(" "));
+    }
+    if cfg.diets != base.diets {
+        let shares: Vec<String> = cfg.diets.iter().map(|s| s.to_string()).collect();
+        cmd += &format!(" --diet-mix {}", shares.join(" "));
+    }
+    if cfg.meat_founder_size != base.meat_founder_size {
+        cmd += &format!(" --meat-founders {}", cfg.meat_founder_size);
     }
     let default = Rules::default();
     for key in life_core::rules::RULE_KEYS {
@@ -320,7 +315,12 @@ impl LifeApp {
             if self.view.area.is_some() && ui.button("Убрать рамку").on_hover_text("Снять область (Esc)").clicked() {
                 self.clear_region();
             }
-            if ui.toggle_value(&mut self.flock_colors, "Стаи").on_hover_text("Области вокруг центров стай; цвет и число участников").changed() {
+            if life_core::config::FLOCKS
+                && ui
+                    .toggle_value(&mut self.flock_colors, "Стаи")
+                    .on_hover_text("Показать круги стай и раскрасить существ по стаям")
+                    .changed()
+            {
                 self.sim.send(Command::FlockColors(self.flock_colors));
             }
             let was_rendering = self.render_world;
@@ -358,7 +358,11 @@ impl LifeApp {
 
     fn side_panel(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing.y = 4.0;
-        self.predator_status(ui);
+        // the charts tab lists the diets itself; the other tabs keep one line of them in sight
+        if self.side_tab != SideTab::Charts {
+            self.diets_line(ui);
+            self.highlight_toggles(ui);
+        }
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.side_tab, SideTab::Charts, "Графики");
             ui.selectable_value(&mut self.side_tab, SideTab::Log, "Хроника");
@@ -372,54 +376,60 @@ impl LifeApp {
         }
     }
 
-    pub(crate) fn predator_status(&self, ui: &mut egui::Ui) {
-        if let Some((diets, ratio, shooters)) = predator_summary(&self.history) {
-            ui.label(format!(
-                "Питание: травоядные {:.0}% · всеядные {:.0}% · падальщики {:.0}% · мясоеды {:.0}% · добыча ≤ 1/{ratio:.1}",
-                diets[0], diets[1], diets[2], diets[3]
-            ))
-            .on_hover_text(
-                "Питание и предел размера добычи наследуются каждым существом. Охотятся и пугают \
-                 других только те, кто ест свежее мясо.",
-            );
-            ui.colored_label(
-                rgb(CREATURE_COLOR),
-                format!(
-                    "Стрелков {shooters:.1}% · выстрелов за 10 000 тиков {}",
+    /// Hunting, shooting and flocks: minor facts, folded away.
+    fn other_facts(&self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Прочее").default_open(false).show(ui, |ui| {
+            if let Some((_, ratio, shooters)) = predator_summary(&self.history) {
+                ui.label(format!("Охотятся на тех, кто мельче хотя бы в {ratio:.1} раза")).on_hover_text(
+                    "Медиана по всем: этот ген есть у каждого, но работает только у тех, кто ест свежее мясо.",
+                );
+                ui.label(format!(
+                    "Умеют стрелять {shooters:.1}% · выстрелов за 10 000 тиков {}",
                     spaced(self.history.shots_in_window())
-                ),
-            );
-        }
+                ))
+                .on_hover_text("Выстрел слабее удара вблизи и дорого стоит, поэтому стрелков мало.");
+            }
+            if let Some(s) = self.history.snapshots.points().last()
+                && life_core::config::FLOCKS
+            {
+                ui.label(format!(
+                    "Стайный ген: {} ({:.0}%) · в стаях: {} · стай: {}",
+                    spaced(s.pack_carriers as u64),
+                    s.pack_share * 100.0,
+                    spaced(s.pack_members as u64),
+                    s.flocks
+                ));
+            }
+        });
     }
 
     fn charts_tab(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().show(ui, |ui| {
+            self.diets_block(ui);
+            ui.add_space(6.0);
+            ui.label(RichText::new("Численность").strong().color(ACCENT)).on_hover_text(
+                "Растения — в своей шкале, питания — в одной общей, чтобы их можно было сравнивать. \
+                 Наведите на график — под ним будут числа в этой точке.",
+            );
             ui.colored_label(MUTED, "Последние 10 000 тиков");
-            ui.label(RichText::new("Численность").strong().color(ACCENT));
             charts::populations(ui, &self.history, 112.0);
-            if let Some(s) = self.history.snapshots.points().last() {
+            ui.add_space(4.0);
+            self.kills_table(ui);
+            egui::CollapsingHeader::new("Геном всех существ").default_open(false).show(ui, |ui| {
                 ui.colored_label(
                     MUTED,
-                    format!(
-                        "Стайный ген: {} ({:.0}%) · в стаях: {} · стай: {}",
-                        spaced(s.pack_carriers as u64),
-                        s.pack_share * 100.0,
-                        spaced(s.pack_members as u64),
-                        s.flocks
-                    ),
+                    "Линия — медиана, полоса — где 80% существ. Справа — сейчас и изменение за окно.",
                 );
-            }
-            ui.add_space(4.0);
-            ui.label(RichText::new("Геном существ").strong());
-            let snaps = self.history.snapshots.points();
-            let points: Vec<charts::GenePoint> =
-                snaps.iter().filter_map(|s| Some((s.tick, &s.genes.as_ref()?[..]))).collect();
-            if points.is_empty() {
-                ui.colored_label(MUTED, "существ нет — нет и генома");
-            } else {
-                charts::genome(ui, &creature::GENES, &points, rgb(CREATURE_COLOR), 23.0);
-            }
-            ui.add_space(4.0);
+                let snaps = self.history.snapshots.points();
+                let points: Vec<charts::GenePoint> =
+                    snaps.iter().filter_map(|s| Some((s.tick, &s.genes.as_ref()?[..]))).collect();
+                if points.is_empty() {
+                    ui.colored_label(MUTED, "существ нет — нет и генома");
+                } else {
+                    charts::genome(ui, &creature::GENES, &points, rgb(CREATURE_COLOR), 23.0);
+                }
+            });
+            self.other_facts(ui);
             self.research(ui);
         });
     }
@@ -523,12 +533,13 @@ impl LifeApp {
             }
             return;
         }
-        let Some(s) = self.view.frame.as_ref().and_then(|f| f.selected) else {
+        let Some((s, rules)) = self.view.frame.as_ref().and_then(|f| Some((f.selected?, f.rules.clone())))
+        else {
             ui.colored_label(MUTED, "Никто не выбран. Кликните по существу в мире.");
             return;
         };
         let avg = self.history.counts.last().and_then(|p| p.genom);
-        creature_card(ui, &s, avg);
+        creature_card(ui, &s, avg, &rules);
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             let following = self.view.following();
@@ -560,70 +571,88 @@ impl LifeApp {
             .default_width(410.0)
             .default_pos(ctx.content_rect().right_top() + Vec2::new(-440.0, 55.0))
             .show(ctx, |ui| {
-                ui.set_width(410.0);
-                ui.spacing_mut().slider_width = 140.0;
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.lab_tab, Tab::Lab, "Правила");
-                    ui.selectable_value(&mut self.lab_tab, Tab::Food, "Еда");
+                // the body's formula stands beside its fields: the window widens for it
+                let body = self.lab_tab == Tab::Body;
+                let diets = self.lab_tab == Tab::Diets;
+                ui.set_width(if body {
+                    740.0
+                } else if diets {
+                    660.0
+                } else {
+                    410.0
+                });
+                ui.horizontal_wrapped(|ui| {
+                    for (tab, name) in Tab::RULES {
+                        ui.selectable_value(&mut self.lab_tab, tab, name);
+                    }
                 });
                 let food = self.lab_tab == Tab::Food;
                 ui.add(
                     egui::Label::new(
-                        RichText::new("Правила действуют после «Применить». Гены существ не меняются.")
-                            .color(MUTED),
+                        RichText::new(
+                            "Правила действуют после «Применить»; гены существ не меняются. Наведите на \
+                             название — что это и в каких пределах; справа — значение по умолчанию.",
+                        )
+                        .color(MUTED),
                     )
                     .wrap(),
                 );
                 let default = settings::Settings::default();
                 let height = (ctx.content_rect().height() - 210.0).clamp(220.0, 520.0);
                 egui::ScrollArea::vertical().max_height(height).show(ui, |ui| {
-                    let groups: &[&str] = if food {
-                        &["Распределение растений"]
-                    } else {
-                        &["Питание и энергия", "Бой", "Эволюция"]
-                    };
-                    for &group in groups {
+                    if diets {
                         ui.add_space(5.0);
-                        ui.label(RichText::new(group).strong().color(ACCENT));
-                        egui::Grid::new(("правила лаборатории", group))
-                            .num_columns(4)
-                            .spacing([7.0, 4.0])
-                            .show(ui, |ui| {
-                                for f in FIELDS.iter().filter(|f| f.live() && lab_group(f) == group) {
-                                    if !(f.shown)(&self.lab) {
-                                        continue;
-                                    }
-                                    let mut marked = self.lab_reset_selected.contains(&f.key);
-                                    if ui
-                                        .checkbox(&mut marked, "")
-                                        .on_hover_text("Отметить для общего сброса")
-                                        .changed()
-                                    {
-                                        if marked {
-                                            self.lab_reset_selected.insert(f.key);
-                                        } else {
+                        crate::screens::diet_table(ui, &mut self.lab);
+                        return;
+                    }
+                    ui.horizontal_top(|ui| {
+                        ui.vertical(|ui| {
+                            ui.add_space(5.0);
+                            egui::Grid::new(("правила лаборатории", self.lab_tab as u8))
+                                .num_columns(5)
+                                .spacing([7.0, 4.0])
+                                .show(ui, |ui| {
+                                    for f in FIELDS.iter().filter(|f| f.live() && f.tab == self.lab_tab) {
+                                        if !(f.visible)(&self.lab) {
+                                            continue;
+                                        }
+                                        let mut marked = self.lab_reset_selected.contains(&f.key);
+                                        if ui
+                                            .checkbox(&mut marked, "")
+                                            .on_hover_text("Отметить для общего сброса")
+                                            .changed()
+                                        {
+                                            if marked {
+                                                self.lab_reset_selected.insert(f.key);
+                                            } else {
+                                                self.lab_reset_selected.remove(&f.key);
+                                            }
+                                        }
+                                        ui.label(f.label).on_hover_text(crate::screens::field_hint(f));
+                                        let mut v = self.lab.get(f.key);
+                                        if crate::screens::field_input(ui, f, &mut v) {
+                                            self.lab.set(f.key, v);
+                                        }
+                                        crate::screens::base_value(ui, f, &default);
+                                        if self.lab.is_default(f.key) {
+                                            ui.label("");
+                                        } else if ui
+                                            .small_button("↺")
+                                            .on_hover_text("Вернуть исходное значение")
+                                            .clicked()
+                                        {
+                                            self.lab.set(f.key, default.get(f.key));
                                             self.lab_reset_selected.remove(&f.key);
                                         }
+                                        ui.end_row();
                                     }
-                                    ui.label(f.label).on_hover_text(f.hint);
-                                    let mut v = self.lab.get(f.key);
-                                    if crate::screens::field_input(ui, f, &mut v) {
-                                        self.lab.set(f.key, v);
-                                    }
-                                    if self.lab.is_default(f.key) {
-                                        ui.label("");
-                                    } else if ui
-                                        .small_button("↺")
-                                        .on_hover_text("Вернуть исходное значение")
-                                        .clicked()
-                                    {
-                                        self.lab.set(f.key, default.get(f.key));
-                                        self.lab_reset_selected.remove(&f.key);
-                                    }
-                                    ui.end_row();
-                                }
-                            });
-                    }
+                                });
+                        });
+                        if body {
+                            ui.add_space(8.0);
+                            crate::screens::body_formula(ui, &self.lab);
+                        }
+                    });
                     if food {
                         ui.add_space(6.0);
                         crate::screens::food_preview(ui, &self.lab.rules(), space, seed);
@@ -695,7 +724,7 @@ impl LifeApp {
 }
 
 /// Карточка выбранного существа: энергия, гены.
-fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; N]>) {
+fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; N]>, rules: &Rules) {
     let color = rgb(CREATURE_COLOR);
     ui.horizontal(|ui| {
         ui.label(RichText::new("●").color(color).size(18.0));
@@ -720,7 +749,7 @@ fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; N]>) {
         ),
     )
     .on_hover_text(diet.about);
-    ui.colored_label(MUTED, diet_bonuses(s.genome[creature::Gene::Diet as usize]));
+    ui.colored_label(MUTED, diet_bonuses(s.genome[creature::Gene::Diet as usize], rules));
     if let Some(food) = s.eating {
         use life_core::creature::Morsel;
         ui.colored_label(
@@ -779,30 +808,35 @@ fn gene_rows(ui: &mut egui::Ui, genes: &[GeneSpec], g: &[f64], avg: Option<&[f64
 }
 
 /// A diet's edges, from the engine's tables: «удар ×1,5 · скорость дешевле на 20%».
-fn diet_bonuses(gene: f64) -> String {
-    use life_core::config::{
-        DIET_DEEP_SAVING, DIET_HEALTH, DIET_SIZE_COST, DIET_SMELL, DIET_SPEED_COST, DIET_STRIKE,
+/// A diet's edges in the world's current rules (the lab may have changed them).
+fn diet_bonuses(gene: f64, rules: &Rules) -> String {
+    let e = &rules.diets[(gene.max(0.0) as usize).min(3)];
+    let times = |x: f64| format!("{}", (x * 100.0).round() / 100.0).replace('.', ",");
+    let cheaper = |name: &str, x: f64| {
+        if x < 1.0 {
+            format!("{name} дешевле на {:.0}%", (1.0 - x) * 100.0)
+        } else {
+            format!("{name} дороже на {:.0}%", (x - 1.0) * 100.0)
+        }
     };
-    let d = (gene.max(0.0) as usize).min(3);
-    let times = |x: f64| format!("{x}").replace('.', ",");
     let mut parts = Vec::new();
-    if DIET_STRIKE[d] != 1.0 {
-        parts.push(format!("удар ×{}", times(DIET_STRIKE[d])));
+    if e.strike != 1.0 {
+        parts.push(format!("удар ×{}", times(e.strike)));
     }
-    if DIET_HEALTH[d] != 1.0 {
-        parts.push(format!("здоровье ×{}", times(DIET_HEALTH[d])));
+    if e.health != 1.0 {
+        parts.push(format!("здоровье ×{}", times(e.health)));
     }
-    if DIET_SIZE_COST[d] != 1.0 {
-        parts.push(format!("размер дешевле на {:.0}%", (1.0 - DIET_SIZE_COST[d]) * 100.0));
+    if e.size_upkeep != 1.0 {
+        parts.push(cheaper("размер", e.size_upkeep));
     }
-    if DIET_SPEED_COST[d] != 1.0 {
-        parts.push(format!("скорость дешевле на {:.0}%", (1.0 - DIET_SPEED_COST[d]) * 100.0));
+    if e.speed_upkeep != 1.0 {
+        parts.push(cheaper("скорость", e.speed_upkeep));
     }
-    if DIET_SMELL[d] != 1.0 {
-        parts.push(format!("нюх ×{}", times(DIET_SMELL[d])));
+    if e.smell != 1.0 {
+        parts.push(format!("нюх ×{}", times(e.smell)));
     }
-    if DIET_DEEP_SAVING[d] != 0.0 {
-        parts.push(format!("в глубине расход до −{:.0}%", DIET_DEEP_SAVING[d] * 100.0));
+    if e.deep_saving != 0.0 {
+        parts.push(format!("в глубине расход до −{:.0}%", e.deep_saving * 100.0));
     }
     if parts.is_empty() { "без особых сил".into() } else { parts.join(" · ") }
 }

@@ -10,7 +10,7 @@ use life_core::{Rules, Shape, Space};
 
 use crate::app::{LifeApp, Screen};
 use crate::frame::PLANT_COLOR;
-use crate::settings::{FIELDS, Field, PRESETS, SEED_MAX, Settings, Tab, UI_SCALES};
+use crate::settings::{DIET_ROWS, FIELDS, Field, Key, PRESETS, SEED_MAX, Settings, Tab, UI_SCALES, field};
 use crate::theme::{self, ACCENT, BG, DANGER, GOOD, MUTED, VEIL, spaced};
 
 /// Оценка большого мира: сколько существ на старте и как быстро пойдёт тик.
@@ -110,10 +110,8 @@ impl LifeApp {
                     ui.set_max_width(760.0);
                     ui.label(RichText::new("Новый мир").size(26.0).strong());
                     ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        for (tab, name) in
-                            [(Tab::World, "Мир"), (Tab::Food, "Еда"), (Tab::Lab, "Лаборатория")]
-                        {
+                    ui.horizontal_wrapped(|ui| {
+                        for (tab, name) in std::iter::once((Tab::World, "Мир")).chain(Tab::RULES) {
                             ui.selectable_value(&mut self.setup_tab, tab, RichText::new(name).size(16.0));
                         }
                     });
@@ -121,29 +119,30 @@ impl LifeApp {
                     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                         match self.setup_tab {
                             Tab::World => self.world_tab(ui, measured),
-                            Tab::Food => {
+                            _ => {
                                 ui.colored_label(
                                     MUTED,
-                                    "Где растут растения. Это правила мира: их можно менять и посреди \
-                                     партии — панелью «Лаборатория».",
-                                );
-                                ui.add_space(4.0);
-                            }
-                            Tab::Lab => {
-                                ui.colored_label(
-                                    MUTED,
-                                    "Правила мира. Их можно менять и посреди партии — панелью «Лаборатория».",
+                                    "Правила мира. Их можно менять и посреди партии — окном «Лаборатория». \
+                                     Наведите на название, чтобы узнать, что это; справа — значение по умолчанию.",
                                 );
                                 ui.add_space(4.0);
                             }
                         }
-                        if self.setup_tab == Tab::Food {
+                        if self.setup_tab == Tab::Body {
+                            ui.horizontal_top(|ui| {
+                                ui.vertical(|ui| fields(ui, &mut self.settings, Tab::Body));
+                                ui.add_space(12.0);
+                                body_formula(ui, &self.settings);
+                            });
+                        } else if self.setup_tab == Tab::Food {
                             let space = Space::new(self.settings.scale, self.settings.shape);
                             ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| fields(ui, &mut self.settings, Tab::Food));
                                 ui.add_space(12.0);
                                 food_preview(ui, &self.settings.rules(), space, self.settings.seed);
                             });
+                        } else if self.setup_tab == Tab::Diets {
+                            diet_table(ui, &mut self.settings);
                         } else {
                             fields(ui, &mut self.settings, self.setup_tab);
                         }
@@ -331,9 +330,21 @@ fn ui_scale_label(v: f64) -> String {
 /// список. true — значение изменилось.
 pub fn field_input(ui: &mut egui::Ui, f: &Field, value: &mut f64) -> bool {
     if f.choices.is_empty() {
-        let slider =
-            egui::Slider::new(value, f.lo..=f.hi).step_by(f.step).custom_formatter(|v, _| (f.format)(v));
-        return ui.add(slider).on_hover_text(f.hint).changed();
+        // typed or dragged, the value stays inside the field's hard limits
+        let mut shown = *value * f.shown;
+        let response = ui
+            .add(
+                egui::DragValue::new(&mut shown)
+                    .range(f.lo * f.shown..=f.hi * f.shown)
+                    .speed(f.step * f.shown)
+                    .fixed_decimals(f.decimals)
+                    .suffix(f.unit),
+            )
+            .on_hover_text(field_hint(f));
+        if response.changed() {
+            *value = shown / f.shown;
+        }
+        return response.changed();
     }
     let mut k = (*value as usize).min(f.choices.len() - 1);
     let before = k;
@@ -349,6 +360,20 @@ pub fn field_input(ui: &mut egui::Ui, f: &Field, value: &mut f64) -> bool {
         .on_hover_text(f.hint);
     *value = k as f64;
     k != before
+}
+
+/// A field's hint with its limits: «…\n\nМожно от 0,04 до 20. Больше 50 в тик — …».
+pub fn field_hint(f: &Field) -> String {
+    if !f.choices.is_empty() {
+        return f.hint.to_string();
+    }
+    let why = if f.limit.is_empty() { String::new() } else { format!(" {}", f.limit) };
+    format!(
+        "{}\n\nМожно от {} до {}.{why} Тяните мышью или щёлкните дважды и впишите число.",
+        f.hint,
+        (f.format)(f.lo),
+        (f.format)(f.hi)
+    )
 }
 
 /// Patches the preview still draws: more would be specks of a pixel.
@@ -428,20 +453,23 @@ pub fn food_preview(ui: &mut egui::Ui, rules: &Rules, space: Space, seed: u64) {
 
 /// Поля одной вкладки по таблице `FIELDS` — те, что сейчас видны.
 fn fields(ui: &mut egui::Ui, s: &mut Settings, tab: Tab) {
-    egui::Grid::new(("поля", tab as u8)).num_columns(3).spacing([12.0, 10.0]).show(ui, |ui| {
+    let default = Settings::default();
+    egui::Grid::new(("поля", tab as u8)).num_columns(4).spacing([12.0, 8.0]).show(ui, |ui| {
         for f in FIELDS.iter().filter(|f| f.tab == tab) {
-            if !(f.shown)(s) {
+            if !(f.visible)(s) {
                 continue;
             }
-            ui.label(f.label).on_hover_text(f.hint);
+            ui.label(f.label).on_hover_text(field_hint(f));
             let mut v = s.get(f.key);
             if field_input(ui, f, &mut v) {
                 s.set(f.key, v);
             }
+            base_value(ui, f, &default);
             if s.is_default(f.key) {
                 ui.label("");
-            } else if ui.small_button("↺").on_hover_text("По умолчанию").clicked() {
-                s.set(f.key, Settings::default().get(f.key));
+            } else if ui.small_button("↺").on_hover_text("Вернуть значение по умолчанию").clicked()
+            {
+                s.set(f.key, default.get(f.key));
             }
             ui.end_row();
         }
@@ -449,9 +477,147 @@ fn fields(ui: &mut egui::Ui, s: &mut Settings, tab: Tab) {
     if tab == Tab::World {
         ui.colored_label(
             MUTED,
-            "Численность и рост растений — на участок 6000×4000: в большом мире всё в той же плотности.",
+            "Численность и плотность энергии — на участок 6000×4000: в большом мире всё в той же плотности.",
         );
     }
+}
+
+/// The «Питание» tab: a row per edge, a column per diet, the bases of the row beside it. Hover a
+/// row's name for what it means, a cell for its limits.
+pub fn diet_table(ui: &mut egui::Ui, s: &mut Settings) {
+    let default = Settings::default();
+    let cell = |d: usize, e: usize| Key::Diet(d as u8, e as u8);
+    ui.colored_label(
+        MUTED,
+        "Сильные стороны каждого питания. Доли усвоения не больше 100%: энергия берётся только из растений \
+         и дальше лишь переходит по цепочке.",
+    );
+    ui.add_space(4.0);
+    egui::Grid::new("бонусы питаний").num_columns(7).spacing([8.0, 6.0]).striped(true).show(ui, |ui| {
+        ui.label("");
+        for d in 0..4 {
+            let [r, g, b] = theme::DIET_COLORS[d];
+            ui.colored_label(egui::Color32::from_rgb(r, g, b), theme::DIET_NAMES[d])
+                .on_hover_text(theme::DIET_HINTS[d]);
+        }
+        ui.colored_label(MUTED, "база").on_hover_text("Значения по умолчанию, по порядку столбцов");
+        ui.label("");
+        ui.end_row();
+        for (e, (label, hint)) in DIET_ROWS.iter().enumerate() {
+            ui.label(*label).on_hover_text(*hint);
+            for d in 0..4 {
+                let f = field(cell(d, e));
+                let mut v = s.get(f.key);
+                if field_input(ui, f, &mut v) {
+                    s.set(f.key, v);
+                }
+            }
+            let bases: Vec<String> =
+                (0..4).map(|d| (field(cell(d, e)).format)(default.get(cell(d, e)))).collect();
+            ui.colored_label(MUTED, bases.join(" · "));
+            if (0..4).all(|d| s.is_default(cell(d, e))) {
+                ui.label("");
+            } else if ui.small_button("↺").on_hover_text("Вернуть строку по умолчанию").clicked()
+            {
+                for d in 0..4 {
+                    s.set(cell(d, e), default.get(cell(d, e)));
+                }
+            }
+            ui.end_row();
+        }
+    });
+}
+
+/// «база 2.5»: the default value, muted, beside the input.
+pub fn base_value(ui: &mut egui::Ui, f: &Field, default: &Settings) {
+    let base = if f.choices.is_empty() {
+        (f.format)(default.get(f.key))
+    } else {
+        f.choices[(default.get(f.key) as usize).min(f.choices.len() - 1)].to_string()
+    };
+    ui.colored_label(MUTED, format!("база {base}")).on_hover_text("Значение по умолчанию");
+}
+
+/// The body's upkeep in words and a chart: the formula with the rules' numbers, what a body twice
+/// the base costs, and each term's price against its stat.
+pub fn body_formula(ui: &mut egui::Ui, s: &Settings) {
+    let r = s.rules();
+    // what each term costs the base genome by config (the three are equal by design)
+    let base = life_core::config::SIZE_ENERGY_COEF * 40f64.powf(life_core::config::SIZE_ENERGY_POWER);
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.vertical(|ui| {
+            ui.set_width(300.0);
+            ui.label(RichText::new("Сколько стоит тело").strong());
+            ui.label("Каждый тик существо тратит энергию на своё тело:");
+            let formula = format!(
+                "трата = {:.2} × (
+    {:.3} × р^{:.2}
+  + {:.3} × с^{:.2} × р^{:.2}
+  + {:.3} × з^{:.2} )",
+                r.cost_scale,
+                base * r.size_cost,
+                r.size_power,
+                base * r.speed_cost,
+                r.speed_power,
+                r.speed_mass_power,
+                base * r.sight_cost,
+                r.sight_power,
+            );
+            ui.label(RichText::new(formula).monospace()).on_hover_text(
+                "р, с, з — размер, скорость и зрение в долях базовых (40, 10 и 400): у базового существа                  каждое равно 1, и каждое слагаемое стоит свою цену. Первое число — общая цена жизни,                  числа перед буквами — цены, степени — как быстро дорожает стат выше базового.                  Для сравнения: полный бак базового существа — 100.",
+            );
+            let twice = |power: f64| 2f64.powf(power);
+            ui.colored_label(
+                MUTED,
+                format!(
+                    "Базовое существо платит {:.3} в тик. Вдвое крупнее — тело дороже в {:.1} раза,                      вдвое быстрее — бег в {:.1}, вдвое зорче — зрение в {:.1}.",
+                    r.upkeep(40.0, 10.0, 400.0),
+                    twice(r.size_power),
+                    twice(r.speed_power),
+                    twice(r.sight_power)
+                ),
+            );
+            cost_chart(ui, [r.size_power, r.speed_power, r.sight_power]);
+        });
+    });
+}
+
+/// How each term's price grows with its stat, from half the base to three times it.
+fn cost_chart(ui: &mut egui::Ui, powers: [f64; 3]) {
+    let size = Vec2::new(ui.available_width().min(300.0), 90.0);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter_at(rect.expand(2.0));
+    painter.rect_stroke(rect, 3.0, egui::Stroke::new(1.0, theme::LINE), egui::StrokeKind::Inside);
+    let inner = rect.shrink(6.0);
+    let (x0, x1, top) = (0.5f64, 3.0f64, 10.0f64);
+    let at = |x: f64, y: f64| {
+        egui::pos2(
+            inner.left() + ((x - x0) / (x1 - x0)) as f32 * inner.width(),
+            inner.bottom() - (y.min(top) / top) as f32 * inner.height(),
+        )
+    };
+    // the base: stat 1, price 1
+    let grid = egui::Stroke::new(1.0, theme::LINE);
+    painter.line_segment([at(1.0, 0.0), at(1.0, top)], grid);
+    painter.line_segment([at(x0, 1.0), at(x1, 1.0)], grid);
+    let names = ["размер", "скорость", "зрение"];
+    let colors = [
+        egui::Color32::from_rgb(235, 170, 90),
+        egui::Color32::from_rgb(110, 190, 235),
+        egui::Color32::from_rgb(190, 140, 235),
+    ];
+    for (power, color) in powers.iter().zip(colors) {
+        let points: Vec<egui::Pos2> =
+            (0..=60).map(|i| x0 + (x1 - x0) * i as f64 / 60.0).map(|x| at(x, x.powf(*power))).collect();
+        painter.add(egui::Shape::line(points, egui::Stroke::new(1.6, color)));
+    }
+    ui.horizontal_wrapped(|ui| {
+        ui.colored_label(MUTED, "цена от стата (от 0,5 до 3 базовых, шкала до ×10):")
+            .on_hover_text("Серый крест — базовое существо: стат 1, цена 1.");
+        for (name, color) in names.iter().zip(colors) {
+            ui.colored_label(color, *name);
+        }
+    });
 }
 
 #[cfg(test)]
@@ -460,7 +626,7 @@ mod tests {
 
     #[test]
     fn оценка_растёт_с_масштабом() {
-        let small = Settings::default();
+        let small = Settings { scale: 1.0, ..Default::default() };
         let big = Settings { scale: 1000.0, ..Default::default() };
         let (a, ca) = estimate(&small, Some((0.5, 1.0)));
         let (b, cb) = estimate(&big, Some((0.5, 1.0)));

@@ -75,6 +75,9 @@ struct Args {
     /// По умолчанию 55 25 10 10; `--diet-mix 1` — все травоядные.
     #[arg(long, num_args = 1.., value_name = "ДОЛИ")]
     diet_mix: Vec<f64>,
+    /// How many times bigger the meat-eating founders (scavengers, carnivores) start; default 2.
+    #[arg(long, value_name = "РАЗ")]
+    meat_founders: Option<f64>,
     /// Правило мира: имя=число (можно несколько раз). Профиль еды — и именем:
     /// `--rule plant_width_profile=waves`.
     #[arg(long = "rule", value_name = "ИМЯ=ЧИСЛО")]
@@ -185,7 +188,11 @@ fn main() {
         n_creatures: args.creatures,
         strategies: args.mix.clone(),
         diets: if args.diet_mix.is_empty() { WorldConfig::default().diets } else { args.diet_mix.clone() },
+        meat_founder_size: args.meat_founders.unwrap_or(WorldConfig::default().meat_founder_size),
     };
+    if !(base_cfg.meat_founder_size.is_finite() && base_cfg.meat_founder_size > 0.0) {
+        fail("--meat-founders: нужно число больше нуля".into());
+    }
 
     let reference = args.compare.as_ref().map(|path| {
         metrics::Reference::load(path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())))

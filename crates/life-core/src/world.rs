@@ -12,7 +12,7 @@
 
 use crate::config::*;
 use crate::creature::strategy as creature_strategy;
-use crate::creature::{Creature, Meal, Morsel};
+use crate::creature::{Creature, Diet, Meal, Morsel};
 use crate::flora::Flora;
 use crate::genome::{CreatureGenome, creature, variant_for};
 use crate::grid::Grid;
@@ -39,6 +39,8 @@ pub struct WorldConfig {
     /// Founders' diets: shares in the order of `DIET_VARIANTS` (empty — all herbivores).
     /// Dealt without a draw and spread over the founders (`spread_ranks`).
     pub diets: Vec<f64>,
+    /// How many times bigger the meat-eating founders start (`config::MEAT_FOUNDER_SIZE`).
+    pub meat_founder_size: f64,
 }
 
 impl Default for WorldConfig {
@@ -51,6 +53,7 @@ impl Default for WorldConfig {
             n_creatures: None,
             strategies: Vec::new(),
             diets: DIET_START_MIX.to_vec(),
+            meat_founder_size: MEAT_FOUNDER_SIZE,
         }
     }
 }
@@ -104,6 +107,37 @@ pub struct Counters {
     pub corpses_bottom: u64,
     pub skeletons: u64,
     pub corpse_ticks: u64,
+    /// The same flows split by diet, and who fights and kills whom.
+    pub by_diet: DietCounters,
+}
+
+/// Flows by diet: rows and columns in `Diet` order (herbivore, omnivore, scavenger, carnivore).
+/// Bookkeeping only: nothing in the world reads it back.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DietCounters {
+    /// Children born, by the child's diet.
+    pub born: [u64; 4],
+    /// Deaths by the dead one's diet and cause, in `Death` order: starved, old age, combat.
+    pub deaths: [[u64; 3]; 4],
+    /// Melee strikes and shots, by the striker's diet (row) on the target's diet (column).
+    pub strikes: [[u64; 4]; 4],
+    /// Combat deaths by the killer's diet (row) and the victim's (column). Of several strikers in
+    /// the fatal tick the killer is the one who dealt the most damage.
+    pub kills: [[u64; 4]; 4],
+}
+
+impl DietCounters {
+    pub fn since(&self, earlier: &DietCounters) -> DietCounters {
+        let sub = |a: &[u64; 4], b: &[u64; 4]| std::array::from_fn(|k| a[k] - b[k]);
+        DietCounters {
+            born: sub(&self.born, &earlier.born),
+            deaths: std::array::from_fn(|d| {
+                std::array::from_fn(|k| self.deaths[d][k] - earlier.deaths[d][k])
+            }),
+            strikes: std::array::from_fn(|d| sub(&self.strikes[d], &earlier.strikes[d])),
+            kills: std::array::from_fn(|d| sub(&self.kills[d], &earlier.kills[d])),
+        }
+    }
 }
 
 impl Counters {
@@ -127,6 +161,7 @@ impl Counters {
             corpses_bottom: self.corpses_bottom - earlier.corpses_bottom,
             skeletons: self.skeletons - earlier.skeletons,
             corpse_ticks: self.corpse_ticks - earlier.corpse_ticks,
+            by_diet: self.by_diet.since(&earlier.by_diet),
         }
     }
 }
@@ -216,7 +251,7 @@ impl World {
             // and the flocks of a world were decided by that lottery. The draw stays, so the
             // founders' other draws are the same.
             let _ = founder.random();
-            let pack = i % 2 == 0;
+            let pack = FLOCKS && i % 2 == 0;
             let territory = founder.random();
             let shooter = founder.random() < 0.05;
             // Loners carry territoriality too: it acts only through a flock's circle, so for them
@@ -252,6 +287,12 @@ impl World {
                     .with(creature::Gene::MinY, top)
                     .with(creature::Gene::MaxY, bottom)
                     .with(creature::Gene::LayerBound, 0.0)
+            } else {
+                genome
+            };
+            // Meat-eating founders start bigger, so the first herbivores' children are their prey.
+            let genome = if matches!(Diet::ALL[diet], Diet::Scavenger | Diet::Carnivore) {
+                genome.with(creature::Gene::Size, genome[creature::Gene::Size] * cfg.meat_founder_size)
             } else {
                 genome
             };
@@ -387,11 +428,13 @@ impl World {
                 herd: Some(&*herd),
             });
             if !v.alive {
-                if v.death == Some(crate::creature::Death::OldAge) {
+                let death = v.death.unwrap_or(crate::creature::Death::Starved);
+                if death == crate::creature::Death::OldAge {
                     counters.old_age += 1;
                 } else {
                     counters.starved += 1;
                 }
+                counters.by_diet.deaths[v.pheno.diet as usize][death as usize] += 1;
                 continue; // умер от голода на этом ходу: не ест и не делится
             }
         }
@@ -501,7 +544,9 @@ impl World {
         }
         let before = corpses.len();
         corpses.extend(
-            creatures.iter().filter(|v| !v.alive).map(|v| crate::corpse::Corpse::from_creature(v, now)),
+            creatures.iter().filter(|v| !v.alive).map(|v| {
+                crate::corpse::Corpse::from_creature_in(v, now, crate::corpse::CorpseClock::of(rules))
+            }),
         );
         counters.corpses += (corpses.len() - before) as u64;
         creatures.retain(|v| v.alive);
@@ -512,6 +557,9 @@ impl World {
             p.alive()
         }); // выметаем съеденное
         counters.born += offspring.len() as u64;
+        for (child, _, _) in &offspring {
+            counters.by_diet.born[child.pheno.diet as usize] += 1;
+        }
         let mut transitions = Vec::new();
         for (child, former_flock, protect) in offspring {
             let separate = child.flock == 0;
@@ -724,6 +772,23 @@ mod trait_tests {
     use super::*;
     use crate::genome::creature::Gene;
 
+    /// The diet split adds up to the totals: every birth and death is counted once, under its
+    /// diet; combat deaths never outnumber the kills plus the deaths nobody struck hardest.
+    #[test]
+    fn diet_counters_add_up_to_the_totals() {
+        let cfg = WorldConfig { seed: 3, diets: vec![25.0; 4], ..Default::default() };
+        let mut w = World::new(&cfg);
+        for _ in 0..1500 {
+            w.step();
+        }
+        let (c, by) = (w.counters, w.counters.by_diet);
+        let deaths = |cause: usize| by.deaths.iter().map(|d| d[cause]).sum::<u64>();
+        assert_eq!(by.born.iter().sum::<u64>(), c.born);
+        assert_eq!((deaths(0), deaths(1), deaths(2)), (c.starved, c.old_age, c.combat));
+        assert_eq!(by.kills.iter().flatten().sum::<u64>(), c.combat, "every combat death has a killer");
+        assert!(c.combat > 0 && by.strikes.iter().flatten().sum::<u64>() >= c.combat);
+    }
+
     #[test]
     fn founders_deal_flock_kinds_evenly_and_free_a_quarter_of_layers() {
         let cfg = WorldConfig { seed: 17, n_creatures: Some(400), ..Default::default() };
@@ -763,9 +828,7 @@ mod trait_tests {
         let extended = World::new(&WorldConfig { n_creatures: Some(401), ..cfg });
         let mut modes = [0usize; 3];
         let mut shooters = 0;
-        for (i, ((a, b), c)) in
-            first.creatures.iter().zip(&again.creatures).zip(&extended.creatures).enumerate()
-        {
+        for ((a, b), c) in first.creatures.iter().zip(&again.creatures).zip(&extended.creatures) {
             assert_eq!(a.genome, b.genome);
             assert_eq!((a.x, a.y), (b.x, b.y));
             // An extra founder does not shift the independent draws.
@@ -773,7 +836,7 @@ mod trait_tests {
             assert_eq!(a.pheno.territoriality, c.pheno.territoriality);
             assert_eq!(a.pheno.shooter, c.pheno.shooter);
             assert_eq!((a.x, a.y), (c.x, c.y));
-            assert_eq!(a.pheno.pack_instinct, i % 2 == 0, "every other founder is flocking");
+            assert!(!a.pheno.pack_instinct, "flocks are off: every founder is a loner");
             shooters += a.pheno.shooter as usize;
             // loners carry territoriality too, as neutral variation
             modes[a.genome[Gene::Territoriality] as usize] += 1;

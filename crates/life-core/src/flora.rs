@@ -40,8 +40,8 @@
 use std::f64::consts::{PI, TAU};
 
 use crate::config::{
-    GAME_PLATEAU, GAME_SLOPE_END, GAME_SLOPE_LEVEL, PATCH_DARK_SIZE, PATCH_STRETCH, PATCH_WEIGHT_MIN,
-    PLANT_MAX, PLANT_RADIUS, PLANT_TOP_MARGIN_PCT, WORLD_HEIGHT, WORLD_WIDTH,
+    GAME_PLATEAU, PATCH_DARK_SIZE, PATCH_STRETCH, PATCH_WEIGHT_MIN, PLANT_MAX, PLANT_RADIUS,
+    PLANT_TOP_MARGIN_PCT, WORLD_HEIGHT, WORLD_WIDTH,
 };
 use crate::plant::Plant;
 use crate::rng::Rng;
@@ -60,8 +60,8 @@ pub enum Profile {
     Log,
     /// `1 − a·cos(2π·n·t)`: n богатых полос, пики — в серединах полос.
     Waves,
-    /// A rough real sea: full food down to `GAME_PLATEAU` of the axis, a straight slope to
-    /// `GAME_SLOPE_LEVEL` at `GAME_SLOPE_END`, then a cosine fall to a dead bottom. No parameters.
+    /// A rough real sea: full food down to `GAME_PLATEAU` of the axis, then `e^(−k·s)` over the
+    /// rest (`s` from 0 to 1 there, `k` the steepness): a nearly dead bottom.
     Game,
 }
 
@@ -221,17 +221,7 @@ impl FoodAxis {
                 let a = self.amplitude / 100.0;
                 (1.0 - a * (TAU * self.waves * t).cos()) / (1.0 + a)
             }
-            Profile::Game => {
-                if t <= GAME_PLATEAU {
-                    1.0
-                } else if t <= GAME_SLOPE_END {
-                    1.0 - (1.0 - GAME_SLOPE_LEVEL) * (t - GAME_PLATEAU) / (GAME_SLOPE_END - GAME_PLATEAU)
-                } else {
-                    GAME_SLOPE_LEVEL
-                        * 0.5
-                        * (1.0 + (PI * (t - GAME_SLOPE_END) / (1.0 - GAME_SLOPE_END)).cos())
-                }
-            }
+            Profile::Game => (-self.steepness * ((t - GAME_PLATEAU) / (1.0 - GAME_PLATEAU)).max(0.0)).exp(),
         }
     }
 
@@ -239,7 +229,13 @@ impl FoodAxis {
     pub fn describe(&self) -> String {
         let p = self.kind();
         match p {
-            Profile::Uniform | Profile::Game => p.label().into(),
+            Profile::Uniform => p.label().into(),
+            Profile::Game => format!(
+                "{}, ровно до {:.0}%, дальше крутизна {}",
+                p.label(),
+                GAME_PLATEAU * 100.0,
+                self.steepness
+            ),
             Profile::Linear => format!("{}, у дальнего края {:.0}%", p.label(), self.end),
             Profile::Exp => format!("{}, крутизна {}", p.label(), self.steepness),
             Profile::Log => format!("{}, изгиб {}", p.label(), self.bend),
@@ -669,7 +665,8 @@ mod tests {
         for _ in 0..10_000 {
             // прежний Plant::random
             let lambda = PLANT_DEPTH_DECAY / space.height;
-            let e_top = (-lambda * (PLANT_RADIUS + 200.0)).exp();
+            // the surface's dead zone was 200 then; the formula is the same with it at any width
+            let e_top = (-lambda * (PLANT_RADIUS + PLANT_TOP_MARGIN_PCT * space.height / 100.0)).exp();
             let e_bottom = (-lambda * (space.height - PLANT_RADIUS)).exp();
             let x = a.uniform(PLANT_RADIUS, space.width - PLANT_RADIUS);
             let u = a.random();
@@ -792,11 +789,11 @@ mod tests {
         }
     }
 
-    /// Предпросмотр: на мёртвой зоне ноль, у богатого края — единица.
+    /// Preview: full at the rich edge, right up to the surface (no dead zone there any more).
     #[test]
     fn плотность_для_предпросмотра_от_нуля_до_единицы() {
         let r = Rules::default();
-        assert_eq!(density(&r, 0.5, 0.01), 0.0);
+        assert_eq!(density(&r, 0.5, 0.0), 1.0);
         assert_eq!(density(&r, 0.5, 0.05), 1.0);
         let exp = rules(&[("plant_depth_profile", Profile::Exp.index())]);
         assert!((density(&exp, 0.5, 0.05) - (-8.0 * 0.05_f64).exp()).abs() < 1e-12);
@@ -812,7 +809,7 @@ mod tests {
     fn профиль_словами() {
         assert_eq!(
             describe(&Rules::default()),
-            "по глубине — игровое; по ширине — равномерно; заросли — 24 на участок 6000×4000, радиус ~200, в них 60% растений"
+            "по глубине — игровое, ровно до 20%, дальше крутизна 8; по ширине — равномерно; заросли — 24 на участок 6000×4000, радиус ~200, в них 60% растений"
         );
         assert_eq!(
             describe(&scattered(&rules(&[("plant_depth_profile", Profile::Exp.index())]))),
@@ -878,18 +875,17 @@ mod tests {
         for t in [0.0, 0.1, GAME_PLATEAU] {
             assert_eq!(game.density(t), 1.0, "flat to {GAME_PLATEAU}: {t}");
         }
-        let middle = (GAME_PLATEAU + GAME_SLOPE_END) / 2.0;
-        assert!((game.density(middle) - (1.0 + GAME_SLOPE_LEVEL) / 2.0).abs() < 1e-12, "a straight slope");
-        assert!((game.density(GAME_SLOPE_END) - GAME_SLOPE_LEVEL).abs() < 1e-12);
-        assert!(game.density(1.0).abs() < 1e-12, "the bottom is dead");
+        let middle = (GAME_PLATEAU + 1.0) / 2.0;
+        assert!((game.density(middle) - (-game.steepness / 2.0).exp()).abs() < 1e-12, "the exponent below");
+        assert!((game.density(1.0) - (-8.0_f64).exp()).abs() < 1e-12, "the bottom is nearly dead");
         // continuous and never rising with depth
         let mut last = 1.0;
         for i in 0..=10_000 {
             let d = game.density(i as f64 / 10_000.0);
-            assert!(d <= last + 1e-12 && last - d < 2e-4, "{i}: {last} -> {d}");
+            assert!(d <= last + 1e-12 && last - d < 2e-3, "{i}: {last} -> {d}");
             last = d;
         }
-        assert_eq!(game.describe(), "игровое");
+        assert_eq!(game.describe(), "игровое, ровно до 20%, дальше крутизна 8");
         assert_eq!(Profile::parse("game"), Some(Profile::Game));
     }
 

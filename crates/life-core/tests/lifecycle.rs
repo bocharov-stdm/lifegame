@@ -168,8 +168,8 @@ fn диеты_усваивают_по_таблице() {
     for (diet, plants, fresh, rot) in [
         (Diet::Herbivore, 1.0, 0.0, 0.0),
         (Diet::Omnivore, 0.7, 0.3, 0.05),
-        (Diet::Carnivore, 0.0, 1.0, 0.1),
-        (Diet::Scavenger, 0.0, 0.8, 0.9),
+        (Diet::Carnivore, 0.2, 1.0, 0.1),
+        (Diet::Scavenger, 0.15, 0.8, 0.9),
     ] {
         let mut v = parent();
         v.genome = with_diet(v.genome, diet);
@@ -191,11 +191,47 @@ fn диеты_усваивают_по_таблице() {
         );
     }
     // meat eaters strike harder: herbivore < omnivore < scavenger < carnivore
-    let bonus = |d: Diet| d.strike_bonus();
+    let bonus = |d: Diet| Rules::default().diets[d as usize].strike;
     assert_eq!(bonus(Diet::Herbivore), 1.0);
     assert!(bonus(Diet::Herbivore) < bonus(Diet::Omnivore));
     assert!(bonus(Diet::Omnivore) < bonus(Diet::Scavenger));
     assert!(bonus(Diet::Scavenger) < bonus(Diet::Carnivore));
+}
+
+/// The lab edits a diet's edges: every one of them reaches the phenotype, and only that diet's.
+#[test]
+fn diet_edges_follow_the_rules() {
+    let space = Space::default();
+    let r = Rules::default();
+    let lab = [
+        ("carnivore_strike", 6.0),
+        ("carnivore_health", 2.0),
+        ("carnivore_size_upkeep", 0.5),
+        ("carnivore_speed_upkeep", 0.5),
+        ("carnivore_smell", 3.0),
+        ("carnivore_deep_saving", 0.5),
+        ("carnivore_plants", 0.5),
+        ("carnivore_meat", 0.6),
+        ("carnivore_rot", 0.7),
+    ]
+    .iter()
+    .fold(r.clone(), |r, (k, v)| r.with(k, *v).unwrap());
+    let of = |diet: Diet, rules: &Rules| {
+        let mut v = parent();
+        v.genome = with_diet(v.genome, diet);
+        v.apply_rules(rules, &space);
+        v.pheno
+    };
+    let (base, new) = (of(Diet::Carnivore, &r), of(Diet::Carnivore, &lab));
+    assert_eq!(new.strike(), base.strike() * 2.0);
+    assert_eq!(new.strike_cost(), base.strike_cost(), "the bonus is on damage only");
+    assert_eq!((new.health_bonus, new.smell, new.deep_saving), (2.0, 3.0 * new.vision, 0.5));
+    assert_eq!((new.plant_efficiency, new.meat_efficiency, new.rot_efficiency), (0.5, 0.6, 0.7));
+    assert_eq!(new.upkeep, lab.upkeep_diet(new.size, new.speed, new.vision, [0.5, 0.5]) * new.life_pace);
+    assert!(new.upkeep < base.upkeep);
+    for diet in [Diet::Herbivore, Diet::Omnivore, Diet::Scavenger] {
+        assert_eq!(of(diet, &lab), of(diet, &r), "{diet:?} keeps its edges");
+    }
 }
 
 /// Sated, a creature eats and goes only for its own food: the scavenger leaves the fresher half
@@ -252,7 +288,8 @@ fn бонусы_диет() {
     let size_term = r.upkeep(size, speed, vision) - r.upkeep_diet(size, speed, vision, [0.0, 1.0]);
     assert!((o.pheno.upkeep - h.pheno.upkeep - 0.15 * size_term * h.pheno.life_pace).abs() < 1e-12);
     let speed_term = r.upkeep(size, speed, vision) - r.upkeep_diet(size, speed, vision, [1.0, 0.0]);
-    assert!((o.pheno.upkeep - c.pheno.upkeep - 0.2 * speed_term * c.pheno.life_pace).abs() < 1e-12);
+    let saved = 1.0 - life_core::config::DIET_SPEED_COST[3];
+    assert!((o.pheno.upkeep - c.pheno.upkeep - saved * speed_term * c.pheno.life_pace).abs() < 1e-12);
     assert_eq!(s.pheno.upkeep, o.pheno.upkeep, "the scavenger saves only in the deep");
     assert_eq!((s.pheno.smell, o.pheno.smell), (2.0 * vision, vision));
     // the deep saving grows from half the depth to 40% on the bottom
@@ -537,4 +574,71 @@ fn счётчики_трупов_сходятся() {
     assert!(c.corpses_bottom <= c.corpses_gone);
     assert!(c.corpse_ticks >= c.corpses_gone, "a corpse lies at least a tick");
     assert!(w.corpses.iter().filter_map(|k| k.skeleton).all(|s| s.rest >= s.y1));
+}
+
+/// The lab's body prices: each term's price scales its term alone, the mass power can drop the
+/// body's weight from the price of running; at 1 and 1 they keep config's bits.
+#[test]
+fn body_prices_scale_their_own_terms() {
+    let base = Rules::default();
+    let (size, speed, vision) = (80.0, 20.0, 400.0);
+    let terms = |r: &Rules| {
+        let all = r.upkeep(size, speed, vision);
+        let no_size =
+            r.upkeep(size, speed, vision) - r.with("size_cost", 0.0).unwrap().upkeep(size, speed, vision);
+        (all, no_size)
+    };
+    let (all, size_term) = terms(&base);
+    let doubled = base.with("size_cost", 2.0).unwrap();
+    assert!(
+        (doubled.upkeep(size, speed, vision) - (all + size_term)).abs() < 1e-12,
+        "only the size term doubles"
+    );
+    let massless = base.with("speed_mass_power", 0.0).unwrap();
+    let running = |r: &Rules| {
+        r.upkeep(size, speed, vision) - r.with("speed_cost", 0.0).unwrap().upkeep(size, speed, vision)
+    };
+    assert!(
+        (running(&base) / running(&massless) - 2.0).abs() < 1e-12,
+        "twice the base size runs twice as dear"
+    );
+    let same = base.with("size_cost", 1.0).unwrap().with("speed_mass_power", 1.0).unwrap();
+    assert_eq!(same.upkeep(size, speed, vision).to_bits(), all.to_bits());
+}
+
+/// Heredity from the rules: with every child a copy nothing mutates; with no copies and a certain
+/// diet step every mutating child changes its diet; the mutability floor holds.
+#[test]
+fn heredity_follows_the_rules() {
+    use life_core::genome::Heredity;
+    let rules = Rules::default();
+    let parent = CreatureGenome::BASE.with(Gene::Mutability, 0.0);
+    let mut rng = Rng::new(3);
+    let copies = Heredity::of(&rules.with("clone_share", 1.0).unwrap());
+    assert!((0..200).all(|_| parent.mutate_by(&copies, &mut rng) == parent));
+    let restless = Heredity::of(
+        &rules
+            .with("clone_share", 0.0)
+            .unwrap()
+            .with("diet_step", 1.0)
+            .unwrap()
+            .with("diet_meat_step", 1.0)
+            .unwrap(),
+    );
+    for _ in 0..200 {
+        let child = parent.mutate_by(&restless, &mut rng);
+        assert_ne!(child[Gene::Diet], parent[Gene::Diet], "the diet always steps");
+        assert!(child[Gene::Mutability] >= rules.min_mutability, "the floor holds");
+    }
+}
+
+/// A corpse keeps the clock of the rules it died under.
+#[test]
+fn corpses_follow_the_rules_clock() {
+    use life_core::corpse::{Corpse, CorpseClock};
+    let rules = Rules::default().with("corpse_fresh", 10.0).unwrap().with("corpse_rotten", 20.0).unwrap();
+    let v = parent();
+    let c = Corpse::from_creature_in(&v, 0, CorpseClock::of(&rules));
+    assert_eq!((c.rot(10), c.rot(20)), (0.0, 1.0), "rotten by the rules, not by config");
+    assert_eq!(Corpse::from_creature(&v, 0).rot(20), 0.0, "config's corpse is still fresh");
 }

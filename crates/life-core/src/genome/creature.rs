@@ -1,7 +1,10 @@
 //! Геном существа.
 
 use super::{GeneKind, GeneSpec, Genome, Mutation, Variant, bases};
-use crate::config::{DIET_JUMP_CHANCE, DIET_STEP_CHANCE, SHOOTER_SWITCH_CHANCE, STRATEGY_SWITCH_CHANCE};
+use crate::config::{
+    DIET_JUMP_CHANCE, DIET_MEAT_STEP_CHANCE, DIET_STEP_CHANCE, FLOCKS, SHOOTER_SWITCH_CHANCE,
+    STRATEGY_SWITCH_CHANCE,
+};
 use crate::creature::strategy::VARIANTS as STRATEGIES;
 use crate::rng::Rng;
 
@@ -126,6 +129,11 @@ pub const FLOCK_KIND_VARIANTS: [Variant; 4] = [
 /// carnivore to each other and back to the omnivore. In a chain one meat diet could arise only
 /// from the other, and whichever stood last never appeared in the validation worlds.
 pub const DIET_NEIGHBOURS: [&[usize]; 4] = [&[1], &[0, 2, 3], &[1, 3], &[1, 2]];
+
+/// The neighbours towards meat: the herbivore to the omnivore, the omnivore to the scavenger and
+/// the carnivore. A step there has its own, larger chance (`DIET_MEAT_STEP_CHANCE`): meat-eating
+/// founders starve before there is meat, so the meat diets arise from mutants.
+pub const DIET_TOWARDS_MEAT: [&[usize]; 4] = [&[1], &[2, 3], &[], &[]];
 
 /// What a creature can digest (`config::DIET_DIGESTION`). A mutation steps to a neighbour in
 /// `DIET_NEIGHBOURS`. Labels are game UI.
@@ -269,8 +277,10 @@ pub const GENES: [GeneSpec; N] = [
         base: 0.0,
         mutation: Mutation::Neighbours {
             chance: DIET_STEP_CHANCE,
+            rise: DIET_MEAT_STEP_CHANCE,
             jump: DIET_JUMP_CHANCE,
             of: &DIET_NEIGHBOURS,
+            up: &DIET_TOWARDS_MEAT,
         },
     },
     GeneSpec {
@@ -319,7 +329,8 @@ pub const GENES: [GeneSpec; N] = [
         about: "Живёт в семейной стае или отдельно от потомков.",
         kind: GeneKind::Choice(&PACK_VARIANTS),
         base: 1.0,
-        mutation: Mutation::Switch { chance: SHOOTER_SWITCH_CHANCE },
+        // flocks are off: a loner's child never turns flocking (the draw stays)
+        mutation: Mutation::Switch { chance: if FLOCKS { SHOOTER_SWITCH_CHANCE } else { 0.0 } },
     },
     GeneSpec {
         key: "territoriality",
@@ -416,11 +427,27 @@ impl CreatureGenome {
         self
     }
 
-    /// Геном потомка (см. `mutate_values`).
+    /// The child's genome with config's heredity and this sigma (`mutate_by`).
     pub fn mutate(&self, sigma: f64, rng: &mut Rng) -> Self {
+        self.mutate_by(&super::Heredity::with_sigma(sigma), rng)
+    }
+
+    /// The child's genome: an exact copy with `clone_share`, otherwise mutated (`mutate_values`).
+    pub fn mutate_by(&self, h: &super::Heredity, rng: &mut Rng) -> Self {
         let mut child = *self;
-        let mutability = super::mutability_of(self[Gene::Mutability]);
-        super::mutate_values(&mut child.0, &GENES, sigma, mutability, rng);
+        if rng.random() < h.clone_share {
+            return child; // an exact copy: no gene mutates
+        }
+        let mutability = super::mutability_of(self[Gene::Mutability], h.min_mutability);
+        super::mutate_values(
+            &mut child.0,
+            &GENES,
+            h.sigma,
+            mutability,
+            rng,
+            Some((h.diet_step, h.diet_meat_step, h.diet_jump)),
+        );
+        child.0[Gene::Mutability as usize] = super::mutability_of(child[Gene::Mutability], h.min_mutability);
         child.0[Gene::LifePace as usize] = child[Gene::LifePace].clamp(0.5, 2.0);
         child.0[Gene::PreyRatio as usize] = child[Gene::PreyRatio].clamp(1.0, 5.0);
         child
@@ -478,6 +505,9 @@ mod tests {
             assert!(near.iter().all(|&j| j != k && DIET_NEIGHBOURS[j].contains(&k)), "{k}: {near:?}");
         }
         assert_eq!(DIET_NEIGHBOURS[0], &[1]);
+        for (k, up) in DIET_TOWARDS_MEAT.iter().enumerate() {
+            assert!(up.iter().all(|j| DIET_NEIGHBOURS[k].contains(j)), "{k}: up is among the neighbours");
+        }
         let mut rng = Rng::new(21);
         let n = 200_000;
         for (start, near) in DIET_NEIGHBOURS.iter().enumerate() {
@@ -490,8 +520,16 @@ mod tests {
                     if near.contains(&(child as usize)) { steps += 1 } else { jumps += 1 }
                 }
             }
-            // a step 0.1%, a jump 0.01% of which some land on neighbours
-            assert!((140..=270).contains(&steps), "steps from {start}: {steps} of {n}");
+            // half the children are copies; of the rest a step towards meat 2%, another step 0.5%,
+            // a jump 0.01% of which some land on neighbours
+            let up = DIET_TOWARDS_MEAT[start];
+            let chance = if up.is_empty() { 0.0 } else { DIET_MEAT_STEP_CHANCE }
+                + if near.len() > up.len() { DIET_STEP_CHANCE } else { 0.0 };
+            let expected = n as f64 * 0.5 * chance;
+            assert!(
+                (expected * 0.85..=expected * 1.15 + 20.0).contains(&(steps as f64)),
+                "steps from {start}: {steps} of {n}, expected {expected}"
+            );
             let far = 3 - near.len();
             assert!(jumps <= 12 * far && (far == 0 || jumps >= 1), "jumps from {start}: {jumps}");
         }
@@ -523,7 +561,12 @@ mod tests {
         let (rare, frequent) = (switches(0.2), switches(2.0));
         assert!(frequent > rare * 3, "смена стратегии: {frequent} против {rare}");
         let base = spread(1.0);
-        assert!((base.0 - 0.3 * 0.8).abs() < 0.03, "при 1 разброс — сигма правил: {:.3}", base.0);
+        let expected = 0.3 * 0.8 * (1.0 - crate::config::CLONE_CHANCE);
+        assert!(
+            (base.0 - expected).abs() < 0.03,
+            "at 1 the spread is the rules' sigma (half are copies): {:.3}",
+            base.0
+        );
         let capped = CreatureGenome::BASE.with(Gene::Mutability, 1e300).mutate(0.3, &mut Rng::new(1));
         assert!(capped.to_values().iter().all(|v| v.is_finite()), "потолок: геном конечен");
     }

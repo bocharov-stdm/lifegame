@@ -47,7 +47,7 @@ impl LifeApp {
 
     fn energy_tab(&mut self, ui: &mut egui::Ui) {
         ui.colored_label(MUTED, "Последние 10 000 тиков");
-        self.predator_status(ui);
+        self.diets_line(ui);
         let snaps = self.history.snapshots.points();
         if let Some(s) = snaps.last() {
             ui.label(format!(

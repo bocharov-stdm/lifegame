@@ -11,7 +11,8 @@ struct U {
     since: f32,
     // секунды с начала программы (по модулю): «глотки» бегут по хоботку непрерывно
     time: f32,
-    pad0: f32,
+    // diets to highlight, a bit per diet; 0 — nobody highlighted
+    highlight: u32,
     pad1: vec2<f32>,
 };
 @group(0) @binding(0) var<uniform> u: U;
@@ -43,7 +44,16 @@ struct VOut {
     @location(8) @interpolate(flat) diet: u32,
     // хоботок: направление к еде, длина за краем тела в пикселях (0 — нет), фаза «глотков»
     @location(9) @interpolate(flat) proboscis: vec4<f32>,
+    // highlight: 0 as usual, 1 highlighted (a halo in its diet's colour), 2 dimmed
+    @location(10) @interpolate(flat) hl: u32,
 };
+
+// how much of a dimmed body stays visible while some diets are highlighted
+const DIM_CREATURE: f32 = 0.2;
+const DIM_PLANT: f32 = 0.45;
+// a highlighted body is at least this big, px, and wears a halo this wide
+const HL_MIN_PX: f32 = 3.0;
+const HALO_PX: f32 = 3.0;
 
 @vertex
 fn vs_main(
@@ -62,9 +72,14 @@ fn vs_main(
     let kind = (flags >> 16u) & 3u;
     let ghost = (flags & (1u << 18u)) != 0u;
     let starved = (flags & (1u << 19u)) != 0u;
-    let dot = (flags & (1u << 20u)) != 0u;
     let angle = f32(flags & 0xFFFu) / 4096.0 * TAU;
     let diet = (flags >> 12u) & 3u;
+    var hl = 0u;
+    if u.highlight != 0u {
+        hl = select(2u, 1u, kind != PLANT && ((u.highlight >> diet) & 1u) != 0u);
+    }
+    // a highlighted creature is never a far dot: it keeps its body and halo at any zoom
+    let dot = (flags & (1u << 20u)) != 0u && hl != 1u;
     let feeding = (flags & (1u << 14u)) != 0u;
     let fed = (flags & (1u << 15u)) != 0u;
     let food_angle = f32((flags >> 21u) & 127u) / 128.0 * TAU;
@@ -93,8 +108,13 @@ fn vs_main(
     let p = select(mix(prev, pos, u.k), pos, dot);
     let r_px = select(r * u.zoom * scale * u.pixels_per_point, 1.0, dot);
     // мельче пикселя: рисуем пиксель, но с яркостью по площади
-    let drawn = max(r_px, 0.7);
+    let drawn = max(r_px, select(0.7, HL_MIN_PX, hl == 1u));
     alpha = select(alpha * min(1.0, r_px * r_px / (drawn * drawn)), 1.0, dot);
+    if hl == 1u {
+        alpha = max(alpha, select(0.0, 1.0, !ghost));
+    } else if hl == 2u {
+        alpha = alpha * select(DIM_CREATURE, DIM_PLANT, kind == PLANT);
+    }
 
     // Хоботок выдвигается, пока идёт кадр, в котором существо начало есть, и втягивается в
     // кадре, где оно перестало; только вблизи, как остальные детали.
@@ -109,7 +129,9 @@ fn vs_main(
     let near = clamp((drawn - 3.0) / 3.0, 0.0, 1.0);
     let length_px = select(0.0, reach * drawn * extend, kind != PLANT && !ghost && !dot && near > 0.0);
 
-    let half_px = select(drawn + 1.0 + select(0.0, length_px + max(1.5, 0.2 * drawn), length_px > 0.0), 1.0, dot);
+    let halo_px = select(0.0, HALO_PX, hl == 1u);
+    let half_px =
+        select(drawn + 1.0 + max(halo_px, select(0.0, length_px + max(1.5, 0.2 * drawn), length_px > 0.0)), 1.0, dot);
     let corner = corners[vi];
     let at = u.origin + p * u.zoom + corner * (half_px / u.pixels_per_point);
 
@@ -126,6 +148,7 @@ fn vs_main(
     // a sprout has no diet: these bits carry its leaf count, 3 to 5, from its turn
     out.diet = select(diet, 3u + (flags & 0xFFFu) % 3u, kind == PLANT);
     out.proboscis = vec4(cos(food_angle), sin(food_angle), length_px, u.time);
+    out.hl = hl;
     return out;
 }
 
@@ -147,7 +170,7 @@ fn diet_color(diet: u32) -> vec3<f32> {
 @fragment
 fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     if in.dot != 0u {
-        return vec4(in.color.rgb, 1.0);
+        return vec4(in.color.rgb * in.alpha, in.alpha);
     }
     let r = in.r_px;
     let q = in.local;
@@ -213,5 +236,13 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     col = mix(col, vec3(lum), in.grey);
     let body_a = inside(d) * in.alpha;
     let t_a = tube_a * in.alpha * (1.0 - body_a);
-    return vec4(col * body_a + tube * t_a, body_a + t_a);
+    var rgb = col * body_a + tube * t_a;
+    var a = body_a + t_a;
+    if in.hl == 1u {
+        // a halo in the diet's colour just outside the body
+        let halo = inside(d - HALO_PX) * (1.0 - inside(d)) * 0.9 * in.alpha * (1.0 - a);
+        rgb = rgb + diet_color(in.diet) * halo;
+        a = a + halo;
+    }
+    return vec4(rgb, a);
 }

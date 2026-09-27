@@ -14,6 +14,8 @@ pub struct Sample {
     pub tick: u64,
     pub plants: f64,
     pub creatures: f64,
+    /// Creatures of each diet, smoothed the same way, in `Diet` order.
+    pub diets: [f64; 4],
     pub shots: u64,
     pub genom: Option<[f64; creature::N]>,
 }
@@ -94,7 +96,7 @@ mod tests {
     fn число_выстрелов_относится_к_видимому_окну() {
         let mut h = History::default();
         for (tick, shots) in [(0, 2), (10_000, 7), (10_010, 12)] {
-            h.add_sample(Sample { tick, plants: 0.0, creatures: 0.0, shots, genom: None });
+            h.add_sample(Sample { tick, plants: 0.0, creatures: 0.0, diets: [0.0; 4], shots, genom: None });
         }
         assert_eq!(h.shots_in_window(), 5);
     }

@@ -35,7 +35,8 @@ struct Uniforms {
     k: f32,
     since: f32,
     time: f32,
-    pad: [f32; 3],
+    highlight: u32,
+    pad: [f32; 2],
 }
 
 /// Всё, что живёт в видеокарте между кадрами.
@@ -153,6 +154,8 @@ pub struct Circles {
     pub since: f32,
     /// Секунды с начала программы, по модулю: фаза «глотков» хоботка.
     pub time: f32,
+    /// Diets to highlight, a bit per diet in `Diet` order; 0 — none, everyone drawn as usual.
+    pub highlight: u32,
 }
 
 impl egui_wgpu::CallbackTrait for Circles {
@@ -173,7 +176,8 @@ impl egui_wgpu::CallbackTrait for Circles {
             k: self.k,
             since: self.since,
             time: self.time,
-            pad: [0.0; 3],
+            highlight: self.highlight,
+            pad: [0.0; 2],
         };
         queue.write_buffer(&res.uniforms, 0, bytemuck::bytes_of(&u));
         if res.generation != self.generation {

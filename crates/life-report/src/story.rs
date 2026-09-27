@@ -53,6 +53,7 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
         percent(c.skeletons, c.corpses_gone),
         c.corpse_ticks as f64 / c.corpses_gone.max(1) as f64
     );
+    print_diets(&c.by_diet, last);
 
     println!(
         "Молодых {} из {}; стайный ген {} ({:.0}%), участников стай {}, стай {}.",
@@ -126,6 +127,25 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
 }
 
 /// Таблица по промежуткам: состояние на конец промежутка и потоки за него.
+/// Births and deaths of each diet, and who strikes and kills whom.
+fn print_diets(by: &life_core::DietCounters, last: &Snapshot) {
+    let names = creature::DIET_VARIANTS.map(|v| v.key);
+    println!("By diet: born, died starved / of old age / in combat, alive at the end.");
+    for (d, name) in names.iter().enumerate() {
+        let [starved, old, combat] = by.deaths[d];
+        println!(
+            "  {name:<10} born {:>7}, died {starved} / {old} / {combat}, alive {}",
+            by.born[d], last.diets[d].creatures
+        );
+    }
+    for (title, table) in [("Strikes", &by.strikes), ("Kills", &by.kills)] {
+        println!("{title} (row → column): {}", names.map(|n| format!("{n:>10}")).join(""));
+        for (d, name) in names.iter().enumerate() {
+            println!("  {name:<10}{}", table[d].map(|n| format!("{n:>10}")).join(""));
+        }
+    }
+}
+
 fn print_intervals(snaps: &[Snapshot], rows: usize) {
     if snaps.len() < 2 || rows == 0 {
         return;

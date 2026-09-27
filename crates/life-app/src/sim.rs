@@ -184,8 +184,8 @@ struct Sim {
     dots: bool,
 
     // ── наблюдение ──────────────────────────────────────────────────────────
-    /// Численности последних `DIVIDE_PERIOD` тиков — для сглаженной точки графика.
-    window: VecDeque<[usize; 2]>,
+    /// Plants, creatures and creatures by diet over the last `DIVIDE_PERIOD` ticks: a smoothed point.
+    window: VecDeque<[usize; 6]>,
     tracker: EventTracker,
     snapshot_every: u64,
     next_snapshot: u64,
@@ -550,7 +550,11 @@ impl Sim {
         if self.window.len() == DIVIDE_PERIOD as usize {
             self.window.pop_front();
         }
-        self.window.push_back([w.plants.len(), w.creatures.len()]);
+        let mut counts = [w.plants.len(), w.creatures.len(), 0, 0, 0, 0];
+        for v in &w.creatures {
+            counts[2 + v.pheno.diet as usize] += 1;
+        }
+        self.window.push_back(counts);
         if !w.tick.is_multiple_of(GRAPH_EVERY) {
             return;
         }
@@ -561,6 +565,7 @@ impl Sim {
             tick: w.tick,
             plants: avg(0),
             creatures: avg(1),
+            diets: std::array::from_fn(|d| avg(2 + d)),
             shots: w.counters.ranged_shots,
             genom: stats.avg_genom,
         });

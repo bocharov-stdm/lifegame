@@ -43,7 +43,13 @@ fn срез_раскладывает_всех_по_глубине() {
     }
     let packs = g[Gene::PackInstinct as usize].shares().unwrap()[1];
     let shooters = g[Gene::Shooter as usize].shares().unwrap()[1];
-    assert!((0.4..=0.6).contains(&packs), "половина основателей стайные: {packs}");
+    assert_eq!(packs, 0.0, "flocks are off: every founder is a loner");
+    let by_diet: usize = s.diets.iter().map(|d| d.creatures).sum();
+    assert_eq!(
+        (by_diet, s.all.creatures),
+        (w.creatures.len(), w.creatures.len()),
+        "every creature under its diet"
+    );
     assert!((0.02..=0.08).contains(&shooters), "редкие стрелки у основателей: {shooters}");
 
     let mut empty = w.clone();

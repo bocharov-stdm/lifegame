@@ -10,6 +10,7 @@
 //! - [`ascii_map`] — карта мира текстом: слои, скопления, пустые края.
 
 use life_core::config::*;
+use life_core::creature::{Creature, Diet};
 use life_core::genome::{GeneSpec, Genome, creature};
 use life_core::{Counters, World};
 
@@ -103,6 +104,48 @@ pub fn gene_stats<'a, G: Genome, const N: usize>(
     }))
 }
 
+/// Genes the per-diet summary follows: the body, the senses and the fighting temper.
+pub const DIET_GENES: [creature::Gene; 6] = [
+    creature::Gene::Size,
+    creature::Gene::Speed,
+    creature::Gene::Vision,
+    creature::Gene::PreyRatio,
+    creature::Gene::Picky,
+    creature::Gene::Rivalry,
+];
+
+/// A summary of one diet's creatures (or of all of them).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DietStat {
+    pub creatures: usize,
+    /// Mean fullness of the tank, 0..1.
+    pub fullness: Option<f64>,
+    /// Age, ticks.
+    pub age: Option<Spread>,
+    /// Depth, % of the world's height.
+    pub depth: Option<Spread>,
+    /// Spread of each of `DIET_GENES`, in that order.
+    pub genes: Option<[Spread; DIET_GENES.len()]>,
+}
+
+impl DietStat {
+    pub fn of<'a>(herd: impl Iterator<Item = &'a Creature> + Clone, height: f64) -> DietStat {
+        let spread =
+            |value: &dyn Fn(&Creature) -> f64| Spread::of(&mut herd.clone().map(value).collect::<Vec<_>>());
+        DietStat {
+            creatures: herd.clone().count(),
+            fullness: average(herd.clone().map(|v| v.energy / v.pheno.max_energy)),
+            age: spread(&|v| v.age),
+            depth: spread(&|v| v.y / height * 100.0),
+            genes: DIET_GENES
+                .map(|g| spread(&|v| v.genome.values()[g as usize]))
+                .into_iter()
+                .collect::<Option<Vec<_>>>()
+                .map(|v| v.try_into().expect("one spread per gene")),
+        }
+    }
+}
+
 /// Срез мира на одном тике.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
@@ -150,6 +193,9 @@ pub struct Snapshot {
     pub plants_by_width: [usize; WIDTH_BANDS],
     /// Средняя заполненность бака существ, 0..1.
     pub fullness: Option<f64>,
+    /// Each diet's creatures, in `Diet` order, and all creatures by the same measures.
+    pub diets: [DietStat; 4],
+    pub all: DietStat,
 }
 
 fn band(at: f64, len: f64, bands: usize) -> usize {
@@ -233,6 +279,8 @@ impl Snapshot {
             creatures_by_width,
             plants_by_width,
             fullness: average(herd.iter().map(|v| v.energy / v.pheno.max_energy)),
+            diets: Diet::ALL.map(|d| DietStat::of(herd.iter().filter(|v| v.pheno.diet == d), h)),
+            all: DietStat::of(herd.iter(), h),
         }
     }
 }

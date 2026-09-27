@@ -11,7 +11,7 @@ use life_sim::observe::{GeneStat, MAX_VARIANTS, Snapshot, Spread};
 
 use crate::frame::{CREATURE_COLOR, PLANT_COLOR};
 use crate::history::{History, Sample};
-use crate::theme::{LINE, MUTED, TEXT, rgb, spaced};
+use crate::theme::{DIET_COLORS, DIET_NAMES, LINE, MUTED, TEXT, rgb, spaced};
 
 /// Индекс точки под курсором (по x), если курсор над графиком.
 fn hover_index(ui: &egui::Ui, rect: Rect, n: usize) -> Option<usize> {
@@ -33,6 +33,9 @@ pub struct Line<T> {
     pub label: &'static str,
     pub color: Color32,
     pub value: fn(&T) -> Option<f64>,
+    /// With `Scale::Own`, lines marked shared use one scale between them (the diets: a line of three
+    /// carnivores must not look as tall as three thousand herbivores).
+    pub shared: bool,
 }
 
 /// Шкала графика линиями.
@@ -76,9 +79,12 @@ pub fn lines<T>(
         painter
             .line_segment([Pos2::new(inner.left(), y), Pos2::new(inner.right(), y)], Stroke::new(1.0, LINE));
     }
+    let top = |line: &Line<T>| points.iter().filter_map(|p| (line.value)(p)).fold(0.0f64, f64::max).max(1.0);
+    let shared = lines.iter().filter(|l| l.shared).map(top).fold(1.0f64, f64::max);
     for line in lines {
         let max = match scale {
-            Scale::Own => points.iter().filter_map(|p| (line.value)(p)).fold(0.0f64, f64::max).max(1.0),
+            Scale::Own if line.shared => shared,
+            Scale::Own => top(line),
             Scale::Share => 1.0,
         };
         // Кусками: где величины нет, линия рвётся.
@@ -124,27 +130,45 @@ fn draw_run(painter: &egui::Painter, run: &mut Vec<Pos2>, color: Color32) {
     run.clear();
 }
 
-/// Численности: растения и существа — каждая в своей шкале.
+/// Populations: plants on their own scale, the diets on one scale between them.
 pub fn populations(ui: &mut egui::Ui, history: &History, height: f32) {
     let points = history.counts.points();
+    let diet = |d: usize, value: fn(&Sample) -> Option<f64>| Line {
+        label: DIET_NAMES[d],
+        color: rgb(DIET_COLORS[d]),
+        value,
+        shared: true,
+    };
     let all = [
-        Line { label: "растения", color: rgb(PLANT_COLOR), value: |s: &Sample| Some(s.plants) },
-        Line { label: "существа", color: rgb(CREATURE_COLOR), value: |s: &Sample| Some(s.creatures) },
+        Line {
+            label: "растения", color: rgb(PLANT_LINE), value: |s: &Sample| Some(s.plants), shared: false
+        },
+        diet(0, |s| Some(s.diets[0])),
+        diet(1, |s| Some(s.diets[1])),
+        diet(2, |s| Some(s.diets[2])),
+        diet(3, |s| Some(s.diets[3])),
     ];
     lines(ui, &points, |s| s.tick, &all, Scale::Own, height);
 }
+
+/// Plants on the population chart: a pale grey green, apart from the herbivores' green.
+const PLANT_LINE: [u8; 3] = [120, 150, 130];
 
 /// Сытость: средняя заполненность бака существ и насколько растения
 /// упёрлись в потолок.
 pub fn energy(ui: &mut egui::Ui, snaps: &[&Snapshot], height: f32) {
     let all = [
         Line {
-            label: "сытость существ", color: rgb(CREATURE_COLOR), value: |s: &Snapshot| s.fullness
+            label: "сытость существ",
+            color: rgb(CREATURE_COLOR),
+            value: |s: &Snapshot| s.fullness,
+            shared: false,
         },
         Line {
             label: "растений от потолка",
             color: rgb(PLANT_COLOR),
             value: |s: &Snapshot| (s.plant_cap > 0).then(|| s.plants as f64 / s.plant_cap as f64),
+            shared: false,
         },
     ];
     lines(ui, snaps, |s| s.tick, &all, Scale::Share, height);
@@ -241,9 +265,14 @@ pub fn genome(ui: &mut egui::Ui, table: &[GeneSpec], points: &[GenePoint], color
     );
 }
 
-/// Показывать ли ген: ген-выбор с одним вариантом ничего не различает.
+/// Genes that act only through flocks: while flocks are off (`config::FLOCKS`) they drift unseen.
+const FLOCK_GENES: [&str; 5] = ["pack_instinct", "territoriality", "flock_kind", "flock_spacing", "forage"];
+
+/// Whether to show a gene: a choice gene with one variant tells nothing apart, and the flock genes
+/// do nothing while flocks are off.
 pub fn shown(spec: &GeneSpec) -> bool {
     spec.variants().is_none_or(|v| v.len() >= 2)
+        && (life_core::config::FLOCKS || !FLOCK_GENES.contains(&spec.key))
 }
 
 fn spread_at(p: &GenePoint, g: usize) -> Spread {

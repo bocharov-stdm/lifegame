@@ -813,7 +813,9 @@ mod tests {
     fn запросы_к_сеткам_совпадают_с_перебором_в_живом_мире() {
         let giants = Rules::default().with("size_power", 1.0).unwrap().with("plant_energy", 120.0).unwrap();
         for (seed, rules) in [(1, Rules::default()), (4, giants)] {
-            let mut w = World::new(&WorldConfig { seed, rules, ..Default::default() });
+            // the former founders' mix: hunters from the start, for the prey queries to check
+            let diets = vec![55.0, 25.0, 10.0, 10.0];
+            let mut w = World::new(&WorldConfig { seed, rules, diets, ..Default::default() });
             let mut food = Grid::new(GRID_CELL);
             let mut snapshot = Herd::new();
             let (mut checked, mut threats, mut spared) = (0, 0, 0);

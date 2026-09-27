@@ -57,22 +57,45 @@ shots are weaker than a contact strike and cost energy. There is no cooperative 
 leaders, no sharing of prey, no merging of flocks. Sociability is an inherited gene; groups
 that stay separated get a new label. The exact mechanics and their checks: `BEHAVIOR.md`.
 
+**Flocks are off** (`config::FLOCKS = false`, the user's decision: they spoiled more than they
+gave). Every founder is a loner, the pack gene never switches, the game hides «Стаи» and the flock
+genes' charts. The code is still there; the plan is to remove it from the game and the tests and
+keep it under a git tag **`flocks-final`**, the way predators were removed. Never run balance
+measurements with flocks.
+
+**Energy is never made from nothing** (the user's hard rule, 2026-09-26). Energy enters the world
+only in plants; everything else only passes it along the chain (plant → eater → corpse → eater)
+and loses some on the way. No mechanic, bonus, rule or lab limit may duplicate it or create it:
+digestion is at most 100% of a food (`Rules::with` rejects more), deep saving at most the whole
+upkeep, and a body a creature got for free (a founder's, a newborn's birth half) is not meat.
+Founders' bodies and tanks are the one initial condition. Check every new mechanic against this.
+
 The food web (branch `food-web`): the `diet` choice gene — herbivore, omnivore, scavenger,
 carnivore (variant order H/O/S/C, the order of every `DIET_*` table in `config.rs`) — sets what a
 creature digests (`DIET_DIGESTION`: plants, fresh meat, rot; 0 means it neither eats nor goes for
-that food) and its edges, all read in `Phenotype::of` / `Diet::*`:
+that food) and its edges. The edges are world rules (`Rules::diets`, one `DietEdges` per diet, keys
+`{diet}_{edge}` such as `carnivore_strike`; defaults are the `DIET_*` tables, edited in the lab's
+«Питание» tab), all read in `Phenotype::of`:
 
 | | strike (`DIET_STRIKE`) | other edge |
 |---|---|---|
 | herbivore | ×1 | health ×1.5 (`DIET_HEALTH`), size term of upkeep ×0.85 (`DIET_SIZE_COST`) |
 | omnivore | ×1.15 | eats everything, so no food is foreign to it |
 | scavenger | ×1.3 | smells corpses at 2× vision (`DIET_SMELL`, free); upkeep falls linearly from half the depth to −40% on the bottom (`DIET_DEEP_SAVING`, `Phenotype::depth_upkeep`, applied in `Creature::act`); founders start with layer 50–100% (`SCAVENGER_START_LAYER`) |
-| carnivore | ×1.5 | speed term of upkeep ×0.8 (`DIET_SPEED_COST`) |
+| carnivore | ×3 | speed term of upkeep ×0.5 (`DIET_SPEED_COST`) |
+
+Scavengers digest plants at 15%, carnivores at 20% (`DIET_DIGESTION`), so a lone meat-eater
+does not starve outright. There are no meat founders by default (`DIET_START_MIX` 70/30/0/0): at the
+start there are neither corpses nor prey small enough, and every one starved without a strike. The
+meat diets arise from mutants (`DIET_MEAT_STEP_CHANCE`). Meat founders set in a mix still start
+`meat_founder_size` (`MEAT_FOUNDER_SIZE` ×2, `WorldConfig`, `--meat-founders`, «Мясоеды на старте
+крупнее») times bigger.
 
 The strike bonus is on damage only, never on the strike's energy cost (`strike` vs `strike_cost`).
 Damage scales with size: melee is 5% of the striker's size, times (its size / the target's) **
 `melee_size_power` (rule, `MELEE_SIZE_POWER` 1.25) when it is the bigger — equals trade ~20
-strikes, 2× needs ~5, 3× a carnivore kills a herbivore in two, 7× in one (`Phenotype::strike_on`,
+strikes, 2× needs ~5, 3× a carnivore at the former strike ×1.5 kills a herbivore in two, 7× in
+one (`Phenotype::strike_on`,
 `melee_damage`; hunters weigh prey and retaliation by the same function). At 1.75 (3× = one blow)
 carnivores boomed, ate the herbivores out and starved; at 1.0 they died out everywhere.
 Melee has no cap any more; a shot stays 1% of size, capped at ¼ of the target's max health, and
@@ -93,12 +116,18 @@ and a child of another diet leaves its flock. A corpse's meat is the body grown 
 growing it cost (`GROWTH_ENERGY_PER_SIZE` a unit of size), plus the tank (`corpse::meat`) — hunters
 weigh prey by the same measure. The body a creature is born or spawned with is no meat: counted at
 `size × ENERGY_PER_SIZE` it made energy from nothing (parents bore empty children and ate their
-corpses — 9500 scavengers on 34 plants). It is fresh for 150
-ticks, then rots and sinks, fully rotten on the bottom (lowest 2%) at 600, gone at 1800 (in % of
-depth, a function of the tick only). A corpse eaten down to `CORPSE_SKELETON_SHARE` (10%) of its meat
-becomes a **skeleton** (`Corpse::skeleton`): rot from then, it sinks within 300 ticks to a place in
-the lowest 15% of the depth (hash of the id, never up) and decays over 1800 ticks from the stripping;
-a corpse left alone is never stripped. Creatures stop at `EAT_STOP_SHARE` of their reach instead of
+corpses — 9500 scavengers on 34 plants). A corpse's clock is a rule set (`corpse_fresh`,
+`corpse_rotten`, `corpse_sink`, `corpse_decay`, `corpse_rest` → `CorpseClock::of(rules)`, stored in
+the corpse; defaults `CORPSE_*`). It is fresh for 150 ticks, fully rotten at 600, and after the fresh
+time sinks at `CORPSE_SINK_SPEED` (2 a tick, a fifth of a base creature's speed) straight down,
+edible all the way; it rests at its own place in the lowest 25% of the depth (`CORPSE_REST_PCT`, a
+hash of the id, never rising) and is gone at 1800. The sinking is a speed, not a time to the bottom:
+with a time (1200 ticks) a corpse in the user's 15 500-deep world fell 10–15 a tick, as fast as a
+scavenger swims, and scavengers ate 3% of the time with corpses all around. In a tall world a corpse
+may decay before it reaches the bottom. A corpse eaten down to `CORPSE_SKELETON_SHARE` (10%) of its
+meat becomes a **skeleton** (`Corpse::skeleton`). From then it is rot: it sinks at
+`SKELETON_SINK_SPEED` (4) to a place in the same zone (never up) and decays over 1800 ticks from the
+stripping. A corpse left alone is never stripped. Creatures stop at `EAT_STOP_SHARE` of their reach instead of
 standing on the food, and the game draws a proboscis to it. Plants grow in patches over a new
 default depth profile «игровое» (see "Where food grows").
 
@@ -113,10 +142,33 @@ commits. What is left:
   `--rule cost_scale=3`) in
   one separate commit once the user accepts the balance; golden case H can become "all four diets".
 - Then push, PR, green CI.
-- Open (2026-09-26): with meat = grown body + tank the meat niches collapsed (seeds 1–8: no
-  carnivores or scavengers anywhere, herbivores 79–100%, medians 925 / 755); the user decides how
-  to feed them; re-measure after the choice.
+- Open (2026-09-26): the meat niches.
+  - With meat = grown body + tank, the niches collapsed (seeds 1–8: no carnivores or scavengers
+    anywhere, herbivores 79–100%, medians 925 / 755).
+  - The user chose: meat founders ×2, plants for meat-eaters, diet step 0.5% independent of
+    mutability, 50% clones, a mutability floor of 0.1.
+  - On the baseline conditions (below), all 8 worlds still ended ~100% herbivores. Diagnosed with
+    a probe (2026-09-27): meat founders never met prey (random deep layers, nothing small enough
+    at the start) and starved; corpses in the tall world sank as fast as scavengers swim; and a
+    carnivore could catch only newborns and juveniles, 7–15 energy each, so hunting paid 0.10–0.18
+    a tick against 0.16–0.26 of upkeep. Adults converted mid-game to scavengers held with slow
+    sinking (44 → 49–52, → 197 with half the upkeep); to carnivores only with strike ×3 and half the
+    upkeep (44 → ~30).
+  - The user then chose (2026-09-27): corpses sink at a constant speed; carnivore strike ×3 and its
+    movement at half the price; no meat founders, meat diets from mutants with a 2% step towards
+    meat (`diet_meat_step`, «Шаг к мясу»). Every diet edge is a rule now (lab tab «Питание»).
+  - Tried and reverted, don't repeat: the parent paying for the child's body (halved populations,
+    no meat diets); birth at ¼ size.
+- Flocks: remove the code and tests under the tag `flocks-final`. Prove the removal by the golden
+  digests recorded with `FLOCKS = false` before removal, as with predators.
 - Planned next: the life/pace reform (see "Balance: exponents, not coefficients").
+
+**Baseline conditions** (the user's own game; measure balance on these, not on ×1 defaults):
+
+```bash
+cargo run -p life-report --release -- --seeds 1 2 3 4 5 6 7 8 --ticks 20000 --max-work 1e15 \
+  --scale 20 --shape 2:1 --rule plant_rate=0.5 --rule cost_scale=3 --rule plant_depth_steepness=5 --mix 1 1
+```
 The user keeps a short PDF of genes, strategies and diet edges (built by a throwaway fpdf2 script
 with Arial for Cyrillic); regenerate and send it after diet or gene changes.
 
@@ -185,7 +237,8 @@ cargo run -p life-report --release -- --ticks 5000 --json run.json   # JSON to a
 
 The story (always on for a single seed) prints: final state; creature births/deaths **by
 cause** (starved / old age / combat) — the counters in `World::counters`, social ones in
-`World::social_counts`; a table by intervals with flows, gene medians, the depth layer holding
+`World::social_counts`; per diet (`Counters::by_diet`: born, deaths by cause, who struck and
+killed whom, as matrices — `story::print_diets`); a table by intervals with flows, gene medians, the depth layer holding
 80% of creatures and their fullness; genome start → end as median (10‒90%); creatures vs plants
 by depth band (and by width band when the width food profile isn't uniform); a chronicle of
 events (crashes and rises with their causes, extinction, plants hitting the cap, gene shifts,
@@ -395,14 +448,14 @@ profile (density = their product). A profile (`FoodAxis` in `Rules::plant_depth`
 `plant_width`, six rules per axis `plant_{depth,width}_{profile,steepness,end,bend,waves,amplitude}`)
 is `f(t)` over the share of the axis from the near edge (surface / left): uniform, linear
 (`end` % at the far edge), exp (`steepness`), log (`bend`: plateau, then a cliff), waves
-(`waves` rich bands, peaks mid-band, `amplitude` %), and «игровое» (`Profile::Game`, no
-parameters: flat to 20% of depth, a straight slope to 15% at 85%, a cosine fall to a dead
-bottom — `GAME_*` in `config.rs`). The default is «игровое» down, uniform across (before
+(`waves` rich bands, peaks mid-band, `amplitude` %), and «игровое» (`Profile::Game`: flat to
+`GAME_PLATEAU` = 20% of depth, then the exp fall `e^(-steepness·t')` over the rest of the depth,
+using the same `steepness` rule as exp). The default is «игровое» down, uniform across (before
 `food-web` it was exp, steepness 8). Each parameter is read by its profile only;
-the UI shows it only then (`Field::shown`). `--rule plant_width_profile=waves` takes names
-(`Rules::with_text`). The dead zone at the surface (`PLANT_TOP_MARGIN_PCT` = 5% — 200 at height
-4000) belongs to the surface and applies to every profile. The distribution is a world property;
-layer genes don't adapt to it.
+the UI shows it only then (`Field::visible`). `--rule plant_width_profile=waves` takes names
+(`Rules::with_text`). The surface has no dead zone any more (`PLANT_TOP_MARGIN_PCT` = 0; the knob
+still applies to every profile). The distribution is a world property; layer genes don't adapt
+to it.
 
 `Flora` is derived from rules + space + the world's seed like a phenotype from a genome: built
 in `World::new` and in `set_rules` (plants already grown stay put). Uniform and exp keep the
@@ -450,7 +503,9 @@ frame after a new world or new rules (`Frame::patches`) and tints them under the
 
 Upkeep is `COEF * stat ** POWER` summed over size, speed and sight, with the speed term also
 multiplied by `(size / 40) ** SPEED_MASS_POWER` — moving a big body costs more (the factor is 1
-for the base genome). The *exponents* decide whether evolution has a
+for the base genome). Each term has its own price multiplier (rules `size_cost`, `speed_cost`,
+`sight_cost`, applied in `renormalize`) and power, plus `speed_mass_power` and the overall
+`cost_scale`; the lab's «Тело» tab shows the formula with these numbers and a chart (`screens::body_formula`). The *exponents* decide whether evolution has a
 trade-off at all: eating radius equals size (benefit ~ size²) and search radius equals vision
 (benefit ~ vision²), so cost must grow steeper — hence `size ** 2.5` and `vision ** 2`. With
 shallower exponents the stats run away to infinity. Read the comment block in `config.rs`
@@ -534,11 +589,16 @@ replaced in place by the `diet` choice gene (`food-web`), so no other gene moved
 
 Mutation laws (`genome::Mutation`): `Scale` for numeric genes (× (1 + gauss(0, σ·mutability)),
 multiplier ≥ 0.1); `Switch { chance }` to any other variant (0.1% for the choice genes);
-`Neighbours { chance, jump, of }` for the diet — a step to a neighbour in `DIET_NEIGHBOURS`
-(0.1%; the omnivore forks to herbivore / scavenger / carnivore, scavenger ↔ carnivore) or, on the
-same first draw, a jump to any other diet (0.01%). All chances are multiplied by the parent's
-mutability. Then `picky` («разборчивость», %, base 30, free): the own-niche threshold; the last row
-is `rivalry` («задиристость», %, base 30, free): below it a creature fights for its food. A founders' diet mix (`WorldConfig::diets`, 55/25/10/10 in variant order H/O/S/C,
+`Neighbours { chance, rise, jump, of, up }` for the diet — a step to a neighbour in
+`DIET_NEIGHBOURS` (the omnivore forks to herbivore / scavenger / carnivore, scavenger ↔ carnivore):
+towards meat (`DIET_TOWARDS_MEAT`: herbivore → omnivore, omnivore → scavenger or carnivore) with
+`DIET_MEAT_STEP_CHANCE` 2%, to any other neighbour with `DIET_STEP_CHANCE` 0.5%; or, on the same
+first draw, a jump to any other diet (`DIET_JUMP_CHANCE` 0.01%). Switch
+chances are multiplied by the parent's mutability; the diet's are not. Before any of it,
+`CLONE_CHANCE` (50%) of children are exact copies, and after it mutability is clamped to
+`MIN_MUTABILITY` (0.1). All of this is `genome::Heredity`, built from the rules (`clone_share`,
+`min_mutability`, `diet_step`, `diet_meat_step`, `diet_jump`) and applied by `CreatureGenome::mutate_by`. Then `picky` («разборчивость», %, base 30, free): the own-niche threshold; the last row
+is `rivalry` («задиристость», %, base 30, free): below it a creature fights for its food. A founders' diet mix (`WorldConfig::diets`, 70/30/0/0 in variant order H/O/S/C,
 `--diet-mix`) is dealt without draws through `genome::spread_ranks`, so it does not line up with
 the strategy mix.
 
@@ -550,8 +610,9 @@ eating). Eating, catching and division stay world physics driven by the phenotyp
 
 **Mutability** (`mutability`, base 1): the parent's value multiplies
 the mutation sigma of every gene — itself included — and the strategy switch chance
-(`mutate_values(.., mutability, ..)`, capped by `MAX_MUTABILITY`). It has no cost and no
-phenotype; it acts only at division.
+(`mutate_values(.., mutability, ..)`, between `MIN_MUTABILITY` and `MAX_MUTABILITY`). It has no
+cost and no phenotype; it acts only at division. Without the floor, selection drove it to 0 in
+long worlds, and evolution froze.
 
 The strategy is a gene: a row of each table, `Choice(&strategy::VARIANTS)`,
 `Mutation::Switch { chance: STRATEGY_SWITCH_CHANCE }`. **A choice gene with one variant is
@@ -595,12 +656,13 @@ Adding a strategy:
 
 **The window never waits for the simulation** — that is the rule every change must keep.
 
-Default game profile: `cost_scale=3`, starts at 30 ticks/s. «Спокойнее» applies the profile to
+Default game settings are the user's own world: ×20, 2:1, `cost_scale=3`, energy density 0.2,
+half lurkers, food steepness 5 (`Settings::default`); starts at 30 ticks/s. «Спокойнее» applies the profile to
 an old game; saved settings are not rewritten automatically (an old file's `cannibalism` key is
 ignored). The profile's reference is `reference/calm-fingerprint.json` (compare with `--rule
 cost_scale=3`); the engine's base reference is separate.
 
-«Стаи» toggles flock circles and flock colouring, including the minimap and the density raster.
+«Стаи» (hidden while `FLOCKS` is off) toggles flock circles and flock colouring, including the minimap and the density raster.
 One circle per flock (its feeding place and territory), gliding between frames like the bodies;
 the stroke is thin, normal or thick by territoriality, orange with a warned intruder, red in a
 battle. Labels «№ · members · kind» are laid out biggest flock first and never over another
@@ -646,7 +708,7 @@ cleared area.
   the same interpolated position. The buffer is uploaded only when a new frame arrives.
   `view.rs` paints corpses (red-brown fresh → grey-green rot, sinking between frames; a skeleton
   pale and smaller, `CorpseMark::skeleton`) and the faint patch tint under the flock circles. The
-  creature card shows the diet's edges from the `DIET_*` tables (`game::diet_bonuses`).
+  creature card shows the diet's edges in the world's current rules (`game::diet_bonuses`).
 - `app.rs` — `LifeApp`: screens and transitions, owns the settings and the `SimHandle`;
   `theme.rs` — palette (port of `app/theme.py`).
 - `stats.rs` — the «Статистика» window (key I): «Энергия» (fullness, plants vs cap),
@@ -658,14 +720,22 @@ cleared area.
   (`Frame::snapshots`, `History::snapshots`). Graphs and summaries retain only the last 10 000
   ticks; the chronicle is independent of that window.
 - `view.rs` (world, selection, minimap), `camera.rs` (port of `camera.py`, f64), `game.rs`
-  (game screen, lab window with «Правила»/«Еда» tabs, creature card, `report_command`),
-  `screens.rs` (menu, «Новый мир» with tabs «Мир»/«Еда»/«Лаборатория» and buttons pinned in a
-  bottom panel, prefs, help; `field_input` — a slider or, for a field with `choices`, a combo
-  box; `food_preview` — the world in its proportions shaded by `flora::density`, with the
+  (game screen; its «Графики» side panel: diets first, then the population chart, «Кто кого»,
+  folded genome and «Прочее»; lab window with topic tabs `Tab::RULES` — Еда/Тело/Питание/Бой/Трупы/
+  Эволюция, «Питание» a table of every diet's edges (`screens::diet_table`, `Key::Diet`); creature card; `report_command`),
+  `diets.rs` (the «Кто живёт» block: a row per diet with a click-open comparison to the world,
+  flows, kills by diet from `Counters::by_diet`; the «Кто кого» matrix; the «Подсветить:» toggles
+  that set `WorldView::highlight` — a shader uniform: highlighted diets drawn ≥ 3 px with a halo,
+  the rest dimmed),
+  `screens.rs` (menu, «Новый мир» with tab «Мир» plus the lab's topic tabs and buttons pinned in a
+  bottom panel, prefs, help; `field_input` — a `DragValue` clamped to the field's hard limits
+  (`Field::lo..hi`, why in `Field::limit`, shown by `field_hint`) with the default beside it
+  (`base_value`), or, for a field with `choices`, a combo box; `food_preview` — the world in its proportions shaded by `flora::density`, with the
   seed's patches when there are at most 3000),
   `charts.rs` (drawn with the painter — no plot crate; `lines` for any series, `genome` for a
   gene table), `history.rs` (port of `history.py`), `settings.rs` (`FIELDS`, the single field
-  spec — label, hint, range, `choices`, `shown`; start counts are *per base area* and scale with
+  spec — label, hint, range, `choices`, `visible`, display scale `shown`, `unit`, `decimals`,
+  `limit`; start counts are *per base area* and scale with
   the world; the strategy slider is the share of the second variant, the four diet sliders are
   shares of the founders; the shape is `Settings::shape`; file in
   `%APPDATA%\TinyLife`, atomic, clamped; settings tests write only to temp dirs).

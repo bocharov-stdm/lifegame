@@ -11,9 +11,85 @@ const BASE_SIZE: f64 = GENES[Gene::Size as usize].base;
 const BASE_SPEED: f64 = GENES[Gene::Speed as usize].base;
 const BASE_VISION: f64 = GENES[Gene::Vision as usize].base;
 
+/// The diets as rule keys name them, in the order of every `DIET_*` table (H/O/S/C).
+pub const DIETS: [&str; 4] = ["herbivore", "omnivore", "scavenger", "carnivore"];
+
+/// A diet's edges as rules: `{diet}_{edge}`, e.g. `carnivore_strike` (`DietEdges`).
+pub const DIET_EDGES: [&str; 9] =
+    ["strike", "health", "size_upkeep", "speed_upkeep", "smell", "deep_saving", "plants", "meat", "rot"];
+
+/// Every diet edge's rule key, `[diet][edge]`.
+pub const DIET_RULE_KEYS: [[&str; 9]; 4] = [
+    [
+        "herbivore_strike",
+        "herbivore_health",
+        "herbivore_size_upkeep",
+        "herbivore_speed_upkeep",
+        "herbivore_smell",
+        "herbivore_deep_saving",
+        "herbivore_plants",
+        "herbivore_meat",
+        "herbivore_rot",
+    ],
+    [
+        "omnivore_strike",
+        "omnivore_health",
+        "omnivore_size_upkeep",
+        "omnivore_speed_upkeep",
+        "omnivore_smell",
+        "omnivore_deep_saving",
+        "omnivore_plants",
+        "omnivore_meat",
+        "omnivore_rot",
+    ],
+    [
+        "scavenger_strike",
+        "scavenger_health",
+        "scavenger_size_upkeep",
+        "scavenger_speed_upkeep",
+        "scavenger_smell",
+        "scavenger_deep_saving",
+        "scavenger_plants",
+        "scavenger_meat",
+        "scavenger_rot",
+    ],
+    [
+        "carnivore_strike",
+        "carnivore_health",
+        "carnivore_size_upkeep",
+        "carnivore_speed_upkeep",
+        "carnivore_smell",
+        "carnivore_deep_saving",
+        "carnivore_plants",
+        "carnivore_meat",
+        "carnivore_rot",
+    ],
+];
+
 /// Имена настраиваемых правил — для отчёта (`--rule имя=число`) и настроек.
-/// Профили еды — по шесть на ось, по порядку `flora::AXIS_PARAMS`.
-pub const RULE_KEYS: [&str; 29] = [
+/// Профили еды — по шесть на ось, по порядку `flora::AXIS_PARAMS`; the diet edges come last.
+pub const RULE_KEYS: [&str; 79] = {
+    let mut all = [""; 79];
+    let mut i = 0;
+    while i < WORLD_RULE_KEYS.len() {
+        all[i] = WORLD_RULE_KEYS[i];
+        i += 1;
+    }
+    let mut d = 0;
+    while d < DIETS.len() {
+        let mut e = 0;
+        while e < DIET_EDGES.len() {
+            all[i] = DIET_RULE_KEYS[d][e];
+            i += 1;
+            e += 1;
+        }
+        d += 1;
+    }
+    all
+};
+
+/// The rules that are not a diet's edges.
+const WORLD_RULE_KEYS: [&str; 43] = [
     "plant_rate",
     "plant_energy",
     "mutation_sigma",
@@ -43,6 +119,20 @@ pub const RULE_KEYS: [&str; 29] = [
     "plant_patch_size",
     "melee_size_power",
     "plant_patch_share",
+    "size_cost",
+    "speed_cost",
+    "sight_cost",
+    "speed_mass_power",
+    "clone_share",
+    "min_mutability",
+    "diet_step",
+    "diet_jump",
+    "corpse_fresh",
+    "corpse_rotten",
+    "corpse_sink",
+    "corpse_decay",
+    "corpse_rest",
+    "diet_meat_step",
 ];
 
 /// Patches per base world — no more than this: at 1500 slots that is five places a patch, and
@@ -58,6 +148,60 @@ const FOOD_AXIS: FoodAxis = FoodAxis {
     waves: PLANT_WAVES,
     amplitude: PLANT_WAVE_AMPLITUDE,
 };
+
+/// What a diet is good at (`config::DIET_*`, one row each): all read in `Phenotype::of`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DietEdges {
+    /// Strike damage, times the world's shares (`DIET_STRIKE`); the strike's energy cost stays.
+    pub strike: f64,
+    /// Health per unit of size (`DIET_HEALTH`).
+    pub health: f64,
+    /// Factors of the size and speed terms of upkeep (`DIET_SIZE_COST`, `DIET_SPEED_COST`).
+    pub size_upkeep: f64,
+    pub speed_upkeep: f64,
+    /// How far corpses are sensed, in shares of vision (`DIET_SMELL`).
+    pub smell: f64,
+    /// Upkeep saved on the bottom (`DIET_DEEP_SAVING`), 0‒1.
+    pub deep_saving: f64,
+    /// Digestibility of plants, fresh meat and rot (`DIET_DIGESTION`), 0‒1.
+    pub digestion: [f64; 3],
+}
+
+impl DietEdges {
+    const fn of(d: usize) -> Self {
+        DietEdges {
+            strike: DIET_STRIKE[d],
+            health: DIET_HEALTH[d],
+            size_upkeep: DIET_SIZE_COST[d],
+            speed_upkeep: DIET_SPEED_COST[d],
+            smell: DIET_SMELL[d],
+            deep_saving: DIET_DEEP_SAVING[d],
+            digestion: DIET_DIGESTION[d],
+        }
+    }
+
+    fn slot(&mut self, edge: &str) -> Option<&mut f64> {
+        Some(match edge {
+            "strike" => &mut self.strike,
+            "health" => &mut self.health,
+            "size_upkeep" => &mut self.size_upkeep,
+            "speed_upkeep" => &mut self.speed_upkeep,
+            "smell" => &mut self.smell,
+            "deep_saving" => &mut self.deep_saving,
+            "plants" => &mut self.digestion[0],
+            "meat" => &mut self.digestion[1],
+            "rot" => &mut self.digestion[2],
+            _ => return None,
+        })
+    }
+}
+
+/// `carnivore_strike` → (3, "strike").
+fn split_diet_key(key: &str) -> Option<(usize, &str)> {
+    let (diet, edge) = key.split_once('_')?;
+    let d = DIETS.iter().position(|&n| n == diet)?;
+    DIET_EDGES.contains(&edge).then_some((d, edge))
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Rules {
@@ -94,6 +238,31 @@ pub struct Rules {
     pub melee_size_power: f64,
     /// Share of the plant slots in patches, % (`config::PLANT_PATCH_SHARE`).
     pub plant_patch_share: f64,
+    /// What each term of the upkeep costs the base genome, times its config price (1 — as in
+    /// config): the powers set how steeply a stat away from the base costs more, these set the price
+    /// of the base itself.
+    pub size_cost: f64,
+    pub speed_cost: f64,
+    pub sight_cost: f64,
+    /// How the speed term grows with the body: `(size / 40) ** speed_mass_power`.
+    pub speed_mass_power: f64,
+    /// Share of children born exact copies, the floor of the mutability gene, and the chances of a
+    /// mutating child's diet to step to a neighbour or jump to any other (`config.rs`).
+    pub clone_share: f64,
+    pub min_mutability: f64,
+    pub diet_step: f64,
+    pub diet_jump: f64,
+    /// The chance of a step towards meat (`config::DIET_MEAT_STEP_CHANCE`).
+    pub diet_meat_step: f64,
+    /// A corpse's clock, ticks from death: fresh until, fully rotten at, gone at; how far it sinks
+    /// a tick; and the lowest share of the depth, %, where it comes to rest (`corpse.rs`).
+    pub corpse_fresh: f64,
+    pub corpse_rotten: f64,
+    pub corpse_sink: f64,
+    pub corpse_decay: f64,
+    pub corpse_rest: f64,
+    /// What each diet is good at, by diet (H/O/S/C).
+    pub diets: [DietEdges; 4],
     // производные коэффициенты — считает `renormalize`
     size_coef: f64,
     speed_coef: f64,
@@ -126,6 +295,21 @@ impl Default for Rules {
             plant_patch_size: PLANT_PATCH_SIZE,
             melee_size_power: MELEE_SIZE_POWER,
             plant_patch_share: PLANT_PATCH_SHARE,
+            size_cost: 1.0,
+            speed_cost: 1.0,
+            sight_cost: 1.0,
+            speed_mass_power: SPEED_MASS_POWER,
+            clone_share: CLONE_CHANCE,
+            min_mutability: MIN_MUTABILITY,
+            diet_step: DIET_STEP_CHANCE,
+            diet_jump: DIET_JUMP_CHANCE,
+            diet_meat_step: DIET_MEAT_STEP_CHANCE,
+            corpse_fresh: CORPSE_FRESH_TICKS as f64,
+            corpse_rotten: CORPSE_ROTTEN_TICKS as f64,
+            corpse_sink: CORPSE_SINK_SPEED,
+            corpse_decay: CORPSE_DECAY_TICKS as f64,
+            corpse_rest: CORPSE_REST_PCT,
+            diets: [DietEdges::of(0), DietEdges::of(1), DietEdges::of(2), DietEdges::of(3)],
             size_coef: 0.0,
             speed_coef: 0.0,
             sight_coef: 0.0,
@@ -153,6 +337,22 @@ impl Rules {
             return Err(format!("правило {key}: нужно конечное число, а не {value}"));
         }
         let mut r = self.clone();
+        if let Some((d, edge)) = split_diet_key(key) {
+            // Digesting more than all of a food, or saving more than the whole upkeep, would make
+            // energy from nothing: energy only grows in plants and passes along the chain.
+            let (allowed, need) = match edge {
+                "plants" | "meat" | "rot" | "deep_saving" => {
+                    ((0.0..=1.0).contains(&value), "доля от 0 до 1: больше — энергия из ничего")
+                }
+                "health" => (value > 0.0, "число больше 0"),
+                _ => (value >= 0.0, "число не меньше 0"),
+            };
+            if !allowed {
+                return Err(format!("правило {key}: нужно {need}, а не {value}"));
+            }
+            *r.diets[d].slot(edge).expect("ребро разобрано split_diet_key") = value;
+            return Ok(r);
+        }
         if let Some((along, param)) = flora::split_key(key) {
             FoodAxis::check(param, value)
                 .map_err(|need| format!("правило {key}: нужно {need}, а не {value}"))?;
@@ -177,6 +377,20 @@ impl Rules {
             "plant_patch_size" => r.plant_patch_size = value,
             "melee_size_power" => r.melee_size_power = value,
             "plant_patch_share" => r.plant_patch_share = value,
+            "size_cost" => r.size_cost = value,
+            "speed_cost" => r.speed_cost = value,
+            "sight_cost" => r.sight_cost = value,
+            "speed_mass_power" => r.speed_mass_power = value,
+            "clone_share" => r.clone_share = value,
+            "min_mutability" => r.min_mutability = value,
+            "diet_step" => r.diet_step = value,
+            "diet_jump" => r.diet_jump = value,
+            "diet_meat_step" => r.diet_meat_step = value,
+            "corpse_fresh" => r.corpse_fresh = value,
+            "corpse_rotten" => r.corpse_rotten = value,
+            "corpse_sink" => r.corpse_sink = value,
+            "corpse_decay" => r.corpse_decay = value,
+            "corpse_rest" => r.corpse_rest = value,
             _ => return Err(unknown(key)),
         }
         // Пределы — только те, за которыми правило теряет смысл, а не «разумные»:
@@ -187,7 +401,11 @@ impl Rules {
             "plant_bite_yield" => (0.0..=1.0).contains(&value),
             "plant_patches" => value.fract() == 0.0 && (0.0..=MAX_PATCHES).contains(&value),
             "plant_patch_size" => value >= PLANT_RADIUS,
-            "plant_patch_share" => (0.0..=100.0).contains(&value),
+            "plant_patch_share" | "corpse_rest" => (0.0..=100.0).contains(&value),
+            "clone_share" | "diet_step" | "diet_jump" | "diet_meat_step" => (0.0..=1.0).contains(&value),
+            "min_mutability" => (0.0..=MAX_MUTABILITY).contains(&value),
+            "corpse_fresh" | "corpse_rotten" | "corpse_decay" => value >= 1.0 && value.fract() == 0.0,
+            "corpse_sink" => value > 0.0,
             _ => value >= 0.0,
         };
         if !allowed {
@@ -196,7 +414,11 @@ impl Rules {
                 "plant_bite_yield" => "число от 0 до 1",
                 "plant_patches" => "целое число от 0 до 300",
                 "plant_patch_size" => "число не меньше радиуса растения (10)",
-                "plant_patch_share" => "число от 0 до 100",
+                "plant_patch_share" | "corpse_rest" => "число от 0 до 100",
+                "clone_share" | "diet_step" | "diet_jump" | "diet_meat_step" => "доля от 0 до 1",
+                "min_mutability" => "число от 0 до 10",
+                "corpse_fresh" | "corpse_rotten" | "corpse_decay" => "целое число тиков не меньше 1",
+                "corpse_sink" => "число больше 0",
                 _ => "число не меньше 0",
             };
             return Err(format!("правило {key}: нужно {need}, а не {value}"));
@@ -227,6 +449,9 @@ impl Rules {
 
     /// Значение правила по имени (для отчёта и настроек).
     pub fn get(&self, key: &str) -> Option<f64> {
+        if let Some((d, edge)) = split_diet_key(key) {
+            return self.diets[d].clone().slot(edge).map(|v| *v);
+        }
         if let Some((along, param)) = flora::split_key(key) {
             return self.food_axis(along).get(param);
         }
@@ -248,6 +473,20 @@ impl Rules {
             "plant_patch_size" => self.plant_patch_size,
             "melee_size_power" => self.melee_size_power,
             "plant_patch_share" => self.plant_patch_share,
+            "size_cost" => self.size_cost,
+            "speed_cost" => self.speed_cost,
+            "sight_cost" => self.sight_cost,
+            "speed_mass_power" => self.speed_mass_power,
+            "clone_share" => self.clone_share,
+            "min_mutability" => self.min_mutability,
+            "diet_step" => self.diet_step,
+            "diet_jump" => self.diet_jump,
+            "diet_meat_step" => self.diet_meat_step,
+            "corpse_fresh" => self.corpse_fresh,
+            "corpse_rotten" => self.corpse_rotten,
+            "corpse_sink" => self.corpse_sink,
+            "corpse_decay" => self.corpse_decay,
+            "corpse_rest" => self.corpse_rest,
             _ => return None,
         })
     }
@@ -271,12 +510,19 @@ impl Rules {
     /// бесплатным целиком, и опыт мерил бы не то. При показателях из конфига
     /// множитель — base ** 0.0, то есть ровно 1.0.
     fn renormalize(&mut self) {
-        self.size_coef =
-            SIZE_ENERGY_COEF * self.cost_scale * BASE_SIZE.powf(SIZE_ENERGY_POWER - self.size_power);
-        self.speed_coef =
-            SPEED_ENERGY_COEF * self.cost_scale * BASE_SPEED.powf(SPEED_ENERGY_POWER - self.speed_power);
-        self.sight_coef =
-            SIGHT_ENERGY_COEF * self.cost_scale * BASE_VISION.powf(SIGHT_ENERGY_POWER - self.sight_power);
+        // the prices are exactly 1.0 by default: the products keep config's bits
+        self.size_coef = SIZE_ENERGY_COEF
+            * self.cost_scale
+            * BASE_SIZE.powf(SIZE_ENERGY_POWER - self.size_power)
+            * self.size_cost;
+        self.speed_coef = SPEED_ENERGY_COEF
+            * self.cost_scale
+            * BASE_SPEED.powf(SPEED_ENERGY_POWER - self.speed_power)
+            * self.speed_cost;
+        self.sight_coef = SIGHT_ENERGY_COEF
+            * self.cost_scale
+            * BASE_VISION.powf(SIGHT_ENERGY_POWER - self.sight_power)
+            * self.sight_cost;
     }
 
     /// Расход энергии за тик: COEF * стат ** POWER, суммарно по трём статам.
@@ -285,10 +531,10 @@ impl Rules {
         self.upkeep_diet(size, speed, vision, [1.0, 1.0])
     }
 
-    /// Upkeep with the size and speed terms times the diet's factors (`config::DIET_SIZE_COST`,
-    /// `DIET_SPEED_COST`).
+    /// Upkeep with the size and speed terms times the diet's factors (`DietEdges::size_upkeep`,
+    /// `speed_upkeep`).
     pub fn upkeep_diet(&self, size: f64, speed: f64, vision: f64, [size_cost, speed_cost]: [f64; 2]) -> f64 {
-        let mass = (size / BASE_SIZE).powf(SPEED_MASS_POWER);
+        let mass = (size / BASE_SIZE).powf(self.speed_mass_power);
         self.size_coef * size.powf(self.size_power) * size_cost
             + self.speed_coef * speed.powf(self.speed_power) * mass * speed_cost
             + self.sight_coef * vision.powf(self.sight_power)
@@ -329,6 +575,41 @@ mod tests {
         ] {
             assert!(rules.with(key, value).is_err(), "{key}={value}");
         }
+    }
+
+    #[test]
+    fn diet_edges_default_to_config_and_never_make_energy() {
+        let r = Rules::default();
+        for (d, row) in DIET_RULE_KEYS.iter().enumerate() {
+            let expected = [
+                DIET_STRIKE[d],
+                DIET_HEALTH[d],
+                DIET_SIZE_COST[d],
+                DIET_SPEED_COST[d],
+                DIET_SMELL[d],
+                DIET_DEEP_SAVING[d],
+                DIET_DIGESTION[d][0],
+                DIET_DIGESTION[d][1],
+                DIET_DIGESTION[d][2],
+            ];
+            for (key, v) in row.iter().zip(expected) {
+                assert_eq!(r.get(key), Some(v), "{key}");
+            }
+        }
+        assert_eq!(r.with("carnivore_strike", 2.0).unwrap().diets[3].strike, 2.0);
+        assert_eq!(r.with("scavenger_rot", 0.5).unwrap().diets[2].digestion[2], 0.5);
+        for (key, v) in [
+            ("carnivore_meat", 1.01),
+            ("herbivore_plants", 1.5),
+            ("scavenger_rot", -0.1),
+            ("scavenger_deep_saving", 1.2),
+            ("herbivore_health", 0.0),
+            ("omnivore_strike", -1.0),
+        ] {
+            assert!(r.with(key, v).is_err(), "{key}={v}");
+        }
+        assert!(r.with("carnivore_wings", 1.0).is_err());
+        assert!(r.with("dragon_strike", 1.0).is_err());
     }
 
     #[test]

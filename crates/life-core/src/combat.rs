@@ -196,7 +196,7 @@ pub(crate) fn resolve_with_grace(
             hits.push(Hit {
                 attacker: i,
                 victim: j,
-                damage: (v.pheno.size * rules.shot_damage_share * v.pheno.diet.strike_bonus())
+                damage: (v.pheno.size * rules.shot_damage_share * v.pheno.strike_bonus)
                     .min(u.max_health() * 0.25),
                 cost: shot_cost,
                 ranged: true,
@@ -206,6 +206,8 @@ pub(crate) fn resolve_with_grace(
     }
     let mut result = CombatResult::default();
     let mut damage = vec![0.0; creatures.len()];
+    // who dealt each victim the most this tick: the killer if it dies
+    let mut killer: Vec<Option<(f64, usize)>> = vec![None; creatures.len()];
     for hit in hits {
         let Hit { attacker: i, victim: j, damage: d, cost, ranged, territorial } = hit;
         let signal =
@@ -228,8 +230,13 @@ pub(crate) fn resolve_with_grace(
         creatures[i].peaceful_ticks = 0;
         creatures[j].peaceful_ticks = 0;
         damage[j] += d;
+        let diets = (creatures[i].pheno.diet as usize, creatures[j].pheno.diet as usize);
+        counters.by_diet.strikes[diets.0][diets.1] += 1;
+        if killer[j].is_none_or(|(most, _)| d > most) {
+            killer[j] = Some((d, diets.0));
+        }
     }
-    for (v, d) in creatures.iter_mut().zip(damage) {
+    for ((v, d), killer) in creatures.iter_mut().zip(damage).zip(killer) {
         if !v.alive {
             continue;
         }
@@ -238,6 +245,11 @@ pub(crate) fn resolve_with_grace(
             v.alive = false;
             v.death = Some(Death::Combat);
             counters.combat += 1;
+            let diet = v.pheno.diet as usize;
+            counters.by_diet.deaths[diet][Death::Combat as usize] += 1;
+            if let Some((_, by)) = killer {
+                counters.by_diet.kills[by][diet] += 1;
+            }
         }
     }
     result
@@ -246,6 +258,7 @@ pub(crate) fn resolve_with_grace(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::creature::Diet;
     use crate::genome::creature::Gene;
     use crate::{CreatureGenome, World, WorldConfig};
     fn world() -> World {
@@ -332,6 +345,29 @@ mod tests {
         assert!(w.creatures.iter().all(|v| !v.alive && v.health == 0.0 && v.energy == 78.0));
         assert_eq!(w.counters.combat, 2);
     }
+    /// Every strike is counted by the striker's and the target's diet; a death goes to whoever
+    /// dealt the most damage in the fatal tick.
+    #[test]
+    fn strikes_and_kills_are_counted_by_diet() {
+        let mut w = world();
+        let diet = |d: Diet| CreatureGenome::BASE.with(Gene::Diet, d as usize as f64);
+        w.spawn(diet(Diet::Carnivore).with(Gene::Size, 100.0), 1000.0, 1000.0, Some(200.0));
+        w.spawn(diet(Diet::Omnivore).with(Gene::Size, 40.0), 1000.0, 1000.0, Some(80.0));
+        let prey = w.spawn(diet(Diet::Herbivore).with(Gene::Size, 30.0), 1000.0, 1000.0, Some(50.0));
+        w.creatures[2].health = 1.0;
+        for v in &mut w.creatures[..2] {
+            v.mind.attack = Some(prey);
+            v.mind.social.activity = crate::social::Activity::Alarm;
+        }
+        hit(&mut w);
+        assert!(!w.creatures[2].alive);
+        let (h, o, c) = (Diet::Herbivore as usize, Diet::Omnivore as usize, Diet::Carnivore as usize);
+        let by = w.counters.by_diet;
+        assert_eq!((by.strikes[c][h], by.strikes[o][h]), (1, 1));
+        assert_eq!((by.kills[c][h], by.kills[o][h]), (1, 0), "the harder striker killed it");
+        assert_eq!(by.deaths[h][Death::Combat as usize], 1);
+        assert_eq!(by.strikes.iter().flatten().sum::<u64>(), 2);
+    }
     #[test]
     fn a_hungry_creature_does_not_bite_whoever_it_bumps_into() {
         let mut w = world();
@@ -367,8 +403,10 @@ mod tests {
     /// strikes in proportion to its size, no weaker.
     #[test]
     fn a_bigger_body_strikes_disproportionately_harder() {
+        // the numbers of `MELEE_SIZE_POWER`'s comment, at the carnivore's former strike ×1.5
         let strikes_to_kill = |attacker: CreatureGenome, target: CreatureGenome| {
             let mut w = world();
+            w.set_rules(w.rules.with("carnivore_strike", 1.5).unwrap());
             w.spawn(attacker, 1000.0, 1000.0, Some(500.0));
             let prey = w.spawn(target, 1000.0, 1000.0, Some(50.0));
             w.creatures[0].mind.attack = Some(prey);
@@ -405,7 +443,8 @@ mod tests {
         let prey = w.spawn(herbivore(40.0), 1000.0, 1000.0, Some(50.0));
         w.creatures[0].mind.attack = Some(prey);
         hit(&mut w);
-        assert_eq!(w.creatures[1].max_health() - w.creatures[1].health, 9.0);
+        let strike = 120.0 * crate::config::MELEE_DAMAGE_SHARE * crate::config::DIET_STRIKE[3];
+        assert!((w.creatures[1].max_health() - w.creatures[1].health - strike).abs() < 1e-9);
     }
 
     /// Hungry at its food, a creature strikes a smaller stranger eating the same food beside it —

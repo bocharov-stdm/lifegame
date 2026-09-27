@@ -12,6 +12,7 @@
 mod app;
 mod camera;
 mod charts;
+mod diets;
 mod frame;
 mod game;
 mod history;

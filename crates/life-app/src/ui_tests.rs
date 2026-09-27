@@ -130,11 +130,17 @@ fn игра_помещается_в_окно() {
         for tab in [SideTab::Charts, SideTab::Log, SideTab::Creature] {
             h.state_mut().side_tab = tab;
             if tab == SideTab::Creature {
-                // самый крупный кружок в кадре — существо (растения мелкие)
+                // the biggest creature in the frame (a big meat-eating founder's corpse is not one)
                 let f = h.state().view.frame.as_ref().expect("кадр");
                 let (x, y) = {
-                    let i =
-                        h.state().view.instances().iter().max_by(|a, b| a.r.total_cmp(&b.r)).expect("кружки");
+                    let i = h
+                        .state()
+                        .view
+                        .instances()
+                        .iter()
+                        .filter(|v| (v.meta >> 16) & 3 == crate::motion::KIND_CREATURE)
+                        .max_by(|a, b| a.r.total_cmp(&b.r))
+                        .expect("кружки");
                     (f.origin.0 + i.x as f64, f.origin.1 + i.y as f64)
                 };
                 h.state_mut().sim.send(Command::Pick { x, y, radius: 1.0 });
@@ -155,6 +161,25 @@ fn игра_помещается_в_окно() {
                 Rect::from_min_max(Pos2::new(top.left() - 12.0, top.top()), Pos2::new(size.x, bottom));
             check_layout(h, size, &format!("игра, {tab:?}, {tag}"), Some(panel));
             shot(h, &format!("игра-{tab:?}-{tag}"));
+            if tab == SideTab::Charts {
+                // a click on a diet's row opens how it lives next to the whole world
+                assert!(h.query_by_label("сытость").is_none());
+                h.get_by_label("травоядные").click();
+                settle(h);
+                assert_eq!(h.state().diet_open, [true, false, false, false]);
+                assert!(h.query_by_label("сытость").is_some(), "the herbivores' details are open");
+                check_layout(h, size, &format!("игра, питание, {tag}"), Some(panel));
+                shot(h, &format!("игра-питание-{tag}"));
+                h.state_mut().diet_open = [false; 4];
+                // highlighting a diet lights it up in the world and fades the rest
+                h.get_by_label("● всеяд.").click();
+                settle(h);
+                assert_eq!(h.state().view.highlight, 0b10);
+                shot(h, &format!("игра-подсветка-{tag}"));
+                h.get_by_label("● всеяд.").click();
+                settle(h);
+                assert_eq!(h.state().view.highlight, 0);
+            }
         }
     });
 }
@@ -233,7 +258,7 @@ fn лаборатория_на_ходу_помещается_в_окно() {
     each_size(|h, size, tag| {
         h.state_mut().lab_open = true;
         h.state_mut().side_open = false;
-        for tab in [Tab::Lab, Tab::Food] {
+        for tab in Tab::RULES.map(|(tab, _)| tab) {
             h.state_mut().lab_tab = tab;
             if tab == Tab::Food {
                 h.state_mut().lab.set(Key::PlantWidthProfile, Profile::Waves.index());
@@ -245,7 +270,7 @@ fn лаборатория_на_ходу_помещается_в_окно() {
                 window.contains_rect(apply),
                 "лаборатория {tab:?}, {tag}: «Применить» за окном: {apply:?}"
             );
-            for role in [Role::Slider, Role::ComboBox] {
+            for role in [Role::SpinButton, Role::ComboBox] {
                 for node in h.query_all_by_role(role) {
                     assert!(
                         window.contains_rect(node.rect()),
@@ -266,7 +291,7 @@ fn меню_и_новый_мир_помещаются_в_окно() {
         settle(h);
         check_layout(h, size, &format!("меню, {tag}"), None);
         shot(h, &format!("меню-{tag}"));
-        for tab in [Tab::World, Tab::Food, Tab::Lab] {
+        for tab in std::iter::once(Tab::World).chain(Tab::RULES.map(|(tab, _)| tab)) {
             h.state_mut().screen = Screen::Setup;
             h.state_mut().setup_tab = tab;
             settle(h);
@@ -314,7 +339,7 @@ fn лаборатория_сбрасывает_отмеченные_цены_и_
     let _gpu = gpu();
     each_size(|h, size, tag| {
         h.state_mut().lab_open = true;
-        h.state_mut().lab_tab = Tab::Lab;
+        h.state_mut().lab_tab = Tab::Combat;
         h.state_mut().lab.set(Key::ShotDamage, 0.05);
         h.state_mut().lab.set(Key::ShotCost, 0.10);
         h.state_mut().lab_reset_selected.extend([Key::ShotDamage, Key::ShotCost]);
@@ -411,56 +436,13 @@ fn статистика_помещается_в_окно() {
 }
 
 #[test]
-fn раскраска_стай_и_спокойный_профиль_работают_на_паузе() {
+fn спокойный_профиль_работает_на_паузе() {
     let _gpu = gpu();
-    each_size(|h, size, tag| {
+    each_size(|h, _size, _tag| {
         h.state_mut().side_open = false;
         settle(h);
         let tick = h.state().view.frame.as_ref().unwrap().tick;
-        h.get_by_label("Стаи").click();
-        for _ in 0..100 {
-            h.step();
-            let colors: std::collections::BTreeSet<_> = h
-                .state()
-                .view
-                .instances()
-                .iter()
-                .filter(|v| (v.meta >> 16) & 3 == crate::motion::KIND_CREATURE)
-                .map(|v| v.color & 0xFFFFFF)
-                .collect();
-            if colors.len() > 2 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        let colors: std::collections::BTreeSet<_> = h
-            .state()
-            .view
-            .instances()
-            .iter()
-            .filter(|v| (v.meta >> 16) & 3 == crate::motion::KIND_CREATURE)
-            .map(|v| v.color & 0xFFFFFF)
-            .collect();
-        assert!(colors.len() > 2, "стаи имеют разные цвета");
-        let areas = &h.state().view.frame.as_ref().unwrap().flock_areas;
-        assert!(!areas.is_empty(), "кнопка включает области стай");
-        assert!(areas.iter().all(|a| a.members >= 2 && a.radius.is_finite() && a.radius > 0.0));
-        assert_eq!(h.state().view.frame.as_ref().unwrap().tick, tick);
-        // Пакет из 600 шагов выполнен без ожидания: дать закончиться анимации рождения.
-        std::thread::sleep(std::time::Duration::from_millis(800));
-        settle(h);
-        check_layout(h, size, "вид стай", None);
-        shot(h, &format!("стаи-{tag}"));
-        h.get_by_label("Стаи").click();
-        for _ in 0..100 {
-            h.step();
-            if h.state().view.frame.as_ref().unwrap().flock_areas.is_empty() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        assert!(h.state().view.frame.as_ref().unwrap().flock_areas.is_empty());
-        assert_eq!(h.state().view.frame.as_ref().unwrap().tick, tick);
+        assert!(h.query_by_label("Стаи").is_none(), "flocks are off: no button for them");
         h.get_by_label("Спокойнее").click();
         for _ in 0..100 {
             h.step();

@@ -81,12 +81,12 @@ fn plants_fill_slots_up_to_cap() {
 
 /// The surface is grazed bare every tick: the deep sea keeps only its own share
 /// of the cap instead of growing a forest into the room the surface left — about
-/// 14% below 30% depth with the exponent, about 55% with the «игровое» profile
-/// (patches blur the line a little).
+/// 14% below 30% depth with the exponent, about 12% with the «игровое» profile (flat to 20%, the
+/// exponent below; patches blur the line a little).
 #[test]
 fn deep_plants_do_not_take_over_when_surface_is_eaten() {
     let exp = scattered().with("plant_depth_profile", life_core::flora::Profile::Exp.index()).unwrap();
-    for (rules, share) in [(exp, 0.07..0.2), (Rules::default(), 0.45..0.62)] {
+    for (rules, share) in [(exp, 0.07..0.2), (Rules::default(), 0.1..0.26)] {
         let mut w = empty_world(rules);
         for _ in 0..3000 {
             w.step();
@@ -360,8 +360,12 @@ fn a_hunter_spares_its_growing_child_but_not_a_brother() {
     };
     let mut w = threat_world(100.0, 10.0, as_brother);
     w.creatures[0].energy = w.creatures[0].pheno.max_energy * 0.3;
+    let brother = w.creatures[1].id;
     w.step();
-    assert!(w.creatures[1].health < w.creatures[1].max_health(), "a hungry hunter spared a brother");
+    assert!(
+        w.creature(brother).is_none_or(|v| v.health < v.max_health()),
+        "a hungry hunter spared a brother"
+    );
 }
 
 /// Мир с бегством детерминирован: сородичей видят по снимку на начало фазы.
@@ -558,7 +562,7 @@ fn медленный_ход_дешевле() {
     let v = creature(1000.0, 1000.0, BASE);
     assert!((v.pheno.slow_speed - v.pheno.speed * SLOW_PACE).abs() < 1e-12);
     assert!(v.pheno.slow_upkeep < v.pheno.upkeep);
-    let costs = life_core::creature::Diet::Herbivore.upkeep_costs();
+    let costs = [DIET_SIZE_COST[0], DIET_SPEED_COST[0]];
     assert_eq!(
         v.pheno.slow_upkeep,
         Rules::default().upkeep_diet(40.0, v.pheno.slow_speed, v.pheno.vision, costs)
@@ -816,20 +820,31 @@ fn масштаб_больше_предела_отвергается() {
 /// herbivores followed by the rest.
 #[test]
 fn диеты_основателей_раздаются_по_долям_вперемешку() {
-    let w = World::new(&WorldConfig { seed: 4, ..Default::default() });
+    let diets = vec![55.0, 25.0, 10.0, 10.0];
+    let w = World::new(&WorldConfig { seed: 4, diets, ..Default::default() });
     let diets: Vec<usize> = w.creatures.iter().map(|v| v.pheno.diet as usize).collect();
     let count = |k| diets.iter().filter(|&&d| d == k).count();
     assert_eq!([count(0), count(1), count(2), count(3)], [11, 5, 2, 2], "{diets:?}");
     assert!(diets[..10].iter().any(|&d| d != 0) && diets[10..].contains(&0), "spread: {diets:?}");
     let all_herbivores = World::new(&WorldConfig { seed: 4, diets: Vec::new(), ..Default::default() });
     assert!(all_herbivores.creatures.iter().all(|v| v.pheno.diet as usize == 0));
-    // the diets draw nothing: the founders stand where they stood — scavengers at the same x, but
+    // the diets draw nothing: the founders stand where they stood — meat-eaters bigger
+    // (`MEAT_FOUNDER_SIZE`), so a body's margin off the edge may move them a little, and scavengers
     // held in the deep (`SCAVENGER_START_LAYER`)
     let height = w.space.height;
     for (a, b) in all_herbivores.creatures.iter().zip(&w.creatures) {
-        if b.pheno.diet == life_core::creature::Diet::Scavenger {
-            assert_eq!(a.x, b.x, "dealing diets must not shift the world's random numbers");
+        use life_core::creature::Diet;
+        if matches!(b.pheno.diet, Diet::Scavenger | Diet::Carnivore) {
+            assert_eq!(b.pheno.size, a.pheno.size * life_core::config::MEAT_FOUNDER_SIZE, "starts bigger");
+            assert!(
+                (a.x - b.x).abs() < b.pheno.size,
+                "dealing diets must not shift the world's random numbers"
+            );
+        }
+        if b.pheno.diet == Diet::Scavenger {
             assert!(b.y > height * 0.5 && b.pheno.layer_bound, "a scavenger starts in the deep: {}", b.y);
+        } else if b.pheno.diet == Diet::Carnivore {
+            continue;
         } else {
             assert_eq!((a.x, a.y), (b.x, b.y), "dealing diets must not shift the world's random numbers");
         }
