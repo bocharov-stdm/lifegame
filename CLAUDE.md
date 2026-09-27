@@ -81,11 +81,15 @@ that food) and its edges. The edges are world rules (`Rules::diets`, one `DietEd
 |---|---|---|
 | herbivore | ×1 | health ×1.5 (`DIET_HEALTH`), size term of upkeep ×0.85 (`DIET_SIZE_COST`) |
 | omnivore | ×1.15 | eats everything, so no food is foreign to it |
-| scavenger | ×1.3 | smells corpses at 2× vision (`DIET_SMELL`, free); upkeep falls linearly from half the depth to −40% on the bottom (`DIET_DEEP_SAVING`, `Phenotype::depth_upkeep`, applied in `Creature::act`); founders start with layer 50–100% (`SCAVENGER_START_LAYER`) |
-| carnivore | ×3 | speed term of upkeep ×0.5 (`DIET_SPEED_COST`) |
+| scavenger | ×1.3 | smells corpses at 3× vision (`DIET_SMELL`, free); upkeep falls linearly from half the depth to −40% on the bottom (`DIET_DEEP_SAVING`, `Phenotype::depth_upkeep`, applied in `Creature::act`); founders start with layer 50–100% (`SCAVENGER_START_LAYER`) |
+| carnivore | ×3 | speed term of upkeep ×0.5 (`DIET_SPEED_COST`); smells corpses at 1.5× vision; a juvenile gut: plants at 70% until grown (`DIET_YOUNG_PLANTS`) |
 
 Scavengers digest plants at 15%, carnivores at 20% (`DIET_DIGESTION`), so a lone meat-eater
-does not starve outright. There are no meat founders by default (`DIET_START_MIX` 70/30/0/0): at the
+does not starve outright. Until a creature grows to its own size (the size gene) it digests plants
+at its diet's `young_plants` edge (`DIET_YOUNG_PLANTS`, «Растения в детстве»; the grown value for
+every diet but the carnivore): a carnivore mutant is born half grown with its herbivore parent's
+prey ratio, sees no prey that much smaller, and starved on plants at 20%; now it grows on plants
+like an omnivore and hunts once grown. Staying young is no loophole: only the grown divide. There are no meat founders by default (`DIET_START_MIX` 70/30/0/0): at the
 start there are neither corpses nor prey small enough, and every one starved without a strike. The
 meat diets arise from mutants (`DIET_MEAT_STEP_CHANCE`). Meat founders set in a mix still start
 `meat_founder_size` (`MEAT_FOUNDER_SIZE` ×2, `WorldConfig`, `--meat-founders`, «Мясоеды на старте
@@ -157,6 +161,20 @@ commits. What is left:
   - The user then chose (2026-09-27): corpses sink at a constant speed; carnivore strike ×3 and its
     movement at half the price; no meat founders, meat diets from mutants with a 2% step towards
     meat (`diet_meat_step`, «Шаг к мясу»). Every diet edge is a rule now (lab tab «Питание»).
+  - Herbivores leap straight to the carnivore (0.1%) or the scavenger (0.01%): the meat niches
+    arose, but carnivores held in 0 of 8 worlds (born 28–249 a world, almost all starved).
+  - An 18-variant sweep of carnivore body traits (`life-sweep`, 2026-09-27; all conservation-safe):
+    a free nose for corpses is the main lever (×1.5: carnivores hold in 7 of 8, population −1%, but
+    they live as hyenas, 162 kills a world); a juvenile gut plus the nose ×1.5 gives real hunters
+    (8 of 8, 7.6%, 3672 kills, −19% population) but eats the corpses before they rot, and the
+    scavengers held in 1; a nose paid like sight at its radius killed the niche (0 of 8); a bigger
+    stomach ×1.5 held in 6 of 8 with little hunting; bolder prey choice hurt. The user chose
+    **three niches**: the juvenile gut, the carnivore's nose ×1.5, the scavenger's ×3 — carnivores
+    hold in 6 of 8, scavengers in 3, population −13% (`DIET_SMELL`, `DIET_YOUNG_PLANTS`).
+    Reproduced bit for bit after adoption. Open: in the ×1 worlds (acceptance, 8 seeds × 20 000)
+    all 16 survive, but the carnivores are too strong there — base 973 → 470 creatures late
+    (carnivores 8% → 20%), calm 750 → 205 (5% → 14%), dips down to 8–15 creatures; with the old
+    values carnivores already held in ×1 (8 and 5 of 8).
   - Tried and reverted, don't repeat: the parent paying for the child's body (halved populations,
     no meat diets); birth at ¼ size.
 - Flocks: remove the code and tests under the tag `flocks-final`. Prove the removal by the golden
@@ -220,6 +238,40 @@ cargo run -p life-report --release -- --seeds 3 --ticks 20000 --max-work 1e15 | 
 cargo run -p life-report --release -- --diet-mix 50 0 0 50        # founders' diets: H O S C shares
 ```
 
+**Many variants at once — `life-sweep`** (`crates/life-report/src/bin/life-sweep.rs`, doc comment at
+its top). A plan file lists `seeds:`, shared `args:` and `variant NAME: ARGS` lines (a `NAME=VALUE`
+token in capitals is an environment variable, for experiment builds); every variant × seed runs as
+its own `life-report` process, `--jobs` at a time, and each variant gets one summary row: worlds
+that ended on their own, survived, in how many carnivores / scavengers *hold* (≥ 10 creatures and
+1% of the world over the last `--late` share of the run), herbivore + carnivore coexistence, late
+diet shares, late and minimum population, carnivore births and kills, plus any `METRIC <name>
+<number>` lines a build prints. Guards: the report's own deadline (`--seconds`, 300 by default — a
+slowed run is cut and left out of the medians, never counted as finished), a watchdog that kills a
+process `--grace` seconds past it, the worst case printed before the start and the time left after
+every run. Results in `--out`: `runs.csv`, `summary.csv`, `summary.md` and each run's JSON and text;
+a run whose JSON and command line are there already is reused, so a stopped sweep resumes.
+Comments describe: the plan's top block, a block above variants, a comment ending a variant's line.
+Progress goes to `OUT/progress.json` every second, and a small always-on-top window
+(`life-progress`, a `life-app` bin next to `life-sweep`, or `--viewer`; `--no-window` for none)
+shows the bar (finished runs plus the running ones' ticks: each run rewrites `s<seed>.tick` about once a second
+through the report's `--progress FILE`), the time left (from those ticks even before a run ends),
+what runs now with its description, tick and time against the run limit, the last runs, and the same bar
+on its taskbar button. Its buttons pause, resume and stop the sweep through `OUT/control.txt` (`run`,
+`pause`, `stop`, read four times a second): a pause takes the running runs off at once and puts them
+back at the front of the queue (a world depends on its seed only, so the rerun gives the same
+result), a stop ends the sweep with a summary of what is done. Every press is printed (`PAUSED` /
+`RESUMED` / `STOPPED by the user in the window`) and appended to `OUT/events.log`. The user asked
+to see every series of Claude's runs there and to have Claude notice the presses: run measurements
+as a sweep in the background, with a Russian description above each variant, and a background
+watcher that ends on those lines (`until grep -qE "PAUSED by|STOPPED by" LOG; do sleep 2; done`).
+
+```bash
+cargo build -p life-report --release
+target/release/life-sweep plan.txt --out sweeps/hunt --jobs 16 --seconds 300
+target/release/life-sweep plan.txt --out sweeps/hunt --summary-only   # re-read the summary
+cargo build -p life-app --release --bin life-progress                  # the progress window
+```
+
 `CLAUDE.md`, `AGENTS.md` (short rules for other agents), `BEHAVIOR.md` and `README.md` describe
 one model: when a mechanic changes, update all four.
 
@@ -247,7 +299,8 @@ plants). The JSON has the same plus every snapshot (`life_sim::observe::Snapshot
 `GeneStat` — a spread for numeric genes, variant shares for choice genes —, depth and width
 histograms, cumulative counters). Format `life-report/10` (social counters, flocking-gene
 carriers, territories, corpses, feeding and rot bites, corpse fates — appeared, removed, lain on the bottom,
-skeletons, lifetimes —, shots, configurable action costs): top-level `genes`
+skeletons, lifetimes —, shots, configurable action costs, flows by diet `counters.by_diet`: born,
+deaths by cause, strikes and kills keyed by diet): top-level `genes`
 describes the gene table (key, label, kind, variants); keys are English (event `kind`), texts
 Russian. Long runs may stop on the work budget ("перегрузка") — raise it with `--max-work`.
 
@@ -329,7 +382,7 @@ Integration tests (`crates/life-core/tests/`): `engine`, `golden`, `lifecycle`, 
 
 `crates/life-sim/src/lib.rs` — `simulate()` / `run()` under limits; `observe.rs` — snapshots,
 events, ASCII map. `crates/life-report/src/` — `main.rs` (CLI), `story.rs`, `json.rs`,
-`metrics.rs` (`--compare`).
+`metrics.rs` (`--compare`), `bin/life-sweep.rs` (plans of many variants).
 
 `Relict/` — **frozen 2025 archive** of early Python prototypes. See `Relict/ПАМЯТНИК.txt`:
 nothing there is edited, refactored, "fixed", modernised or translated. Its bugs are part of
@@ -593,7 +646,9 @@ multiplier ≥ 0.1); `Switch { chance }` to any other variant (0.1% for the choi
 `DIET_NEIGHBOURS` (the omnivore forks to herbivore / scavenger / carnivore, scavenger ↔ carnivore):
 towards meat (`DIET_TOWARDS_MEAT`: herbivore → omnivore, omnivore → scavenger or carnivore) with
 `DIET_MEAT_STEP_CHANCE` 2%, to any other neighbour with `DIET_STEP_CHANCE` 0.5%; or, on the same
-first draw, a jump to any other diet (`DIET_JUMP_CHANCE` 0.01%). Switch
+first draw, a leap past the neighbours: the herbivore's own leaps (`DIET_LEAPS`: to the carnivore
+`HERBIVORE_LEAP_CARNIVORE` 0.1%, to the scavenger `HERBIVORE_LEAP_SCAVENGER` 0.01%, config only, no
+lab rule) replace its general jump; the other diets jump to any other diet (`DIET_JUMP_CHANCE` 0.01%). Switch
 chances are multiplied by the parent's mutability; the diet's are not. Before any of it,
 `CLONE_CHANCE` (50%) of children are exact copies, and after it mutability is clamped to
 `MIN_MUTABILITY` (0.1). All of this is `genome::Heredity`, built from the rules (`clone_share`,
@@ -749,6 +804,11 @@ cleared area.
   GPU lock: parallel wgpu renderers crash the driver on Windows. CI renders through WARP.
 - Release on Windows builds with `windows_subsystem = "windows"` (no console on double-click)
   and attaches to the parent console so flag errors still print.
+- `bin/life-progress.rs` — not the game: the `life-sweep` progress window with pause, resume and
+  stop (reads `progress.json` twice a second, writes `control.txt`; `View::of` and `draw` are tested,
+  `draw` also as PNGs with `TINYLIFE_SHOTS`), its own dark palette whatever the system theme, always
+  on top in the bottom right corner, its taskbar button a progress bar through `ITaskbarList3` (the
+  `windows` crate at the version eframe already pulls in): green, yellow on pause, red when stopped.
 
 ### Behavioural spec at `python-final`
 

@@ -2,8 +2,8 @@
 
 use super::{GeneKind, GeneSpec, Genome, Mutation, Variant, bases};
 use crate::config::{
-    DIET_JUMP_CHANCE, DIET_MEAT_STEP_CHANCE, DIET_STEP_CHANCE, FLOCKS, SHOOTER_SWITCH_CHANCE,
-    STRATEGY_SWITCH_CHANCE,
+    DIET_JUMP_CHANCE, DIET_MEAT_STEP_CHANCE, DIET_STEP_CHANCE, FLOCKS, HERBIVORE_LEAP_CARNIVORE,
+    HERBIVORE_LEAP_SCAVENGER, SHOOTER_SWITCH_CHANCE, STRATEGY_SWITCH_CHANCE,
 };
 use crate::creature::strategy::VARIANTS as STRATEGIES;
 use crate::rng::Rng;
@@ -135,6 +135,12 @@ pub const DIET_NEIGHBOURS: [&[usize]; 4] = [&[1], &[0, 2, 3], &[1, 3], &[1, 2]];
 /// founders starve before there is meat, so the meat diets arise from mutants.
 pub const DIET_TOWARDS_MEAT: [&[usize]; 4] = [&[1], &[2, 3], &[], &[]];
 
+/// A diet's own leaps past its neighbours, with their chances: the herbivore may leap straight to
+/// the carnivore or the scavenger (`HERBIVORE_LEAP_*`), so the meat diets do not hang on the
+/// omnivores alone, who dwindle to 1–2% of a world. The others keep the general jump.
+pub const DIET_LEAPS: [&[(usize, f64)]; 4] =
+    [&[(3, HERBIVORE_LEAP_CARNIVORE), (2, HERBIVORE_LEAP_SCAVENGER)], &[], &[], &[]];
+
 /// What a creature can digest (`config::DIET_DIGESTION`). A mutation steps to a neighbour in
 /// `DIET_NEIGHBOURS`. Labels are game UI.
 pub const DIET_VARIANTS: [Variant; 4] = [
@@ -151,12 +157,12 @@ pub const DIET_VARIANTS: [Variant; 4] = [
     Variant {
         key: "scavenger",
         label: "падальщик",
-        about: "Ест только мясо: гниль усваивает лучше всех, свежее — чуть хуже мясоеда, но берёт его только голодным. Чует трупы вдвое дальше, чем видит; в глубине живёт экономнее.",
+        about: "Ест только мясо: гниль усваивает лучше всех, свежее — чуть хуже мясоеда, но берёт его только голодным. Чует трупы втрое дальше, чем видит; в глубине живёт экономнее.",
     },
     Variant {
         key: "carnivore",
         label: "мясоед",
-        about: "Ест только мясо: свежее усваивает полностью, гниль — едва и только голодным. Бьёт сильнее всех, бегает дешевле.",
+        about: "Ест мясо: свежее усваивает полностью, гниль — едва и только голодным. Пока не вырос, растёт на растениях, как всеядный. Бьёт сильнее всех, бегает дешевле, чует трупы в полтора раза дальше, чем видит.",
     },
 ];
 
@@ -272,7 +278,7 @@ pub const GENES: [GeneSpec; N] = [
     GeneSpec {
         key: "diet",
         label: "питание",
-        about: "Что ест и как усваивает; потомок изредка сдвигается на шаг: травоядный ↔ всеядный, всеядный → падальщик или мясоед, падальщик ↔ мясоед; совсем редко перескакивает в любое питание. Мясоед бьёт сильнее всех, падальщик и всеядный слабее.",
+        about: "Что ест и как усваивает; потомок изредка сдвигается на шаг: травоядный ↔ всеядный, всеядный → падальщик или мясоед, падальщик ↔ мясоед; травоядный изредка сразу становится мясоедом, ещё реже падальщиком; остальные совсем редко перескакивают в любое питание. Мясоед бьёт сильнее всех, падальщик и всеядный слабее.",
         kind: GeneKind::Choice(&DIET_VARIANTS),
         base: 0.0,
         mutation: Mutation::Neighbours {
@@ -281,6 +287,7 @@ pub const GENES: [GeneSpec; N] = [
             jump: DIET_JUMP_CHANCE,
             of: &DIET_NEIGHBOURS,
             up: &DIET_TOWARDS_MEAT,
+            leaps: &DIET_LEAPS,
         },
     },
     GeneSpec {
@@ -531,7 +538,16 @@ mod tests {
                 "steps from {start}: {steps} of {n}, expected {expected}"
             );
             let far = 3 - near.len();
-            assert!(jumps <= 12 * far && (far == 0 || jumps >= 1), "jumps from {start}: {jumps}");
+            if start == 0 {
+                // the herbivore's own leaps: to the carnivore 0.1%, to the scavenger 0.01%
+                let expected = n as f64 * 0.5 * (HERBIVORE_LEAP_CARNIVORE + HERBIVORE_LEAP_SCAVENGER);
+                assert!(
+                    (expected * 0.7..=expected * 1.3).contains(&(jumps as f64)),
+                    "leaps from the herbivore: {jumps}, expected {expected}"
+                );
+            } else {
+                assert!(jumps <= 12 * far && (far == 0 || jumps >= 1), "jumps from {start}: {jumps}");
+            }
         }
     }
 

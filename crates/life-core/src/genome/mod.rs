@@ -53,15 +53,17 @@ pub enum Mutation {
     /// the omnivore is a fork to the herbivore, the scavenger and the carnivore), `up[k]` those of
     /// them up the chain (the diets: towards meat). A step up has chance `rise`, a step to any
     /// other neighbour `chance`. One of several neighbours is picked with equal odds (one more
-    /// draw); with one there is no second draw. With chance `jump` instead it leaps to any other
-    /// variant (one more draw); the same first draw decides all three. With one variant nothing is
-    /// drawn.
+    /// draw); with one there is no second draw. Otherwise it may leap past its neighbours: to the
+    /// variants `leaps[k]` lists, each with its own chance (no more draws), or, when that list is
+    /// empty, with chance `jump` to any other variant (one more draw). The same first draw decides
+    /// all of it. With one variant nothing is drawn.
     Neighbours {
         chance: f64,
         rise: f64,
         jump: f64,
         of: &'static [&'static [usize]],
         up: &'static [&'static [usize]],
+        leaps: &'static [&'static [(usize, f64)]],
     },
 }
 
@@ -168,7 +170,7 @@ pub(crate) fn mutate_values(
                     *value = (k + (k >= current) as usize) as f64;
                 }
             }
-            Mutation::Neighbours { chance, rise, jump, of, up } => {
+            Mutation::Neighbours { chance, rise, jump, of, up, leaps } => {
                 let (chance, rise, jump) = diet.unwrap_or((chance, rise, jump));
                 let n = spec.variants().map_or(0, <[Variant]>::len);
                 if n < 2 {
@@ -191,10 +193,24 @@ pub(crate) fn mutate_values(
                 } else if u < rise + chance {
                     let others: Vec<usize> = near.iter().copied().filter(|j| !ups.contains(j)).collect();
                     *value = pick(others.iter().peekable(), others.len());
-                } else if u < rise + chance + jump {
-                    // any other variant, as `Switch` picks it
-                    let k = rng.randint(0, n as i64 - 2) as usize;
-                    *value = (k + (k >= current) as usize) as f64;
+                } else {
+                    let own = leaps.get(current).copied().unwrap_or(&[]);
+                    if own.is_empty() {
+                        if u < rise + chance + jump {
+                            // any other variant, as `Switch` picks it
+                            let k = rng.randint(0, n as i64 - 2) as usize;
+                            *value = (k + (k >= current) as usize) as f64;
+                        }
+                    } else {
+                        let mut edge = rise + chance;
+                        for &(target, p) in own {
+                            edge += p;
+                            if u < edge {
+                                *value = target as f64;
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -362,7 +378,7 @@ mod tests {
 
     fn chain(chance: f64) -> GeneSpec {
         GeneSpec {
-            mutation: Mutation::Neighbours { chance, rise: 0.0, jump: 0.0, of: &CHAIN, up: &[] },
+            mutation: Mutation::Neighbours { chance, rise: 0.0, jump: 0.0, of: &CHAIN, up: &[], leaps: &[] },
             ..choice(&THREE, chance)
         }
     }
@@ -389,7 +405,14 @@ mod tests {
     fn прыжок_в_любой_другой_вариант() {
         const FAR: [&[usize]; 3] = [&[1], &[0, 2], &[1]];
         let spec = GeneSpec {
-            mutation: Mutation::Neighbours { chance: 0.0, rise: 0.0, jump: 1.0, of: &FAR, up: &[] },
+            mutation: Mutation::Neighbours {
+                chance: 0.0,
+                rise: 0.0,
+                jump: 1.0,
+                of: &FAR,
+                up: &[],
+                leaps: &[],
+            },
             ..choice(&THREE, 1.0)
         };
         let mut rng = Rng::new(8);
@@ -415,7 +438,14 @@ mod tests {
         ];
         const FORK: [&[usize]; 4] = [&[1], &[0, 2, 3], &[1, 3], &[1, 2]];
         let spec = GeneSpec {
-            mutation: Mutation::Neighbours { chance: 1.0, rise: 0.0, jump: 0.0, of: &FORK, up: &[] },
+            mutation: Mutation::Neighbours {
+                chance: 1.0,
+                rise: 0.0,
+                jump: 0.0,
+                of: &FORK,
+                up: &[],
+                leaps: &[],
+            },
             ..choice(&FOUR, 1.0)
         };
         let mut rng = Rng::new(3);
@@ -447,7 +477,14 @@ mod tests {
             Variant { key: "d", label: "г", about: "" },
         ];
         let spec = GeneSpec {
-            mutation: Mutation::Neighbours { chance: 0.1, rise: 0.4, jump: 0.0, of: &FORK, up: &UP },
+            mutation: Mutation::Neighbours {
+                chance: 0.1,
+                rise: 0.4,
+                jump: 0.0,
+                of: &FORK,
+                up: &UP,
+                leaps: &[],
+            },
             ..choice(&FOUR, 1.0)
         };
         let mut rng = Rng::new(9);
@@ -464,6 +501,48 @@ mod tests {
         assert!(seen[1][2] > 1700 && seen[1][3] > 1700, "{:?}", seen[1]);
         assert!((850..=1150).contains(&seen[1][0]), "down 10%: {:?}", seen[1]);
         assert!((850..=1150).contains(&(seen[2][1] + seen[2][3])), "nothing above: 10%: {:?}", seen[2]);
+    }
+
+    /// A variant with leaps of its own leaps only there, each with its chance, and never by the
+    /// general jump; the others keep the general jump.
+    #[test]
+    fn own_leaps_replace_the_general_jump() {
+        const FORK: [&[usize]; 4] = [&[1], &[0, 2, 3], &[1, 3], &[1, 2]];
+        const LEAPS: [&[(usize, f64)]; 4] = [&[(3, 0.2), (2, 0.05)], &[], &[], &[]];
+        const FOUR: [Variant; 4] = [
+            Variant { key: "a", label: "а", about: "" },
+            Variant { key: "b", label: "б", about: "" },
+            Variant { key: "c", label: "в", about: "" },
+            Variant { key: "d", label: "г", about: "" },
+        ];
+        let spec = GeneSpec {
+            mutation: Mutation::Neighbours {
+                chance: 0.0,
+                rise: 0.0,
+                jump: 0.5,
+                of: &FORK,
+                up: &[],
+                leaps: &LEAPS,
+            },
+            ..choice(&FOUR, 1.0)
+        };
+        let mut rng = Rng::new(17);
+        let mut from_first = [0usize; 4];
+        for _ in 0..10_000 {
+            let mut v = [0.0];
+            mutate_values(&mut v, &[spec], 0.3, 1.0, &mut rng, None);
+            from_first[v[0] as usize] += 1;
+        }
+        assert_eq!(from_first[1], 0, "no general jump from a variant with leaps of its own");
+        assert!((1800..=2200).contains(&from_first[3]), "20%: {from_first:?}");
+        assert!((400..=600).contains(&from_first[2]), "5%: {from_first:?}");
+        let mut moved = 0;
+        for _ in 0..10_000 {
+            let mut v = [2.0];
+            mutate_values(&mut v, &[spec], 0.3, 1.0, &mut rng, None);
+            moved += (v[0] != 2.0) as usize;
+        }
+        assert!((4700..=5300).contains(&moved), "the others keep the general jump: {moved}");
     }
 
     #[test]
@@ -487,7 +566,14 @@ mod tests {
         mutate_values(
             &mut v,
             &[GeneSpec {
-                mutation: Mutation::Neighbours { chance: 1.0, rise: 1.0, jump: 1.0, of: &[&[]], up: &[&[]] },
+                mutation: Mutation::Neighbours {
+                    chance: 1.0,
+                    rise: 1.0,
+                    jump: 1.0,
+                    of: &[&[]],
+                    up: &[&[]],
+                    leaps: &[&[(0, 1.0)]],
+                },
                 ..choice(&ONE, 1.0)
             }],
             0.3,

@@ -698,7 +698,7 @@ mod tests {
         }
     }
 
-    /// The scavenger smells corpses twice as far as it sees; the others find them by sight only.
+    /// The scavenger smells corpses three times as far as it sees; the omnivore finds them by sight.
     /// Sated, it leaves a fresh corpse to the hunters; hungry, it goes for it too.
     #[test]
     fn падальщик_чует_издалека_и_сытым_не_берёт_свежее() {
@@ -811,7 +811,9 @@ mod tests {
     /// гиганты, и радиус запроса растёт с ними.
     #[test]
     fn запросы_к_сеткам_совпадают_с_перебором_в_живом_мире() {
-        let giants = Rules::default().with("size_power", 1.0).unwrap().with("plant_energy", 120.0).unwrap();
+        // Food rich enough for bodies past 100. At 120 the biggest reached ~86 once the carnivore
+        // and the scavenger smelled farther (2026-09-27); at 180 it is ~190.
+        let giants = Rules::default().with("size_power", 1.0).unwrap().with("plant_energy", 180.0).unwrap();
         for (seed, rules) in [(1, Rules::default()), (4, giants)] {
             // the former founders' mix: hunters from the start, for the prey queries to check
             let diets = vec![55.0, 25.0, 10.0, 10.0];

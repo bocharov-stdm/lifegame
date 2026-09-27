@@ -1772,7 +1772,9 @@ dependencies = [
  "egui_kittest",
  "life-core",
  "life-sim",
+ "raw-window-handle",
  "serde_json",
+ "windows",
 ]
 
 [[package]]

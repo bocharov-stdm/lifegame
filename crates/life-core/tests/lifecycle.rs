@@ -1,5 +1,5 @@
 //! Регрессии жизненного цикла.
-use life_core::creature::{Creature, Diet};
+use life_core::creature::{Creature, Diet, Phenotype};
 use life_core::genome::creature::Gene;
 use life_core::rng::Rng;
 use life_core::{CreatureGenome, Rules, Space};
@@ -213,6 +213,7 @@ fn diet_edges_follow_the_rules() {
         ("carnivore_plants", 0.5),
         ("carnivore_meat", 0.6),
         ("carnivore_rot", 0.7),
+        ("carnivore_young_plants", 0.4),
     ]
     .iter()
     .fold(r.clone(), |r, (k, v)| r.with(k, *v).unwrap());
@@ -227,11 +228,32 @@ fn diet_edges_follow_the_rules() {
     assert_eq!(new.strike_cost(), base.strike_cost(), "the bonus is on damage only");
     assert_eq!((new.health_bonus, new.smell, new.deep_saving), (2.0, 3.0 * new.vision, 0.5));
     assert_eq!((new.plant_efficiency, new.meat_efficiency, new.rot_efficiency), (0.5, 0.6, 0.7));
+    let young = Phenotype::at_size(&with_diet(parent().genome, Diet::Carnivore), &lab, &space, 10.0);
+    assert_eq!(young.plant_efficiency, 0.4, "the juvenile gut is a rule too");
     assert_eq!(new.upkeep, lab.upkeep_diet(new.size, new.speed, new.vision, [0.5, 0.5]) * new.life_pace);
     assert!(new.upkeep < base.upkeep);
     for diet in [Diet::Herbivore, Diet::Omnivore, Diet::Scavenger] {
         assert_eq!(of(diet, &lab), of(diet, &r), "{diet:?} keeps its edges");
     }
+}
+
+/// A carnivore grows on plants like an omnivore until it reaches its own size (the juvenile gut),
+/// then digests them at its grown 20% and must hunt; the other diets digest plants young as grown.
+#[test]
+fn a_young_carnivore_grows_on_plants() {
+    let (r, space) = (Rules::default(), Space::default());
+    for diet in [Diet::Herbivore, Diet::Omnivore, Diet::Scavenger, Diet::Carnivore] {
+        let g = with_diet(parent().genome, diet);
+        let full = g[Gene::Size];
+        let (young, grown) =
+            (Phenotype::at_size(&g, &r, &space, full * 0.5), Phenotype::at_size(&g, &r, &space, full));
+        let d = diet as usize;
+        assert_eq!(young.plant_efficiency, life_core::config::DIET_YOUNG_PLANTS[d], "{diet:?} young");
+        assert_eq!(grown.plant_efficiency, life_core::config::DIET_DIGESTION[d][0], "{diet:?} grown");
+    }
+    let c = with_diet(parent().genome, Diet::Carnivore);
+    let almost = Phenotype::at_size(&c, &r, &space, c[Gene::Size] - 0.01);
+    assert_eq!((almost.plant_efficiency, Phenotype::of(&c, &r, &space).plant_efficiency), (0.7, 0.2));
 }
 
 /// Sated, a creature eats and goes only for its own food: the scavenger leaves the fresher half
@@ -264,8 +286,9 @@ fn сытый_ест_только_свою_пищу() {
 }
 
 /// Each diet has an edge of its own besides the strike: the herbivore is hardy and carries its
-/// size cheaper, the carnivore runs cheaper, the scavenger smells corpses from afar and lives
-/// cheaper in the deep. Only the named term of upkeep changes.
+/// size cheaper, the carnivore runs cheaper and smells corpses half as far again as it sees, the
+/// scavenger smells them from three times as far and lives cheaper in the deep. Only the named
+/// term of upkeep changes.
 #[test]
 fn бонусы_диет() {
     let r = Rules::default();
@@ -291,7 +314,7 @@ fn бонусы_диет() {
     let saved = 1.0 - life_core::config::DIET_SPEED_COST[3];
     assert!((o.pheno.upkeep - c.pheno.upkeep - saved * speed_term * c.pheno.life_pace).abs() < 1e-12);
     assert_eq!(s.pheno.upkeep, o.pheno.upkeep, "the scavenger saves only in the deep");
-    assert_eq!((s.pheno.smell, o.pheno.smell), (2.0 * vision, vision));
+    assert_eq!((s.pheno.smell, c.pheno.smell, o.pheno.smell), (3.0 * vision, 1.5 * vision, vision));
     // the deep saving grows from half the depth to 40% on the bottom
     assert_eq!(s.pheno.depth_upkeep(0.0), 1.0);
     assert_eq!(s.pheno.depth_upkeep(space.height * 0.5), 1.0);

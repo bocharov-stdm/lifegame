@@ -116,6 +116,9 @@ struct Args {
     /// Весь отчёт в JSON: каждый срез, хроника, карты. «-» — в stdout вместо текста.
     #[arg(long, value_name = "ФАЙЛ")]
     json: Option<PathBuf>,
+    /// Write «tick of ticks» to this file about once a second (one seed; `life-sweep` shows it).
+    #[arg(long, value_name = "ФАЙЛ")]
+    progress: Option<PathBuf>,
 }
 
 fn parse_scale(s: &str) -> Result<f64, String> {
@@ -244,9 +247,17 @@ fn main() {
         .map(|&seed| {
             let cfg = WorldConfig { seed, ..base_cfg.clone() };
             let mut maps = Vec::new();
+            let mut written = Instant::now();
             let res = simulate(&cfg, &limits, |w| {
                 if w.tick.is_multiple_of(map_every) {
                     maps.push((w.tick, ascii_map(w, args.map_width)));
+                }
+                if let Some(path) = &args.progress
+                    && w.tick.is_multiple_of(50)
+                    && written.elapsed() >= Duration::from_secs(1)
+                {
+                    let _ = std::fs::write(path, format!("{} {ticks}", w.tick));
+                    written = Instant::now();
                 }
             });
             // последняя карта — всегда конечное состояние, даже если прогон оборван

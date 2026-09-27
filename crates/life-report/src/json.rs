@@ -3,7 +3,8 @@
 //! тексты событий — по-русски.
 
 use life_core::genome::{GeneKind, GeneSpec, creature};
-use life_core::rules::RULE_KEYS;
+use life_core::rules::{DIETS, RULE_KEYS};
+use life_core::world::DietCounters;
 use life_core::{Counters, Rules, WorldConfig};
 use life_sim::SimResult;
 use life_sim::observe::{Event, GeneStat, MAP_LEGEND, Snapshot, Spread};
@@ -19,6 +20,21 @@ fn r(x: f64) -> f64 {
 
 fn spread(s: &Spread) -> Value {
     json!({ "p10": r(s.p10), "p50": r(s.p50), "p90": r(s.p90), "mean": r(s.mean) })
+}
+
+/// Flows by diet keyed by diet: `born[diet]`, `deaths[diet]` (starved, old age, combat), and the
+/// matrices `strikes[striker][target]`, `kills[killer][victim]`.
+fn by_diet(c: &DietCounters) -> Value {
+    let row =
+        |r: &[u64; 4]| Value::Object(DIETS.iter().zip(r).map(|(d, n)| (d.to_string(), json!(n))).collect());
+    let keyed =
+        |f: &dyn Fn(usize) -> Value| Value::Object((0..4).map(|d| (DIETS[d].to_string(), f(d))).collect());
+    json!({
+        "born": row(&c.born),
+        "deaths": keyed(&|d| json!({ "starved": c.deaths[d][0], "old_age": c.deaths[d][1], "combat": c.deaths[d][2] })),
+        "strikes": keyed(&|d| row(&c.strikes[d])),
+        "kills": keyed(&|d| row(&c.kills[d])),
+    })
 }
 
 fn counters(c: &Counters) -> Value {
@@ -40,6 +56,7 @@ fn counters(c: &Counters) -> Value {
         "corpses_bottom": c.corpses_bottom,
         "skeletons": c.skeletons,
         "corpse_ticks": c.corpse_ticks,
+        "by_diet": by_diet(&c.by_diet),
     })
 }
 
@@ -222,6 +239,11 @@ mod tests {
             assert!(snap[key].as_u64().is_some(), "нет численности {key}");
         }
         assert!(snap["pack_share"].as_f64().is_some());
+        for diet in DIETS {
+            assert!(run["totals"]["by_diet"]["born"][diet].as_u64().is_some(), "no births of {diet}");
+            assert!(run["totals"]["by_diet"]["kills"]["carnivore"][diet].as_u64().is_some());
+            assert!(snap["counters"]["by_diet"]["deaths"][diet]["starved"].as_u64().is_some());
+        }
         assert_eq!(snap["corpses"], 1);
         assert_eq!(snap["social"]["departures"], 0);
         assert_eq!(run["social_totals"]["departures"], 0);

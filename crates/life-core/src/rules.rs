@@ -15,11 +15,21 @@ const BASE_VISION: f64 = GENES[Gene::Vision as usize].base;
 pub const DIETS: [&str; 4] = ["herbivore", "omnivore", "scavenger", "carnivore"];
 
 /// A diet's edges as rules: `{diet}_{edge}`, e.g. `carnivore_strike` (`DietEdges`).
-pub const DIET_EDGES: [&str; 9] =
-    ["strike", "health", "size_upkeep", "speed_upkeep", "smell", "deep_saving", "plants", "meat", "rot"];
+pub const DIET_EDGES: [&str; 10] = [
+    "strike",
+    "health",
+    "size_upkeep",
+    "speed_upkeep",
+    "smell",
+    "deep_saving",
+    "plants",
+    "meat",
+    "rot",
+    "young_plants",
+];
 
 /// Every diet edge's rule key, `[diet][edge]`.
-pub const DIET_RULE_KEYS: [[&str; 9]; 4] = [
+pub const DIET_RULE_KEYS: [[&str; 10]; 4] = [
     [
         "herbivore_strike",
         "herbivore_health",
@@ -30,6 +40,7 @@ pub const DIET_RULE_KEYS: [[&str; 9]; 4] = [
         "herbivore_plants",
         "herbivore_meat",
         "herbivore_rot",
+        "herbivore_young_plants",
     ],
     [
         "omnivore_strike",
@@ -41,6 +52,7 @@ pub const DIET_RULE_KEYS: [[&str; 9]; 4] = [
         "omnivore_plants",
         "omnivore_meat",
         "omnivore_rot",
+        "omnivore_young_plants",
     ],
     [
         "scavenger_strike",
@@ -52,6 +64,7 @@ pub const DIET_RULE_KEYS: [[&str; 9]; 4] = [
         "scavenger_plants",
         "scavenger_meat",
         "scavenger_rot",
+        "scavenger_young_plants",
     ],
     [
         "carnivore_strike",
@@ -63,13 +76,14 @@ pub const DIET_RULE_KEYS: [[&str; 9]; 4] = [
         "carnivore_plants",
         "carnivore_meat",
         "carnivore_rot",
+        "carnivore_young_plants",
     ],
 ];
 
 /// Имена настраиваемых правил — для отчёта (`--rule имя=число`) и настроек.
 /// Профили еды — по шесть на ось, по порядку `flora::AXIS_PARAMS`; the diet edges come last.
-pub const RULE_KEYS: [&str; 79] = {
-    let mut all = [""; 79];
+pub const RULE_KEYS: [&str; 83] = {
+    let mut all = [""; 83];
     let mut i = 0;
     while i < WORLD_RULE_KEYS.len() {
         all[i] = WORLD_RULE_KEYS[i];
@@ -165,6 +179,8 @@ pub struct DietEdges {
     pub deep_saving: f64,
     /// Digestibility of plants, fresh meat and rot (`DIET_DIGESTION`), 0‒1.
     pub digestion: [f64; 3],
+    /// Digestibility of plants while not grown to its own size (`DIET_YOUNG_PLANTS`), 0‒1.
+    pub young_plants: f64,
 }
 
 impl DietEdges {
@@ -177,6 +193,7 @@ impl DietEdges {
             smell: DIET_SMELL[d],
             deep_saving: DIET_DEEP_SAVING[d],
             digestion: DIET_DIGESTION[d],
+            young_plants: DIET_YOUNG_PLANTS[d],
         }
     }
 
@@ -191,6 +208,7 @@ impl DietEdges {
             "plants" => &mut self.digestion[0],
             "meat" => &mut self.digestion[1],
             "rot" => &mut self.digestion[2],
+            "young_plants" => &mut self.young_plants,
             _ => return None,
         })
     }
@@ -341,7 +359,7 @@ impl Rules {
             // Digesting more than all of a food, or saving more than the whole upkeep, would make
             // energy from nothing: energy only grows in plants and passes along the chain.
             let (allowed, need) = match edge {
-                "plants" | "meat" | "rot" | "deep_saving" => {
+                "plants" | "meat" | "rot" | "young_plants" | "deep_saving" => {
                     ((0.0..=1.0).contains(&value), "доля от 0 до 1: больше — энергия из ничего")
                 }
                 "health" => (value > 0.0, "число больше 0"),
@@ -591,6 +609,7 @@ mod tests {
                 DIET_DIGESTION[d][0],
                 DIET_DIGESTION[d][1],
                 DIET_DIGESTION[d][2],
+                DIET_YOUNG_PLANTS[d],
             ];
             for (key, v) in row.iter().zip(expected) {
                 assert_eq!(r.get(key), Some(v), "{key}");
@@ -603,6 +622,7 @@ mod tests {
             ("herbivore_plants", 1.5),
             ("scavenger_rot", -0.1),
             ("scavenger_deep_saving", 1.2),
+            ("carnivore_young_plants", 1.1),
             ("herbivore_health", 0.0),
             ("omnivore_strike", -1.0),
         ] {

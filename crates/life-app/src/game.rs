@@ -838,6 +838,9 @@ fn diet_bonuses(gene: f64, rules: &Rules) -> String {
     if e.deep_saving != 0.0 {
         parts.push(format!("в глубине расход до −{:.0}%", e.deep_saving * 100.0));
     }
+    if e.young_plants != e.digestion[0] {
+        parts.push(format!("растения в детстве {:.0}%", e.young_plants * 100.0));
+    }
     if parts.is_empty() { "без особых сил".into() } else { parts.join(" · ") }
 }
 

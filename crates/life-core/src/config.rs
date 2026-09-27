@@ -191,6 +191,11 @@ pub const DIET_STEP_CHANCE: f64 = 0.005;
 /// diets have no founders (they starved before there was meat), so they arise from these mutants;
 /// at 0.5% a world saw about three in 20 000 ticks, too few to take hold.
 pub const DIET_MEAT_STEP_CHANCE: f64 = 0.02;
+/// Chances that a mutating herbivore's child leaps straight to the carnivore or the scavenger,
+/// past the omnivore (`genome::creature::DIET_LEAPS`; they replace its general jump): the omnivores
+/// dwindle to 1–2% of a world, and the meat diets hung on them alone (user's choice, 2026-09-27).
+pub const HERBIVORE_LEAP_CARNIVORE: f64 = 0.001;
+pub const HERBIVORE_LEAP_SCAVENGER: f64 = 0.0001;
 /// Chance that a mutating child's diet jumps to any other diet, neighbour or not, also whatever
 /// the mutability: so a line is not locked into its branch forever.
 pub const DIET_JUMP_CHANCE: f64 = 0.0001;
@@ -212,10 +217,16 @@ pub const DIET_SIZE_COST: [f64; 4] = [0.85, 1.0, 1.0, 1.0];
 /// scavenger learned to smell (16 of 16 worlds, 2026-09-26); at ×0.8 it still spent more on the
 /// chase than it caught (0.12 energy a tick against 0.15), at half the price it about held.
 pub const DIET_SPEED_COST: [f64; 4] = [1.0, 1.0, 1.0, 0.5];
-/// How far corpses are sensed, in shares of vision: the scavenger smells them twice as far as it
-/// sees. Smell is not paid for — only vision is (the scavenger's food lies scattered in the deep,
-/// and it would never find it by sight alone).
-pub const DIET_SMELL: [f64; 4] = [1.0, 1.0, 2.0, 1.0];
+/// How far corpses are sensed, in shares of vision: the scavenger smells them three times as far
+/// as it sees, the carnivore half as far again. Smell is not paid for — only vision is (the
+/// scavenger's food lies scattered in the deep, and it would never find it by sight alone). The
+/// carnivore's nose is what lets it hold (user's choice, 2026-09-27, from an 18-variant sweep on
+/// the baseline conditions): without it, it held in 0 of 8 worlds; a nose ×1.5 with the juvenile
+/// gut (`DIET_YOUNG_PLANTS`) in 8 of 8, but fresh corpses were eaten before they rotted and the
+/// scavengers held in 1; the scavenger's nose ×3 gives both — carnivores in 6, scavengers in 3. A
+/// nose paid for like sight at its radius killed the carnivores everywhere: a mutant is born with
+/// it and cannot pay for it before it finds meat.
+pub const DIET_SMELL: [f64; 4] = [1.0, 1.0, 3.0, 1.5];
 /// Upkeep saved in the deep by diet: from `DEEP_SAVING_FROM` of the depth down to the bottom the
 /// share grows linearly to this. The scavenger lives slowly in the cold dark where rot settles
 /// and plants do not grow; above that depth it pays like everybody.
@@ -253,6 +264,13 @@ pub const DIET_DIGESTION: [[f64; 3]; 4] = [
     [0.15, 0.8, 0.9], // падальщик
     [0.2, 1.0, 0.1],  // мясоед
 ];
+/// Plants while not grown to its own size (the size gene), by diet — a juvenile gut: a young
+/// carnivore digests plants like an omnivore, grows on them and hunts once grown. A carnivore
+/// mutant is born half grown with its herbivore parent's prey ratio, sees no prey that much
+/// smaller than itself and starved on plants at 20%. Grown, it is back at `DIET_DIGESTION`. No
+/// loophole in staying young: only the grown divide (57‒67% of carnivores were grown in every
+/// variant of the sweep). The others digest plants young as grown.
+pub const DIET_YOUNG_PLANTS: [f64; 4] = [1.0, 0.7, 0.15, 0.7];
 /// Founders' diets, shares in the same order. Dealt without a draw. No meat eaters: at the start
 /// there are neither corpses nor prey small enough, and every such founder starved (none struck
 /// once in the user's world, 2026-09-27); the meat diets arise from mutants
