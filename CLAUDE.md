@@ -70,7 +70,7 @@ digestion is at most 100% of a food (`Rules::with` rejects more), deep saving at
 upkeep, and a body a creature got for free (a founder's, a newborn's birth half) is not meat.
 Founders' bodies and tanks are the one initial condition. Check every new mechanic against this.
 
-The food web (branch `food-web`): the `diet` choice gene — herbivore, omnivore, scavenger,
+The food web (developed on the branch `food-web`, now on `main`): the `diet` choice gene — herbivore, omnivore, scavenger,
 carnivore (variant order H/O/S/C, the order of every `DIET_*` table in `config.rs`) — sets what a
 creature digests (`DIET_DIGESTION`: plants, fresh meat, rot; 0 means it neither eats nor goes for
 that food) and its edges. The edges are world rules (`Rules::diets`, one `DietEdges` per diet, keys
@@ -135,17 +135,19 @@ stripping. A corpse left alone is never stripped. Creatures stop at `EAT_STOP_SH
 standing on the food, and the game draws a proboscis to it. Plants grow in patches over a new
 default depth profile «игровое» (see "Where food grows").
 
-## Where the `food-web` work stands
+## Where the food-web work stands
 
-The branch `food-web` (not pushed yet; merge only on the user's word) holds six stages of
-commits. What is left:
+The user asked for the work on `main` (2026-09-27): `main` was fast-forwarded to the `food-web`
+branch (up to `ed14091`, three niches and the sweep tools); not pushed yet. Commit to `main` from
+now on unless told otherwise. What is left:
 - `AGENTS.md`, `BEHAVIOR.md`, `README.md` still describe the pre-`food-web` model (this file is
   current): diets and their edges, own niche and `picky`, rot, skeletons, patches, «игровое».
 - The golden digests fail by design until re-recorded; re-record them and both references
   (`--save-reference reference/fingerprint.json`, and `reference/calm-fingerprint.json` with
   `--rule cost_scale=3`) in
   one separate commit once the user accepts the balance; golden case H can become "all four diets".
-- Then push, PR, green CI.
+- Then push `main` (on the user's word). Until the digests and references are re-taken, CI on
+  `main` fails on the golden test and `--compare`.
 - Open (2026-09-26): the meat niches.
   - With meat = grown body + tank, the niches collapsed (seeds 1–8: no carnivores or scavengers
     anywhere, herbivores 79–100%, medians 925 / 755).
@@ -227,7 +229,8 @@ Dev builds use `opt-level = 2`: tests run real multi-thousand-tick simulations.
 Validating a model change: seeds 1–8 × 20 000 ticks for the base and the calm (`cost_scale=3`)
 profile. Runs must finish on their own, not stop on the work budget, so long runs need
 `--max-work 1e15` (`--compare` and `--save-reference` set it themselves). Acceptance: at least 7
-of 8 worlds survive in each profile. A single-seed run prints the genome start → end, including
+of 8 worlds survive in each profile; then the same on the baseline conditions (below), which is
+the balance the user judges. Run such series as a `life-sweep` plan (see below). A single-seed run prints the genome start → end, including
 the diet shares (`питание`) — that is how to see which diets survived. Detailed social validation
 numbers: `reference/social-validation.json`, analysed in `BEHAVIOR.md`.
 
@@ -314,8 +317,8 @@ and the event chronicle for its in-game event feed.
 and is re-taken from Rust after each deliberate balance change. It is a world of creatures
 and plants; metrics: creatures and plants mean, size max and final. The model is
 `life-behavior/10` (diets, rotting corpses, plant patches); references without this version are
-rejected with an explanation. On the `food-web` branch both references are still the /9 ones
-and are re-taken once the balance is settled.
+rejected with an explanation. Both references are still the /9 ones and are re-taken once the
+balance is settled.
 `--compare` reruns the same seeds in Rust and checks each metric's mean against the reference's
 per-seed range; any mismatch exits with code 1 (CI relies on it). It refuses (code 2) when the
 world differs from the one the reference was taken on (world size — compared as `Space`, not
