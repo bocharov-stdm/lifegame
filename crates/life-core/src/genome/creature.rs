@@ -2,7 +2,7 @@
 
 use super::{GeneKind, GeneSpec, Genome, Mutation, Variant, bases};
 use crate::config::{
-    CHOICE_SWITCH_CHANCE, DIET_JUMP_CHANCE, DIET_MEAT_STEP_CHANCE, DIET_STEP_CHANCE, FLOCKS,
+    CHOICE_SWITCH_CHANCE, COLD_BLOOD_STEP, DIET_JUMP_CHANCE, DIET_MEAT_STEP_CHANCE, DIET_STEP_CHANCE, FLOCKS,
     HERBIVORE_LEAP_CARNIVORE, HERBIVORE_LEAP_SCAVENGER, LIFESPAN_BASE, LIFESPAN_MAX, LIFESPAN_MIN,
     STRATEGY_SWITCH_CHANCE,
 };
@@ -41,6 +41,8 @@ pub enum Gene {
     Picky,
     Rivalry,
     Lifespan,
+    ColdBlood,
+    LayerReach,
 }
 
 impl Gene {
@@ -73,10 +75,12 @@ impl Gene {
         Gene::Picky,
         Gene::Rivalry,
         Gene::Lifespan,
+        Gene::ColdBlood,
+        Gene::LayerReach,
     ];
 }
 
-pub const N: usize = 28;
+pub const N: usize = 30;
 
 pub const PACK_VARIANTS: [Variant; 2] = [
     Variant {
@@ -425,6 +429,26 @@ pub const GENES: [GeneSpec; N] = [
         base: LIFESPAN_BASE,
         mutation: SCALE,
     },
+    GeneSpec {
+        key: "cold_blood",
+        label: "хладнокровие",
+        about: "Насколько тело остывает вместе с водой. В холодной глубине такое существо дешевле живёт \
+                и медленнее плавает: при 100% в самой холодной воде содержание вдвое дешевле, скорость \
+                на 40% ниже. В тёплой воде разницы нет, %.",
+        kind: GeneKind::Percent,
+        // warm-blooded, as before the gene; it moves off zero by points, not by a factor
+        base: 0.0,
+        mutation: Mutation::Shift { points: COLD_BLOOD_STEP },
+    },
+    GeneSpec {
+        key: "layer_reach",
+        label: "выход_из_слоя",
+        about: "Насколько далеко за край своего слоя выходит за видимой едой, % глубины мира. 100% — \
+                куда угодно; 0 — ест только в своём слое.",
+        kind: GeneKind::Percent,
+        base: 100.0,
+        mutation: SCALE,
+    },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -592,6 +616,27 @@ mod tests {
             (expected * 0.4..=expected * 1.8).contains(&(jumps as f64)),
             "jumps past the neighbours: {jumps}, expected {expected:.0}"
         );
+    }
+
+    /// `cold_blood` starts warm-blooded at 0 and a mutation moves it by points, so it leaves zero,
+    /// and it stays within 0‒100.
+    #[test]
+    fn cold_blood_moves_off_zero_by_points() {
+        let mut rng = Rng::new(3);
+        let (mut moved, mut sum) = (0, 0.0);
+        for _ in 0..10_000 {
+            let child = CreatureGenome::BASE.mutate(0.3, &mut rng)[Gene::ColdBlood];
+            assert!((0.0..=100.0).contains(&child), "{child}");
+            moved += (child > 0.0) as usize;
+            sum += child;
+        }
+        // half are copies; of the rest half go up (the other half clamp to 0)
+        assert!((2000..=3000).contains(&moved), "moved off zero: {moved}");
+        // gauss(0, 10) above zero averages 10 × sqrt(2/π) ≈ 8 points
+        let mean = sum / moved as f64;
+        assert!((6.0..=10.0).contains(&mean), "{mean}");
+        let full = CreatureGenome::BASE.with(Gene::ColdBlood, 100.0);
+        assert!((0..1000).all(|_| full.mutate(0.3, &mut rng)[Gene::ColdBlood] <= 100.0));
     }
 
     /// Мутагенность родителя растягивает разброс всех генов, и свой тоже, и

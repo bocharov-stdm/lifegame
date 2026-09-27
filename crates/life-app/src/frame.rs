@@ -227,30 +227,30 @@ pub fn flock_areas(world: &World) -> Vec<FlockArea> {
         .collect()
 }
 
-/// Видимый остаток трупа; его сытость определяет прозрачность отметки, гнилость — цвет.
+/// Видимый остаток трупа; его сытость определяет прозрачность отметки, стадия — цвет.
 #[derive(Clone, Copy, Debug)]
 pub struct CorpseMark {
     pub x: f64,
     pub y: f64,
     /// Depth on the previous frame: a rotting corpse sinks, drawn between the two.
     pub py: f64,
-    /// 0 fresh, 1 rotten.
-    pub rot: f64,
+    /// Past its fresh time: rot.
+    pub rot: bool,
     pub size: f64,
     /// What is left: of the whole meat, or of a skeleton's store.
     pub fullness: f64,
-    /// Eaten down to its bones: drawn pale and smaller.
+    /// Its bones: drawn pale and smaller.
     pub skeleton: bool,
 }
 
 impl CorpseMark {
     /// Fresh meat is red-brown, rot grey-green, bones pale.
     pub fn rgb(&self) -> [u8; 3] {
-        if self.skeleton {
-            return [206, 198, 172];
+        match (self.skeleton, self.rot) {
+            (true, _) => [206, 198, 172],
+            (false, true) => [118, 128, 96],
+            (false, false) => [176, 104, 88],
         }
-        let (fresh, rotten) = ([176.0, 104.0, 88.0], [118.0, 128.0, 96.0]);
-        [0, 1, 2].map(|i| (fresh[i] + (rotten[i] - fresh[i]) * self.rot.clamp(0.0, 1.0)) as u8)
     }
 }
 

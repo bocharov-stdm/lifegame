@@ -40,8 +40,8 @@
 use std::f64::consts::{PI, TAU};
 
 use crate::config::{
-    GAME_PLATEAU, PATCH_DARK_SIZE, PATCH_STRETCH, PATCH_WEIGHT_MIN, PLANT_MAX, PLANT_RADIUS, WORLD_HEIGHT,
-    WORLD_WIDTH,
+    GAME_PLATEAU, OCEAN_PEAK, OCEAN_SURFACE, PATCH_DARK_SIZE, PATCH_STRETCH, PATCH_WEIGHT_MIN, PLANT_MAX,
+    PLANT_RADIUS, WORLD_HEIGHT, WORLD_WIDTH,
 };
 use crate::plant::Plant;
 use crate::rng::Rng;
@@ -63,11 +63,22 @@ pub enum Profile {
     /// A rough real sea: full food down to `GAME_PLATEAU` of the axis, then `e^(−k·s)` over the
     /// rest (`s` from 0 to 1 there, `k` the steepness): a nearly dead bottom.
     Game,
+    /// A real ocean: a little poorer at the very surface, richest at `OCEAN_PEAK` of the axis (the
+    /// deep chlorophyll maximum, where light and nutrients from below meet), then `e^(−k·s)` over
+    /// the rest (`s` from 0 to 1 below the peak, `k` the steepness).
+    Ocean,
 }
 
 impl Profile {
-    pub const ALL: [Profile; 6] =
-        [Profile::Uniform, Profile::Linear, Profile::Exp, Profile::Log, Profile::Waves, Profile::Game];
+    pub const ALL: [Profile; 7] = [
+        Profile::Uniform,
+        Profile::Linear,
+        Profile::Exp,
+        Profile::Log,
+        Profile::Waves,
+        Profile::Game,
+        Profile::Ocean,
+    ];
 
     /// Имя для флага: `--rule plant_width_profile=waves`.
     pub fn key(self) -> &'static str {
@@ -78,6 +89,7 @@ impl Profile {
             Profile::Log => "log",
             Profile::Waves => "waves",
             Profile::Game => "game",
+            Profile::Ocean => "ocean",
         }
     }
 
@@ -89,6 +101,7 @@ impl Profile {
             Profile::Log => "логарифм",
             Profile::Waves => "волны",
             Profile::Game => "игровое",
+            Profile::Ocean => "океаническое",
         }
     }
 
@@ -222,6 +235,8 @@ impl FoodAxis {
                 (1.0 - a * (TAU * self.waves * t).cos()) / (1.0 + a)
             }
             Profile::Game => (-self.steepness * ((t - GAME_PLATEAU) / (1.0 - GAME_PLATEAU)).max(0.0)).exp(),
+            Profile::Ocean if t < OCEAN_PEAK => OCEAN_SURFACE + (1.0 - OCEAN_SURFACE) * t / OCEAN_PEAK,
+            Profile::Ocean => (-self.steepness * (t - OCEAN_PEAK) / (1.0 - OCEAN_PEAK)).exp(),
         }
     }
 
@@ -234,6 +249,12 @@ impl FoodAxis {
                 "{}, ровно до {:.0}%, дальше крутизна {}",
                 p.label(),
                 GAME_PLATEAU * 100.0,
+                self.steepness
+            ),
+            Profile::Ocean => format!(
+                "{}, больше всего на {:.0}%, дальше крутизна {}",
+                p.label(),
+                OCEAN_PEAK * 100.0,
                 self.steepness
             ),
             Profile::Linear => format!("{}, у дальнего края {:.0}%", p.label(), self.end),
@@ -876,6 +897,44 @@ mod tests {
         }
         assert_eq!(game.describe(), "игровое, ровно до 20%, дальше крутизна 8");
         assert_eq!(Profile::parse("game"), Some(Profile::Game));
+    }
+
+    /// The ocean: poorer at the very surface, richest at `OCEAN_PEAK`, the exponent below; the
+    /// plants grown follow it.
+    #[test]
+    fn the_ocean_profile_peaks_under_the_surface() {
+        let r = rules(&[("plant_depth_profile", Profile::Ocean.index())]);
+        let ocean = r.plant_depth;
+        assert_eq!(ocean.density(0.0), OCEAN_SURFACE);
+        assert_eq!(ocean.density(OCEAN_PEAK), 1.0);
+        let middle = (OCEAN_PEAK + 1.0) / 2.0;
+        assert!((ocean.density(middle) - (-ocean.steepness / 2.0).exp()).abs() < 1e-12, "the exponent below");
+        // continuous: rising to the peak, never rising below it
+        let mut last = OCEAN_SURFACE;
+        for i in 1..=10_000 {
+            let t = i as f64 / 10_000.0;
+            let d = ocean.density(t);
+            assert!((d - last).abs() < 3e-3, "{t}: {last} -> {d}");
+            assert!(if t <= OCEAN_PEAK { d >= last } else { d <= last }, "{t}: {last} -> {d}");
+            last = d;
+        }
+        assert_eq!(ocean.describe(), "океаническое, больше всего на 15%, дальше крутизна 8");
+        assert_eq!(Profile::parse("ocean"), Some(Profile::Ocean));
+        assert_eq!(Profile::parse("океаническое"), Some(Profile::Ocean));
+
+        // plants by 5% of depth: the densest band is at the peak, the surface one is poorer
+        let space = Space::default();
+        let flora = Flora::new(&scattered(&r), &space, 1);
+        let mut bands = [0u32; 20];
+        let mut rng = Rng::new(5);
+        for _ in 0..50_000 {
+            let y = flora.plant(&mut rng).y / space.height;
+            bands[((y * 20.0) as usize).min(19)] += 1;
+        }
+        let densest = (0..20).max_by_key(|&i| bands[i]).unwrap();
+        assert!((2..=3).contains(&densest), "the peak at 15%: {bands:?}");
+        assert!(bands[0] < bands[densest] * 3 / 4, "the surface is poorer: {bands:?}");
+        assert!(bands[19] * 100 < bands[densest], "a nearly dead bottom: {bands:?}");
     }
 
     /// Patches differ in size, shape and weight; every region holds the same number of slots;

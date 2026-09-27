@@ -18,6 +18,7 @@ pub mod rules;
 pub mod senses;
 pub mod space;
 pub mod territory;
+pub mod units;
 pub mod world;
 
 pub use genome::{CreatureGenome, Genome};

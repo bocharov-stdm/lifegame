@@ -8,9 +8,10 @@
 
 use super::Strategy;
 use crate::config::{
-    DEEP_SAVING_FROM, DIET_OWN, ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, LIFESPAN_MAX, LIFESPAN_MIN, OLD_AGE_FROM,
-    OLD_AGE_FULL, OLD_AGE_VIGOUR, SLOW_PACE,
+    COLD_SAVING, COLD_SLOWING, DIET_OWN, ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, LIFESPAN_MAX, LIFESPAN_MIN,
+    OLD_AGE_FROM, OLD_AGE_FULL, OLD_AGE_VIGOUR, SLOW_PACE,
 };
+use crate::corpse::Stage;
 use crate::flock::{FlockKind, Territoriality};
 use crate::genome::CreatureGenome;
 use crate::genome::creature::Gene;
@@ -40,7 +41,7 @@ impl Diet {
     }
 
     /// Its own food among plants, fresh meat and rot (`DIET_OWN`).
-    pub fn own(self) -> [bool; 3] {
+    pub fn own(self) -> [bool; 4] {
         DIET_OWN[self as usize]
     }
 }
@@ -77,12 +78,14 @@ pub struct Phenotype {
     pub plant_efficiency: f64,
     /// Fresh meat: a corpse right after death, and so what a hunt is worth.
     pub meat_efficiency: f64,
-    /// Fully rotten meat; a rotting corpse is a mix by its rot share (`corpse_efficiency`).
+    /// A rotting corpse, and its bones (`corpse::Stage`).
     pub rot_efficiency: f64,
-    /// Fresh meat and rot are its own food: sated, it eats and goes only for its own
+    pub bones_efficiency: f64,
+    /// Fresh meat, rot and bones are its own food: sated, it eats and goes only for its own
     /// (`DIET_OWN`); below `picky` of its store, for any it digests.
     pub own_meat: bool,
     pub own_rot: bool,
+    pub own_bones: bool,
     pub picky: f64,
     /// Health per unit of size (`DietEdges::health`).
     pub health_bonus: f64,
@@ -90,8 +93,12 @@ pub struct Phenotype {
     pub strike_bonus: f64,
     /// How far it senses corpses (`DietEdges::smell` times vision).
     pub smell: f64,
-    /// Upkeep saved at the bottom; the saving grows from `DEEP_SAVING_FROM` of the depth.
-    pub deep_saving: f64,
+    /// How much the body takes the water's temperature (the `cold_blood` gene, 0‒1), and the
+    /// thermocline, y from and to (`Rules::thermo_*`).
+    pub cold_blood: f64,
+    pub thermo: (f64, f64),
+    /// How far beyond its layer it goes for food it sees (the `layer_reach` gene), y.
+    pub layer_reach: f64,
     pub height: f64,
     pub prey_ratio: f64,
     /// How much a hunter weighs the strikes it expects from its prey and the prey's visible
@@ -197,9 +204,9 @@ impl Phenotype {
         let vision = genome[Gene::Vision] * vigour;
         let diet = Diet::from_gene(genome[Gene::Diet]);
         let edges = *diet.edges(rules);
-        let [plants, fresh, rot] = edges.digestion;
+        let [plants, fresh, rot, bones] = edges.digestion;
         let diet_upkeep = [edges.size_upkeep, edges.speed_upkeep];
-        let [_, own_meat, own_rot] = diet.own();
+        let [_, own_meat, own_rot, own_bones] = diet.own();
         let slow_speed = speed * SLOW_PACE;
         Phenotype {
             size,
@@ -220,13 +227,21 @@ impl Phenotype {
             plant_efficiency: if size < genome[Gene::Size] { plants.max(edges.young_plants) } else { plants },
             meat_efficiency: fresh,
             rot_efficiency: rot,
+            bones_efficiency: bones,
             own_meat,
             own_rot,
+            own_bones,
             picky: genome[Gene::Picky].clamp(0.0, 100.0) / 100.0,
             health_bonus: edges.health,
             strike_bonus: edges.strike,
             smell: vision * edges.smell,
-            deep_saving: edges.deep_saving,
+            cold_blood: genome[Gene::ColdBlood].clamp(0.0, 100.0) / 100.0,
+            thermo: (rules.thermo_top / 100.0 * space.height, rules.thermo_bottom / 100.0 * space.height),
+            layer_reach: if genome[Gene::LayerReach] >= 100.0 {
+                f64::INFINITY
+            } else {
+                genome[Gene::LayerReach].max(0.0) / 100.0 * space.height
+            },
             height: space.height,
             prey_ratio: genome[Gene::PreyRatio].clamp(1.0, 5.0),
             caution: genome[Gene::Caution].clamp(0.0, 100.0) / 50.0,
@@ -280,17 +295,17 @@ pub fn melee_damage(strike: f64, size: f64, target: f64, power: f64) -> f64 {
 }
 
 impl Phenotype {
-    /// Efficiency on a corpse with rot share `rot`: fresh and rot mixed. A sated creature
-    /// (`hungry` false) does not touch a corpse that is mostly another niche's food (0): a sated
-    /// scavenger leaves the fresher half of the time to the hunters, a sated carnivore the rotten
-    /// half to the scavengers.
+    /// Efficiency on a corpse at `stage`. A sated creature (`hungry` false) does not touch another
+    /// niche's food (0): a sated scavenger leaves fresh corpses to the hunters, a sated carnivore
+    /// rot and bones to the scavengers.
     #[inline]
-    pub fn corpse_efficiency(&self, rot: f64, hungry: bool) -> f64 {
-        let own = if rot < 0.5 { self.own_meat } else { self.own_rot };
-        if !hungry && !own {
-            return 0.0;
-        }
-        self.meat_efficiency * (1.0 - rot) + self.rot_efficiency * rot
+    pub fn corpse_efficiency(&self, stage: Stage, hungry: bool) -> f64 {
+        let (efficiency, own) = match stage {
+            Stage::Fresh => (self.meat_efficiency, self.own_meat),
+            Stage::Rot => (self.rot_efficiency, self.own_rot),
+            Stage::Bones => (self.bones_efficiency, self.own_bones),
+        };
+        if hungry || own { efficiency } else { 0.0 }
     }
 
     /// Below `picky` of its store it eats another niche's food too.
@@ -299,15 +314,31 @@ impl Phenotype {
         energy < self.max_energy * self.picky
     }
 
-    /// The share of upkeep it pays at depth `y`: 1, or less for a deep dweller below
-    /// `DEEP_SAVING_FROM` of the depth, down to `1 − deep_saving` on the bottom.
+    /// How cold the water is at depth `y`: 0 above the thermocline, a smooth step to 1 below it.
     #[inline]
-    pub fn depth_upkeep(&self, y: f64) -> f64 {
-        if self.deep_saving == 0.0 {
-            return 1.0;
+    pub fn coldness(&self, y: f64) -> f64 {
+        let (top, bottom) = self.thermo;
+        if bottom <= top {
+            return if y >= top { 1.0 } else { 0.0 };
         }
-        let t = ((y / self.height - DEEP_SAVING_FROM) / (1.0 - DEEP_SAVING_FROM)).clamp(0.0, 1.0);
-        1.0 - self.deep_saving * t
+        let t = ((y - top) / (bottom - top)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    }
+
+    /// (speed, upkeep) factors at depth `y`: a cold-blooded body is slower and cheaper in the cold.
+    #[inline]
+    pub fn temper(&self, y: f64) -> (f64, f64) {
+        if self.cold_blood == 0.0 {
+            return (1.0, 1.0);
+        }
+        let c = self.cold_blood * self.coldness(y);
+        (1.0 - COLD_SLOWING * c, 1.0 - COLD_SAVING * c)
+    }
+
+    /// Food at depth `y` is within its reach: in its layer or no farther than `layer_reach` from it.
+    #[inline]
+    pub fn within_reach(&self, y: f64) -> bool {
+        y >= self.layer_lo - self.layer_reach && y <= self.layer_hi + self.layer_reach
     }
 
     /// Eats plants at all.

@@ -1,4 +1,5 @@
 //! Регрессии жизненного цикла.
+use life_core::corpse::Stage;
 use life_core::creature::{Creature, Diet, Phenotype};
 use life_core::genome::creature::Gene;
 use life_core::rng::Rng;
@@ -184,6 +185,9 @@ fn раны_лечатся_за_энергию_после_паузы() {
     assert_eq!(v.health, 20.0);
     v.peaceful_ticks = 59;
     let e = v.energy;
+    // warm-blooded, it pays the same at any depth
+    let cheaper = v.pheno.temper(v.y).1;
+    assert_eq!(cheaper, 1.0);
     // 0.2% of its health a tick: 60 for a hardy herbivore of size 40
     let heal = v.max_health() * 0.002;
     assert!((heal - 0.12).abs() < 1e-12);
@@ -194,20 +198,20 @@ fn раны_лечатся_за_энергию_после_паузы() {
     } else {
         v.pheno.upkeep
     };
-    assert!((e - v.energy - upkeep - heal).abs() < 1e-9);
+    assert!((e - v.energy - upkeep * cheaper - heal).abs() < 1e-9);
 }
 
-/// The diet table: a specialist digests its own food fully, the omnivore everything but worse,
-/// rot feeds well only the scavenger; a rotting corpse mixes fresh and rot.
+/// The diet table: a specialist digests its own food fully, the omnivore everything but bones and
+/// worse; rot feeds well only the scavenger, bones nobody else.
 #[test]
 fn диеты_усваивают_по_таблице() {
     let r = Rules::default();
     let plant_bite = r.plant_energy * r.plant_bite_yield / 5.0;
-    for (diet, plants, fresh, rot) in [
-        (Diet::Herbivore, 1.0, 0.0, 0.0),
-        (Diet::Omnivore, 0.7, 0.3, 0.05),
-        (Diet::Carnivore, 0.2, 1.0, 0.1),
-        (Diet::Scavenger, 0.15, 0.8, 0.9),
+    for (diet, plants, fresh, rot, bones) in [
+        (Diet::Herbivore, 1.0, 0.0, 0.0, 0.0),
+        (Diet::Omnivore, 0.7, 0.3, 0.05, 0.0),
+        (Diet::Carnivore, 0.2, 1.0, 0.1, 0.0),
+        (Diet::Scavenger, 0.15, 0.8, 0.9, 0.9),
     ] {
         let mut v = parent();
         v.genome = with_diet(v.genome, diet);
@@ -217,9 +221,9 @@ fn диеты_усваивают_по_таблице() {
         v.feed(&r);
         assert!((v.energy - plant_bite * plants).abs() < 1e-9, "{diet:?}: plants {}", v.energy);
         // hungry, it eats whatever it digests
-        assert_eq!(v.pheno.corpse_efficiency(0.0, true), fresh, "{diet:?}: fresh meat");
-        assert_eq!(v.pheno.corpse_efficiency(1.0, true), rot, "{diet:?}: rot");
-        assert!((v.pheno.corpse_efficiency(0.5, true) - (fresh + rot) / 2.0).abs() < 1e-12);
+        assert_eq!(v.pheno.corpse_efficiency(Stage::Fresh, true), fresh, "{diet:?}: fresh meat");
+        assert_eq!(v.pheno.corpse_efficiency(Stage::Rot, true), rot, "{diet:?}: rot");
+        assert_eq!(v.pheno.corpse_efficiency(Stage::Bones, true), bones, "{diet:?}: bones");
         assert_eq!(v.pheno.eats_plants(), plants > 0.0);
         assert_eq!(v.pheno.hunts(), fresh > 0.0);
         assert_eq!(
@@ -247,7 +251,6 @@ fn diet_edges_follow_the_rules() {
         ("carnivore_size_upkeep", 0.5),
         ("carnivore_speed_upkeep", 0.5),
         ("carnivore_smell", 3.0),
-        ("carnivore_deep_saving", 0.5),
         ("carnivore_plants", 0.5),
         ("carnivore_meat", 0.6),
         ("carnivore_rot", 0.7),
@@ -264,7 +267,7 @@ fn diet_edges_follow_the_rules() {
     let (base, new) = (of(Diet::Carnivore, &r), of(Diet::Carnivore, &lab));
     assert_eq!(new.strike(), base.strike() * 2.0);
     assert_eq!(new.strike_cost(), base.strike_cost(), "the bonus is on damage only");
-    assert_eq!((new.health_bonus, new.smell, new.deep_saving), (2.0, 3.0 * new.vision, 0.5));
+    assert_eq!((new.health_bonus, new.smell), (2.0, 3.0 * new.vision));
     assert_eq!((new.plant_efficiency, new.meat_efficiency, new.rot_efficiency), (0.5, 0.6, 0.7));
     let young = Phenotype::at_size(&with_diet(parent().genome, Diet::Carnivore), &lab, &space, 10.0);
     assert_eq!(young.plant_efficiency, 0.8, "the juvenile gut is a rule too");
@@ -313,29 +316,33 @@ fn a_young_carnivore_grows_on_plants() {
     assert_eq!(plants(&lab.with("carnivore_young_plants", 0.0).unwrap(), Diet::Carnivore, 0.5), 0.9);
 }
 
-/// Sated, a creature eats and goes only for its own food: the scavenger leaves the fresher half
-/// of a corpse's time to the hunters and does not hunt, the carnivore leaves rot and skeletons to
-/// the scavengers. Below `picky` of its store it takes whatever it digests. The omnivore has no
-/// foreign food.
+/// Sated, a creature eats and goes only for its own food: the scavenger leaves fresh corpses to
+/// the hunters and does not hunt, the carnivore leaves rot and bones to the scavengers. Below
+/// `picky` of its store it takes whatever it digests. The omnivore has no foreign food (and cannot
+/// digest bones at all).
 #[test]
 fn сытый_ест_только_свою_пищу() {
     let r = Rules::default();
-    for (diet, sated_fresh, sated_rot) in
-        [(Diet::Omnivore, true, true), (Diet::Scavenger, false, true), (Diet::Carnivore, true, false)]
-    {
+    for (diet, sated_fresh, sated_rot, bones) in [
+        (Diet::Omnivore, true, true, false),
+        (Diet::Scavenger, false, true, true),
+        (Diet::Carnivore, true, false, false),
+    ] {
         let mut v = parent();
         v.genome = with_diet(v.genome, diet).with(Gene::Picky, 30.0);
         v.apply_rules(&r, &Space::default());
         let full = v.pheno.max_energy;
         assert!(!v.pheno.hungry(full * 0.3) && v.pheno.hungry(full * 0.29), "{diet:?}: picky is 30%");
-        for rot in [0.0, 0.3, 0.49] {
-            assert_eq!(v.pheno.corpse_efficiency(rot, false) > 0.0, sated_fresh, "{diet:?} at rot {rot}");
-            assert!(v.pheno.corpse_efficiency(rot, true) > 0.0, "{diet:?} hungry at rot {rot}");
+        for (stage, sated) in [(Stage::Fresh, sated_fresh), (Stage::Rot, sated_rot), (Stage::Bones, bones)] {
+            assert_eq!(v.pheno.corpse_efficiency(stage, false) > 0.0, sated, "{diet:?} sated on {stage:?}");
         }
-        for rot in [0.5, 0.8, 1.0] {
-            assert_eq!(v.pheno.corpse_efficiency(rot, false) > 0.0, sated_rot, "{diet:?} at rot {rot}");
-            assert!(v.pheno.corpse_efficiency(rot, true) > 0.0, "{diet:?} hungry at rot {rot}");
-        }
+        assert!(v.pheno.corpse_efficiency(Stage::Fresh, true) > 0.0, "{diet:?} hungry on fresh");
+        assert!(v.pheno.corpse_efficiency(Stage::Rot, true) > 0.0, "{diet:?} hungry on rot");
+        assert_eq!(
+            v.pheno.corpse_efficiency(Stage::Bones, true) > 0.0,
+            bones,
+            "{diet:?}: only one digests bones"
+        );
         assert_eq!(v.pheno.hunts_now(full), sated_fresh, "{diet:?}: hunts sated");
         assert!(v.pheno.hunts_now(0.0), "{diet:?}: hunts hungry");
         assert!(v.pheno.hunts(), "{diet:?}: feared either way");
@@ -344,8 +351,7 @@ fn сытый_ест_только_свою_пищу() {
 
 /// Each diet has an edge of its own besides the strike: the herbivore is hardy and carries its
 /// size cheaper, the carnivore runs cheaper and smells corpses half as far again as it sees, the
-/// scavenger smells them from three times as far and lives cheaper in the deep. Only the named
-/// term of upkeep changes.
+/// scavenger smells them from three times as far. Only the named term of upkeep changes.
 #[test]
 fn бонусы_диет() {
     let r = Rules::default();
@@ -366,20 +372,80 @@ fn бонусы_диет() {
     let speed_term = r.upkeep(size, speed, vision) - r.upkeep_diet(size, speed, vision, [1.0, 0.0]);
     let saved = 1.0 - life_core::config::DIET_SPEED_COST[3];
     assert!((o.pheno.upkeep - c.pheno.upkeep - saved * speed_term).abs() < 1e-12);
-    assert_eq!(s.pheno.upkeep, o.pheno.upkeep, "the scavenger saves only in the deep");
+    assert_eq!(s.pheno.upkeep, o.pheno.upkeep, "the scavenger pays the base");
     assert_eq!((s.pheno.smell, c.pheno.smell, o.pheno.smell), (3.0 * vision, 1.5 * vision, vision));
-    // the deep saving grows from half the depth to 40% on the bottom
-    assert_eq!(s.pheno.depth_upkeep(0.0), 1.0);
-    assert_eq!(s.pheno.depth_upkeep(space.height * 0.5), 1.0);
-    assert!((s.pheno.depth_upkeep(space.height * 0.75) - 0.8).abs() < 1e-12);
-    assert!((s.pheno.depth_upkeep(space.height) - 0.6).abs() < 1e-12);
-    assert_eq!(o.pheno.depth_upkeep(space.height), 1.0);
-    let mut deep = s.clone();
-    deep.y = space.height - deep.pheno.size;
-    deep.energy = 50.0;
-    deep.step(&life_core::senses::Blind);
-    let paid = 50.0 - deep.energy;
-    assert!(paid < deep.pheno.upkeep * 0.62 && paid > deep.pheno.upkeep * 0.55, "paid {paid}");
+}
+
+/// Cold deep water: a cold-blooded body is slower and cheaper below the thermocline, by its gene
+/// times the coldness; a warm-blooded one is the same everywhere. It saves, it never gains.
+#[test]
+fn a_cold_blooded_body_is_slower_and_cheaper_in_the_cold() {
+    use life_core::config::{COLD_SAVING, COLD_SLOWING, THERMO_BOTTOM, THERMO_TOP};
+    let (r, space) = (Rules::default(), Space::default());
+    let body = |cold: f64| {
+        let mut v = parent();
+        v.genome = v.genome.with(Gene::ColdBlood, cold);
+        v.apply_rules(&r, &space);
+        v
+    };
+    let (warm, cold, half) = (body(0.0), body(100.0), body(50.0));
+    let (top, bottom) = (space.height * THERMO_TOP / 100.0, space.height * THERMO_BOTTOM / 100.0);
+    for v in [&warm, &cold, &half] {
+        assert_eq!(v.pheno.temper(top), (1.0, 1.0), "warm water");
+        assert_eq!(v.pheno.upkeep, warm.pheno.upkeep, "the gene is free");
+    }
+    assert_eq!(warm.pheno.temper(space.height), (1.0, 1.0), "warm-blooded");
+    assert_eq!(cold.pheno.temper(bottom), (1.0 - COLD_SLOWING, 1.0 - COLD_SAVING));
+    let (slower, cheaper) = half.pheno.temper(space.height);
+    assert!(
+        (slower - (1.0 - COLD_SLOWING / 2.0)).abs() < 1e-12
+            && (cheaper - (1.0 - COLD_SAVING / 2.0)).abs() < 1e-12
+    );
+    assert!((cold.pheno.coldness((top + bottom) / 2.0) - 0.5).abs() < 1e-12, "a smooth step");
+    // a step on the bottom: the cold-blooded one goes shorter and pays half
+    let step = |mut v: life_core::creature::Creature| {
+        (v.x, v.y, v.energy) = (3000.0, space.height - 100.0, 50.0);
+        v.step(&life_core::senses::Blind);
+        ((v.x - 3000.0).hypot(v.y - (space.height - 100.0)), 50.0 - v.energy, v.pheno)
+    };
+    let (warm_moved, warm_paid, pheno) = step(warm.clone());
+    let (cold_moved, cold_paid, _) = step(cold.clone());
+    assert!((warm_paid - pheno.upkeep).abs() < 1e-9, "{warm_paid}");
+    assert!((cold_paid - pheno.upkeep * (1.0 - COLD_SAVING)).abs() < 1e-9, "{cold_paid}");
+    assert!(warm_moved > 0.0 && (cold_moved - warm_moved * (1.0 - COLD_SLOWING)).abs() < 1e-9);
+}
+
+/// `layer_reach`: how far beyond its layer a creature goes for food it sees. It takes the best
+/// food within its reach, not the nearest dropped.
+#[test]
+fn layer_reach_limits_where_it_goes_for_food() {
+    use life_core::{World, WorldConfig, plant::Plant};
+    let space = Space::default();
+    let strict = CreatureGenome::BASE
+        .with(Gene::MinY, 10.0)
+        .with(Gene::MaxY, 30.0)
+        .with(Gene::LayerBound, 0.0)
+        .with(Gene::LayerReach, 5.0);
+    let p = Phenotype::of(&strict, &Rules::default(), &space);
+    let (lo, hi, reach) = (space.height * 0.1, space.height * 0.3, space.height * 0.05);
+    assert!(p.within_reach(lo - reach + 1.0) && p.within_reach(hi + reach - 1.0));
+    assert!(!p.within_reach(lo - reach - 1.0) && !p.within_reach(hi + reach + 1.0));
+    let free = Phenotype::of(&strict.with(Gene::LayerBound, 1.0), &Rules::default(), &space);
+    assert!(free.within_reach(space.height) && free.within_reach(0.0), "a free one has no layer");
+    let base = Phenotype::of(&CreatureGenome::BASE, &Rules::default(), &space);
+    assert_eq!(base.layer_reach, f64::INFINITY, "100% is anywhere, as before the gene");
+
+    // on its layer's lower edge: the nearer plant is past its reach, the farther one inside it
+    let mut w = World::new(&WorldConfig {
+        n_creatures: Some(0),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
+        ..Default::default()
+    });
+    w.spawn(strict.with(Gene::Sociability, 0.0), 1000.0, hi, Some(40.0));
+    w.plants.push(Plant::at(1000.0, hi + reach + 100.0));
+    w.plants.push(Plant::at(1000.0, hi - 200.0));
+    w.step();
+    assert_eq!(w.creatures[0].mind.social.personal_food, Some((1000.0, hi - 200.0)));
 }
 
 #[test]
@@ -509,12 +575,13 @@ fn один_остаток_трупа_получает_едок_с_меньши�
     w.creatures[1].flock = w.creatures[0].flock;
     let mut corpse = Corpse::from_creature(&w.creatures[0], 0);
     corpse.owner = 99;
-    // one bite: a spawned body is no meat, so the corpse is its tank of 30, 3 of it the bones
-    corpse.remaining = 3.0;
+    // one bite of flesh is left: a spawned body is no meat, so the corpse is its tank of 30, 3 of
+    // it the bones, which carnivores cannot eat
+    corpse.remaining = 3.0 + 10.0;
     w.corpses.push(corpse);
     w.step();
-    assert_eq!(w.counters.meat_bites, 1);
-    assert_eq!(w.corpses[0].remaining, 0.0);
+    assert_eq!((w.counters.meat_bites, w.counters.bone_bites), (1, 0));
+    assert!(w.corpses[0].skeleton.is_some() && (w.corpses[0].remaining - 3.0).abs() < 1e-9, "bones left");
     assert!(w.creatures[0].energy > w.creatures[1].energy);
 }
 
@@ -584,7 +651,7 @@ fn потерявший_растение_ест_труп_который_каса
     assert_eq!(w.plants[0].portions, 4);
     use life_core::creature::Morsel;
     assert!(matches!(w.creatures[0].meal.map(|m| m.food), Some(Morsel::Plant)));
-    assert!(matches!(w.creatures[1].meal.map(|m| m.food), Some(Morsel::Corpse { rot }) if rot == 1.0));
+    assert!(matches!(w.creatures[1].meal.map(|m| m.food), Some(Morsel::Corpse { stage: Stage::Rot })));
     assert!(w.creatures[2].meal.is_none(), "the herbivore beside the corpse ate nothing");
 }
 
@@ -639,19 +706,20 @@ fn погибший_не_размножается() {
     assert_eq!(p.energy, energy);
 }
 
-/// The corpse counters add up: every corpse that appeared was removed or still lies; in a living
-/// world some are eaten down to skeletons.
+/// The corpse counters add up: every corpse that appeared was removed or still lies; every one
+/// comes to bones before it goes (a short clock, so that many go within the run).
 #[test]
 fn счётчики_трупов_сходятся() {
     use life_core::{World, WorldConfig};
-    let mut w = World::new(&WorldConfig { seed: 3, ..Default::default() });
+    let rules = Rules::default().with("corpse_decay", 600.0).unwrap().with("corpse_bones", 600.0).unwrap();
+    let mut w = World::new(&WorldConfig { seed: 3, rules, ..Default::default() });
     for _ in 0..3000 {
         w.step();
     }
     let c = w.counters;
     assert_eq!(c.corpses, c.corpses_gone + w.corpses.len() as u64);
     assert!(c.corpses_gone > 100, "{c:?}");
-    assert!(c.skeletons > 0 && c.skeletons <= c.corpses_gone, "{c:?}");
+    assert_eq!(c.skeletons, c.corpses_gone, "all came to bones: {c:?}");
     assert!(c.corpses_bottom <= c.corpses_gone);
     assert!(c.corpse_ticks >= c.corpses_gone, "a corpse lies at least a tick");
     assert!(w.corpses.iter().filter_map(|k| k.skeleton).all(|s| s.rest >= s.y1));
@@ -743,9 +811,20 @@ fn herbivore_leaps_follow_the_rules() {
 #[test]
 fn corpses_follow_the_rules_clock() {
     use life_core::corpse::{Corpse, CorpseClock};
-    let rules = Rules::default().with("corpse_fresh", 10.0).unwrap().with("corpse_rotten", 20.0).unwrap();
+    let rules = Rules::default()
+        .with("corpse_fresh", 10.0)
+        .unwrap()
+        .with("corpse_decay", 20.0)
+        .unwrap()
+        .with("corpse_bones", 30.0)
+        .unwrap()
+        .with("corpse_bones_sink", 7.0)
+        .unwrap();
     let v = parent();
-    let c = Corpse::from_creature_in(&v, 0, CorpseClock::of(&rules));
-    assert_eq!((c.rot(10), c.rot(20)), (0.0, 1.0), "rotten by the rules, not by config");
-    assert_eq!(Corpse::from_creature(&v, 0).rot(20), 0.0, "config's corpse is still fresh");
+    let mut c = Corpse::from_creature_in(&v, 0, CorpseClock::of(&rules));
+    assert_eq!((c.stage(10), c.stage(11)), (Stage::Fresh, Stage::Rot), "rot by the rules, not by config");
+    assert_eq!(Corpse::from_creature(&v, 0).stage(11), Stage::Fresh, "config's corpse is still fresh");
+    assert!(c.decay(20) && c.stage(20) == Stage::Bones, "bones by the rules");
+    assert_eq!(c.y_at(21) - c.y_at(20), 7.0, "sinking at the rules' speed");
+    assert!(c.decay(49) && !c.decay(50), "gone by the rules");
 }

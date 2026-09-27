@@ -64,9 +64,9 @@ pub struct Meal {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Morsel {
     Plant,
-    /// A piece of a corpse with this rot share (0 fresh, 1 rotten).
+    /// A piece of a corpse at this stage.
     Corpse {
-        rot: f64,
+        stage: crate::corpse::Stage,
     },
 }
 
@@ -234,6 +234,9 @@ impl Creature {
             (self.pheno.speed, self.pheno.upkeep)
         };
         let (x, y) = (self.x, self.y);
+        // a cold-blooded body in cold water is slower and cheaper (`Phenotype::temper`)
+        let (slower, cheaper) = self.pheno.temper(y);
+        let speed = speed * slower;
         let (dx, dy) = (intent.tx - x, intent.ty - y);
         let d = dx.hypot(dy);
         // Точка ближе шага — встаём ровно на неё. Проскочить её нельзя: при мягком
@@ -254,7 +257,7 @@ impl Creature {
             self.mind.social.heading = Some(moved);
         }
 
-        self.energy -= upkeep * self.pheno.depth_upkeep(y);
+        self.energy -= upkeep * cheaper;
         if self.energy <= 0.0 {
             self.alive = false;
             self.death = Some(Death::Starved);

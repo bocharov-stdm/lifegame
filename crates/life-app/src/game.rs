@@ -6,7 +6,7 @@ use eframe::egui::{self, Align2, Key, RichText, Vec2};
 use life_core::flora::Profile;
 use life_core::genome::creature::N;
 use life_core::genome::{GeneSpec, creature};
-use life_core::{Rules, WorldConfig};
+use life_core::{Rules, WorldConfig, units};
 use life_sim::observe::{EventKind, GeneStat};
 
 use crate::app::{LifeApp, SideTab, Tool};
@@ -737,6 +737,19 @@ fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; N]>, rules: 
         s.genome[creature::Gene::Size as usize],
         s.age
     ));
+    // the same in real units (`life_core::units`): the life clock is compressed
+    ui.colored_label(
+        MUTED,
+        format!(
+            "≈ {:.0} см · {:.1} года · глубина {:.0} м",
+            units::cm(s.half * 2.0),
+            units::years(s.age),
+            units::metres(s.y)
+        ),
+    )
+    .on_hover_text(
+        "В настоящих единицах: базовое существо — рыба в 20 см. Жизнь ускорена: тик жизни ≈ 9 часов.",
+    );
     ui.label(format!("Здоровье {:.1} / {:.1} · {}", s.health, s.max_health, s.state));
     ui.label(s.flock.map_or("Одиночка".into(), |id| format!("Стая № {id}")));
     let diet = &creature::DIET_VARIANTS[(s.genome[creature::Gene::Diet as usize] as usize).min(3)];
@@ -751,13 +764,15 @@ fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; N]>, rules: 
     .on_hover_text(diet.about);
     ui.colored_label(MUTED, diet_bonuses(s.genome[creature::Gene::Diet as usize], rules));
     if let Some(food) = s.eating {
+        use life_core::corpse::Stage;
         use life_core::creature::Morsel;
         ui.colored_label(
             MUTED,
             match food {
                 Morsel::Plant => "ест растение".to_string(),
-                Morsel::Corpse { rot } if rot < 0.5 => "ест свежее мясо".to_string(),
-                Morsel::Corpse { .. } => "ест гниль".to_string(),
+                Morsel::Corpse { stage: Stage::Fresh } => "ест свежее мясо".to_string(),
+                Morsel::Corpse { stage: Stage::Rot } => "ест гниль".to_string(),
+                Morsel::Corpse { stage: Stage::Bones } => "грызёт кости".to_string(),
             },
         );
     }
@@ -834,9 +849,6 @@ fn diet_bonuses(gene: f64, rules: &Rules) -> String {
     }
     if e.smell != 1.0 {
         parts.push(format!("нюх ×{}", times(e.smell)));
-    }
-    if e.deep_saving != 0.0 {
-        parts.push(format!("в глубине расход до −{:.0}%", e.deep_saving * 100.0));
     }
     if e.young_plants > e.digestion[0] {
         parts.push(format!("растения в детстве {:.0}%", e.young_plants * 100.0));

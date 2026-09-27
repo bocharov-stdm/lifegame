@@ -1,22 +1,21 @@
 //! Трупы: конечный запас мясной пищи, доступный со следующего тика после смерти.
 //!
-//! A corpse's clock (`CorpseClock`, the world's rules at its death; `CORPSE_*` in config by
-//! default): it is fresh until `fresh` and lies where the creature died. Then it rots along a
-//! smooth step, fully rotten at `rotten`, and sinks `sink` a tick, straight down, to its place in
-//! the lowest `rest` % of the depth (a hash of the owner's id, no draws; never above where it died).
-//! It can be eaten all the way down. The speed is absolute, so a scavenger catches a sinking corpse
-//! in a world of any height; in a tall one it may decay before it gets there. Its store decays
-//! evenly until `decay`.
+//! Three stages (`Stage`), each its own food (a column of `DIET_DIGESTION`). A corpse's clock
+//! (`CorpseClock`, the world's rules at its death; `CORPSE_*` in config by default):
+//! - **fresh** until `fresh`, lying where the creature died;
+//! - **rot** from then: it sinks `sink` a tick, straight down, to its place in the lowest `rest` %
+//!   of the depth (a hash of the owner's id, no draws; never above where it died), and its flesh
+//!   decays evenly down to the bones by `decay` ticks from death. It can be eaten all the way
+//!   down; the speed is absolute, so a scavenger catches a sinking corpse in a world of any height;
+//! - **bones**: `CORPSE_SKELETON_SHARE` of its meat, left when the flesh is eaten or has rotted
+//!   away, whichever comes first. They sink `bones_sink` a tick to the corpse's resting place
+//!   (never up) and decay evenly over `bones` ticks from then.
 //!
-//! A corpse eaten down to `CORPSE_SKELETON_SHARE` of its meat becomes a skeleton: rot from that
-//! moment, it sinks `SKELETON_SINK_SPEED` a tick to the corpse's resting place (never up) and its
-//! store decays evenly over `SKELETON_TICKS` from then. One left
-//! alone is never stripped; it just decays. Everything is a function of the tick, so the result
-//! does not depend on how often it is checked.
+//! Everything is a function of the tick, so the result does not depend on how often it is checked.
 
 use crate::config::{
-    CORPSE_DECAY_TICKS, CORPSE_FRESH_TICKS, CORPSE_REST_PCT, CORPSE_ROTTEN_TICKS, CORPSE_SINK_SPEED,
-    CORPSE_SKELETON_SHARE, GROWTH_ENERGY_PER_SIZE, SKELETON_SINK_SPEED, SKELETON_TICKS,
+    CORPSE_DECAY_TICKS, CORPSE_FRESH_TICKS, CORPSE_REST_PCT, CORPSE_SINK_SPEED, CORPSE_SKELETON_SHARE,
+    GROWTH_ENERGY_PER_SIZE, SKELETON_SINK_SPEED, SKELETON_TICKS,
 };
 use crate::creature::Creature;
 use crate::grid::Grid;
@@ -44,7 +43,7 @@ pub struct Corpse {
     pub last_decay: u64,
     /// It came to rest with meat left (for the counters).
     pub settled: bool,
-    /// Eaten down to its bones.
+    /// Its bones, once the flesh is eaten or rotted away.
     pub skeleton: Option<Skeleton>,
     pub clock: CorpseClock,
 }
@@ -54,22 +53,26 @@ pub struct Corpse {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CorpseClock {
     pub fresh: u64,
-    pub rotten: u64,
     /// How far it sinks a tick after the fresh time.
     pub sink: f64,
+    /// The flesh has rotted down to the bones this many ticks from death.
     pub decay: u64,
     /// The lowest share of the depth where it comes to rest, %.
     pub rest: f64,
+    /// How long the bones lie, ticks from when they were left, and how fast they sink.
+    pub bones: u64,
+    pub bones_sink: f64,
 }
 
 impl Default for CorpseClock {
     fn default() -> Self {
         CorpseClock {
             fresh: CORPSE_FRESH_TICKS,
-            rotten: CORPSE_ROTTEN_TICKS,
             sink: CORPSE_SINK_SPEED,
             decay: CORPSE_DECAY_TICKS,
             rest: CORPSE_REST_PCT,
+            bones: SKELETON_TICKS,
+            bones_sink: SKELETON_SINK_SPEED,
         }
     }
 }
@@ -78,31 +81,48 @@ impl CorpseClock {
     pub fn of(rules: &crate::Rules) -> CorpseClock {
         CorpseClock {
             fresh: rules.corpse_fresh as u64,
-            rotten: rules.corpse_rotten as u64,
             sink: rules.corpse_sink,
             decay: rules.corpse_decay as u64,
             rest: rules.corpse_rest,
+            bones: rules.corpse_bones as u64,
+            bones_sink: rules.corpse_bones_sink,
         }
     }
 }
 
-/// What is left of an eaten corpse: rot that sinks to the deep.
+/// What a corpse is to an eater: each stage is its own food, a column of `DIET_DIGESTION` (after
+/// plants).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage {
+    Fresh = 1,
+    Rot = 2,
+    Bones = 3,
+}
+
+impl Stage {
+    /// Its column in `DIET_DIGESTION` and `DIET_OWN`.
+    pub fn column(self) -> usize {
+        self as usize
+    }
+}
+
+/// What is left of a corpse once its flesh is eaten or rotted away: bones that sink to the deep.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Skeleton {
-    /// Tick it was stripped.
+    /// Tick the bones were left.
     pub at: u64,
-    /// Depth it was stripped at, and where it comes to rest.
+    /// Depth they were left at, and where they come to rest.
     pub y1: f64,
     pub rest: f64,
-    /// Its meat when stripped.
+    /// Its meat when left.
     pub store: f64,
 }
 
-/// A bite of a corpse: the raw portion, the rot share at that tick and where the corpse lies.
+/// A bite of a corpse: the raw portion, its stage at that tick and where the corpse lies.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bite {
     pub amount: f64,
-    pub rot: f64,
+    pub stage: Stage,
     pub x: f64,
     pub y: f64,
 }
@@ -133,20 +153,22 @@ impl Corpse {
         }
     }
 
-    /// Rot share at tick `now`: 0 while fresh, then a smooth step to 1 when fully rotten. A
-    /// skeleton is rot.
-    pub fn rot(&self, now: u64) -> f64 {
+    /// Its stage at tick `now` (decayed up to it: `decay` leaves the bones when the flesh is gone).
+    pub fn stage(&self, now: u64) -> Stage {
         if self.skeleton.is_some() {
-            return 1.0;
+            Stage::Bones
+        } else if now.saturating_sub(self.born) <= self.clock.fresh {
+            Stage::Fresh
+        } else {
+            Stage::Rot
         }
-        smooth_step(now.saturating_sub(self.born), self.clock.fresh, self.clock.rotten)
     }
 
-    /// Depth at tick `now`: it sinks at its speed once no longer fresh; a skeleton sinks faster to
+    /// Depth at tick `now`: it sinks at its speed once no longer fresh; the bones sink faster to
     /// the same place.
     pub fn y_at(&self, now: u64) -> f64 {
         match self.skeleton {
-            Some(s) => (s.y1 + SKELETON_SINK_SPEED * now.saturating_sub(s.at) as f64).min(s.rest),
+            Some(s) => (s.y1 + self.clock.bones_sink * now.saturating_sub(s.at) as f64).min(s.rest),
             None => {
                 let sinking = now.saturating_sub(self.born).saturating_sub(self.clock.fresh);
                 (self.y0 + self.clock.sink * sinking as f64).min(self.bottom)
@@ -154,18 +176,39 @@ impl Corpse {
         }
     }
 
-    /// Равномерное разложение по первоначальной ценности, даже если часть съедена, и оседание.
-    /// A skeleton decays by its own store and time. Возвращает `false`, когда труп нужно убрать.
+    /// Decay and sinking up to tick `now`. The flesh decays evenly by its first worth, even if some
+    /// was eaten, down to the bones by `decay`; the tick it is gone the bones are left, and they
+    /// decay by their own store and time. Возвращает `false`, когда труп нужно убрать.
     pub fn decay(&mut self, now: u64) -> bool {
-        let (start, store, span) = match self.skeleton {
-            Some(s) => (s.at, s.store, SKELETON_TICKS),
-            None => (self.born, self.initial, self.clock.decay),
-        };
-        if now >= start.saturating_add(span) {
-            self.remaining = 0.0;
-        } else if now > self.last_decay {
-            let elapsed = now - self.last_decay.max(start);
-            self.remaining = (self.remaining - store * elapsed as f64 / span as f64).max(0.0);
+        if self.skeleton.is_none() && now > self.last_decay {
+            let bones = self.bones();
+            let rate = (self.initial - bones) / self.clock.decay as f64;
+            let from = self.last_decay.max(self.born);
+            // the tick the flesh is gone: never later than `decay` from death, where an uneaten
+            // corpse gets to (the division may land a hair past it)
+            let gone = if rate > 0.0 {
+                from.saturating_add(((self.remaining - bones) / rate).ceil().max(0.0) as u64)
+            } else {
+                from
+            }
+            .min(self.born.saturating_add(self.clock.decay));
+            if gone <= now {
+                self.remaining = bones.min(self.remaining);
+                self.last_decay = gone;
+                self.strip(gone);
+            } else {
+                self.remaining -= rate * (now - from) as f64;
+                self.last_decay = now;
+            }
+        }
+        if let Some(s) = self.skeleton {
+            let span = self.clock.bones;
+            if now >= s.at.saturating_add(span) {
+                self.remaining = 0.0;
+            } else if now > self.last_decay {
+                let elapsed = now - self.last_decay.max(s.at);
+                self.remaining = (self.remaining - s.store * elapsed as f64 / span as f64).max(0.0);
+            }
         }
         self.last_decay = self.last_decay.max(now);
         self.y = self.y_at(self.last_decay);
@@ -193,38 +236,27 @@ impl Corpse {
     }
 
     /// Одна порция. Даже если этот метод вызван до отдельной фазы разложения,
-    /// срок жизни и расход учитываются ровно один раз. A corpse eaten down to its bones — by
-    /// this bite or by decay before it — becomes a skeleton.
+    /// срок жизни и расход учитываются ровно один раз. A corpse eaten down to its bones by this
+    /// bite leaves them.
     pub fn bite(&mut self, now: u64, plant_energy: f64) -> Option<Bite> {
         if now <= self.born || !self.decay(now) {
             return None;
         }
-        if self.remaining <= self.bones() {
-            self.strip(now);
-        }
         let amount = self.portion(plant_energy);
-        let rot = self.rot(now);
+        let stage = self.stage(now);
         self.remaining = (self.remaining - amount).max(self.bones().min(self.remaining));
         if self.remaining <= self.bones() {
             self.strip(now);
         }
-        Some(Bite { amount, rot, x: self.x, y: self.y })
+        Some(Bite { amount, stage, x: self.x, y: self.y })
     }
 
-    /// It becomes a skeleton at tick `now`, where it lies.
-    fn strip(&mut self, now: u64) {
-        self.skeleton =
-            Some(Skeleton { at: now, y1: self.y, rest: self.bottom.max(self.y), store: self.remaining });
+    /// Its bones are left at tick `at`, where the corpse lies then.
+    fn strip(&mut self, at: u64) {
+        let y = self.y_at(at);
+        self.y = y;
+        self.skeleton = Some(Skeleton { at, y1: y, rest: self.bottom.max(y), store: self.remaining });
     }
-}
-
-/// 0 up to `from` ticks of age, then a smooth step to 1 at `to` (at once, if `to` is not later).
-fn smooth_step(age: u64, from: u64, to: u64) -> f64 {
-    if to <= from {
-        return if age >= to { 1.0 } else { 0.0 };
-    }
-    let t = ((age as f64 - from as f64) / (to - from) as f64).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
 }
 
 /// The meat of creature `v`'s body: the energy that went into growing it since birth
@@ -345,17 +377,24 @@ mod tests {
         let mut c = Corpse::from_creature(&body(), 10);
         assert_eq!(c.bite(10, 50.0), None);
         let initial = c.initial;
+        let bones = initial * CORPSE_SKELETON_SHARE;
         let bite = c.bite(11, 50.0).unwrap();
         assert_eq!(bite.amount, (initial / 12.0).max(10.0));
-        assert_eq!((bite.rot, bite.x, bite.y), (0.0, 1000.0, 1000.0), "fresh and where it died");
-        let lost = initial / CORPSE_DECAY_TICKS as f64;
+        assert_eq!((bite.stage, bite.x, bite.y), (Stage::Fresh, 1000.0, 1000.0), "fresh and where it died");
+        // the flesh decays, the bones do not
+        let lost = (initial - bones) / CORPSE_DECAY_TICKS as f64;
         assert!((c.remaining - (initial - lost - bite.amount)).abs() < 1e-12);
         assert!(c.decay(11)); // повторный учёт того же тика ничего не меняет
         let mut untouched = Corpse::from_creature(&body(), 10);
-        assert!(untouched.decay(10 + CORPSE_DECAY_TICKS - 1));
-        assert!(!untouched.decay(10 + CORPSE_DECAY_TICKS));
+        assert!(untouched.decay(10 + CORPSE_DECAY_TICKS - 1) && untouched.skeleton.is_none());
+        assert!(untouched.decay(10 + CORPSE_DECAY_TICKS), "the bones are left");
+        assert!((untouched.remaining - bones).abs() < 1e-9, "{} of {bones}", untouched.remaining);
+        assert_eq!(untouched.skeleton.map(|s| s.at), Some(10 + CORPSE_DECAY_TICKS));
+        assert!(untouched.decay(10 + CORPSE_DECAY_TICKS + SKELETON_TICKS - 1));
+        assert!(!untouched.decay(10 + CORPSE_DECAY_TICKS + SKELETON_TICKS), "the bones are gone too");
         assert_eq!(untouched.remaining, 0.0);
-        assert!(!c.decay(10 + CORPSE_DECAY_TICKS));
+        // one bitten into rots to its bones sooner
+        assert!(c.decay(10 + CORPSE_DECAY_TICKS - 1) && c.skeleton.is_some());
     }
 
     /// Two corpses in contact at the same distance: the one with the smaller owner id is bitten,
@@ -380,17 +419,21 @@ mod tests {
         assert!(corpses[1].remaining < corpses[1].initial);
     }
 
+    /// Decay, sinking and the bones being left do not depend on how often the corpse is checked.
     #[test]
     fn разложение_не_зависит_от_частоты_проверок() {
-        let mut each_tick = Corpse::from_creature(&body(), 1);
-        let mut once = each_tick.clone();
-        for tick in 2..=400 {
-            each_tick.decay(tick);
+        for end in [400, CORPSE_DECAY_TICKS + 700] {
+            let mut each_tick = Corpse::from_creature(&body(), 1);
+            let mut once = each_tick.clone();
+            for tick in 2..=end {
+                each_tick.decay(tick);
+            }
+            once.decay(end);
+            assert!((each_tick.remaining - once.remaining).abs() < 1e-9, "{end}");
+            assert_eq!((each_tick.y, each_tick.skeleton), (once.y, once.skeleton), "{end}: sinking too");
+            let (a, b) = (each_tick.bite(end, 50.0).unwrap(), once.bite(end, 50.0).unwrap());
+            assert!((a.amount - b.amount).abs() < 1e-9 && (a.stage, a.y) == (b.stage, b.y), "{a:?} {b:?}");
         }
-        once.decay(400);
-        assert!((each_tick.remaining - once.remaining).abs() < 1e-10);
-        assert_eq!(each_tick.y, once.y, "sinking too");
-        assert_eq!(each_tick.bite(400, 50.0), once.bite(400, 50.0));
     }
 
     #[test]
@@ -411,8 +454,8 @@ mod tests {
         assert_eq!(contact(&grid, &corpses, (1000.0, 1000.0), 100.0, 30.0, 2, |c| c.owner != 3), None);
     }
 
-    /// Fresh first, then it rots and sinks at its speed to its place in the lowest quarter of the
-    /// depth; it can be eaten on the way down.
+    /// Fresh first, then rot at once: it sinks at its speed to its place in the lowest quarter of
+    /// the depth, and can be eaten on the way down.
     #[test]
     fn труп_гниёт_и_оседает_на_дно() {
         let mut c = Corpse::from_creature(&body(), 100);
@@ -420,32 +463,35 @@ mod tests {
         assert!(c.bottom > space.height * (1.0 - CORPSE_REST_PCT / 100.0) - 20.0 - 1e-9);
         assert!(c.bottom <= space.height - 20.0, "the body stays in the world");
         for tick in [101, 100 + CORPSE_FRESH_TICKS] {
-            assert_eq!((c.rot(tick), c.y_at(tick)), (0.0, 1000.0), "fresh at {tick}");
+            assert_eq!((c.stage(tick), c.y_at(tick)), (Stage::Fresh, 1000.0), "fresh at {tick}");
         }
+        assert_eq!(c.stage(101 + CORPSE_FRESH_TICKS), Stage::Rot, "then rot at once");
         let at_rest = 100 + CORPSE_FRESH_TICKS + ((c.bottom - 1000.0) / CORPSE_SINK_SPEED).ceil() as u64;
-        let mut last = (0.0, 1000.0);
+        let mut last = 1000.0;
         for tick in (100 + CORPSE_FRESH_TICKS..=at_rest).step_by(10) {
-            let now = (c.rot(tick), c.y_at(tick));
-            assert!(now.0 >= last.0 && now.1 >= last.1, "only rots and sinks");
-            assert!(now.1 - last.1 <= CORPSE_SINK_SPEED * 10.0 + 1e-9, "at its speed");
-            last = now;
+            let y = c.y_at(tick);
+            assert!(y >= last && y - last <= CORPSE_SINK_SPEED * 10.0 + 1e-9, "only sinks, at its speed");
+            last = y;
         }
-        assert_eq!((c.rot(at_rest), c.y_at(at_rest)), (1.0, c.bottom), "fully rotten and at rest");
-        let rotten = 100 + CORPSE_ROTTEN_TICKS;
-        assert!(c.rot(rotten) == 1.0 && c.y_at(rotten) < c.bottom - 100.0, "sinks slower than it rots");
-        let bite = c.clone().bite(rotten, 50.0).expect("eaten on the way down");
-        assert_eq!((bite.rot, bite.y), (1.0, c.y_at(rotten)));
+        assert_eq!(c.y_at(at_rest), c.bottom, "at rest");
+        let sinking = 100 + CORPSE_FRESH_TICKS + 100;
+        let bite = c.clone().bite(sinking, 50.0).expect("eaten on the way down");
+        assert_eq!((bite.stage, bite.y), (Stage::Rot, c.y_at(sinking)));
         c.decay(at_rest + 50);
         assert_eq!(c.y, c.bottom);
-        assert!(c.remaining > 0.0, "it reaches its place before it decays: {}", c.remaining);
+        assert!(
+            c.remaining > c.initial / 2.0,
+            "it reaches its place with most of its flesh: {}",
+            c.remaining
+        );
         let mut deep = body();
         deep.y = space.height - 5.0;
         let d = Corpse::from_creature(&deep, 0);
         assert_eq!(d.bottom, deep.y, "one that died deeper does not rise");
     }
 
-    /// Eaten down to a tenth, a corpse becomes a skeleton: rot from then, it sinks to the corpse's
-    /// resting place and lies there `SKELETON_TICKS` from the stripping, not from death.
+    /// Eaten down to a tenth, a corpse leaves its bones at once: they sink fast to the corpse's
+    /// resting place and lie there `SKELETON_TICKS` from then, not from death.
     #[test]
     fn скелет_остаётся_от_объеденного_трупа() {
         let space = Space::default();
@@ -454,7 +500,7 @@ mod tests {
         let mut stripped = None;
         for tick in 101..140 {
             let bite = c.bite(tick, 50.0).unwrap();
-            assert_eq!(bite.rot, 0.0, "fresh bites, the stripping one too");
+            assert_eq!(bite.stage, Stage::Fresh, "fresh bites, the stripping one too");
             if c.skeleton.is_some() {
                 stripped = Some(tick);
                 break;
@@ -464,15 +510,17 @@ mod tests {
         let s = c.skeleton.unwrap();
         assert_eq!((s.at, s.y1), (at, 1000.0));
         assert!((s.store - bones).abs() < 1e-9 && c.remaining == s.store, "a tenth is left: {}", s.store);
-        assert_eq!(c.rot(at), 1.0, "a skeleton is rot");
+        assert_eq!(c.stage(at), Stage::Bones);
         let zone = space.height * (1.0 - CORPSE_REST_PCT / 100.0);
         assert!(s.rest >= zone - 20.0 && s.rest <= space.height - 20.0, "near the bottom: {}", s.rest);
         assert_eq!(s.rest, c.bottom, "where the corpse would rest");
         let mut once = c.clone();
         let mut last = c.y;
-        for tick in at + 1..=at + ((s.rest - s.y1) / SKELETON_SINK_SPEED).ceil() as u64 {
+        let falling = ((s.rest - s.y1) / SKELETON_SINK_SPEED).ceil() as u64;
+        assert!(falling < 100, "bones fall fast: {falling} ticks");
+        for tick in at + 1..=at + falling {
             assert!(c.decay(tick));
-            assert!(c.y >= last, "only sinks");
+            assert!(c.y >= last && c.y - last <= SKELETON_SINK_SPEED + 1e-9, "only sinks, at their speed");
             last = c.y;
         }
         assert_eq!(c.y, s.rest, "at rest");
@@ -481,7 +529,7 @@ mod tests {
         assert!(once.decay(at + SKELETON_TICKS - 1));
         assert!((c.remaining - once.remaining).abs() < 1e-12 && c.y == once.y, "any check frequency");
         assert!(!c.decay(at + SKELETON_TICKS), "gone after its time");
-        // a skeleton is eaten to nothing
+        // bones are eaten to nothing
         let mut eaten = Corpse::from_creature(&body(), 100);
         for tick in 101..140 {
             if eaten.bite(tick, 50.0).is_none() {
@@ -491,16 +539,18 @@ mod tests {
         assert!(eaten.skeleton.is_some() && eaten.remaining == 0.0);
     }
 
-    /// Only an eaten corpse is stripped: one left alone comes to rest and decays away. One
-    /// that died deep does not rise as a skeleton.
+    /// One left alone comes to rest with its flesh and rots down to its bones where it lies. One
+    /// that died deep does not rise as bones.
     #[test]
-    fn нетронутый_труп_не_становится_скелетом() {
+    fn нетронутый_труп_сгнивает_до_костей() {
         let mut c = Corpse::from_creature(&body(), 0);
         let at_rest = CORPSE_FRESH_TICKS + ((c.bottom - c.y0) / CORPSE_SINK_SPEED).ceil() as u64;
         assert!(c.decay(at_rest - 1) && !c.settled);
         assert!(c.decay(at_rest) && c.settled, "lay at rest");
-        assert!(!c.decay(CORPSE_DECAY_TICKS));
-        assert!(c.skeleton.is_none());
+        assert!(c.decay(CORPSE_DECAY_TICKS));
+        let s = c.skeleton.expect("rotted to its bones");
+        assert_eq!((s.at, s.y1, s.rest), (CORPSE_DECAY_TICKS, c.bottom, c.bottom), "where it lay");
+        assert_eq!(c.stage(CORPSE_DECAY_TICKS), Stage::Bones);
         let mut deep = body();
         deep.y = Space::default().height - 25.0;
         let mut d = Corpse::from_creature(&deep, 0);

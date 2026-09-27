@@ -756,7 +756,7 @@ impl Sim {
                             x: c.x,
                             y: c.y,
                             py: c.y_at(prev_tick.max(c.born)),
-                            rot: c.rot(w.tick),
+                            rot: c.stage(w.tick) == life_core::corpse::Stage::Rot,
                             size: c.size,
                             fullness: match c.skeleton {
                                 Some(s) if s.store > 0.0 => (c.remaining / s.store).clamp(0.0, 1.0),

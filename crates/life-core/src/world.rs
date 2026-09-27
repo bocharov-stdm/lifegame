@@ -89,17 +89,18 @@ pub struct Counters {
     pub plants_grown: u64,
     pub plants_eaten: u64,
     pub plant_bites: u64,
-    /// Bites of corpses; `rot_bites` of them were mostly rot (rot share at least ½).
+    /// Bites of corpses; `rot_bites` and `bone_bites` of them were of rot and of bones.
     pub meat_bites: u64,
     pub rot_bites: u64,
+    pub bone_bites: u64,
     pub ranged_shots: u64,
     pub territorial_fights: u64,
     pub born: u64,
     pub starved: u64,
     pub old_age: u64,
     pub combat: u64,
-    /// Corpses that appeared, and of those removed: how many had lain fully rotten on the bottom
-    /// with meat left, how many had been eaten down to a skeleton, and their lifetimes summed.
+    /// Corpses that appeared, and of those removed: how many had lain on the bottom with flesh
+    /// left, how many had come to bones (eaten or rotted away), and their lifetimes summed.
     pub corpses: u64,
     pub corpses_gone: u64,
     pub corpses_bottom: u64,
@@ -147,6 +148,7 @@ impl Counters {
             plant_bites: self.plant_bites - earlier.plant_bites,
             meat_bites: self.meat_bites - earlier.meat_bites,
             rot_bites: self.rot_bites - earlier.rot_bites,
+            bone_bites: self.bone_bites - earlier.bone_bites,
             ranged_shots: self.ranged_shots - earlier.ranged_shots,
             territorial_fights: self.territorial_fights - earlier.territorial_fights,
             born: self.born - earlier.born,
@@ -277,13 +279,14 @@ impl World {
                 .with(creature::Gene::FlockKind, kind as f64)
                 .with(creature::Gene::LayerBound, f64::from(free as u8))
                 .with(creature::Gene::Diet, diet as f64);
-            // Scavengers start held in the deep, where rot will settle.
+            // Scavengers start held in the deep, where rot will settle, and cold-blooded.
             let genome = if diet == crate::creature::Diet::Scavenger as usize {
                 let (top, bottom) = crate::config::SCAVENGER_START_LAYER;
                 genome
                     .with(creature::Gene::MinY, top)
                     .with(creature::Gene::MaxY, bottom)
                     .with(creature::Gene::LayerBound, 0.0)
+                    .with(creature::Gene::ColdBlood, crate::config::SCAVENGER_START_COLD)
             } else {
                 genome
             };
@@ -469,7 +472,7 @@ impl World {
         for (i, v) in creatures.iter_mut().enumerate().filter(|(_, v)| v.alive) {
             // Only what the diet digests is eaten at all: a meat-eater does not take a plant from
             // a herbivore for nothing, a herbivore does not touch a corpse. Sated, only its own.
-            let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.rot(now), hungry[i]) > 0.0;
+            let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.stage(now), hungry[i]) > 0.0;
             let corpse = crate::corpse::contact_by(
                 corpse_grid,
                 |j| shadow(&claimed, lying, j),
@@ -481,7 +484,7 @@ impl World {
             );
             let prefer_corpse = corpse.is_some_and(|j| {
                 let c = shadow(&claimed, lying, j);
-                c.portion(rules.plant_energy) * v.pheno.corpse_efficiency(c.rot(now), hungry[i])
+                c.portion(rules.plant_energy) * v.pheno.corpse_efficiency(c.stage(now), hungry[i])
                     > plant_bite * v.pheno.plant_efficiency
             });
             let plant = if prefer_corpse || !v.pheno.eats_plants() {
@@ -534,7 +537,7 @@ impl World {
             if !v.alive || fed[i] {
                 continue;
             }
-            let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.rot(now), hungry[i]) > 0.0;
+            let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.stage(now), hungry[i]) > 0.0;
             if let Some(bite) = crate::corpse::bite(
                 corpse_grid,
                 corpses,
@@ -545,11 +548,16 @@ impl World {
                 now,
                 eats,
             ) {
-                v.nourish(bite.amount * v.pheno.corpse_efficiency(bite.rot, true), rules);
-                v.meal =
-                    Some(Meal { tick: now, x: bite.x, y: bite.y, food: Morsel::Corpse { rot: bite.rot } });
+                v.nourish(bite.amount * v.pheno.corpse_efficiency(bite.stage, true), rules);
+                v.meal = Some(Meal {
+                    tick: now,
+                    x: bite.x,
+                    y: bite.y,
+                    food: Morsel::Corpse { stage: bite.stage },
+                });
                 counters.meat_bites += 1;
-                counters.rot_bites += (bite.rot >= 0.5) as u64;
+                counters.rot_bites += (bite.stage == crate::corpse::Stage::Rot) as u64;
+                counters.bone_bites += (bite.stage == crate::corpse::Stage::Bones) as u64;
                 fed[i] = true;
             }
         }

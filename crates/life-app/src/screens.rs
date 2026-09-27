@@ -451,6 +451,15 @@ pub fn food_preview(ui: &mut egui::Ui, rules: &Rules, space: Space, seed: u64) {
             "вверху поверхность; ярче — гуще"
         };
         ui.colored_label(MUTED, caption);
+        // the world in real units (`life_core::units`): the base fish is 20 cm
+        ui.colored_label(
+            MUTED,
+            format!(
+                "≈ {:.0} × {:.0} м, базовая рыба 20 см",
+                life_core::units::metres(space.width),
+                life_core::units::metres(space.height)
+            ),
+        );
     });
 }
 

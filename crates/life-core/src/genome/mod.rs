@@ -47,6 +47,10 @@ pub enum Mutation {
     /// множитель ниже 1 + m перетягивается заново (без этого при большой
     /// сигме ген уходил бы в ноль и в минус).
     Scale { keep_above: Option<f64>, reject_below: Option<f64> },
+    /// A percent gene whose zero means something (the warm-blooded `cold_blood` 0): adds
+    /// gauss(0, `points` × the spread's share of `MUTATION_SIGMA`) points, clamped to 0‒100. A
+    /// factor could never move it off zero.
+    Shift { points: f64 },
     /// Смена варианта с шансом `chance` на любой другой. С одним вариантом
     /// жребий не тянется вовсе: ген инертен и не сдвигает случайные числа.
     Switch { chance: f64 },
@@ -159,6 +163,10 @@ pub(crate) fn mutate_values(
                     mutated = mutated.clamp(0.0, 100.0);
                 }
                 *value = mutated.max(0.01);
+            }
+            Mutation::Shift { points } => {
+                let g = rng.gauss(0.0, points * sigma / crate::config::MUTATION_SIGMA);
+                *value = (*value + g).clamp(0.0, 100.0);
             }
             Mutation::Switch { chance } => {
                 let n = spec.variants().map_or(0, <[Variant]>::len);

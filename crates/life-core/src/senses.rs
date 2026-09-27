@@ -156,8 +156,13 @@ impl Senses for GridSenses<'_> {
         self.corpse_grid?.for_each_near(me.x, me.y, me.pheno.smell, |i, cx, cy| {
             let c = &self.corpses[i];
             let distance = (cx - me.x).hypot(cy - me.y);
-            let efficiency = me.pheno.corpse_efficiency(c.rot(self.now), hungry);
-            if c.born >= self.now || c.remaining <= 0.0 || distance >= me.pheno.smell || efficiency <= 0.0 {
+            let efficiency = me.pheno.corpse_efficiency(c.stage(self.now), hungry);
+            if c.born >= self.now
+                || c.remaining <= 0.0
+                || distance >= me.pheno.smell
+                || efficiency <= 0.0
+                || !me.pheno.within_reach(cy)
+            {
                 return;
             }
             let portion = c.portion(me.pheno.plant_energy);
@@ -705,7 +710,8 @@ mod tests {
                 c
             };
             let corpses = [corpse(1, 1100.0, now - 10), corpse(2, 900.0, now - 700)];
-            assert_eq!((corpses[0].rot(now), corpses[1].rot(now)), (0.0, 1.0));
+            use crate::corpse::Stage;
+            assert_eq!((corpses[0].stage(now), corpses[1].stage(now)), (Stage::Fresh, Stage::Rot));
             let mut cgrid = Grid::new(GRID_CELL);
             cgrid.rebuild(&w.space, corpses.iter().map(|c| (c.x, c.y)));
             let food = Grid::new(GRID_CELL);

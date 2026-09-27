@@ -67,15 +67,15 @@ it; a struck creature strikes back only if the enemy is less than its own `prey_
 bigger, else it runs. Exact mechanics and their checks: `BEHAVIOR.md` (partly stale, see below).
 
 **Diets** — the `diet` choice gene, variant order H/O/S/C (the order of every `DIET_*` table in
-`config.rs`). Digestion (`DIET_DIGESTION`: plants, fresh meat, rot; 0 = neither eats nor goes for
-it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{diet}_{edge}`, lab tab
+`config.rs`). Digestion (`DIET_DIGESTION`: plants, fresh meat, rot, bones; 0 = neither eats nor
+goes for it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{diet}_{edge}`, lab tab
 «Питание»), all read in `Phenotype::of`:
 
 | | strike | other edges |
 |---|---|---|
 | herbivore | ×1 | health ×1.5, size term of upkeep ×0.85 |
 | omnivore | ×1.15 | eats everything |
-| scavenger | ×1.3 | plants 15%; smells corpses at 3× vision (free); upkeep falls to −40% on the bottom (`DIET_DEEP_SAVING`); founders start deep |
+| scavenger | ×1.3 | plants 15%; smells corpses at 3× vision (free); alone digests bones (90%); founders start deep and fully cold-blooded |
 | carnivore | ×3 | plants 20%; speed term of upkeep ×0.5; smells corpses at 1.5× vision; juvenile gut |
 
 - Juvenile gut: until grown to its size gene a creature digests plants at
@@ -83,26 +83,49 @@ it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{diet}_{ed
   A carnivore mutant is born half grown and small prey is rare, so it grows on plants and hunts
   grown. Only the grown divide, so staying young is no loophole.
 - **Own niche**: above its `picky` share of the store a creature takes only its own food — a sated
-  scavenger skips the fresher half of a corpse (rot < 0.5) and does not hunt, a sated carnivore
-  skips rot and skeletons (`Phenotype::corpse_efficiency(rot, hungry)`). Anyone who eats fresh meat
-  (`hunts`) is feared.
+  scavenger skips fresh corpses and does not hunt, a sated carnivore skips rot and bones
+  (`Phenotype::corpse_efficiency(stage, hungry)`, `DIET_OWN`). Anyone who eats fresh meat (`hunts`)
+  is feared.
 - No meat founders by default (`DIET_START_MIX` 70/30/0/0): they starved with nothing to eat. Meat
   diets arise from mutants (see mutation laws). Meat founders set in a mix start
   `meat_founder_size` (×2) bigger.
 - **Corpses**: meat = the body grown since birth at `GROWTH_ENERGY_PER_SIZE` + the tank
-  (`corpse::meat`); a creature with no meat leaves no corpse. Clock (rules `corpse_*`,
-  `CorpseClock`): fresh 150 ticks, fully rotten at 600, gone at 1800; after the fresh time it sinks
-  at 2 a tick (a speed, not a time to the bottom) to its own resting place in the lowest 25% of the
-  depth. Eaten down to 10% it becomes a **skeleton**: rot, sinks at 4, decays 1800 ticks from the
-  stripping.
+  (`corpse::meat`); a creature with no meat leaves no corpse. Three sharp stages (`corpse::Stage`,
+  each its own food column), clock in rules `corpse_*` (`CorpseClock`): **fresh** 300 ticks where it
+  died; then **rot** at once, sinking at 2 a tick (a speed, not a time) to its own resting place in
+  the lowest 25% of the depth while its flesh decays evenly down to the bones by 3000 ticks from
+  death; **bones** (10% of the meat) when the flesh is eaten or rotted away, sinking at 40, lying
+  5000 ticks. Bones at 20 000 made scavengers as strong as carnivores (24 seeds: both held in 58%);
+  the user chose 5000.
+- **Cold deep** (replaced the scavenger's deep saving): warm water down to `thermo_top` (15% of
+  depth), cold from `thermo_bottom` (45%), a smooth step between. The `cold_blood` gene (%, base 0 =
+  warm-blooded) makes a body cheaper (−50% at 100% in full cold, `COLD_SAVING`) and slower (−40%,
+  `COLD_SLOWING`) in cold water (`Phenotype::temper`, applied in `act` at the current depth). It
+  moves by points (`Mutation::Shift`, ±10), since a factor never leaves zero.
+- **Layer reach**: the `layer_reach` gene (% of depth, base 100 = anywhere, as before) — how far past
+  its layer a creature goes for food it sees; checked inside the plant, corpse and prey choices
+  (`Phenotype::within_reach`), so it takes the best food within reach. A behaviour, not a wall.
 - **Life**: `maturation` (%, base 50) — the share of digested food that goes into growth until
   grown, the rest into the tank. `lifespan` (base 3000, 500–10 000 ticks) — death of old age; from
   70% of it speed, vision, strike and max health fall linearly to 70% at 90% (`phenotype::vigour`,
   `Creature::grow_old` at the start of the tick). Both free genes.
-- Plants grow in patches over the depth profile «игровое» (see "Where food grows").
+- Plants grow in patches over the depth profile «игровое» (see "Where food grows"); «океаническое»
+  (a peak at 15% of depth) is to become the default with the cold, on the user's word.
 
 ## Where the work stands
 
+- **Ocean reform** (plan `~/.claude/plans/snug-puzzling-pixel.md`, stages A–G; A–C done, 2026-09-27):
+  A ocean profile + real units (bit for bit), B corpse stages, C cold deep and genes; next D paying
+  for the step taken with `cruise` and `rest` genes (the existing rest at 95% fullness becomes the
+  gene's base), E burst, F torpor, G defaults and records. Baseline conditions, 24 seeds × 20 000:
+  - before B: carnivores hold in 80%, scavengers 20% (35 seeds), late population 1320;
+  - B (bones 5000): carnivores 71%, scavengers 46%, 1424; the corpse count rose from ~1000 to
+    6000–21 000 at bones 20 000;
+  - C: carnivores 88% (21/24), scavengers 38%, carnivores 3.4% late, 1413; `cold_blood` evolves to a
+    mean of 14–18%, `layer_reach` falls to a median of 69%. ×1 (8 seeds): all survive, carnivores
+    22–33% late (47% base before B), populations 57 / 185.
+  - «океаническое» vs «игровое» before B (8 seeds): carnivores held alike (7) but at 2.8% late
+    against 7.8%, population 1384 against 1228.
 - Balance after the life reform (sweep 2026-09-27, 8 seeds × 20 000): all 24 worlds survive.
   - Baseline conditions: carnivores hold in 7 of 8 (7.8% late), scavengers in 1, population late
     median 1228, minimum 496.
@@ -275,12 +298,14 @@ A creature killed in combat gets no prey and does not reproduce.
 - The layer genes (`min_y`, `max_y`) are a preference, not a wall: a creature goes for any visible
   food and walks back to its home band otherwise; physics clamps only to the world. Never add moves
   that teleport.
+- Real units are for showing only (`units.rs`, `docs/scale.md`): 1 px = 0.5 cm (the base fish is
+  20 cm), a tick is 0.25 s of swimming but ~9 hours of life (3000 ticks = 3 years).
 - Scale is area, shape (1:1, 3:2 default, 2:1, strip) is proportions (`Space::new`); at ×1 3:2 is
   exactly the base 6000×4000. Per-world quantities scale with `area_ratio` via `per_area`; the
   vertical ecology is in % of depth. Tall worlds are harsher (newborns start far from the rich top).
 - Food (`flora.rs`): x and y drawn independently by width and depth profiles (uniform, linear, exp,
-  log, waves, «игровое» — flat to 20% of depth, then an exp fall; default «игровое» down, uniform
-  across). Capacity is `PLANT_MAX` slots, one plant each, so growth is logistic. Default 24 patches
+  log, waves, «игровое» — flat to 20% of depth, then an exp fall; «океаническое» — 60% at the
+  surface rising to a peak at 15%, then an exp fall; default «игровое» down, uniform across). Capacity is `PLANT_MAX` slots, one plant each, so growth is logistic. Default 24 patches
   per base world holding `plant_patch_share` 60% of the slots, fewer, smaller and poorer with depth;
   patch centres come from their own keyed stream, never the world's. Occupied slots are an
   incremental bitset (`world::Occupancy`), rebuilt when the plant count stops matching — keep
@@ -299,7 +324,8 @@ replacements were `carnivory` → `diet` (row 11) and `life_pace` → `maturatio
 same draws. A choice gene with one variant is inert (draws nothing, hidden in the UI).
 
 Mutation (`genome::Heredity`, built from the rules): `CLONE_CHANCE` 50% of children are exact
-copies; otherwise `Scale` for numbers (× (1 + gauss(0, σ·mutability)), multiplier ≥ 0.1), `Switch`
+copies; otherwise `Scale` for numbers (× (1 + gauss(0, σ·mutability)), multiplier ≥ 0.1), `Shift`
+for a percent gene whose zero means something (+ gauss points, clamped 0–100: `cold_blood`), `Switch`
 for choice genes (0.1% × mutability), and `Neighbours { chance, rise, jump, of, up, leaps }` for the
 diet, independent of mutability: a step towards meat 2% (herbivore → omnivore → scavenger or
 carnivore), another neighbour step 0.5%, the herbivore's own leaps to the carnivore 0.1% and the

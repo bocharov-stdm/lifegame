@@ -21,10 +21,10 @@ pub const DIET_EDGES: [&str; 10] = [
     "size_upkeep",
     "speed_upkeep",
     "smell",
-    "deep_saving",
     "plants",
     "meat",
     "rot",
+    "bones",
     "young_plants",
 ];
 
@@ -36,10 +36,10 @@ pub const DIET_RULE_KEYS: [[&str; 10]; 4] = [
         "herbivore_size_upkeep",
         "herbivore_speed_upkeep",
         "herbivore_smell",
-        "herbivore_deep_saving",
         "herbivore_plants",
         "herbivore_meat",
         "herbivore_rot",
+        "herbivore_bones",
         "herbivore_young_plants",
     ],
     [
@@ -48,10 +48,10 @@ pub const DIET_RULE_KEYS: [[&str; 10]; 4] = [
         "omnivore_size_upkeep",
         "omnivore_speed_upkeep",
         "omnivore_smell",
-        "omnivore_deep_saving",
         "omnivore_plants",
         "omnivore_meat",
         "omnivore_rot",
+        "omnivore_bones",
         "omnivore_young_plants",
     ],
     [
@@ -60,10 +60,10 @@ pub const DIET_RULE_KEYS: [[&str; 10]; 4] = [
         "scavenger_size_upkeep",
         "scavenger_speed_upkeep",
         "scavenger_smell",
-        "scavenger_deep_saving",
         "scavenger_plants",
         "scavenger_meat",
         "scavenger_rot",
+        "scavenger_bones",
         "scavenger_young_plants",
     ],
     [
@@ -72,18 +72,18 @@ pub const DIET_RULE_KEYS: [[&str; 10]; 4] = [
         "carnivore_size_upkeep",
         "carnivore_speed_upkeep",
         "carnivore_smell",
-        "carnivore_deep_saving",
         "carnivore_plants",
         "carnivore_meat",
         "carnivore_rot",
+        "carnivore_bones",
         "carnivore_young_plants",
     ],
 ];
 
 /// Имена настраиваемых правил — для отчёта (`--rule имя=число`) и настроек.
 /// Профили еды — по шесть на ось, по порядку `flora::AXIS_PARAMS`; the diet edges come last.
-pub const RULE_KEYS: [&str; 85] = {
-    let mut all = [""; 85];
+pub const RULE_KEYS: [&str; 88] = {
+    let mut all = [""; 88];
     let mut i = 0;
     while i < WORLD_RULE_KEYS.len() {
         all[i] = WORLD_RULE_KEYS[i];
@@ -103,7 +103,7 @@ pub const RULE_KEYS: [&str; 85] = {
 };
 
 /// The rules that are not a diet's edges.
-const WORLD_RULE_KEYS: [&str; 45] = [
+const WORLD_RULE_KEYS: [&str; 48] = [
     "plant_rate",
     "plant_energy",
     "mutation_sigma",
@@ -142,10 +142,13 @@ const WORLD_RULE_KEYS: [&str; 45] = [
     "diet_step",
     "diet_jump",
     "corpse_fresh",
-    "corpse_rotten",
+    "corpse_bones",
     "corpse_sink",
     "corpse_decay",
     "corpse_rest",
+    "corpse_bones_sink",
+    "thermo_top",
+    "thermo_bottom",
     "diet_meat_step",
     "diet_leap_carnivore",
     "diet_leap_scavenger",
@@ -177,10 +180,8 @@ pub struct DietEdges {
     pub speed_upkeep: f64,
     /// How far corpses are sensed, in shares of vision (`DIET_SMELL`).
     pub smell: f64,
-    /// Upkeep saved on the bottom (`DIET_DEEP_SAVING`), 0‒1.
-    pub deep_saving: f64,
-    /// Digestibility of plants, fresh meat and rot (`DIET_DIGESTION`), 0‒1.
-    pub digestion: [f64; 3],
+    /// Digestibility of plants, fresh meat, rot and bones (`DIET_DIGESTION`), 0‒1.
+    pub digestion: [f64; 4],
     /// Digestibility of plants while not grown to its own size, at least (`DIET_YOUNG_PLANTS`), 0‒1:
     /// the young digest `max(digestion[0], young_plants)`.
     pub young_plants: f64,
@@ -194,7 +195,6 @@ impl DietEdges {
             size_upkeep: DIET_SIZE_COST[d],
             speed_upkeep: DIET_SPEED_COST[d],
             smell: DIET_SMELL[d],
-            deep_saving: DIET_DEEP_SAVING[d],
             digestion: DIET_DIGESTION[d],
             young_plants: DIET_YOUNG_PLANTS[d],
         }
@@ -207,10 +207,10 @@ impl DietEdges {
             "size_upkeep" => &mut self.size_upkeep,
             "speed_upkeep" => &mut self.speed_upkeep,
             "smell" => &mut self.smell,
-            "deep_saving" => &mut self.deep_saving,
             "plants" => &mut self.digestion[0],
             "meat" => &mut self.digestion[1],
             "rot" => &mut self.digestion[2],
+            "bones" => &mut self.digestion[3],
             "young_plants" => &mut self.young_plants,
             _ => return None,
         })
@@ -279,13 +279,18 @@ pub struct Rules {
     /// replace its `diet_jump` (`config::HERBIVORE_LEAP_*`).
     pub diet_leap_carnivore: f64,
     pub diet_leap_scavenger: f64,
-    /// A corpse's clock, ticks from death: fresh until, fully rotten at, gone at; how far it sinks
-    /// a tick; and the lowest share of the depth, %, where it comes to rest (`corpse.rs`).
+    /// A corpse's clock, ticks from death: fresh until; how far it sinks a tick; rotted down to the
+    /// bones at; and the lowest share of the depth, %, where it comes to rest (`corpse.rs`).
     pub corpse_fresh: f64,
-    pub corpse_rotten: f64,
     pub corpse_sink: f64,
     pub corpse_decay: f64,
     pub corpse_rest: f64,
+    /// How long bones lie, ticks, and how fast they sink (`SKELETON_*`).
+    pub corpse_bones: f64,
+    pub corpse_bones_sink: f64,
+    /// The thermocline, % of depth: warm water above `thermo_top`, cold below `thermo_bottom`.
+    pub thermo_top: f64,
+    pub thermo_bottom: f64,
     /// What each diet is good at, by diet (H/O/S/C).
     pub diets: [DietEdges; 4],
     // производные коэффициенты — считает `renormalize`
@@ -332,10 +337,13 @@ impl Default for Rules {
             diet_leap_carnivore: HERBIVORE_LEAP_CARNIVORE,
             diet_leap_scavenger: HERBIVORE_LEAP_SCAVENGER,
             corpse_fresh: CORPSE_FRESH_TICKS as f64,
-            corpse_rotten: CORPSE_ROTTEN_TICKS as f64,
             corpse_sink: CORPSE_SINK_SPEED,
             corpse_decay: CORPSE_DECAY_TICKS as f64,
             corpse_rest: CORPSE_REST_PCT,
+            corpse_bones: SKELETON_TICKS as f64,
+            corpse_bones_sink: SKELETON_SINK_SPEED,
+            thermo_top: THERMO_TOP,
+            thermo_bottom: THERMO_BOTTOM,
             diets: [DietEdges::of(0), DietEdges::of(1), DietEdges::of(2), DietEdges::of(3)],
             size_coef: 0.0,
             speed_coef: 0.0,
@@ -364,7 +372,7 @@ impl Rules {
             // Digesting more than all of a food, or saving more than the whole upkeep, would make
             // energy from nothing: energy only grows in plants and passes along the chain.
             let (allowed, need) = match edge {
-                "plants" | "meat" | "rot" | "young_plants" | "deep_saving" => {
+                "plants" | "meat" | "rot" | "bones" | "young_plants" => {
                     ((0.0..=1.0).contains(&value), "доля от 0 до 1: больше — энергия из ничего")
                 }
                 "health" => (value > 0.0, "число больше 0"),
@@ -412,7 +420,10 @@ impl Rules {
             "diet_leap_carnivore" => r.diet_leap_carnivore = value,
             "diet_leap_scavenger" => r.diet_leap_scavenger = value,
             "corpse_fresh" => r.corpse_fresh = value,
-            "corpse_rotten" => r.corpse_rotten = value,
+            "corpse_bones" => r.corpse_bones = value,
+            "corpse_bones_sink" => r.corpse_bones_sink = value,
+            "thermo_top" => r.thermo_top = value,
+            "thermo_bottom" => r.thermo_bottom = value,
             "corpse_sink" => r.corpse_sink = value,
             "corpse_decay" => r.corpse_decay = value,
             "corpse_rest" => r.corpse_rest = value,
@@ -426,7 +437,9 @@ impl Rules {
             "plant_bite_yield" => (0.0..=1.0).contains(&value),
             "plant_patches" => value.fract() == 0.0 && (0.0..=MAX_PATCHES).contains(&value),
             "plant_patch_size" => value >= PLANT_RADIUS,
-            "plant_patch_share" | "corpse_rest" => (0.0..=100.0).contains(&value),
+            "plant_patch_share" | "corpse_rest" | "thermo_top" | "thermo_bottom" => {
+                (0.0..=100.0).contains(&value)
+            }
             "clone_share"
             | "diet_step"
             | "diet_jump"
@@ -434,8 +447,8 @@ impl Rules {
             | "diet_leap_carnivore"
             | "diet_leap_scavenger" => (0.0..=1.0).contains(&value),
             "min_mutability" => (0.0..=MAX_MUTABILITY).contains(&value),
-            "corpse_fresh" | "corpse_rotten" | "corpse_decay" => value >= 1.0 && value.fract() == 0.0,
-            "corpse_sink" => value > 0.0,
+            "corpse_fresh" | "corpse_bones" | "corpse_decay" => value >= 1.0 && value.fract() == 0.0,
+            "corpse_sink" | "corpse_bones_sink" => value > 0.0,
             _ => value >= 0.0,
         };
         if !allowed {
@@ -444,7 +457,7 @@ impl Rules {
                 "plant_bite_yield" => "число от 0 до 1",
                 "plant_patches" => "целое число от 0 до 300",
                 "plant_patch_size" => "число не меньше радиуса растения (10)",
-                "plant_patch_share" | "corpse_rest" => "число от 0 до 100",
+                "plant_patch_share" | "corpse_rest" | "thermo_top" | "thermo_bottom" => "число от 0 до 100",
                 "clone_share"
                 | "diet_step"
                 | "diet_jump"
@@ -452,8 +465,8 @@ impl Rules {
                 | "diet_leap_carnivore"
                 | "diet_leap_scavenger" => "доля от 0 до 1",
                 "min_mutability" => "число от 0 до 10",
-                "corpse_fresh" | "corpse_rotten" | "corpse_decay" => "целое число тиков не меньше 1",
-                "corpse_sink" => "число больше 0",
+                "corpse_fresh" | "corpse_bones" | "corpse_decay" => "целое число тиков не меньше 1",
+                "corpse_sink" | "corpse_bones_sink" => "число больше 0",
                 _ => "число не меньше 0",
             };
             return Err(format!("правило {key}: нужно {need}, а не {value}"));
@@ -520,7 +533,10 @@ impl Rules {
             "diet_leap_carnivore" => self.diet_leap_carnivore,
             "diet_leap_scavenger" => self.diet_leap_scavenger,
             "corpse_fresh" => self.corpse_fresh,
-            "corpse_rotten" => self.corpse_rotten,
+            "corpse_bones" => self.corpse_bones,
+            "corpse_bones_sink" => self.corpse_bones_sink,
+            "thermo_top" => self.thermo_top,
+            "thermo_bottom" => self.thermo_bottom,
             "corpse_sink" => self.corpse_sink,
             "corpse_decay" => self.corpse_decay,
             "corpse_rest" => self.corpse_rest,
@@ -626,10 +642,10 @@ mod tests {
                 DIET_SIZE_COST[d],
                 DIET_SPEED_COST[d],
                 DIET_SMELL[d],
-                DIET_DEEP_SAVING[d],
                 DIET_DIGESTION[d][0],
                 DIET_DIGESTION[d][1],
                 DIET_DIGESTION[d][2],
+                DIET_DIGESTION[d][3],
                 DIET_YOUNG_PLANTS[d],
             ];
             for (key, v) in row.iter().zip(expected) {
@@ -642,7 +658,7 @@ mod tests {
             ("carnivore_meat", 1.01),
             ("herbivore_plants", 1.5),
             ("scavenger_rot", -0.1),
-            ("scavenger_deep_saving", 1.2),
+            ("scavenger_bones", 1.1),
             ("carnivore_young_plants", 1.1),
             ("herbivore_health", 0.0),
             ("omnivore_strike", -1.0),

@@ -42,11 +42,11 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     );
     println!("Растения за прогон: выросло {}, съедено {}.", c.plants_grown, c.plants_eaten);
     println!(
-        "Питание: порций растений {}, мяса {} (из них гнили {}). Выстрелов {}, территориальных ударов {}.",
-        c.plant_bites, c.meat_bites, c.rot_bites, c.ranged_shots, c.territorial_fights
+        "Питание: порций растений {}, трупов {} (из них гнили {}, костей {}). Выстрелов {}, территориальных ударов {}.",
+        c.plant_bites, c.meat_bites, c.rot_bites, c.bone_bites, c.ranged_shots, c.territorial_fights
     );
     println!(
-        "Трупы: появилось {}, убрано {}; из убранных лежали сгнившими на дне {}, стали скелетом {}, лежали в среднем {:.0} тиков.",
+        "Трупы: появилось {}, убрано {}; из убранных лежали на дне с мясом {}, дошли до костей {}, лежали в среднем {:.0} тиков.",
         c.corpses,
         c.corpses_gone,
         percent(c.corpses_bottom, c.corpses_gone),

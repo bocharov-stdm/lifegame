@@ -310,7 +310,9 @@ fn approach(me: &Me, fx: f64, fy: f64, reach: f64) -> (f64, f64) {
 fn personal_plant(me: &Me, mind: &mut Mind, senses: &impl Senses, nearest: Option<(f64, f64)>) {
     let bound = feeding_circle(me, mind);
     let inside = |(x, y): (f64, f64)| {
-        bound.is_none_or(|c| c.holds(x, y, me.pheno.half)) && !behind_border(me, mind, x, y)
+        bound.is_none_or(|c| c.holds(x, y, me.pheno.half))
+            && !behind_border(me, mind, x, y)
+            && me.pheno.within_reach(y)
     };
     let old = mind.social.personal_food.filter(|&(x, y)| {
         (x - me.x).hypot(y - me.y) <= me.pheno.vision

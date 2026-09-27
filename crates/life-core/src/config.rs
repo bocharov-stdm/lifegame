@@ -17,6 +17,15 @@
 pub const WORLD_WIDTH: f64 = 6000.0;
 pub const WORLD_HEIGHT: f64 = 4000.0;
 
+/// Real units, for showing only (`units.rs`, `docs/scale.md`): the mechanics never read them. The
+/// base fish (`size` 40) is a 20 cm fish, so the base world is 30 × 20 m. Two clocks, since life is
+/// compressed far more than swimming: by the swimming clock the base speed 10 is a body length a
+/// second (a cruising fish), by the life clock the base lifespan 3000 ticks is three years (a small
+/// fish of that size) — a tick of life is about nine hours.
+pub const CM_PER_PX: f64 = 0.5;
+pub const SECONDS_PER_TICK: f64 = 0.25;
+pub const TICKS_PER_YEAR: f64 = 1000.0;
+
 /// Раз во сколько тиков существа пробуют делиться.
 pub const DIVIDE_PERIOD: u64 = 30;
 
@@ -35,6 +44,13 @@ pub const PLANT_BITE_YIELD: f64 = 0.44;
 /// bottom holds ~3000 times less food, like the plain exponent. Before it the default was the plain
 /// exponent with steepness 8; the first «игровое» fell along a straight slope and a cosine.
 pub const GAME_PLATEAU: f64 = 0.2;
+/// The «океаническое» depth profile (`flora::Profile::Ocean`): real seas are richest not at the
+/// very surface but a little below it, at the deep chlorophyll maximum, where enough light still
+/// reaches and nutrients rise from the deep. Food grows from `OCEAN_SURFACE` of the peak at the
+/// surface to full at `OCEAN_PEAK` of the depth, then falls by the profile's steepness: at 8 the
+/// bottom holds ~3000 times less than the peak, like «игровое».
+pub const OCEAN_PEAK: f64 = 0.15;
+pub const OCEAN_SURFACE: f64 = 0.6;
 
 /// Крутизна экспоненты по глубине: чем больше, тем плотнее еда прижата к
 /// поверхности. При 8 у дна еды в e^8 ≈ 3000 раз меньше, чем наверху.
@@ -224,19 +240,30 @@ pub const DIET_SPEED_COST: [f64; 4] = [1.0, 1.0, 1.0, 0.5];
 /// nose paid for like sight at its radius killed the carnivores everywhere: a mutant is born with
 /// it and cannot pay for it before it finds meat.
 pub const DIET_SMELL: [f64; 4] = [1.0, 1.0, 3.0, 1.5];
-/// Upkeep saved in the deep by diet: from `DEEP_SAVING_FROM` of the depth down to the bottom the
-/// share grows linearly to this. The scavenger lives slowly in the cold dark where rot settles
-/// and plants do not grow; above that depth it pays like everybody.
-pub const DIET_DEEP_SAVING: [f64; 4] = [0.0, 0.0, 0.4, 0.0];
-pub const DEEP_SAVING_FROM: f64 = 0.5;
-/// Which food is a diet's own (plants, fresh meat, rot): a sated creature eats and goes for only
-/// its own, and takes another niche's food only when hungry (the inherited `picky`). The omnivore
-/// has no foreign food: it is the generalist.
-pub const DIET_OWN: [[bool; 3]; 4] = [
-    [true, false, false], // травоядный
-    [true, true, true],   // всеядный
-    [false, false, true], // падальщик
-    [false, true, false], // мясоед
+// Cold deep water (the user's choice, 2026-09-27; it replaced the scavenger's own deep saving,
+// −40% on the bottom). The water is warm down to the thermocline's top, cold below its bottom, a
+// smooth step between (% of depth, rules `thermo_top`, `thermo_bottom`). A cold-blooded body takes
+// the water's temperature: in the cold it lives cheaper and moves slower, both by its `cold_blood`
+// gene times the coldness. A warm-blooded one pays and moves the same everywhere.
+pub const THERMO_TOP: f64 = 15.0;
+pub const THERMO_BOTTOM: f64 = 45.0;
+/// At full coldness and a fully cold-blooded body: upkeep × (1 − this) and speed × (1 − the next).
+/// Saving no more than the whole upkeep, so it never makes energy.
+pub const COLD_SAVING: f64 = 0.5;
+pub const COLD_SLOWING: f64 = 0.4;
+/// The `cold_blood` gene starts at 0 (warm-blooded, as before it) and a mutation moves it by
+/// gauss(0, this) points (`Mutation::Shift`).
+pub const COLD_BLOOD_STEP: f64 = 10.0;
+/// Scavenger founders (in a start mix) start this cold-blooded, in the deep with the rot.
+pub const SCAVENGER_START_COLD: f64 = 100.0;
+/// Which food is a diet's own (plants, fresh meat, rot, bones): a sated creature eats and goes
+/// for only its own, and takes another niche's food only when hungry (the inherited `picky`). The
+/// omnivore has no foreign food: it is the generalist (bones it cannot digest at all).
+pub const DIET_OWN: [[bool; 4]; 4] = [
+    [true, false, false, false], // травоядный
+    [true, true, true, false],   // всеядный
+    [false, false, true, true],  // падальщик
+    [false, true, false, false], // мясоед
 ];
 /// Founders dealt the scavenger diet start with this layer, % of depth (the `min_y`/`max_y`
 /// genes): in the deep, where rot will settle. A start condition, not a rule — the genes mutate.
@@ -247,19 +274,20 @@ pub const SCAVENGER_START_LAYER: (f64, f64) = (50.0, 100.0);
 /// mutates.
 pub const MEAT_FOUNDER_SIZE: f64 = 2.0;
 /// Digestibility by diet (order of `genome::creature::DIET_VARIANTS`): plants, fresh meat,
-/// rot. For plants 1 is the world's yield `plant_bite_yield`; for meat it is the whole raw
+/// rot, bones (the corpse's stages, `corpse::Stage`). For plants 1 is the world's yield `plant_bite_yield`; for meat it is the whole raw
 /// portion — the diet alone decides how much of it is taken in (the old flat 10% fed a hunter
 /// less for a whole corpse than one plant). 0 means the creature neither eats that food nor
 /// goes for it. A specialist digests its own food fully; the
 /// omnivore takes everything, but worse; rot feeds well only the scavenger, the others barely.
 /// Meat-eaters get a little from plants (not their own food: they eat it only when hungry), so a
 /// line of them is not starved out before it finds meat.
-/// A piece of a rotting corpse is a mix: fresh and rot by the corpse's rot share.
-pub const DIET_DIGESTION: [[f64; 3]; 4] = [
-    [1.0, 0.0, 0.0],  // травоядный
-    [0.7, 0.3, 0.05], // всеядный
-    [0.15, 0.8, 0.9], // падальщик
-    [0.2, 1.0, 0.1],  // мясоед
+/// Bones only the scavenger digests (the user's choice, 2026-09-27): the long-lying remains on the
+/// bottom are its own food, which nobody else can take.
+pub const DIET_DIGESTION: [[f64; 4]; 4] = [
+    [1.0, 0.0, 0.0, 0.0],  // травоядный
+    [0.7, 0.3, 0.05, 0.0], // всеядный
+    [0.15, 0.8, 0.9, 0.9], // падальщик
+    [0.2, 1.0, 0.1, 0.0],  // мясоед
 ];
 /// Plants while not grown to its own size (the size gene), by diet — a juvenile gut: a young
 /// carnivore digests plants like an omnivore, grows on them and hunts once grown. A carnivore
@@ -282,28 +310,33 @@ pub const DIET_START_MIX: [f64; 4] = [70.0, 30.0, 0.0, 0.0];
 pub const EAT_STOP_SHARE: f64 = 0.85;
 
 // ── Трупы ───────────────────────────────────────────────────────────────────
-/// A corpse stays fresh this long and lies where the creature died.
-pub const CORPSE_FRESH_TICKS: u64 = 150;
-/// By then it is fully rotten: the rot share follows a smooth step from the fresh time to this one.
-pub const CORPSE_ROTTEN_TICKS: u64 = 600;
+// Three stages (`corpse::Stage`), each longer than before (the user's choice, 2026-09-27: fresh
+// 150, a smooth rot to 600, gone by 1800; bones only from an eaten corpse, 1800 ticks, sinking 4).
+/// A corpse stays fresh this long and lies where the creature died; then it is rot at once.
+pub const CORPSE_FRESH_TICKS: u64 = 300;
 /// After the fresh time it sinks this far a tick, straight down, and can be eaten all the way. A
 /// speed, not a time to the bottom: with a time, a corpse in a world 15 500 deep (×20, 2:1) fell
 /// 10‒15 a tick, as fast as a scavenger swims, and the scavengers never caught one. At 2 a fifth of
 /// a base creature's speed, in a world of any height; in a tall one a corpse may decay on the way.
 pub const CORPSE_SINK_SPEED: f64 = 2.0;
-/// What is left disappears by then; the store decays evenly over the whole time, so a corpse
-/// reaching its resting place untouched still holds a third of its meat for the scavengers.
-pub const CORPSE_DECAY_TICKS: u64 = 1800;
+/// The flesh has rotted down to the bones by then, decaying evenly over the whole time, so a corpse
+/// reaching its resting place untouched still holds most of its meat for the scavengers.
+pub const CORPSE_DECAY_TICKS: u64 = 3000;
 /// Rot and skeletons rest in this lowest share of the depth, %, each at its own place (a hash of
 /// the id): spread over the dead deep, not a line on the bottom (at 2% it was a thin strip).
 pub const CORPSE_REST_PCT: f64 = 25.0;
-/// A corpse eaten down to this share of its meat becomes a skeleton: bones and scraps, rot from
-/// the start, that sink to the corpse's resting place. The hunters' last tenth feeds the scavengers.
+/// This share of a corpse's meat is its bones, left when the flesh is eaten or rotted away. The
+/// hunters' last tenth feeds the scavengers, who alone digest bones.
 pub const CORPSE_SKELETON_SHARE: f64 = 0.1;
-/// A skeleton sinks to its place this far a tick: bones are heavier than a whole corpse,
-pub const SKELETON_SINK_SPEED: f64 = 4.0;
-/// and what is left of it decays evenly over this many ticks from the moment it was stripped.
-pub const SKELETON_TICKS: u64 = 1800;
+/// Bones sink to the corpse's resting place this far a tick, ten times a corpse: heavy, they fall
+/// «со свистом»,
+pub const SKELETON_SINK_SPEED: f64 = 40.0;
+/// and lie there long, decaying evenly over this many ticks from when they were left: the
+/// scavenger's store on the bottom. The longer they lie, the stronger the scavengers and the
+/// weaker the carnivores (24 seeds, the user's world, 2026-09-27: at 20 000 carnivores held in
+/// 58% of worlds and scavengers in 58%, at 5000 71% and 46%, at 1800 75% and 46%; before the
+/// stages 80% and 20%). The user chose 5000.
+pub const SKELETON_TICKS: u64 = 5000;
 
 // ── Бегство ─────────────────────────────────────────────────────────────────
 /// Существо бежит от чужого (не родни), который может его съесть, когда до
