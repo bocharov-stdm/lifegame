@@ -374,6 +374,10 @@ impl World {
             }
             keep
         });
+        // old age weakens before anyone looks: the snapshot and the moves see the aged bodies
+        for v in &mut self.creatures {
+            v.grow_old(&self.rules);
+        }
         crate::flock::food_goals(&mut self.flocks, &self.creatures, self.tick);
         self.social_counts.relocations +=
             crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.seed, true);
@@ -543,8 +547,10 @@ impl World {
             }
         }
         let before = corpses.len();
+        // One that never grew and died with an empty tank leaves no meat, so no corpse: it would
+        // only count as a corpse gone the next tick and pull the corpses' mean lifetime down.
         corpses.extend(
-            creatures.iter().filter(|v| !v.alive).map(|v| {
+            creatures.iter().filter(|v| !v.alive && crate::corpse::meat(v) > 0.0).map(|v| {
                 crate::corpse::Corpse::from_creature_in(v, now, crate::corpse::CorpseClock::of(rules))
             }),
         );

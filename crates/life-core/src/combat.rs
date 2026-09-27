@@ -489,7 +489,7 @@ mod tests {
         let idle = [Feeding::Plants, Feeding::Nothing];
         assert_eq!(struck(idle, [true, true], 30.0, false), (false, false), "not eating");
         assert_eq!(struck(plants, [false, true], 30.0, false), (false, false), "sated");
-        assert_eq!(struck(plants, [true, true], 45.0, false), (false, false), "not prey_ratio smaller");
+        assert_eq!(struck(plants, [true, true], 70.0, false), (false, false), "not prey_ratio smaller");
         assert_eq!(struck(plants, [true, true], 30.0, true), (false, false), "a flockmate");
     }
 

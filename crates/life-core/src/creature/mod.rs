@@ -10,8 +10,8 @@ mod phenotype;
 mod standard;
 pub mod strategy;
 
-pub use phenotype::{Diet, Phenotype, melee_damage};
-pub use strategy::{Intent, Me, Mind, Strategy};
+pub use phenotype::{Diet, Phenotype, melee_damage, vigour};
+pub use strategy::{Chase, Intent, Me, Mind, Strategy};
 
 use crate::config::*;
 use crate::genome::CreatureGenome;
@@ -93,7 +93,7 @@ pub struct Creature {
     pub energy: f64,
     /// Диаметр при рождении: вложенная в рост энергия доступна добытчику.
     pub birth_size: f64,
-    /// Размеры мира нужны для роста без перемещения центра.
+    /// The world it lives in: its bounds, and where its corpse comes to rest.
     space: Space,
     pub alive: bool,
     pub age: f64,
@@ -149,7 +149,7 @@ impl Creature {
             age: 0.0,
             health: pheno.size * pheno.health_bonus,
             peaceful_ticks: 60,
-            reproduction_wait: (DIVIDE_PERIOD as f64 / pheno.life_pace).ceil() as u64,
+            reproduction_wait: DIVIDE_PERIOD,
             death: None,
             genome,
             pheno,
@@ -188,8 +188,8 @@ impl Creature {
             return;
         }
         self.mind.social.tick += 1;
-        self.age += self.pheno.life_pace;
-        if self.age >= LIFESPAN {
+        self.age += 1.0;
+        if self.age >= self.pheno.lifespan {
             self.alive = false;
             self.death = Some(Death::OldAge);
             return;
@@ -268,8 +268,18 @@ impl Creature {
 
     /// Новые правила пересчитывают фенотип по прежнему фактическому телу.
     pub fn apply_rules(&mut self, rules: &Rules, space: &Space) {
-        self.pheno = Phenotype::at_size(&self.genome, rules, space, self.pheno.size);
+        self.pheno = Phenotype::aged(&self.genome, rules, space, self.pheno.size, self.pheno.vigour);
         self.space = *space;
+    }
+
+    /// Old age weakens it (`phenotype::vigour`): the world calls this before every tick, since the
+    /// phenotype needs the rules. Nothing changes until old age, nor once it has fully set in.
+    pub fn grow_old(&mut self, rules: &Rules) {
+        let vigour = vigour(self.age, self.pheno.lifespan);
+        if vigour != self.pheno.vigour {
+            self.pheno = Phenotype::aged(&self.genome, rules, &self.space, self.pheno.size, vigour);
+            self.health = self.health.min(self.max_health());
+        }
     }
 
     /// Съедено `eaten` растений: энергия, и стратегия узнаёт, что поело.
@@ -297,27 +307,29 @@ impl Creature {
         strategy::after_eating(&me, &mut self.mind, &mut self.rng);
     }
 
-    /// Растёт только на усвоенной пище; остаток наполняет запас.
+    /// Растёт только на усвоенной пище: the `maturation` share of it until grown; the rest fills
+    /// the tank. Only the gene limits growth, not where it stands: next to the surface, where the
+    /// food is, a body used to stop growing until it walked a diameter away. A body grown against an
+    /// edge is pushed inside its new bounds by the growth, a fraction of a unit a bite.
     pub fn nourish(&mut self, gain: f64, rules: &Rules) {
         let gain = gain.max(0.0);
-        let room = self.x.min(self.space.width - self.x).min(self.y.min(self.space.height - self.y));
-        let limit = self.genome[Gene::Size].min(room).max(self.pheno.size);
-        let growth = (gain * self.pheno.life_pace / (1.0 + self.pheno.life_pace) / GROWTH_ENERGY_PER_SIZE)
-            .min(limit - self.pheno.size);
+        let limit = self.genome[Gene::Size].max(self.pheno.size);
+        let growth = (gain * self.pheno.maturation / GROWTH_ENERGY_PER_SIZE).min(limit - self.pheno.size);
         let health_share = self.health / self.max_health();
         if growth > 0.0 {
-            self.pheno = Phenotype::at_size(&self.genome, rules, &self.space, self.pheno.size + growth);
+            let (size, vigour) = (self.pheno.size + growth, self.pheno.vigour);
+            self.pheno = Phenotype::aged(&self.genome, rules, &self.space, size, vigour);
+            self.x = self.x.clamp(self.pheno.x_lo, self.pheno.x_hi);
+            self.y = self.y.clamp(self.pheno.y_lo, self.pheno.y_hi);
         }
         self.health = self.max_health() * health_share;
         self.energy = self.pheno.max_energy.min(self.energy + gain - growth * GROWTH_ENERGY_PER_SIZE);
     }
 
-    /// Здоровье — размер тела, times the diet's bonus (`DIET_HEALTH`). Старение в последней
-    /// пятой жизни уменьшает его до половины.
+    /// Здоровье — размер тела, times the diet's bonus (`DIET_HEALTH`) and its vigour (old age,
+    /// `phenotype::vigour`).
     pub fn max_health(&self) -> f64 {
-        self.pheno.size
-            * self.pheno.health_bonus
-            * (1.0 - ((self.age / LIFESPAN - 0.8) / 0.2).clamp(0.0, 1.0) * 0.5)
+        self.pheno.size * self.pheno.health_bonus * self.pheno.vigour
     }
 
     /// The inherited flock mode is the same: flocking, territoriality, strategy, shooting,
@@ -372,7 +384,7 @@ impl Creature {
             return None;
         }
         self.rng = next_rng;
-        self.reproduction_wait = (DIVIDE_PERIOD as f64 / self.pheno.life_pace).ceil() as u64;
+        self.reproduction_wait = DIVIDE_PERIOD;
 
         // Смещения по осям независимые: с одним общим дети ложились на диагональ.
         let span = self.pheno.size * 2.0;
@@ -385,7 +397,7 @@ impl Creature {
         child.parent = self.id;
         let same_mode = self.pheno.pack_instinct && child.pheno.pack_instinct && self.same_mode(&child);
         child.flock = if same_mode && self.rng.random() < 0.99 { self.flock } else { 0 };
-        child.reproduction_wait = (DIVIDE_PERIOD as f64 / child.pheno.life_pace).ceil() as u64;
+        child.reproduction_wait = DIVIDE_PERIOD;
         child.birth_size = child.genome[Gene::Size] * 0.5;
         child.pheno = Phenotype::at_size(&child.genome, rules, space, child.birth_size);
         child.health = child.max_health();

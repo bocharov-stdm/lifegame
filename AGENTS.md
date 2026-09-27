@@ -82,7 +82,11 @@ parent defends its child only while it knows it; energy is passed to it at birth
 that could eat a creature but hunts nobody is feared only within `1 − bravery` of the flight
 distance. A hunter weighs the meat
 its tank can take in against the expected strikes of the prey and its visible allies
-(`caution`); strikes need a chosen target, a defence or a territorial assignment. Every other
+(`caution`) and gives up a chase that does not close in within 30 ticks (the prey is ignored
+for 180 more); strikes need a chosen target, a defence or a territorial assignment. Life:
+`maturation` sets the share of food that goes into growth until grown; `lifespan` (free, base
+3000, 500–10 000 ticks) ends life, and from 70% of it speed, vision, strike and health fall
+linearly to 70% at 90%. Every other
 founder is flocking. A melee strike requires bodies to touch;
 corpses are available to everyone from the next tick. Behaviour genes are free: restrain them by
 behaviour and effect limits, never by upkeep.

@@ -7,7 +7,10 @@
 //! своё действие, а его цена дописывается в конец суммы расхода.
 
 use super::Strategy;
-use crate::config::{DEEP_SAVING_FROM, DIET_OWN, ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, SLOW_PACE};
+use crate::config::{
+    DEEP_SAVING_FROM, DIET_OWN, ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, LIFESPAN_MAX, LIFESPAN_MIN, OLD_AGE_FROM,
+    OLD_AGE_FULL, OLD_AGE_VIGOUR, SLOW_PACE,
+};
 use crate::flock::{FlockKind, Territoriality};
 use crate::genome::CreatureGenome;
 use crate::genome::creature::Gene;
@@ -57,7 +60,13 @@ pub struct Phenotype {
     /// Circle radius per square root of the member count, clamped to 50-500.
     pub flock_spacing: f64,
     pub care: f64,
-    pub life_pace: f64,
+    /// Share of digested food that goes into growth until grown (the `maturation` gene, 0..1).
+    pub maturation: f64,
+    /// Ticks of life (the `lifespan` gene, clamped).
+    pub lifespan: f64,
+    /// 1 until old age, down to `OLD_AGE_VIGOUR` (`vigour`): speed, vision, strike and health are
+    /// times this.
+    pub vigour: f64,
     pub retreat: f64,
     /// Bravery 0..1: a stranger that could eat it but hunts nobody is feared only within
     /// `1 − bravery` of the usual flight distance; a hunting one within all of it.
@@ -146,7 +155,12 @@ impl Phenotype {
 
     /// Фенотип по фактическому телу: наследственный предел хранится в геноме.
     pub fn at_size(genome: &CreatureGenome, rules: &Rules, space: &Space, size: f64) -> Self {
-        let life_pace = genome[Gene::LifePace].clamp(0.5, 2.0);
+        Self::aged(genome, rules, space, size, 1.0)
+    }
+
+    /// The phenotype of an actual body at `vigour` (`vigour`): an old one is slower, sees less,
+    /// strikes weaker and has less health, and pays the upkeep of the speed and sight it has.
+    pub fn aged(genome: &CreatureGenome, rules: &Rules, space: &Space, size: f64, vigour: f64) -> Self {
         let (mut min_pct, mut max_pct) =
             (genome[Gene::MinY].clamp(0.0, 100.0), genome[Gene::MaxY].clamp(0.0, 100.0));
         if min_pct > max_pct {
@@ -177,8 +191,8 @@ impl Phenotype {
         // Домашняя полоса лежит внутри этих границ: слой — в пределах мира.
         let (y_lo, y_hi) = (margin_y, space.height - margin_y);
 
-        let speed = genome[Gene::Speed];
-        let vision = genome[Gene::Vision];
+        let speed = genome[Gene::Speed] * vigour;
+        let vision = genome[Gene::Vision] * vigour;
         let diet = Diet::from_gene(genome[Gene::Diet]);
         let edges = *diet.edges(rules);
         let [plants, fresh, rot] = edges.digestion;
@@ -195,7 +209,9 @@ impl Phenotype {
             layer_bound,
             flock_spacing: genome[Gene::FlockSpacing].clamp(50.0, 500.0),
             care: genome[Gene::Care].clamp(0.0, 100.0) / 100.0,
-            life_pace,
+            maturation: genome[Gene::Maturation].clamp(0.0, 100.0) / 100.0,
+            lifespan: genome[Gene::Lifespan].clamp(LIFESPAN_MIN, LIFESPAN_MAX),
+            vigour,
             diet,
             // a juvenile gut until grown to its own size: never below the grown one
             // (`DietEdges::young_plants`)
@@ -234,9 +250,9 @@ impl Phenotype {
             y_lo,
             y_hi,
             max_energy: size * ENERGY_PER_SIZE,
-            upkeep: rules.upkeep_diet(size, speed, vision, diet_upkeep) * life_pace,
+            upkeep: rules.upkeep_diet(size, speed, vision, diet_upkeep),
             slow_speed,
-            slow_upkeep: rules.upkeep_diet(size, slow_speed, vision, diet_upkeep) * life_pace,
+            slow_upkeep: rules.upkeep_diet(size, slow_speed, vision, diet_upkeep),
             vision2: vision * vision,
             size2: size * size,
             half: size / 2.0,
@@ -244,6 +260,14 @@ impl Phenotype {
             strategy: Strategy::from_gene(genome[Gene::Strategy]),
         }
     }
+}
+
+/// Strength at `age` of a creature that lives `lifespan` ticks: 1, then from `OLD_AGE_FROM` of its
+/// life falling linearly to `OLD_AGE_VIGOUR` at `OLD_AGE_FULL`, and so to its death.
+#[inline]
+pub fn vigour(age: f64, lifespan: f64) -> f64 {
+    let t = ((age / lifespan - OLD_AGE_FROM) / (OLD_AGE_FULL - OLD_AGE_FROM)).clamp(0.0, 1.0);
+    1.0 - (1.0 - OLD_AGE_VIGOUR) * t
 }
 
 /// Melee damage of a strike `strike` from a body of size `size` to one of size `target`: times
@@ -290,10 +314,10 @@ impl Phenotype {
         self.plant_efficiency > 0.0
     }
 
-    /// Its melee damage: a share of its size, times its diet's bonus. The energy a strike costs
-    /// is the share without the bonus (`strike_cost`).
+    /// Its melee damage: a share of its size, times its diet's bonus and its vigour. The energy a
+    /// strike costs is the share without them (`strike_cost`).
     pub fn strike(&self) -> f64 {
-        self.strike_cost() * self.strike_bonus
+        self.strike_cost() * self.strike_bonus * self.vigour
     }
 
     pub fn strike_cost(&self) -> f64 {

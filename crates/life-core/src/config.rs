@@ -246,8 +246,8 @@ pub const DIET_OWN: [[bool; 3]; 4] = [
 /// genes): in the deep, where rot will settle. A start condition, not a rule — the genes mutate.
 pub const SCAVENGER_START_LAYER: (f64, f64) = (50.0, 100.0);
 /// Founders dealt a meat diet (scavenger, carnivore) start this many times bigger. Equal to the
-/// others they had no prey (a hunter takes prey `prey_ratio` ≈ 3 times smaller, and newborns are
-/// half grown) and starved by tick ~400 without a single strike. A start condition: the gene
+/// others they had no prey (a hunter takes prey `prey_ratio` times smaller, 2.5 then, and newborns
+/// are half grown) and starved by tick ~400 without a single strike. A start condition: the gene
 /// mutates.
 pub const MEAT_FOUNDER_SIZE: f64 = 2.0;
 /// Digestibility by diet (order of `genome::creature::DIET_VARIANTS`): plants, fresh meat,
@@ -319,5 +319,27 @@ pub const FLEE_SIGHT_SHARE: f64 = 1.0 / 3.0;
 /// угроза пропала из виду — ещё не значит, что она ушла.
 pub const FLEE_TICKS: u32 = 60;
 
-/// Предельный биологический возраст. Темп жизни меняет возраст за тик.
-pub const LIFESPAN: f64 = 12_000.0;
+// ── Жизнь и старость ────────────────────────────────────────────────────────
+/// The `lifespan` gene: every founder starts with this many ticks of life (user's call, 2026-09-27).
+/// The gene is free, like behaviour genes: a long life buys nothing but more time, and the old
+/// are weak (below). Before, the `life_pace` gene cut upkeep in proportion to a longer life, and
+/// selection pinned it to its floor everywhere: slow life was a free 50% discount.
+pub const LIFESPAN_BASE: f64 = 3000.0;
+/// The physical ceiling of the gene, and its floor: shorter than a few divide periods of growing up
+/// a line could not bear a child at all.
+pub const LIFESPAN_MAX: f64 = 10_000.0;
+pub const LIFESPAN_MIN: f64 = 500.0;
+/// Old age: from this share of its lifespan a creature weakens linearly, and by `OLD_AGE_FULL` its
+/// speed, vision, strike and health are `OLD_AGE_VIGOUR` of what they were; at the whole lifespan it
+/// dies. The body and its tank stay: shrinking would destroy meat.
+pub const OLD_AGE_FROM: f64 = 0.7;
+pub const OLD_AGE_FULL: f64 = 0.9;
+pub const OLD_AGE_VIGOUR: f64 = 0.7;
+
+// ── Погоня ──────────────────────────────────────────────────────────────────
+/// A hunter that has not closed in on its prey by at least one of its own steps within this many
+/// ticks gives the chase up: a prey as fast as it, fleeing, is never caught in the open, and the
+/// hunter used to follow it as long as it saw it, starving on the way.
+pub const CHASE_PATIENCE: u64 = 30;
+/// For this long it does not choose the prey it gave up again.
+pub const CHASE_GIVE_UP_TICKS: u64 = 180;

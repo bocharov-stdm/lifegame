@@ -6,9 +6,10 @@
 //! **Таблица только дописывается в конец.** От порядка генов зависят порядок
 //! случайных чисел при мутации (значит, каждый сид), позиции генов в эталоне
 //! баланса и JSON отчёта.
-//! One deliberate exception: the numeric `carnivory` row was replaced in place by the choice
-//! gene `diet` (model `life-behavior/10`). A gene that no longer acts should not keep a dead row
-//! that still draws numbers, and replacing it in place keeps every later gene's position.
+//! Deliberate exceptions: the numeric `carnivory` row was replaced in place by the choice gene
+//! `diet` (model `life-behavior/10`), and `life_pace` by `maturation` (same law, same draws). A
+//! gene that no longer acts should not keep a dead row that still draws numbers, and replacing it
+//! in place keeps every later gene's position.
 //!
 //! Значение гена всегда f64: у гена-выбора это номер варианта (0, 1, 2…).
 

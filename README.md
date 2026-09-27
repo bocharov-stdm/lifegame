@@ -38,7 +38,8 @@ the circles (the stroke tells the territoriality, red is a battle); a click open
 corpses. A growing child known to its parent and members of the same flock are protected. How
 much smaller a prey must be is the inherited `prey_ratio` gene alone (there is no world limit
 any more). A hunter weighs the meat it can still take in against the strikes it expects from the
-prey and the prey's visible allies; the inherited `caution` gene sets how much the risk weighs.
+prey and the prey's visible allies; the inherited `caution` gene sets how much the risk weighs,
+and a chase that does not close in within 30 ticks is given up.
 Defending oneself or a territory may strike a bigger enemy. The game has it on by default, the report takes
 `--rule cannibalism=1`.
 

@@ -29,8 +29,8 @@ phases 0‒2 — engine (`crates/life-core`), bounded headless runner with an ob
 at the git tag **`python-final`** (`python/` there) and is the behavioural spec the game was
 ported from. Open: phase 3 (parallel tick) and phase 6 (a separate machine benchmark).
 
-The behaviour reform is implemented: kinship and fleeing, food-driven growth, life pace and
-ageing, health and simultaneous fights, diets and hunting, inherited flocks. Combat is always on
+The behaviour reform is implemented: kinship and fleeing, food-driven growth, maturation,
+lifespan and old age, health and simultaneous fights, diets and hunting, inherited flocks. Combat is always on
 (the peaceful world and the `cannibalism` rule are gone; `with` names the reason). The engine is
 still sequential; the neighbour snapshot and the movement/feeding split do not mean it is
 parallelised. A family flock is a circle that moves as one object (settled, nomadic, scouts or
@@ -182,7 +182,28 @@ branch (up to `ed14091`, three niches and the sweep tools) and pushed with the r
     no meat diets); birth at ¼ size.
 - Flocks: remove the code and tests under the tag `flocks-final`. Prove the removal by the golden
   digests recorded with `FLOCKS = false` before removal, as with predators.
-- Planned next: the life/pace reform (see "Balance: exponents, not coefficients").
+- The life reform and the review fixes (2026-09-27, `life-behavior/11`, the user's choices; not
+  measured yet — measure on Windows, the cloud container runs no simulations):
+  - `life_pace` is gone, replaced in place by `maturation` (row 9, %, base 50, free): the share of
+    digested food that goes into growth until grown, the rest into the tank. Upkeep, age and the
+    reproduction timer no longer depend on it (`DIVIDE_PERIOD` for everyone).
+  - `lifespan` (appended, free, base `LIFESPAN_BASE` 3000, `LIFESPAN_MIN`–`LIFESPAN_MAX` 500–10 000):
+    death of old age at the lifespan. Old age (`phenotype::vigour`, applied by `Creature::grow_old`
+    at the start of the tick): from `OLD_AGE_FROM` 70% of the lifespan speed, vision, strike and
+    max health fall linearly to `OLD_AGE_VIGOUR` 0.7 at `OLD_AGE_FULL` 90%; body and tank stay,
+    upkeep follows the speed and sight it has. Replaces the old «health to half in the last fifth».
+  - A chase that has not closed the gap by one of the hunter's steps in `CHASE_PATIENCE` (30) ticks
+    is given up; the prey is ignored for `CHASE_GIVE_UP_TICKS` (180) (`standard::chase`,
+    `Mind::chase` / `given_up`, `Senses::prey(.., avoid)`).
+  - `prey_ratio` base 2.5 → 1.5: a base carnivore (40) could not attack even a newborn (20).
+    Side effects to watch: founders flee hunters 1.5× bigger and fight rivals 1.5× smaller at food.
+  - Growth is limited by the size gene only, not by the distance to a wall; a body grown against
+    an edge is pushed inside its new bounds.
+  - A creature that dies with no meat (never grew, empty tank) leaves no corpse.
+  - Food scores: a plant is worth the portions it has left, and a plant or corpse no more than the
+    empty part of the tank (`Senses::plant_portions`, `best_corpse`).
+  - Still open from the review: the flock code still runs every tick with flocks off
+    (`social::prepare`, `flock::update`, battles, territories) — goes with `flocks-final`.
 
 **Baseline conditions** (the user's own game; measure balance on these, not on ×1 defaults):
 
@@ -325,8 +346,9 @@ and the event chronicle for its in-game event feed.
 60 ticks). It started as the last Python version's (`python/fingerprint.py` at `python-final`)
 and is re-taken from Rust after each deliberate balance change. It is a world of creatures
 and plants; metrics: creatures and plants mean, size max and final. The model is
-`life-behavior/10` (diets, rotting corpses, plant patches); references without this version are
-rejected with an explanation. Both references are still the /9 ones and are re-taken once the
+`life-behavior/11` (diets, rotting corpses, plant patches; /11: lifespan and maturation, chase
+give-up, prey ratio 1.5); references without this version are rejected with an explanation. Both
+references are still the /9 ones and are re-taken once the
 balance is settled.
 `--compare` reruns the same seeds in Rust and checks each metric's mean against the reference's
 per-seed range; any mismatch exits with code 1 (CI relies on it). It refuses (code 2) when the
@@ -424,8 +446,8 @@ digests). `--ignored` prints digests of 50 seeds × 2 worlds for a wider before/
 
 ### Tick order and life cycle
 
-Plants → flock circles (move, push apart, shrink), battles, neighbour snapshot and territories
-→ decisions, ageing and movement of all creatures → eating plants → simultaneous strikes and
+Plants → old age (`grow_old`) → flock circles (move, push apart, shrink), battles, neighbour
+snapshot and territories → decisions, ageing and movement of all creatures → eating plants → simultaneous strikes and
 winners feeding → reproduction of survivors → removing the dead and adding children →
 splits, stragglers, departures and flock membership (circles only shrink here) → tick number.
 
@@ -594,10 +616,12 @@ up to ~1000 ticks. Before the bonuses and skeletons (`e158f9e`): 824 / 544, carn
 scavengers in none. The history of what was tried is in the commit messages of `16af4f7` and
 before.
 
-Lifespan (measured on `16af4f7`): the `life_pace` gene sits at its floor 0.5 in every world
-(upkeep × pace makes slow life a near-free 50% discount), so the age limit is ~24 000 ticks, while
-creatures live a median of 250–470 ticks (p90 ~2000) and die of hunger or in fights; under 0.1%
-reach the ageing fifth. The user agreed to reform life and pace as a separate stage later.
+Lifespan (measured on `16af4f7`, before the life reform): the `life_pace` gene sat at its floor 0.5
+in every world (upkeep × pace made slow life a near-free 50% discount), so the age limit was
+~24 000 ticks, while creatures lived a median of 250–470 ticks (p90 ~2000) and died of hunger or in
+fights; under 0.1% reached the ageing fifth. Replaced by `maturation` and `lifespan` (see "Where
+the food-web work stands"). The `lifespan` gene is free, so selection may push it to the ceiling;
+with lives this short it matters only if hunger and fights stop killing first.
 
 The previous model (`life-behavior/9`, cells, exp profile, one diet): 8/8 in each of the four
 modes (with and without the then-optional combat); medians base 1139 / 925, calm 732.5 / 564.
@@ -649,8 +673,9 @@ The gene table (`genome/creature.rs`): `GeneSpec { key, label, about, kind, base
 is a variant index). Everything that walks genes — mutation, `Stats`, observer, story, JSON,
 charts, creature card, help — iterates the table, never positions. **Tables are append-only**:
 the order fixes the RNG draw order of mutation (every seed), positions in the reference
-fingerprint and JSON. The one deliberate exception: row 11, the numeric `carnivory`, was
-replaced in place by the `diet` choice gene (`food-web`), so no other gene moved.
+fingerprint and JSON. The deliberate exceptions: row 11, the numeric `carnivory`, was replaced in
+place by the `diet` choice gene (`food-web`), and row 9, `life_pace`, by `maturation` (same law,
+same draws), so no other gene moved.
 
 Mutation laws (`genome::Mutation`): `Scale` for numeric genes (× (1 + gauss(0, σ·mutability)),
 multiplier ≥ 0.1); `Switch { chance }` to any other variant (0.1% for the choice genes);

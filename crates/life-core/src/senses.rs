@@ -43,6 +43,12 @@ pub trait Senses {
         self.nearest_plant(x, y, r2).filter(|&(px, py)| keep(px, py))
     }
 
+    /// Portions left on the live plant at exactly (x, y), as `nearest_plant` returned it. The
+    /// default — a whole plant — is enough for test senses.
+    fn plant_portions(&self, _x: f64, _y: f64) -> u8 {
+        crate::plant::PORTIONS
+    }
+
     /// Лучшая лично видимая падаль с учётом дороги и времени питания.
     fn best_corpse(&self, _me: &Me) -> Option<CorpseFood> {
         None
@@ -51,8 +57,9 @@ pub trait Senses {
     /// Ближайший чужак (не родня), который может меня съесть и до края тела
     /// которого меньше `within`, — по снимку стада на начало фазы.
     fn nearest_threat(&self, me: &Me, within: f64) -> Option<Threat>;
-    /// Личная видимая добыча; прежняя цель имеет приоритет, пока допустима.
-    fn prey(&self, _me: &Me, _previous: Option<u64>) -> Option<Prey> {
+    /// Личная видимая добыча; прежняя цель имеет приоритет, пока допустима. `avoid`: a prey the
+    /// hunter gave up chasing (`CHASE_PATIENCE`), not a candidate.
+    fn prey(&self, _me: &Me, _previous: Option<u64>, _avoid: Option<u64>) -> Option<Prey> {
         None
     }
 }
@@ -63,6 +70,8 @@ pub struct Prey {
     pub id: u64,
     pub x: f64,
     pub y: f64,
+    /// Radius of its body: a chase is measured to its edge.
+    pub half: f64,
     pub score: f64,
 }
 
@@ -95,6 +104,7 @@ impl Prey {
             id: s.kinship.id,
             x: s.x,
             y: s.y,
+            half: s.half,
             score: gain * (1.0 - risk).max(0.0) / (travel + hits + feeding).max(1.0),
         }
     }
@@ -141,6 +151,8 @@ impl Senses for GridSenses<'_> {
     fn best_corpse(&self, me: &Me) -> Option<CorpseFood> {
         let mut best: Option<CorpseFood> = None;
         let hungry = me.pheno.hungry(me.energy);
+        // what it can still take in: a corpse bigger than the empty part of its tank is worth no more
+        let room = (me.pheno.max_energy - me.energy).max(0.0);
         self.corpse_grid?.for_each_near(me.x, me.y, me.pheno.smell, |i, cx, cy| {
             let c = &self.corpses[i];
             let distance = (cx - me.x).hypot(cy - me.y);
@@ -151,7 +163,7 @@ impl Senses for GridSenses<'_> {
             let portion = c.portion(me.pheno.plant_energy);
             let feeding = (c.remaining / portion).ceil();
             let travel = (distance - me.pheno.size - c.size * 0.5).max(0.0) / me.pheno.speed.max(0.01);
-            let score = c.remaining * efficiency / (travel + feeding).max(1.0);
+            let score = (c.remaining * efficiency).min(room) / (travel + feeding).max(1.0);
             let candidate = CorpseFood { owner: c.owner, x: cx, y: cy, half: c.size * 0.5, score };
             if best.is_none_or(|b| score > b.score || (score == b.score && c.owner < b.owner)) {
                 best = Some(candidate);
@@ -174,7 +186,7 @@ impl Senses for GridSenses<'_> {
         }
         Some(Threat { id, x: s.x, y: s.y, gap: distance - s.half, half: s.half })
     }
-    fn prey(&self, me: &Me, previous: Option<u64>) -> Option<Prey> {
+    fn prey(&self, me: &Me, previous: Option<u64>, avoid: Option<u64>) -> Option<Prey> {
         if !me.pheno.hunts_now(me.energy) {
             return None; // fresh meat is worth nothing to it, or it is sated and meat is not its own
         }
@@ -207,6 +219,7 @@ impl Senses for GridSenses<'_> {
                 || s.half * 2.0 > max_size
                 || me.kinship.kin(s.kinship)
                 || herd.grace.contains(me.flock, s.flock, herd.tick)
+                || Some(s.kinship.id) == avoid
             {
                 return;
             }
@@ -260,6 +273,16 @@ impl Senses for GridSenses<'_> {
     #[inline(always)]
     fn nearest_plant(&self, x: f64, y: f64, r2: f64) -> Option<(f64, f64)> {
         nearest_plant(self.food, self.plants, x, y, r2)
+    }
+
+    fn plant_portions(&self, x: f64, y: f64) -> u8 {
+        let mut portions = 0;
+        self.food.for_each_near(x, y, 1.0, |j, px, py| {
+            if (px, py) == (x, y) {
+                portions = portions.max(self.plants[j].portions);
+            }
+        });
+        portions
     }
 
     #[inline(always)]
@@ -826,7 +849,7 @@ mod tests {
                 now: tick,
                 herd: Some(&herd),
             };
-            assert_eq!(view.prey(&hunter, None).is_none(), safe);
+            assert_eq!(view.prey(&hunter, None, None).is_none(), safe);
             assert_eq!(view.nearest_threat(&hunted, hunted.pheno.vision).is_none(), safe);
             assert_eq!(view.visible_enemy(&hunter, prey.id).is_none(), safe);
         }
@@ -1027,7 +1050,7 @@ mod tests {
                                 b
                             }
                         });
-                    let got = view.prey(&me, None);
+                    let got = view.prey(&me, None, None);
                     // Sums in another order may differ in the last bits: compare scores, not ties.
                     let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1e-12);
                     match (got, want) {
@@ -1100,7 +1123,7 @@ mod tests {
             health_share: 1.0,
             health: v.health,
         };
-        view.prey(&me, None)
+        view.prey(&me, None, None)
     }
 
     /// A small creature (size 20, grown from 10: its body is meat) at `x`; `flock` with a circle

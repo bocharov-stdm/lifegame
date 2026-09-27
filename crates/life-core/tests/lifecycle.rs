@@ -46,9 +46,17 @@ fn пища_оплачивает_рост_и_размножение_ждёт_в�
     let size = child.pheno.size;
     let energy = child.energy;
     child.nourish(2.0, &r);
-    let cost = 2.0 * child.pheno.life_pace / (1.0 + child.pheno.life_pace);
+    // the `maturation` share goes into growth, the rest into the tank
+    let cost = 2.0 * child.pheno.maturation;
     assert!((child.pheno.size - size - cost / life_core::config::GROWTH_ENERGY_PER_SIZE).abs() < 1e-9);
     assert!((child.energy - energy - (2.0 - cost)).abs() < 1e-9);
+    let mut quick = child.clone();
+    quick.genome = quick.genome.with(Gene::Maturation, 80.0);
+    quick.apply_rules(&r, &Space::default());
+    let (size, energy) = (quick.pheno.size, quick.energy);
+    quick.nourish(2.0, &r);
+    assert!((quick.pheno.size - size - 1.6 / life_core::config::GROWTH_ENERGY_PER_SIZE).abs() < 1e-9);
+    assert!((quick.energy - energy - 0.4).abs() < 1e-9, "a quick grower fills its tank slower");
     let size = child.pheno.size;
     child.nourish(0.0, &r);
     assert_eq!(child.pheno.size, size);
@@ -94,37 +102,67 @@ fn родитель_больше_не_кормит_подросшего_ребё
     assert!(w.creatures[1].energy < 20.0);
 }
 
+/// Growth is limited by the gene, not by the wall it stands at: the body grows and is pushed
+/// inside its new bounds.
 #[test]
-fn рост_у_стены_не_перемещает_центр() {
+fn growth_at_a_wall_is_not_stopped_by_it() {
     let r = Rules::default();
     let mut child = parent().maybe_divide(&Space::default(), &r).unwrap();
     child.x = child.pheno.size;
-    let before = (child.x, child.y, child.pheno.size);
+    let y = child.y;
     child.nourish(10000.0, &r);
-    assert_eq!((child.x, child.y, child.pheno.size), before);
+    assert!(child.adult(), "grown to its gene at the wall");
+    assert_eq!((child.x, child.y), (child.pheno.x_lo, y), "pushed inside, along the wall's normal only");
+    let size = child.pheno.size;
     child.apply_rules(&r, &Space::default());
-    assert_eq!(child.pheno.size, before.2);
+    assert_eq!(child.pheno.size, size);
 }
 
+/// A tick is a tick of age for everyone. From 70% of its lifespan a creature weakens linearly, and
+/// from 90% its speed, vision, strike and health are 70% of what they were; its body and tank stay.
+/// It dies at its lifespan, which the gene sets within 500–10 000 ticks.
 #[test]
-fn темп_ускоряет_возраст_но_не_скорость() {
+fn old_age_weakens_and_the_lifespan_is_inherited() {
+    use life_core::creature::{Death, vigour};
     use life_core::senses::Blind;
-    let mut slow = parent();
-    slow.genome = slow.genome.with(Gene::LifePace, 0.5);
-    slow.apply_rules(&Rules::default(), &Space::default());
-    let mut fast = parent();
-    fast.genome = fast.genome.with(Gene::LifePace, 2.0);
-    fast.apply_rules(&Rules::default(), &Space::default());
-    slow.step(&Blind);
-    fast.step(&Blind);
-    assert_eq!(slow.age, 0.5);
-    assert_eq!(fast.age, 2.0);
-    assert_eq!(slow.pheno.speed, fast.pheno.speed);
-    assert_eq!(fast.pheno.upkeep, slow.pheno.upkeep * 4.0);
-    fast.age = life_core::config::LIFESPAN - 1.0;
-    fast.step(&Blind);
-    assert_eq!(fast.death, Some(life_core::creature::Death::OldAge));
-    assert!(!fast.alive);
+    let r = Rules::default();
+    let mut v = parent();
+    assert_eq!(v.pheno.lifespan, life_core::config::LIFESPAN_BASE);
+    v.step(&Blind);
+    assert_eq!(v.age, 1.0);
+    assert_eq!((vigour(2099.0, 3000.0), vigour(2100.0, 3000.0)), (1.0, 1.0));
+    assert!((vigour(2400.0, 3000.0) - 0.85).abs() < 1e-12);
+    assert!((vigour(2700.0, 3000.0) - 0.7).abs() < 1e-12);
+    assert!((vigour(2999.0, 3000.0) - 0.7).abs() < 1e-12);
+
+    let (young, health) = (v.pheno, v.max_health());
+    v.grow_old(&r);
+    assert_eq!(v.pheno, young, "nothing changes before old age");
+    v.age = 2700.0;
+    v.grow_old(&r);
+    let old = v.pheno;
+    assert!((old.speed - young.speed * 0.7).abs() < 1e-9);
+    assert!((old.vision - young.vision * 0.7).abs() < 1e-9);
+    assert!((old.strike() - young.strike() * 0.7).abs() < 1e-9);
+    assert!((v.max_health() - health * 0.7).abs() < 1e-9);
+    assert!(v.health <= v.max_health());
+    assert_eq!(
+        (old.size, old.max_energy, old.strike_cost()),
+        (young.size, young.max_energy, young.strike_cost())
+    );
+    assert!(old.upkeep < young.upkeep, "it pays for the speed and sight it has");
+    v.apply_rules(&r, &Space::default());
+    assert_eq!(v.pheno, old, "new rules keep its age");
+
+    v.age = v.pheno.lifespan - 1.0;
+    v.step(&Blind);
+    assert_eq!(v.death, Some(Death::OldAge));
+    assert!(!v.alive);
+
+    let space = Space::default();
+    let lifespan =
+        |years: f64| Phenotype::of(&CreatureGenome::BASE.with(Gene::Lifespan, years), &r, &space).lifespan;
+    assert_eq!((lifespan(50_000.0), lifespan(10.0), lifespan(4000.0)), (10_000.0, 500.0, 4000.0));
 }
 
 #[test]
@@ -230,7 +268,7 @@ fn diet_edges_follow_the_rules() {
     assert_eq!((new.plant_efficiency, new.meat_efficiency, new.rot_efficiency), (0.5, 0.6, 0.7));
     let young = Phenotype::at_size(&with_diet(parent().genome, Diet::Carnivore), &lab, &space, 10.0);
     assert_eq!(young.plant_efficiency, 0.8, "the juvenile gut is a rule too");
-    assert_eq!(new.upkeep, lab.upkeep_diet(new.size, new.speed, new.vision, [0.5, 0.5]) * new.life_pace);
+    assert_eq!(new.upkeep, lab.upkeep_diet(new.size, new.speed, new.vision, [0.5, 0.5]));
     assert!(new.upkeep < base.upkeep);
     for diet in [Diet::Herbivore, Diet::Omnivore, Diet::Scavenger] {
         assert_eq!(of(diet, &lab), of(diet, &r), "{diet:?} keeps its edges");
@@ -320,18 +358,14 @@ fn бонусы_диет() {
     };
     let (h, o, s, c) = (of(Diet::Herbivore), of(Diet::Omnivore), of(Diet::Scavenger), of(Diet::Carnivore));
     let (size, speed, vision) = (o.pheno.size, o.pheno.speed, o.pheno.vision);
-    assert_eq!(
-        o.pheno.upkeep,
-        r.upkeep(size, speed, vision) * o.pheno.life_pace,
-        "the omnivore pays the base"
-    );
+    assert_eq!(o.pheno.upkeep, r.upkeep(size, speed, vision), "the omnivore pays the base");
     assert_eq!(h.max_health(), 1.5 * o.max_health(), "hardy herbivore");
     assert_eq!(c.max_health(), o.max_health());
     let size_term = r.upkeep(size, speed, vision) - r.upkeep_diet(size, speed, vision, [0.0, 1.0]);
-    assert!((o.pheno.upkeep - h.pheno.upkeep - 0.15 * size_term * h.pheno.life_pace).abs() < 1e-12);
+    assert!((o.pheno.upkeep - h.pheno.upkeep - 0.15 * size_term).abs() < 1e-12);
     let speed_term = r.upkeep(size, speed, vision) - r.upkeep_diet(size, speed, vision, [1.0, 0.0]);
     let saved = 1.0 - life_core::config::DIET_SPEED_COST[3];
-    assert!((o.pheno.upkeep - c.pheno.upkeep - saved * speed_term * c.pheno.life_pace).abs() < 1e-12);
+    assert!((o.pheno.upkeep - c.pheno.upkeep - saved * speed_term).abs() < 1e-12);
     assert_eq!(s.pheno.upkeep, o.pheno.upkeep, "the scavenger saves only in the deep");
     assert_eq!((s.pheno.smell, c.pheno.smell, o.pheno.smell), (3.0 * vision, 1.5 * vision, vision));
     // the deep saving grows from half the depth to 40% on the bottom
@@ -361,7 +395,7 @@ fn стая_защищает_неродных_и_исчезает_без_уча�
     assert!(w.creatures.iter().all(|v| v.health == v.max_health() && v.circle.is_some()));
     assert_eq!(w.flocks[&a].members, 2);
     for v in &mut w.creatures {
-        v.age = life_core::config::LIFESPAN;
+        v.age = v.pheno.lifespan;
     }
     w.step();
     assert!(w.creatures.is_empty() && w.flocks.is_empty());
@@ -394,7 +428,8 @@ fn границы_новых_генов_сохраняются_при_мутац
     let mut rng = Rng::new(42);
     for _ in 0..10000 {
         g = g.mutate(0.8, &mut rng);
-        assert!((0.5..=2.0).contains(&g[Gene::LifePace]));
+        assert!((0.0..=100.0).contains(&g[Gene::Maturation]));
+        assert!((500.0..=10_000.0).contains(&g[Gene::Lifespan]));
         assert!((1.0..=5.0).contains(&g[Gene::PreyRatio]));
         assert!((0.0..=100.0).contains(&g[Gene::Bravery]));
         assert!((0..4).contains(&(g[Gene::Diet] as usize)) && g[Gene::Diet].fract() == 0.0);

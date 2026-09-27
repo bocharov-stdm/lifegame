@@ -3,7 +3,8 @@
 use super::{GeneKind, GeneSpec, Genome, Mutation, Variant, bases};
 use crate::config::{
     DIET_JUMP_CHANCE, DIET_MEAT_STEP_CHANCE, DIET_STEP_CHANCE, FLOCKS, HERBIVORE_LEAP_CARNIVORE,
-    HERBIVORE_LEAP_SCAVENGER, SHOOTER_SWITCH_CHANCE, STRATEGY_SWITCH_CHANCE,
+    HERBIVORE_LEAP_SCAVENGER, LIFESPAN_BASE, LIFESPAN_MAX, LIFESPAN_MIN, SHOOTER_SWITCH_CHANCE,
+    STRATEGY_SWITCH_CHANCE,
 };
 use crate::creature::strategy::VARIANTS as STRATEGIES;
 use crate::rng::Rng;
@@ -21,7 +22,7 @@ pub enum Gene {
     MaxY,
     Strategy,
     Mutability,
-    LifePace,
+    Maturation,
     Bravery,
     Diet,
     PreyRatio,
@@ -39,6 +40,7 @@ pub enum Gene {
     Forage,
     Picky,
     Rivalry,
+    Lifespan,
 }
 
 impl Gene {
@@ -52,7 +54,7 @@ impl Gene {
         Gene::MaxY,
         Gene::Strategy,
         Gene::Mutability,
-        Gene::LifePace,
+        Gene::Maturation,
         Gene::Bravery,
         Gene::Diet,
         Gene::PreyRatio,
@@ -70,10 +72,11 @@ impl Gene {
         Gene::Forage,
         Gene::Picky,
         Gene::Rivalry,
+        Gene::Lifespan,
     ];
 }
 
-pub const N: usize = 27;
+pub const N: usize = 28;
 
 pub const PACK_VARIANTS: [Variant; 2] = [
     Variant {
@@ -258,12 +261,14 @@ pub const GENES: [GeneSpec; N] = [
         base: 1.0,
         mutation: SCALE,
     },
+    // Replaced the numeric `life_pace` in place (see `genome/mod.rs`): the same law, so the same
+    // draws.
     GeneSpec {
-        key: "life_pace",
-        label: "темп_жизни",
-        about: "Быстрее рост и рождения, дороже содержание и короче жизнь (0,5–2).",
-        kind: GeneKind::Absolute,
-        base: 1.0,
+        key: "maturation",
+        label: "взросление",
+        about: "Какая доля съеденного идёт в рост, пока не вырос; остальное — в запас. Быстро растущий ходит с пустым баком, %.",
+        kind: GeneKind::Percent,
+        base: 50.0,
         mutation: SCALE,
     },
     GeneSpec {
@@ -295,7 +300,7 @@ pub const GENES: [GeneSpec; N] = [
         label: "отношение_добычи",
         about: "Во сколько раз добыча меньше охотника (1–5).",
         kind: GeneKind::Absolute,
-        base: 2.5,
+        base: 1.5,
         mutation: SCALE,
     },
     GeneSpec {
@@ -411,6 +416,14 @@ pub const GENES: [GeneSpec; N] = [
         base: 30.0,
         mutation: SCALE,
     },
+    GeneSpec {
+        key: "lifespan",
+        label: "срок_жизни",
+        about: "Сколько тиков живёт. С 70% срока слабеет: к 90% скорость, зрение, удар и здоровье — 70% прежних (500–10 000).",
+        kind: GeneKind::Absolute,
+        base: LIFESPAN_BASE,
+        mutation: SCALE,
+    },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -456,7 +469,7 @@ impl CreatureGenome {
         };
         super::mutate_values(&mut child.0, &GENES, h.sigma, mutability, rng, Some(diet));
         child.0[Gene::Mutability as usize] = super::mutability_of(child[Gene::Mutability], h.min_mutability);
-        child.0[Gene::LifePace as usize] = child[Gene::LifePace].clamp(0.5, 2.0);
+        child.0[Gene::Lifespan as usize] = child[Gene::Lifespan].clamp(LIFESPAN_MIN, LIFESPAN_MAX);
         child.0[Gene::PreyRatio as usize] = child[Gene::PreyRatio].clamp(1.0, 5.0);
         child
     }

@@ -192,7 +192,10 @@ sight that still knows it. The new free gene `caution` (0–100%, base 50%, the 
 gene table) weighs that risk: at 0 it is ignored; at the base a hunt whose expected strikes
 equal the hunter's health is worth nothing; at 100% half of that is enough. A hunt goes on while
 it is worth anything; a new one starts only when it is worth more than the best plant or corpse
-in sight, and a full tank starts none. Gone are the fixed 90% fullness threshold for hunting and
+in sight, and a full tank starts none. A chase that has not closed the gap to the prey's edge by
+one of the hunter's own steps within `CHASE_PATIENCE` (30) ticks is given up, and that prey is not
+chosen for `CHASE_GIVE_UP_TICKS` (180): an equally fast prey is never caught in the open, and
+hunters used to follow one as long as they saw it. Gone are the fixed 90% fullness threshold for hunting and
 the bites of whoever a creature bumps into: a strike needs a chosen target, a defence or a
 territorial assignment. `prey_ratio` (1–5) still limits whom a creature attacks first; the risk,
 not a world floor, restrains a low ratio. A reckless mutant may be born and gets beaten by the
@@ -552,17 +555,18 @@ Claude над родством и бегством. Она сохранена и
   section). Family and carriers of the same flock label may not be attacked. Threats are read
   from the neighbour snapshot. Coinciding coordinates give a reproducible direction; turning
   cannibalism off resets fleeing and the attack target.
-- Ген размера задаёт взрослый диаметр. Ребёнок рождается с половиной диаметра;
-  основатели и добавленные вручную существа взрослые. Только усвоенная пища растит
-  тело: доля `p/(1+p)`, текущая цена единицы диаметра `GROWTH_ENERGY_PER_SIZE = 2.25`.
-  Остальное пополняет энергию. Рост ограничен взрослым размером и пространством
-  у стен без смещения центра; неиспользованная доля переходит в энергию.
-  Голод и рождение ребёнка не уменьшают тело.
-- `life_pace`: база 1, диапазон 0.5–2. Содержание и биологический возраст
-  умножаются на темп, скорость движения независима. Размножение доступно взрослым
-  после индивидуального ожидания `ceil(DIVIDE_PERIOD/p)`; прежние расходы сохранены.
-- Предел возраста 12 000. В последние 20% жизни максимум здоровья плавно падает
-  от диаметра до половины диаметра. Рост сохраняет долю здоровья. После 60 тиков
+- The size gene sets the adult diameter. A child is born at half of it; founders and spawned
+  creatures are adult. Only digested food grows the body: the `maturation` share of it (a free
+  gene, base 50%, 0–100%) at `GROWTH_ENERGY_PER_SIZE = 2.25` a unit of diameter, the rest fills
+  the tank. Growth is limited by the adult size only (it used to stop at a wall until the body
+  walked a diameter away from it); a body grown against an edge is pushed inside its new bounds.
+  Hunger and giving birth do not shrink the body. Reproduction waits `DIVIDE_PERIOD` ticks.
+- `lifespan` (replaced `life_pace`, 2026-09-27): a free gene, base 3000 ticks, 500–10 000. A tick
+  is a tick of age for everyone; at its lifespan a creature dies of old age. From 70% of it the
+  speed, vision, strike and maximum health fall linearly to 70% at 90% and stay there; the body
+  and the tank do not change, and the upkeep follows the speed and sight it has. `life_pace`
+  multiplied upkeep and age alike, and selection pinned it to its floor 0.5 everywhere: slow life
+  was a free 50% discount. Рост сохраняет долю здоровья. После 60 тиков
   без боя при энергии выше половины восстанавливается 0.2% максимума здоровья
   за тик, по одной единице энергии за единицу здоровья.
 - Бой начинается при контакте тел. Не более одного удара за тик: 5% своего
@@ -573,7 +577,8 @@ Claude над родством и бегством. Она сохранена и
 - Bravery: base 50%, range 0–100%; retreat threshold `0.8 − 0.6b`.
   Carnivory: base 25%; plants are digested at `1 − 0.8c`, prey at `0.2 + 0.8c`.
   Prey holds its remaining energy and the cost of the body part it grew.
-  `prey_ratio`: base 2.5, range 1–5, a free behaviour gene. It alone decides whom a creature
+  `prey_ratio`: base 1.5 (2.5 until 2026-09-27: a base carnivore of 40 could not attack even a
+  newborn of 20), range 1–5, a free behaviour gene. It alone decides whom a creature
   attacks first (a body at most `size / prey_ratio`) and, in the eyes of others, whom it
   threatens. The world rule `cannibal_ratio` (2.5) is gone: it came from swallowing prey whole
   and only set a floor under the gene. What restrains a low ratio is the risk a hunter weighs

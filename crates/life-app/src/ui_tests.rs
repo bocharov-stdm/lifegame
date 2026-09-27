@@ -498,7 +498,8 @@ fn flock_scenes_and_card_without_a_window() {
         2000.0,
         Some(180.0),
     );
-    w.creatures.last_mut().unwrap().age = life_core::config::LIFESPAN - 12.0;
+    let hunter = w.creatures.last_mut().unwrap();
+    hunter.age = hunter.pheno.lifespan - 12.0;
     let (mut alarm, mut back) = (false, false);
     for _ in 0..200 {
         w.step();

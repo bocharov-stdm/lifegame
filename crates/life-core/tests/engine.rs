@@ -156,7 +156,7 @@ fn каннибал_съедает_мелкого_рядом() {
 #[test]
 fn каннибал_не_ест_крупного_и_дальнего() {
     for (small, dx, why) in [
-        (50.0, 10.0, "only half the size: not prey for the base prey_ratio 2.5"),
+        (70.0, 10.0, "only 1.4 times smaller: not prey for the base prey_ratio 1.5"),
         (30.0, 400.0, "далеко — каннибал не ищет, а ест того, кто рядом"),
     ] {
         let mut w = cannibal_world(small, dx);
@@ -271,7 +271,7 @@ fn does_not_flee_a_parent_that_knows_it_nor_an_equal_or_distant_one() {
     };
     let cases: [(World, &str); 3] = [
         (threat_world(100.0, 150.0, parent), "from its parent"),
-        (threat_world(70.0, 150.0, |_| {}), "from one only 2.3 times bigger"),
+        (threat_world(40.0, 150.0, |_| {}), "from one only 1.3 times bigger"),
         (threat_world(100.0, 250.0, |_| {}), "from one 200 away, beyond a third of its vision"),
     ];
     for (w, why) in cases {
@@ -330,9 +330,9 @@ fn бежит_ещё_после_пропажи_угрозы() {
 /// times bigger than it: then it runs.
 #[test]
 fn strikes_back_an_equal_but_runs_from_one_out_of_its_league() {
-    for (half, fights) in [(20.0, true), (49.0, true), (50.0, false), (120.0, false)] {
+    for (half, fights) in [(20.0, true), (29.0, true), (30.0, false), (120.0, false)] {
         let mut v = creature(1000.0, 1000.0, BASE);
-        assert_eq!((v.pheno.half, v.pheno.prey_ratio), (20.0, 2.5));
+        assert_eq!((v.pheno.half, v.pheno.prey_ratio), (20.0, 1.5));
         let threat = Threat { id: 999, x: 1000.0 + 20.0 + half - 1.0, y: 1000.0, gap: 19.0, half };
         let before = v.x;
         v.step(&senses_from(|_, _, _| None).with_threat(threat));

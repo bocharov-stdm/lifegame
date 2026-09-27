@@ -5,8 +5,8 @@
 //! Решение разбито на `plan`, который говорит ещё и какая ветка сработала:
 //! «затаившийся» (`lurker.rs`) ведёт себя так же, но бродит медленно.
 
-use super::strategy::{Intent, Me, Mind};
-use crate::config::FLEE_TICKS;
+use super::strategy::{Chase, Intent, Me, Mind};
+use crate::config::{CHASE_GIVE_UP_TICKS, CHASE_PATIENCE, FLEE_TICKS};
 use crate::flock::Circle;
 use crate::rng::Rng;
 use crate::senses::Senses;
@@ -114,6 +114,8 @@ pub(super) fn plan(
 
 fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, step: f64) -> (Intent, Mode) {
     let (x, y, speed) = (me.x, me.y, me.pheno.speed);
+    // A chase goes on only while it hunts that prey tick after tick.
+    let chasing = mind.chase.take();
 
     // Испуг: чужак, который может съесть, ближе порога. Бежит FLEE_TICKS тиков
     // и тогда, когда тот пропал из виду: пропал — не значит ушёл. Спокойному
@@ -185,8 +187,9 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
     // A hunt is worth what the meat adds to the tank less the expected strikes (`Prey::of`); a
     // full tank takes nothing, and a hunt that stopped paying (allies came, the tank filled)
     // is dropped.
+    let avoid = mind.given_up.filter(|&(_, until)| mind.social.tick < until).map(|(id, _)| id);
     let prey = if me.energy < me.pheno.max_energy {
-        senses.prey(me, mind.attack).filter(|p| {
+        senses.prey(me, mind.attack, avoid).filter(|p| {
             p.score > 0.0
                 && (mind.attack == Some(p.id) || inside(p.x, p.y))
                 && !behind_border(me, mind, p.x, p.y)
@@ -194,17 +197,28 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
     } else {
         None
     };
+    // What the plant's portions left add to the tank, per tick of the way and the meal.
     let plant_score = plant.map_or(0.0, |(px, py)| {
-        me.pheno.plant_energy * me.pheno.plant_bite_yield * me.pheno.plant_efficiency
-            / (((px - x).hypot(py - y) - me.pheno.size).max(0.0) / speed.max(0.01)
-                + f64::from(crate::plant::PORTIONS))
+        let portions = f64::from(senses.plant_portions(px, py));
+        let bite = me.pheno.plant_energy * me.pheno.plant_bite_yield * me.pheno.plant_efficiency
+            / f64::from(crate::plant::PORTIONS);
+        let room = (me.pheno.max_energy - me.energy).max(0.0);
+        (bite * portions).min(room)
+            / (((px - x).hypot(py - y) - me.pheno.size).max(0.0) / speed.max(0.01) + portions).max(1.0)
     });
     let corpse_score = corpse.map_or(0.0, |c| c.score);
     if let Some(p) = prey
         && (mind.attack == Some(p.id) || p.score > plant_score.max(corpse_score))
     {
-        mind.social.personal_food = None;
-        return (Intent { tx: p.x, ty: p.y, slow: false, attack: Some(p.id) }, Mode::Food);
+        match chase(me, mind.social.tick, chasing, &p) {
+            Some(c) => {
+                mind.chase = Some(c);
+                mind.social.personal_food = None;
+                return (Intent { tx: p.x, ty: p.y, slow: false, attack: Some(p.id) }, Mode::Food);
+            }
+            // it does not close in: other food this tick, and not this prey for a while
+            None => mind.given_up = Some((p.id, mind.social.tick + CHASE_GIVE_UP_TICKS)),
+        }
     }
     if let Some(c) = corpse
         && c.score > plant_score
@@ -262,6 +276,19 @@ fn plan_inner(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses, ste
     }
     let (tx, ty) = mind.target.unwrap();
     (Intent { tx, ty, slow: false, attack: None }, Mode::Wander)
+}
+
+/// The chase of prey `p` this tick, or None when it is hopeless: the hunter has not closed the gap
+/// to its edge by one of its own steps within `CHASE_PATIENCE` ticks. In reach counts as closing.
+fn chase(me: &Me, tick: u64, chasing: Option<Chase>, p: &crate::senses::Prey) -> Option<Chase> {
+    let gap = ((p.x - me.x).hypot(p.y - me.y) - me.pheno.half - p.half).max(0.0);
+    let fresh = Chase { prey: p.id, mark: gap, since: tick };
+    match chasing.filter(|c| c.prey == p.id) {
+        None => Some(fresh),
+        Some(c) if gap <= 0.0 || gap <= c.mark - me.pheno.speed => Some(fresh),
+        Some(c) if tick.saturating_sub(c.since) >= CHASE_PATIENCE => None,
+        Some(c) => Some(c),
+    }
 }
 
 /// Where to stand to eat food at (fx, fy) that is reached within `reach` of the centre: on the
@@ -370,7 +397,7 @@ mod tests {
             None
         }
 
-        fn prey(&self, me: &Me, _: Option<u64>) -> Option<Prey> {
+        fn prey(&self, me: &Me, _: Option<u64>, _: Option<u64>) -> Option<Prey> {
             self.prey.filter(|_| me.pheno.hunts())
         }
     }
@@ -391,7 +418,7 @@ mod tests {
             None
         }
 
-        fn prey(&self, _: &Me, _: Option<u64>) -> Option<Prey> {
+        fn prey(&self, _: &Me, _: Option<u64>, _: Option<u64>) -> Option<Prey> {
             None
         }
     }
@@ -568,7 +595,7 @@ mod tests {
                 &me,
                 &mut mind,
                 &mut rng,
-                &FoodSense { prey: Some(Prey { id: 9, x: 1020.0, y: 1000.0, score: 0.1 }) },
+                &FoodSense { prey: Some(Prey { id: 9, x: 1020.0, y: 1000.0, half: 10.0, score: 0.1 }) },
                 v.pheno.speed,
             );
             let hunts = diet != Diet::Herbivore;
@@ -577,6 +604,79 @@ mod tests {
                 hunts,
                 "{diet:?}: a started hunt goes on, a herbivore has none"
             );
+        }
+    }
+
+    /// Prey `gap` beyond the hunter's reach, straight east; none once the hunter gave it up.
+    struct Ahead {
+        gap: f64,
+    }
+
+    impl Senses for Ahead {
+        fn nearest_plant(&self, _: f64, _: f64, _: f64) -> Option<(f64, f64)> {
+            None
+        }
+
+        fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
+            None
+        }
+
+        fn prey(&self, me: &Me, _: Option<u64>, avoid: Option<u64>) -> Option<Prey> {
+            let x = me.x + me.pheno.half + 10.0 + self.gap;
+            (avoid != Some(9)).then_some(Prey { id: 9, x, y: me.y, half: 10.0, score: 1.0 })
+        }
+    }
+
+    /// A hunter that does not close in on its prey within `CHASE_PATIENCE` ticks gives it up and
+    /// does not choose it for `CHASE_GIVE_UP_TICKS`; one that closes a step now and then goes on.
+    #[test]
+    fn a_hopeless_chase_is_given_up() {
+        let v = Creature::new(
+            &Space::default(),
+            &Rules::default(),
+            CreatureGenome::BASE.with(Gene::Diet, Diet::Carnivore as usize as f64),
+            Some(1000.0),
+            Some(1000.0),
+            Some(30.0),
+            Rng::new(1),
+        );
+        let me = Me {
+            x: v.x,
+            y: v.y,
+            energy: v.energy,
+            kinship: v.kinship(),
+            flock: v.flock,
+            circle: None,
+            pheno: &v.pheno,
+            health_share: 1.0,
+            health: v.pheno.size,
+        };
+        let hunt = |mind: &mut Mind, gap: f64| {
+            mind.social.tick += 1;
+            let (intent, _) = plan(&me, mind, &mut Rng::new(3), &Ahead { gap }, v.pheno.speed);
+            mind.attack = intent.attack;
+            intent.attack
+        };
+        // it keeps its distance: the chase lasts `CHASE_PATIENCE` ticks
+        let mut mind = Mind::default();
+        for t in 0..CHASE_PATIENCE {
+            assert_eq!(hunt(&mut mind, 100.0), Some(9), "tick {t}");
+        }
+        assert_eq!(hunt(&mut mind, 100.0), None, "given up");
+        let until = mind.given_up.expect("remembered").1;
+        assert_eq!(until, mind.social.tick + CHASE_GIVE_UP_TICKS);
+        assert_eq!(hunt(&mut mind, 100.0), None, "not chosen again");
+        mind.social.tick = until - 1;
+        assert_eq!(hunt(&mut mind, 100.0), Some(9), "chosen again later");
+
+        // it closes a step every few ticks: the chase goes on
+        let mut mind = Mind::default();
+        let mut gap = 300.0;
+        for t in 0..3 * CHASE_PATIENCE {
+            if t % 10 == 0 {
+                gap -= v.pheno.speed;
+            }
+            assert_eq!(hunt(&mut mind, gap), Some(9), "tick {t}");
         }
     }
 

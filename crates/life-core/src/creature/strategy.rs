@@ -73,6 +73,18 @@ pub struct Mind {
     /// Цель блуждания. None до первого выбора: иначе новорождённый пошёл бы
     /// потом к месту своего рождения.
     pub target: Option<(f64, f64)>,
+    /// The hunt it is on: does it close in (`CHASE_PATIENCE`)?
+    pub chase: Option<Chase>,
+    /// The prey it gave up chasing, and until what tick it does not choose it again.
+    pub given_up: Option<(u64, u64)>,
+}
+
+/// A hunt under way: the prey, the gap to its edge the hunter last closed to, and when.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Chase {
+    pub prey: u64,
+    pub mark: f64,
+    pub since: u64,
 }
 
 /// Что стратегия знает о себе.
