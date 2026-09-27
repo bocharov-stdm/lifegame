@@ -551,7 +551,6 @@ mod tests {
                 (expected * 0.85..=expected * 1.15 + 20.0).contains(&(steps as f64)),
                 "steps from {start}: {steps} of {n}, expected {expected}"
             );
-            let far = 3 - near.len();
             if start == 0 {
                 // the herbivore's own leaps: to the carnivore 0.1%, to the scavenger 0.01%
                 let expected = n as f64 * 0.5 * (HERBIVORE_LEAP_CARNIVORE + HERBIVORE_LEAP_SCAVENGER);
@@ -559,10 +558,35 @@ mod tests {
                     (expected * 0.7..=expected * 1.3).contains(&(jumps as f64)),
                     "leaps from the herbivore: {jumps}, expected {expected}"
                 );
-            } else {
-                assert!(jumps <= 12 * far && (far == 0 || jumps >= 1), "jumps from {start}: {jumps}");
+            } else if near.len() == 3 {
+                assert_eq!(jumps, 0, "the omnivore has every diet for a neighbour");
             }
         }
+    }
+
+    /// The general jump is rare (0.01%), so it is counted apart, pooled over the scavenger and the
+    /// carnivore (their one non-neighbour is the herbivore) and over enough children to expect ~30
+    /// jumps: with ~3 per diet, as it was, any change to the draw order could turn it into 0.
+    #[test]
+    fn a_diet_jump_past_the_neighbours_is_rare_but_happens() {
+        let mut rng = Rng::new(22);
+        let n = 1_000_000;
+        let mut jumps = 0;
+        for start in [2usize, 3] {
+            let parent = CreatureGenome::BASE.with(Gene::Diet, start as f64);
+            for _ in 0..n {
+                let child = parent.mutate(0.3, &mut rng)[Gene::Diet] as usize;
+                if child != start && !DIET_NEIGHBOURS[start].contains(&child) {
+                    jumps += 1;
+                }
+            }
+        }
+        // half are copies; a jump picks one of the three other diets, one of which is far
+        let expected = 2.0 * n as f64 * 0.5 * DIET_JUMP_CHANCE / 3.0;
+        assert!(
+            (expected * 0.4..=expected * 1.8).contains(&(jumps as f64)),
+            "jumps past the neighbours: {jumps}, expected {expected:.0}"
+        );
     }
 
     /// Мутагенность родителя растягивает разброс всех генов, и свой тоже, и

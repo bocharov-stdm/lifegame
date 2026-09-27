@@ -224,11 +224,36 @@ fn command_line(exe: &Path, plan: &Plan, job: &Job, seconds: u64, json: &Path) -
     line
 }
 
-/// A running run's «tick of ticks», from the file the report rewrites about once a second.
-fn tick_of(out: &Path, variant: &str, seed: u64) -> Option<(u64, u64)> {
+/// A running run's «tick of ticks» and its latest ms a tick (0 before the first lap or from an
+/// older report), from the file the report rewrites about once a second.
+fn tick_of(out: &Path, variant: &str, seed: u64) -> Option<(u64, u64, f64)> {
     let text = fs::read_to_string(out.join(variant).join(format!("s{seed}.tick"))).ok()?;
-    let mut it = text.split_whitespace().map(|t| t.parse::<u64>().ok());
-    Some((it.next()??, it.next()??)).filter(|&(_, total)| total > 0)
+    let mut it = text.split_whitespace();
+    let tick = it.next()?.parse().ok()?;
+    let total = it.next()?.parse().ok().filter(|&t: &u64| t > 0)?;
+    Some((tick, total, it.next().and_then(|m| m.parse().ok()).unwrap_or(0.0)))
+}
+
+/// A run whose worst lap was this many times slower than its median lap is flagged: in the
+/// summary, the progress window and the output.
+const SLOWDOWN_WARN: f64 = 3.0;
+
+/// A run's tick rate from the report's `pace` laps (every 500 ticks).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Pace {
+    /// The median lap's ms a tick.
+    median: f64,
+    /// The worst lap over the median, and the tick it ended at.
+    slowdown: f64,
+    worst_at: u64,
+}
+
+fn pace_of(run: &Value) -> Option<Pace> {
+    let laps: Vec<(u64, f64)> =
+        run["pace"].as_array()?.iter().filter_map(|l| Some((l[0].as_u64()?, l[1].as_f64()?))).collect();
+    let median = median(laps.iter().map(|l| l.1).collect());
+    let (worst_at, worst) = laps.iter().copied().max_by(|a, b| a.1.total_cmp(&b.1))?;
+    (median > 0.0).then_some(Pace { median, slowdown: worst / median, worst_at })
 }
 
 /// How a run ended, from the sweep's side.
@@ -344,6 +369,8 @@ struct RunMetrics {
     diet_end: [f64; 4],
     born: [f64; 4],
     kills_by_carnivores: f64,
+    /// The tick rate by laps, when the report measured it.
+    pace: Option<Pace>,
     extra: BTreeMap<String, f64>,
 }
 
@@ -391,6 +418,7 @@ fn metrics_of(json: &Value, text: &str, seed: u64, late: f64) -> Option<RunMetri
             .map(|s| s["creatures"].as_f64().unwrap_or(0.0))
             .fold(f64::INFINITY, f64::min),
         kills_by_carnivores: DIETS.iter().map(|d| by["kills"]["carnivore"][d].as_f64().unwrap_or(0.0)).sum(),
+        pace: pace_of(run),
         ..RunMetrics::default()
     };
     if !m.pop_min.is_finite() {
@@ -432,16 +460,16 @@ fn summarise(plan: &Plan, runs: &BTreeMap<String, Vec<RunMetrics>>, out: &Path) 
         names
     };
     let mut md = String::from(
-        "| variant | complete | survived | C holds | S holds | C+H coexist | C late % | S late % | O late % | pop late | pop min | C born | C kills |",
+        "| variant | complete | survived | C holds | S holds | C+H coexist | C late % | S late % | O late % | pop late | pop min | C born | C kills | ms/tick | slowdown |",
     );
     for e in &extras {
         md += &format!(" {e} |");
     }
-    md += "\n|---|---|---|---|---|---|---|---|---|---|---|---|---|";
+    md += "\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|";
     md += &"---|".repeat(extras.len());
     md += "\n";
     let mut csv = String::from(
-        "variant,runs,complete,survived,c_holds,s_holds,coexist,c_late_share,s_late_share,o_late_share,pop_late,pop_min,c_born,c_kills",
+        "variant,runs,complete,survived,c_holds,s_holds,coexist,c_late_share,s_late_share,o_late_share,pop_late,pop_min,c_born,c_kills,ms_per_tick,slowdown",
     );
     for e in &extras {
         csv += &format!(",{e}");
@@ -453,8 +481,8 @@ fn summarise(plan: &Plan, runs: &BTreeMap<String, Vec<RunMetrics>>, out: &Path) 
         let n = plan.seeds.len();
         if ok.is_empty() {
             // nothing ended on its own: dashes, not NaN
-            md += &format!("| {} | 0/{n} |{}\n", v.name, " – |".repeat(11 + extras.len()));
-            csv += &format!("{},{n},0{}\n", v.name, ",".repeat(11 + extras.len()));
+            md += &format!("| {} | 0/{n} |{}\n", v.name, " – |".repeat(13 + extras.len()));
+            csv += &format!("{},{n},0{}\n", v.name, ",".repeat(13 + extras.len()));
             continue;
         }
         let survived = ok.iter().filter(|m| m.pop_end > 0.0).count();
@@ -472,12 +500,16 @@ fn summarise(plan: &Plan, runs: &BTreeMap<String, Vec<RunMetrics>>, out: &Path) 
         let pop_min = ok.iter().map(|m| m.pop_min).fold(f64::INFINITY, f64::min);
         let c_born = median(ok.iter().map(|m| m.born[3]).collect());
         let c_kills = median(ok.iter().map(|m| m.kills_by_carnivores).collect());
+        // the median run's tick rate, and the worst slowdown of any run (a boom or a stall)
+        let ms = median(ok.iter().filter_map(|m| m.pace.map(|p| p.median)).collect());
+        let slowdown = ok.iter().filter_map(|m| m.pace.map(|p| p.slowdown)).fold(f64::NAN, f64::max);
+        let slow_mark = if slowdown >= SLOWDOWN_WARN { " ⚠" } else { "" };
         let extra: Vec<f64> = extras
             .iter()
             .map(|e| median(ok.iter().filter_map(|m| m.extra.get(e).copied()).collect()))
             .collect();
         md += &format!(
-            "| {} | {}/{n} | {survived} | {} | {} | {coexist} | {:.1} | {:.1} | {:.1} | {:.0} | {:.0} | {:.0} | {:.0} |",
+            "| {} | {}/{n} | {survived} | {} | {} | {coexist} | {:.1} | {:.1} | {:.1} | {:.0} | {:.0} | {:.0} | {:.0} | {ms:.2} | {slowdown:.1}×{slow_mark} |",
             v.name,
             ok.len(),
             holds(3),
@@ -495,7 +527,7 @@ fn summarise(plan: &Plan, runs: &BTreeMap<String, Vec<RunMetrics>>, out: &Path) 
         }
         md += "\n";
         csv += &format!(
-            "{},{n},{},{survived},{},{},{coexist},{:.2},{:.2},{:.2},{:.0},{:.0},{:.0},{:.0}",
+            "{},{n},{},{survived},{},{},{coexist},{:.2},{:.2},{:.2},{:.0},{:.0},{:.0},{:.0},{ms:.3},{slowdown:.2}",
             v.name,
             ok.len(),
             holds(3),
@@ -516,13 +548,17 @@ fn summarise(plan: &Plan, runs: &BTreeMap<String, Vec<RunMetrics>>, out: &Path) 
     let _ = fs::write(out.join("summary.csv"), &csv);
     let legend = "Medians over the worlds that ended on their own. \"holds\": at least 10 creatures and 1% of the \
                   world over the late window; \"coexist\": herbivores and carnivores both hold; \"pop min\": the \
-                  lowest population after the first 10% of the run, over all worlds.\n\n";
+                  lowest population after the first 10% of the run, over all worlds; \"ms/tick\": the median \
+                  run's median lap (500 ticks); \"slowdown\": the worst lap over its run's median lap, of the \
+                  slowest run (⚠ from 3×).\n\n";
     let _ = fs::write(out.join("summary.md"), format!("{legend}{md}"));
     md
 }
 
 fn write_runs_csv(runs: &BTreeMap<String, Vec<RunMetrics>>, out: &Path) {
-    let mut csv = String::from("variant,seed,stop,ticks,ms_per_tick,pop_end,pop_late,pop_min");
+    let mut csv = String::from(
+        "variant,seed,stop,ticks,ms_per_tick,pace_median_ms,slowdown,slowest_at,pop_end,pop_late,pop_min",
+    );
     for d in DIETS {
         csv += &format!(",{d}_late,{d}_end,{d}_born");
     }
@@ -530,8 +566,17 @@ fn write_runs_csv(runs: &BTreeMap<String, Vec<RunMetrics>>, out: &Path) {
     for (name, list) in runs {
         for m in list {
             csv += &format!(
-                "{name},{},{},{},{:.2},{:.0},{:.1},{:.0}",
-                m.seed, m.stop, m.ticks, m.ms_per_tick, m.pop_end, m.pop_late, m.pop_min
+                "{name},{},{},{},{:.2},{:.3},{:.2},{},{:.0},{:.1},{:.0}",
+                m.seed,
+                m.stop,
+                m.ticks,
+                m.ms_per_tick,
+                m.pace.map_or(f64::NAN, |p| p.median),
+                m.pace.map_or(f64::NAN, |p| p.slowdown),
+                m.pace.map_or(0, |p| p.worst_at),
+                m.pop_end,
+                m.pop_late,
+                m.pop_min
             );
             for d in 0..4 {
                 csv += &format!(",{:.1},{:.0},{:.0}", m.diet_late[d], m.diet_end[d], m.born[d]);
@@ -574,6 +619,8 @@ struct Finished {
     outcome: Outcome,
     /// The report's stop reason, when it wrote its JSON.
     stop: Option<String>,
+    /// Its tick rate, when the report measured it.
+    pace: Option<Pace>,
 }
 
 impl Finished {
@@ -584,7 +631,20 @@ impl Finished {
         }
     }
 
+    /// Its worst lap was `SLOWDOWN_WARN` times slower than its median one.
+    fn slow(&self) -> bool {
+        self.pace.is_some_and(|p| p.slowdown >= SLOWDOWN_WARN)
+    }
+
     fn what(&self) -> String {
+        let slow = match self.pace {
+            Some(p) if self.slow() => format!(", tick rate {:.1}x slower by tick {}", p.slowdown, p.worst_at),
+            _ => String::new(),
+        };
+        self.outcome_text() + &slow
+    }
+
+    fn outcome_text(&self) -> String {
         match &self.outcome {
             Outcome::Reused => "reused".to_string(),
             Outcome::Exited(t) => {
@@ -617,11 +677,11 @@ struct Progress {
 }
 
 /// «Tick of ticks» of each running run, in the order of `Progress::running`, when it has said.
-type Ticks = Vec<Option<(u64, u64)>>;
+type Ticks = Vec<Option<(u64, u64, f64)>>;
 
 /// Share of its ticks a running run has done.
-fn share_of(ticks: Option<(u64, u64)>) -> Option<f64> {
-    ticks.map(|(tick, total)| (tick as f64 / total as f64).min(1.0))
+fn share_of(ticks: Option<(u64, u64, f64)>) -> Option<f64> {
+    ticks.map(|(tick, total, _)| (tick as f64 / total as f64).min(1.0))
 }
 
 impl Progress {
@@ -686,21 +746,14 @@ impl Progress {
 
     fn to_json(&self, plan: &Plan) -> Value {
         let ticks = self.ticks();
-        // per running variant: seeds, its oldest run's seconds, and over the runs that have said how
-        // far they are, their count, ticks done and to do
-        let mut groups: Vec<(String, Vec<u64>, f64, u64, u64, u64)> = Vec::new();
-        for ((name, seed, since), told) in self.running.iter().zip(&ticks) {
-            let t = since.elapsed().as_secs_f64();
-            let (n, tick, total) = told.map_or((0, 0, 0), |(tick, total)| (1, tick, total));
+        // the running runs by variant: (seed, seconds, «tick of ticks» once it has said)
+        type Run = (u64, f64, Option<(u64, u64, f64)>);
+        let mut groups: Vec<(String, Vec<Run>)> = Vec::new();
+        for ((name, seed, since), &told) in self.running.iter().zip(&ticks) {
+            let run = (*seed, since.elapsed().as_secs_f64(), told);
             match groups.iter_mut().find(|g| &g.0 == name) {
-                Some(g) => {
-                    g.1.push(*seed);
-                    g.2 = g.2.max(t);
-                    g.3 += n;
-                    g.4 += tick;
-                    g.5 += total;
-                }
-                None => groups.push((name.clone(), vec![*seed], t, n, tick, total)),
+                Some(g) => g.1.push(run),
+                None => groups.push((name.clone(), vec![run])),
             }
         }
         let out = &self.out;
@@ -711,7 +764,9 @@ impl Progress {
             .iter()
             .rev()
             .take(6)
-            .map(|f| json!({ "variant": f.variant, "seed": f.seed, "what": f.what(), "cut": f.cut() }))
+            .map(|f| {
+                json!({ "variant": f.variant, "seed": f.seed, "what": f.what(), "cut": f.cut(), "slow": f.slow() })
+            })
             .collect();
         json!({
             "title": self.title,
@@ -730,11 +785,22 @@ impl Progress {
             "limit_s": self.limit_s,
             "running": groups
                 .iter()
-                .map(|(name, seeds, longest, told, tick, total)| {
+                .map(|(name, runs)| {
+                    let seeds: Vec<u64> = runs.iter().map(|r| r.0).collect();
+                    let longest = runs.iter().map(|r| r.1).fold(0.0, f64::max);
+                    let told: Vec<(u64, u64, f64)> = runs.iter().filter_map(|r| r.2).collect();
+                    let n = told.len() as u64;
+                    let (tick, total) = told.iter().fold((0, 0), |a, t| (a.0 + t.0, a.1 + t.1));
                     json!({
                         "variant": name, "about": about(name), "seeds": seeds, "longest_s": longest.round(),
                         // the mean tick and length of the runs that have said
-                        "tick": (*told > 0).then(|| tick / told), "ticks": (*told > 0).then(|| total / told),
+                        "tick": (n > 0).then(|| tick / n), "ticks": (n > 0).then(|| total / n),
+                        // and each run apart, for the window's per-seed view
+                        "runs": runs.iter().map(|(seed, s, told)| json!({
+                            "seed": seed, "s": s.round(),
+                            "tick": told.map(|t| t.0), "ticks": told.map(|t| t.1),
+                            "ms": told.map(|t| t.2).filter(|&ms| ms > 0.0),
+                        })).collect::<Vec<_>>(),
                     })
                 })
                 .collect::<Vec<_>>(),
@@ -875,8 +941,10 @@ fn main() {
                     let json = job_paths(&args.out, &job).0;
                     let _ = fs::remove_file(json.with_extension("tick"));
                     let _ = fs::remove_file(json.with_extension("tick.tmp"));
-                    let stop = read_json(&job_paths(&args.out, &job).0)
-                        .and_then(|j| j["runs"][0]["stop"].as_str().map(str::to_string));
+                    let report = read_json(&json);
+                    let stop =
+                        report.as_ref().and_then(|j| j["runs"][0]["stop"].as_str().map(str::to_string));
+                    let pace = report.as_ref().and_then(|j| pace_of(&j["runs"][0]));
                     let mut p = progress.lock().expect("progress");
                     p.running.retain(|r| !(r.0 == job.variant.name && r.1 == job.seed));
                     if matches!(outcome, Outcome::Interrupted) {
@@ -889,6 +957,7 @@ fn main() {
                         seed: job.seed,
                         outcome,
                         stop,
+                        pace,
                     });
                     let left = p.left(&p.ticks()).map_or(String::new(), |s| {
                         format!(", about {} left", minutes(Duration::from_secs_f64(s)))
@@ -959,6 +1028,23 @@ fn report(plan: &Plan, args: &Args) {
         })
         .collect();
     println!("\n{}", summarise(plan, &runs, &args.out));
+    let slow: Vec<String> = runs
+        .iter()
+        .flat_map(|(name, list)| {
+            list.iter().filter_map(move |m| {
+                let p = m.pace?;
+                (p.slowdown >= SLOWDOWN_WARN).then(|| {
+                    format!(
+                        "{name} s{} {:.1}x by tick {} ({:.2} ms median)",
+                        m.seed, p.slowdown, p.worst_at, p.median
+                    )
+                })
+            })
+        })
+        .collect();
+    if !slow.is_empty() {
+        println!("TICK RATE FELL {SLOWDOWN_WARN}x or more: {}", slow.join("; "));
+    }
     if !cut.is_empty() {
         println!("not complete (left out of the medians): {}", cut.join("; "));
     }
@@ -1017,7 +1103,13 @@ mod tests {
         };
         assert_eq!(p.left(&p.ticks()), None, "nothing to go by before the first run ends");
         for (seed, outcome) in [(1, Outcome::Exited(Duration::from_secs(100))), (2, Outcome::Reused)] {
-            p.finished.push(Finished { variant: "a".into(), seed, outcome, stop: Some("done".into()) });
+            p.finished.push(Finished {
+                variant: "a".into(),
+                seed,
+                outcome,
+                stop: Some("done".into()),
+                pace: None,
+            });
         }
         // 8 queued at 100 s each over 2 slots; reused runs do not count towards the mean
         let left = p.left(&p.ticks()).unwrap();
@@ -1027,6 +1119,7 @@ mod tests {
             seed: 3,
             outcome: Outcome::Reused,
             stop: Some("deadline".into()),
+            pace: None,
         });
         assert!(p.finished[2].cut() && !p.finished[1].cut());
     }
@@ -1049,6 +1142,10 @@ mod tests {
         )]);
         let md = summarise(&plan, &runs, &out);
         assert!(md.contains("| control | 0/1 |") && !md.contains("NaN") && !md.contains("inf"), "{md}");
+        assert_eq!(
+            md.lines().nth(2).unwrap().matches('|').count(),
+            md.lines().next().unwrap().matches('|').count()
+        );
         fs::remove_dir_all(&out).unwrap();
     }
 
@@ -1058,7 +1155,7 @@ mod tests {
     fn ticks_of_running_runs_count() {
         let out = std::env::temp_dir().join(format!("life-sweep-ticks-{}", std::process::id()));
         fs::create_dir_all(out.join("a")).unwrap();
-        fs::write(out.join("a").join("s1.tick"), "5000 20000").unwrap();
+        fs::write(out.join("a").join("s1.tick"), "5000 20000 4.25").unwrap();
         let p = Progress {
             title: String::new(),
             about: String::new(),
@@ -1077,10 +1174,10 @@ mod tests {
             state: "running",
             done: false,
         };
-        assert_eq!(tick_of(&out, "a", 1), Some((5000, 20000)));
+        assert_eq!(tick_of(&out, "a", 1), Some((5000, 20000, 4.25)));
         assert_eq!(tick_of(&out, "a", 2), None);
         let ticks = p.ticks();
-        assert_eq!(ticks, [Some((5000, 20000)), None]);
+        assert_eq!(ticks, [Some((5000, 20000, 4.25)), None]);
         assert!((p.share(&ticks) - 0.0625).abs() < 1e-9, "a quarter of one run of four: {}", p.share(&ticks));
         // a quarter in 10 s: 40 s a run; 30 s left of it, 40 of the silent one and 2 queued at 40 s,
         // over 2 slots
@@ -1090,6 +1187,12 @@ mod tests {
         let run = &json["running"][0];
         assert_eq!(run["seeds"], json!([1, 2]));
         assert_eq!((run["tick"].as_u64(), run["ticks"].as_u64()), (Some(5000), Some(20000)), "{run}");
+        // each seed apart: the silent one has no tick yet
+        assert_eq!(
+            (run["runs"][0]["tick"].as_u64(), run["runs"][0]["ms"].as_f64()),
+            (Some(5000), Some(4.25))
+        );
+        assert_eq!((run["runs"][1]["seed"].as_u64(), run["runs"][1]["tick"].as_u64()), (Some(2), None));
         assert_eq!(json["limit_s"].as_u64(), Some(300));
         fs::remove_dir_all(&out).unwrap();
     }
@@ -1156,6 +1259,7 @@ mod tests {
         };
         let json = serde_json::json!({ "runs": [{
             "stop": "done", "ticks_done": 1000, "ms_per_tick": 2.5,
+            "pace": [[250, 2.0], [500, 2.0], [750, 2.5], [1000, 8.0]],
             "totals": { "by_diet": { "born": { "carnivore": 40 }, "kills": { "carnivore": { "herbivore": 7, "carnivore": 1 } } } },
             "snapshots": [snap(0, 100.0, 0.0), snap(500, 50.0, 0.0), snap(800, 1000.0, 0.05), snap(1000, 3000.0, 0.01)],
         }]});
@@ -1168,6 +1272,18 @@ mod tests {
         assert_eq!(m.born[3], 40.0);
         assert_eq!(m.kills_by_carnivores, 8.0);
         assert_eq!(m.extra.get("carnivore_adults"), Some(&12.0));
+        // the tick rate: median lap 2.25 ms, the last lap 8 ms — a slowdown to flag
+        assert_eq!(m.pace, Some(Pace { median: 2.25, slowdown: 8.0 / 2.25, worst_at: 1000 }));
+        let f = Finished {
+            variant: "a".into(),
+            seed: 4,
+            outcome: Outcome::Exited(Duration::from_secs(60)),
+            stop: Some("done".into()),
+            pace: m.pace,
+        };
+        assert!(f.slow() && !f.cut(), "slow is not cut");
+        assert_eq!(f.what(), "60 s, done, tick rate 3.6x slower by tick 1000");
+        assert_eq!(pace_of(&serde_json::json!({})), None, "an older report without laps");
         assert_eq!(m.extra.len(), 1);
     }
 }

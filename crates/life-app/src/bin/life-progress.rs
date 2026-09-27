@@ -11,6 +11,7 @@
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -95,6 +96,15 @@ struct Running {
     about: String,
     /// Share of their ticks its runs have done, once they said.
     share: Option<f32>,
+    /// Each run apart, shown when the card is unfolded: «сид 3 · тик 11 193 из 20 000 · 26 с» and
+    /// its share.
+    runs: Vec<(String, Option<f32>)>,
+}
+
+/// «тик 12 400 из 20 000» and the share done, from a run's (or a variant's mean) tick fields.
+fn tick_of(r: &Value) -> Option<(String, f32)> {
+    let (t, of) = r["tick"].as_u64().zip(r["ticks"].as_u64()).filter(|t| t.1 > 0)?;
+    Some((format!("тик {} из {}", thousands(t), thousands(of)), (t as f32 / of as f32).min(1.0)))
 }
 
 /// Seeds as short ranges: «1–8», «1, 3, 5–7».
@@ -131,6 +141,15 @@ fn thousands(n: u64) -> String {
     out
 }
 
+/// A recently finished run in the «Последние» list.
+#[derive(Debug, PartialEq)]
+struct Finished {
+    line: String,
+    cut: bool,
+    /// Its tick rate fell (the sweep's `SLOWDOWN_WARN`).
+    slow: bool,
+}
+
 /// What the window shows, read from one `progress.json`.
 #[derive(Debug, Default, PartialEq)]
 struct View {
@@ -147,8 +166,8 @@ struct View {
     /// Silent for this many seconds while not over: the sweep may have been killed.
     silent: Option<u64>,
     running: Vec<Running>,
-    /// (line, cut) per recently finished run, newest first.
-    last: Vec<(String, bool)>,
+    /// A recently finished run's line, newest first, and whether it was cut or its tick rate fell.
+    last: Vec<Finished>,
     summary: Option<String>,
     out: Option<String>,
 }
@@ -189,15 +208,35 @@ impl View {
                         } else {
                             longest
                         };
-                        let ticks = r["tick"].as_u64().zip(r["ticks"].as_u64()).filter(|t| t.1 > 0);
-                        let at = ticks.map_or(String::new(), |(t, of)| {
-                            format!(" · тик {} из {}", thousands(t), thousands(of))
-                        });
+                        let ticks = tick_of(r);
+                        let at = ticks.as_ref().map_or(String::new(), |(t, _)| format!(" · {t}"));
+                        let runs = r["runs"]
+                            .as_array()
+                            .map(|a| {
+                                a.iter()
+                                    .map(|run| {
+                                        let told = tick_of(run);
+                                        let seed = run["seed"].as_u64().unwrap_or(0);
+                                        let time = span(run["s"].as_f64().unwrap_or(0.0));
+                                        // the tick rate of its latest 500 ticks, as the report measured it
+                                        let pace = run["ms"]
+                                            .as_f64()
+                                            .map_or(String::new(), |ms| format!(" · {ms:.1} мс/тик"));
+                                        let line = match &told {
+                                            Some((t, _)) => format!("сид {seed} · {t} · {time}{pace}"),
+                                            None => format!("сид {seed} · начинается · {time}"),
+                                        };
+                                        (line, told.map(|t| t.1))
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
                         Running {
                             variant: s(&r["variant"]),
                             seeds: format!("{word} {}{at} · {time}", ranges(&seeds)),
                             about: s(&r["about"]),
-                            share: ticks.map(|(t, of)| (t as f32 / of as f32).min(1.0)),
+                            share: ticks.map(|t| t.1),
+                            runs,
                         }
                     })
                     .collect()
@@ -209,10 +248,11 @@ impl View {
                 a.iter()
                     .map(|r| {
                         let seed = r["seed"].as_u64().unwrap_or(0);
-                        (
-                            format!("{} · сид {seed} · {}", s(&r["variant"]), s(&r["what"])),
-                            r["cut"].as_bool() == Some(true),
-                        )
+                        Finished {
+                            line: format!("{} · сид {seed} · {}", s(&r["variant"]), s(&r["what"])),
+                            cut: r["cut"].as_bool() == Some(true),
+                            slow: r["slow"].as_bool() == Some(true),
+                        }
                     })
                     .collect()
             })
@@ -339,9 +379,27 @@ enum Asked {
     Stop,
 }
 
+/// A thin line of how far a run or a variant is.
+fn thin_bar(ui: &mut egui::Ui, share: f32, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 3.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::same(1), TRACK);
+    let mut done = rect;
+    done.set_width(rect.width() * share);
+    ui.painter().rect_filled(done, CornerRadius::same(1), color);
+}
+
+/// What the window keeps between frames: the stop confirmation and which variants' cards are
+/// unfolded to their seeds.
+#[derive(Default)]
+struct Local {
+    confirm_stop: bool,
+    unfolded: BTreeSet<String>,
+}
+
 /// The window's content; returns what a button asked for. A separate function, so a test can
 /// render it without a native window.
-fn draw(ui: &mut egui::Ui, view: &View, confirm_stop: &mut bool, asked: Option<Asked>) -> Option<Asked> {
+fn draw(ui: &mut egui::Ui, view: &View, local: &mut Local, asked: Option<Asked>) -> Option<Asked> {
+    let confirm_stop = &mut local.confirm_stop;
     let mut pressed = None;
     ui.horizontal(|ui| {
         ui.heading(RichText::new(format!("Серия «{}»", view.title)).strong());
@@ -424,19 +482,36 @@ fn draw(ui: &mut egui::Ui, view: &View, confirm_stop: &mut bool, asked: Option<A
         if !view.running.is_empty() {
             ui.label(RichText::new("Сейчас считается").strong().color(WEAK));
             for r in &view.running {
+                let unfolded = local.unfolded.contains(&r.variant);
                 card(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
+                        // the corner toggle: every seed apart, when there are several; first, so the
+                        // line of ticks never runs under it
+                        if r.runs.len() > 1 {
+                            let (sign, hint) = if unfolded {
+                                ("−", "Свернуть сиды")
+                            } else {
+                                ("+", "Показать каждый сид")
+                            };
+                            if ui.small_button(sign).on_hover_text(hint).clicked() {
+                                if unfolded {
+                                    local.unfolded.remove(&r.variant);
+                                } else {
+                                    local.unfolded.insert(r.variant.clone());
+                                }
+                            }
+                        }
                         ui.label(RichText::new(&r.variant).strong().color(BLUE));
                         ui.label(RichText::new(&r.seeds).color(FAINT));
                     });
                     if let Some(share) = r.share {
-                        // a thin line of how far its runs are
-                        let (rect, _) =
-                            ui.allocate_exact_size(vec2(ui.available_width(), 3.0), egui::Sense::hover());
-                        ui.painter().rect_filled(rect, CornerRadius::same(1), TRACK);
-                        let mut done = rect;
-                        done.set_width(rect.width() * share);
-                        ui.painter().rect_filled(done, CornerRadius::same(1), BLUE.gamma_multiply(0.8));
+                        thin_bar(ui, share, BLUE.gamma_multiply(0.8));
+                    }
+                    if unfolded {
+                        for (line, share) in &r.runs {
+                            ui.label(RichText::new(line).small().color(WEAK));
+                            thin_bar(ui, share.unwrap_or(0.0), BLUE.gamma_multiply(0.5));
+                        }
                     }
                     if !r.about.is_empty() {
                         ui.label(&r.about);
@@ -447,11 +522,19 @@ fn draw(ui: &mut egui::Ui, view: &View, confirm_stop: &mut bool, asked: Option<A
         }
         if !view.last.is_empty() {
             ui.label(RichText::new("Последние").strong().color(WEAK));
-            for (line, cut) in &view.last {
+            for f in &view.last {
+                // red: cut; amber: its tick rate fell; green: fine
+                let (dot, text) = if f.cut {
+                    (RED, RED)
+                } else if f.slow {
+                    (AMBER, AMBER)
+                } else {
+                    (GREEN, WEAK)
+                };
                 ui.horizontal(|ui| {
-                    let (dot, _) = ui.allocate_exact_size(vec2(8.0, 14.0), egui::Sense::hover());
-                    ui.painter().circle_filled(dot.center(), 3.5, if *cut { RED } else { GREEN });
-                    ui.label(RichText::new(line).small().color(if *cut { RED } else { WEAK }));
+                    let (at, _) = ui.allocate_exact_size(vec2(8.0, 14.0), egui::Sense::hover());
+                    ui.painter().circle_filled(at.center(), 3.5, dot);
+                    ui.label(RichText::new(&f.line).small().color(text));
                 });
             }
         }
@@ -479,7 +562,7 @@ struct Viewer {
     read_at: Option<Instant>,
     title: String,
     placed: bool,
-    confirm_stop: bool,
+    local: Local,
     asked: Option<Asked>,
     /// The taskbar button's bar: None until tried, then kept, a failure too (no retry every frame).
     #[cfg(windows)]
@@ -548,7 +631,7 @@ impl eframe::App for Viewer {
                         t.show(view.share(), view.state, view.cut > 0 || view.silent.is_some());
                     }
                 }
-                if let Some(ask) = draw(ui, view, &mut self.confirm_stop, self.asked) {
+                if let Some(ask) = draw(ui, view, &mut self.local, self.asked) {
                     send(
                         &self.path,
                         match ask {
@@ -638,7 +721,7 @@ fn main() -> eframe::Result {
                 read_at: None,
                 title: String::new(),
                 placed: false,
-                confirm_stop: false,
+                local: Local::default(),
                 asked: None,
                 #[cfg(windows)]
                 taskbar: None,
@@ -665,11 +748,16 @@ mod tests {
             "progress": 0.63, "limit_s": 300,
             "updated_unix": 1000, "state": "running", "finished": false,
             "running": [
-                { "variant": "young07_smell15", "about": "детство на траве и нюх в 1,5 раза острее", "seeds": [3, 4, 5], "longest_s": 95.0, "tick": 12400, "ticks": 20000 },
+                { "variant": "young07_smell15", "about": "детство на траве и нюх в 1,5 раза острее", "seeds": [3, 4, 5], "longest_s": 95.0, "tick": 12400, "ticks": 20000,
+                  "runs": [
+                    { "seed": 3, "s": 95.0, "tick": 14000, "ticks": 20000, "ms": 4.25 },
+                    { "seed": 4, "s": 90.0, "tick": 10800, "ticks": 20000 },
+                    { "seed": 5, "s": 2.0 },
+                  ] },
                 { "variant": "smell3_paid", "about": "платный нюх: содержание как у зрения на его радиусе", "seeds": [8], "longest_s": 12.0 },
             ],
             "last": [
-                { "variant": "smell3_paid", "seed": 7, "what": "165 s, done", "cut": false },
+                { "variant": "smell3_paid", "seed": 7, "what": "165 s, done, tick rate 3.6x slower by tick 15000", "cut": false, "slow": true },
                 { "variant": "tank15", "seed": 1, "what": "KILLED after 360 s", "cut": true },
             ],
         })
@@ -684,13 +772,22 @@ mod tests {
         assert_eq!(v.status, "осталось ≈ 10 мин · идёт 15 мин · по 16 сразу");
         assert_eq!(v.running[0].variant, "young07_smell15");
         assert_eq!(v.running[0].seeds, "сиды 3–5 · тик 12 400 из 20 000 · 2 мин из 5 мин");
+        assert_eq!(
+            v.running[0].runs[0],
+            ("сид 3 · тик 14 000 из 20 000 · 2 мин · 4.2 мс/тик".to_string(), Some(0.7))
+        );
+        assert_eq!(v.running[0].runs[2], ("сид 5 · начинается · 2 с".to_string(), None));
+        assert!(v.running[1].runs.is_empty(), "an old progress file without runs still reads");
         assert_eq!(v.running[0].share, Some(0.62));
         assert_eq!((v.running[1].seeds.as_str(), v.running[1].share), ("сид 8 · 12 с из 5 мин", None));
         assert_eq!(
             (ranges(&[8, 1, 2, 3, 5, 6]), ranges(&[4])),
             ("1–3, 5, 6, 8".to_string(), "4".to_string())
         );
-        assert_eq!(v.last[1], ("tank15 · сид 1 · KILLED after 360 s".to_string(), true));
+        let killed =
+            Finished { line: "tank15 · сид 1 · KILLED after 360 s".to_string(), cut: true, slow: false };
+        assert_eq!(v.last[1], killed);
+        assert!(v.last[0].slow && !v.last[0].cut, "a run whose tick rate fell is marked, not cut");
         assert_eq!(v.silent, None);
         assert_eq!(View::of(&p, 1100).silent, Some(100), "a sweep silent for long is flagged");
         let mut paused = p.clone();
@@ -718,8 +815,8 @@ mod tests {
     }
 
     /// The window at its default size, running, paused, asking to stop and finished, each with its
-    /// own buttons and no others; a press on «Пауза» asks for a pause. With TINYLIFE_SHOTS=dir also
-    /// as PNGs.
+    /// own buttons and no others; a press on «Пауза» asks for a pause, and the «+» in a card's corner
+    /// unfolds its seeds. With TINYLIFE_SHOTS=dir also as PNGs.
     #[test]
     fn the_window_draws_a_sweep() {
         let mut paused = running_sweep();
@@ -747,7 +844,7 @@ mod tests {
             ("progress-finished", finished, false, &["Открыть сводку", "Папка с результатами"]),
         ] {
             let view = View::of(&p, 1005);
-            let mut confirm_stop = confirm;
+            let mut local = Local { confirm_stop: confirm, ..Local::default() };
             let pressed = std::rc::Rc::new(std::cell::Cell::new(None));
             let got = pressed.clone();
             let mut h =
@@ -756,7 +853,7 @@ mod tests {
                     egui::CentralPanel::default()
                         .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin::same(14)))
                         .show(ui, |ui| {
-                            if let Some(ask) = draw(ui, &view, &mut confirm_stop, None) {
+                            if let Some(ask) = draw(ui, &view, &mut local, None) {
                                 got.set(Some(ask));
                             }
                         });
@@ -774,6 +871,18 @@ mod tests {
                 h.get_by_label(PAUSE).click();
                 h.run_steps(2);
                 assert_eq!(pressed.get(), Some(Asked::Pause), "{name}: the press reaches the sweep");
+                // the corner of the card with three seeds unfolds them, and folds them back
+                const SEED: &str = "сид 4 · тик 10 800 из 20 000 · 2 мин";
+                assert!(h.query_by_label(SEED).is_none(), "folded at first");
+                h.get_by_label("+").click();
+                h.run_steps(2);
+                assert!(h.query_by_label(SEED).is_some(), "unfolded");
+                if let Ok(dir) = std::env::var("TINYLIFE_SHOTS") {
+                    h.render().expect("a picture").save(format!("{dir}/progress-seeds.png")).expect("saved");
+                }
+                h.get_by_label("−").click();
+                h.run_steps(2);
+                assert!(h.query_by_label(SEED).is_none(), "folded again");
             }
         }
     }

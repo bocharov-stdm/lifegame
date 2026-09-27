@@ -151,6 +151,8 @@ pub struct Run<'a> {
     pub res: &'a SimResult,
     pub events: &'a [Event],
     pub maps: &'a [story::Map],
+    /// The tick rate over the run: (tick, ms a tick over the lap before it).
+    pub pace: &'a [(u64, f64)],
 }
 
 pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, runs: &[Run]) -> Value {
@@ -178,6 +180,7 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
                 "stop_text": run.res.stop.to_string(),
                 "ticks_done": run.res.ticks_done,
                 "ms_per_tick": r(run.res.ms_per_tick()),
+                "pace": run.pace.iter().map(|&(tick, ms)| json!([tick, r(ms)])).collect::<Vec<_>>(),
                 "totals": counters(&last.counters.since(&first.counters)),
                 "social_totals": {
                     "alarms": last.social_counts.alarms - first.social_counts.alarms,
@@ -211,10 +214,12 @@ mod tests {
         let dead = world.creatures.pop().unwrap();
         world.corpses.push(Corpse::from_creature(&dead, 0));
         let res = run(world, &Limits { ticks: 0, ..Limits::default() }, &mut |_| {});
-        let runs = [Run { seed: cfg.seed, res: &res, events: &[], maps: &[] }];
+        let runs =
+            [Run { seed: cfg.seed, res: &res, events: &[], maps: &[], pace: &[(500, 2.5), (1000, 7.25)] }];
         let data = report(&cfg, &cfg.rules, 0, 1, &runs);
         assert_eq!(data["format"], "life-report/10");
         let run = &data["runs"][0];
+        assert_eq!(run["pace"], json!([[500, 2.5], [1000, 7.25]]), "the tick rate by laps");
         let snap = &run["snapshots"][0];
         for key in [
             "plant_bites",

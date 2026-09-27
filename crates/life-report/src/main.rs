@@ -154,6 +154,14 @@ fn check_mix(flag: &str, shares: &[f64], variants: &[Variant]) -> Result<(), Str
     Ok(())
 }
 
+/// Ticks between two measurements of the tick rate: `pace` in the JSON and the third number of
+/// `--progress`, so a run that slows down (a population boom, a degraded search) shows it while it
+/// runs and in the sweep's summary, not only as a mean or a cut at the deadline.
+const PACE_EVERY: u64 = 500;
+
+/// A run's tick rate: (tick, ms a tick over the `PACE_EVERY` ticks before it).
+type Pace = Vec<(u64, f64)>;
+
 fn main() {
     let mut args = Args::parse();
     if let Some(n) = args.threads {
@@ -245,15 +253,24 @@ fn main() {
     }
     let started = Instant::now();
     let map_every = if args.maps > 0 { (ticks / args.maps as u64).max(1) } else { u64::MAX };
-    let (results, maps): (Vec<(u64, SimResult)>, Vec<Vec<story::Map>>) = seeds
+    // per seed: its result, its maps and its tick rate
+    let done: Vec<(u64, SimResult, Vec<story::Map>, Pace)> = seeds
         .par_iter()
         .map(|&seed| {
             let cfg = WorldConfig { seed, ..base_cfg.clone() };
             let mut maps = Vec::new();
             let mut written = Instant::now();
+            // the tick rate, measured every PACE_EVERY ticks: (tick, ms a tick over the lap)
+            let mut pace: Pace = Vec::new();
+            let mut lap = (0, Instant::now());
             let res = simulate(&cfg, &limits, |w| {
                 if w.tick.is_multiple_of(map_every) {
                     maps.push((w.tick, ascii_map(w, args.map_width)));
+                }
+                if w.tick >= lap.0 + PACE_EVERY {
+                    let ms = lap.1.elapsed().as_secs_f64() * 1000.0 / (w.tick - lap.0) as f64;
+                    pace.push((w.tick, ms));
+                    lap = (w.tick, Instant::now());
                 }
                 if let Some(path) = &args.progress
                     && w.tick.is_multiple_of(50)
@@ -262,7 +279,8 @@ fn main() {
                     // aside and renamed over: the sweep reads it several times a second and must
                     // never see half a line (a total of 2 would put the run at its end)
                     let tmp = path.with_extension("tick.tmp");
-                    if std::fs::write(&tmp, format!("{} {ticks}", w.tick)).is_ok() {
+                    let ms = pace.last().map_or(0.0, |p| p.1);
+                    if std::fs::write(&tmp, format!("{} {ticks} {ms:.3}", w.tick)).is_ok() {
                         let _ = std::fs::rename(&tmp, path);
                     }
                     written = Instant::now();
@@ -272,9 +290,15 @@ fn main() {
             if args.maps > 0 && maps.last().map(|m| m.0) != Some(res.world.tick) {
                 maps.push((res.world.tick, ascii_map(&res.world, args.map_width)));
             }
-            ((seed, res), maps)
+            (seed, res, maps, pace)
         })
-        .unzip();
+        .collect();
+    let (mut results, mut maps, mut paces) = (Vec::new(), Vec::new(), Vec::new());
+    for (seed, res, m, pace) in done {
+        results.push((seed, res));
+        maps.push(m);
+        paces.push(pace);
+    }
     let events: Vec<Vec<Event>> = results.iter().map(|(_, r)| observe::events(&r.snapshots)).collect();
 
     if let Some(path) = &args.json {
@@ -282,7 +306,8 @@ fn main() {
             .iter()
             .zip(&events)
             .zip(&maps)
-            .map(|(((seed, res), events), maps)| json::Run { seed: *seed, res, events, maps })
+            .zip(&paces)
+            .map(|((((seed, res), events), maps), pace)| json::Run { seed: *seed, res, events, maps, pace })
             .collect();
         let text = serde_json::to_string_pretty(&json::report(&base_cfg, &rules, ticks, sample, &runs))
             .expect("JSON собирается всегда");
