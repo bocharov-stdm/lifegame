@@ -1,4 +1,4 @@
-//! Tiny Life — игра. Окно на eframe (egui + wgpu), симуляция в своём потоке.
+//! lifegame — игра. Окно на eframe (egui + wgpu), симуляция в своём потоке.
 //!
 //!     cargo run -p life-app --release                       # меню
 //!     cargo run -p life-app --release -- --scale 10 --seed 3 # сразу в игру
@@ -32,7 +32,7 @@ use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::{Rules, Shape, WorldConfig};
 
 #[derive(Parser)]
-#[command(about = "Tiny Life — эволюция растений и существ")]
+#[command(about = "lifegame — эволюция растений и существ")]
 struct Args {
     /// Сид мира; без него — случайный.
     #[arg(long)]
@@ -140,7 +140,7 @@ fn main() -> eframe::Result {
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("Tiny Life")
+            .with_title("lifegame")
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([960.0, 600.0])
             // развёрнуто: мир большой, а окно 1280×800 при масштабе 125% выше
@@ -151,7 +151,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "Tiny Life",
+        "lifegame",
         options,
         Box::new(move |cc| Ok(Box::new(app::LifeApp::new(cc, start, settings::default_path())))),
     )

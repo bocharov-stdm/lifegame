@@ -48,7 +48,7 @@ impl LifeApp {
             egui::Frame::window(ui.style()).inner_margin(28.0).show(ui, |ui| {
                 ui.set_width(300.0);
                 ui.vertical_centered_justified(|ui| {
-                    ui.label(RichText::new("Tiny Life").size(34.0).strong());
+                    ui.label(RichText::new("lifegame").size(34.0).strong());
                     ui.colored_label(MUTED, "эволюция растений и существ");
                     ui.add_space(18.0);
                     let big = |t: &str| RichText::new(t).size(17.0);

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Tiny Life Simulation — an evolutionary sandbox: plants and creatures in a 2D world. Creatures carry
+lifegame — an evolutionary sandbox: plants and creatures in a 2D world. Creatures carry
 a genome (a gene table) that mutates on division; selection is emergent, not scripted. Rust only:
 engine `crates/life-core`, bounded headless runner and observer `crates/life-sim`, balance report and
 sweeps `crates/life-report`, the game (wgpu/egui) `crates/life-app`. Open: phase 3, a parallel tick

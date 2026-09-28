@@ -1,6 +1,6 @@
 [package]
 name        = "life-app"
-description = "Игра Tiny Life: окно, рендер мира, меню и графики. Симуляция идёт в своём потоке."
+description = "Игра lifegame: окно, рендер мира, меню и графики. Симуляция идёт в своём потоке."
 edition.workspace = true
 version.workspace = true
 license.workspace = true

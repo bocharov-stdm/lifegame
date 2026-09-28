@@ -1,6 +1,6 @@
 [package]
 name        = "life-core"
-description = "Движок Tiny Life: мир, тик, сетка соседей, правила, геном. Ничего не знает об экране."
+description = "Движок lifegame: мир, тик, сетка соседей, правила, геном. Ничего не знает об экране."
 edition.workspace = true
 version.workspace = true
 license.workspace = true

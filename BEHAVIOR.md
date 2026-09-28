@@ -1,4 +1,4 @@
-# Реформа поведения Tiny Life
+# Реформа поведения lifegame
 
 ## Plant capacity in fertility cells (this stage)
 

@@ -1,6 +1,6 @@
 [package]
 name        = "life-report"
-description = "Отчёт о балансе Tiny Life без окна: прогоны по сидам параллельно, сводка и сверка с эталоном."
+description = "Отчёт о балансе lifegame без окна: прогоны по сидам параллельно, сводка и сверка с эталоном."
 edition.workspace = true
 version.workspace = true
 license.workspace = true

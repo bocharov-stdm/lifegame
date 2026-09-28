@@ -1,6 +1,6 @@
 # Working in this repository
 
-Tiny Life is an evolutionary simulation in Rust with a native wgpu/egui window.
+lifegame is an evolutionary simulation in Rust with a native wgpu/egui window.
 The Python version is kept at the `python-final` tag; detailed invariants are in `CLAUDE.md`.
 
 ## Structure

@@ -41,7 +41,7 @@ use rayon::prelude::*;
 const WORK_PER_TICK: f64 = 60_000.0;
 
 #[derive(Parser, Debug)]
-#[command(about = "Отчёт о балансе Tiny Life без окна")]
+#[command(about = "Отчёт о балансе lifegame без окна")]
 struct Args {
     /// Один сид (если не заданы --seeds).
     #[arg(long, default_value_t = 1)]
