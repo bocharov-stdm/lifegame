@@ -11,7 +11,8 @@ sweeps `crates/life-report`, the game (wgpu/egui) `crates/life-app`. Open: phase
 (design, no code: `docs/phase3-parallel-tick.md`, written against `life-behavior/7`), and phase 6, a
 machine benchmark. Removed things live under git tags: the Python version (`python-final`, the
 behavioural spec the game was ported from), predators (`predators-final`; old names still read:
-`--vegetarians`, `--veg-mix`, settings key `n_vegetarians`).
+`--vegetarians`, `--veg-mix`, settings key `n_vegetarians`), flocks (`flocks-final`: flocks, flock
+battles, territories, the social layer, kin grace).
 
 **Language.** Code, comments, docs, CLI/report output, test names and commit messages in
 **English**; translate Russian comments and test names you touch, don't mass-rewrite. Only the
@@ -27,20 +28,15 @@ behavioural spec the game was ported from), predators (`predators-final`; old na
 - **Fix niches through the body, evolutionarily**: a diet may have a different body with its own
   advantages, never free energy. Don't adopt a balance change without the user's word; before a big
   mechanic change ask rounds of questions with the risk of each option.
-- **Behaviour genes are free**: no upkeep for a gene that gives no physical stat. A behaviour gene
-  needs a behavioural catch, not a price (the free «испуг»/«голод» genes once ran away and were
-  removed).
-- **Flocks are off** (`config::FLOCKS = false`): every founder is a loner, so is the base genome
-  (`pack_instinct` base follows `FLOCKS`: a spawned creature founds no flock), the game hides
-  «Стаи». The code still runs every tick (`social::prepare_in`, `flock::update`, battles,
-  territories); it is to be removed under a tag `flocks-final`. Never measure balance with flocks.
-  **The social layer is not inert for loners** (kept on purpose, user's call 2026-09-27, until the
-  layer goes): `social::adjust` holds a wander course 30 ticks and turns at most 1.2 rad a tick,
-  `Scene::plant` keeps the plant it chose while it stays visible (`personal_food`), and a child of
-  another mode gets `kin_grace` 600 ticks with its parent's label (`world.rs`, `protect`). Resting
-  moved from the layer into the programs (`Action::Rest`). Removing the
-  layer therefore shifts every seed: `flocks-final` needs the balance validation, and golden proves
-  only the flock-only parts inert.
+- **Behaviour is free**: no upkeep for a block, nor for anything that gives no physical stat. A
+  behaviour needs a behavioural catch, not a price (the free «испуг»/«голод» genes once ran away and
+  were removed). No behaviour genes are left: all behaviour is blocks of the programs, and a new
+  behaviour is a block, never a gene or a world constant.
+- **Flocks are gone** (tag `flocks-final` on `83cdf72`, the user's call 2026-09-28): the flock,
+  battle, territory, social and kin-grace code, the six flock genes, the flock blocks and the game's
+  «Стаи». What the social layer still did for loners became blocks: the held course and the limited
+  turn (setting «плавный ход»), the kept plant (a flag of «к растению»), the parent's cover
+  («защищать детёныша»); the pair grace went.
 - **Commit straight to `main`**, only when asked; push only on the user's word. `main` also moves
   from cloud sessions: `git fetch` and fast-forward before starting.
 - **In a cloud (Linux) container run no simulations and no tests** — no `life-report`,
@@ -51,89 +47,128 @@ behavioural spec the game was ported from), predators (`predators-final`; old na
 - The user keeps a short PDF of genes, strategies and diet edges (a throwaway fpdf2 script, Arial
   for Cyrillic); regenerate and send it after diet or gene changes.
 
-## The model (`life-behavior/13`: behaviour programs on the ocean reform)
+## The model (`life-behavior/14`: every behaviour in blocks, on the ocean reform)
 
 A creature eats plants and corpses in portions, grows from food up to its size gene, divides when
-grown and fed, and dies of hunger, in a fight or of old age. Combat is always on: a creature strikes
-(and shoots) only what its program chose (prey, a rival at food, a fight back); being struck strikes
-back only through a fight-back block. Melee damage is 5% of the striker's size
+grown and its program's «делиться» says so, and dies of hunger, in a fight or of old age. Combat is
+always on: a creature strikes (and shoots, under «стрелять») only what its program chose (prey, a
+rival at food, a fight back, its child's enemy); being struck strikes back only through a
+fight-back block. Melee damage is 5% of the striker's size
 × (its size / the target's) ** `melee_size_power` (1.25) when it is the bigger (`Phenotype::strike_on`;
 hunters weigh prey and retaliation with the same function); a strike's energy cost does not
 depend on diet bonuses. Shots are weak (1% of size, ≤ ¼ of max health) and expensive. Contact is
 the sum of the two radii. A hunt block weighs the meat the tank can take against the strikes it
-expects (its caution, and only the strikes the prey's own program would give back) and gives up a
-chase that has not closed the gap by one of its steps in its patience (template `CHASE_PATIENCE` 30
-ticks), leaving that prey alone for its block's time (template 180). What a creature does and when
-is its behaviour program (below). Exact mechanics and their checks: `BEHAVIOR.md` (partly stale, see
-below).
+expects (its caution, and only the strikes the prey's own program and a defending parent in sight
+would give back) and gives up a chase that has not closed the gap by one of its steps in its
+patience (template `CHASE_PATIENCE` 30 ticks), leaving that prey alone for its block's time
+(template 180). What a creature does and when is its behaviour program (below). Exact mechanics and
+their checks: `BEHAVIOR.md` (partly stale, see below).
 
-**Behaviour programs** (`creature/program.rs`, the user's design, 2026-09-28). Behaviour is an
-ordered rule list of ≤ 24 blocks «if TEST and TEST → ACTION(parameters)». Each tick the
-**settings** (`EatForeign`, `Rival`, `Reach`) whose tests hold apply first, wherever they stand (a
-swap cannot hide one behind a deciding block): they set this tick's `Stance` — eat the other
-niche's food; strike strangers X times smaller at the same food; go no farther than X% of depth
-past its layer for food — which the world's eating and combat phases read. Then the first deciding
-block whose tests hold and whose action can be done decides; a failed action (no prey, no corpse, a
-hopeless chase, not at home to rest) falls through; nothing decides → it stands. `Mind` keeps what
-the window shows: `fired`, `applied` and `tried` (tests held, action could not be done).
+**Behaviour programs** (`creature/program.rs`, the user's design, 2026-09-28; round 3 moved every
+behaviour into them). Behaviour is an ordered rule list of ≤ 32 blocks «if TEST and TEST and TEST →
+ACTION(parameters)» (`Block { when: [Test; 3], action, args: [u16; 8] }`). Each tick the
+**settings** apply first, wherever they stand (a swap cannot hide one behind a deciding block): of
+each kind the **first** whose tests hold applies and a later one of that kind is skipped
+(`Block::setting_kind`; each mode number is a kind); a test sees what the settings above it set this
+tick. They set this tick's `Stance`, which the world's phases read; without a setting of a kind its
+default is «nothing» — own food only, no rivals, any distance, the whole depth, no smoothing, no
+division, no healing, no eating on the move, no children known, no shooting. Then the first
+deciding block whose tests hold and whose action can be done decides; a failed action (no prey, no
+corpse, a hopeless chase, not at home to rest, no child in need) falls through; nothing decides →
+it stands. `Mind` keeps what the window shows: `fired`, `applied` and `tried` (tests held, action
+could not be done).
 - **Two tracks**: `Creature::programs[JUVENILE]` while it grows to its size gene, `[ADULT]` after
   (`Creature::stage`, `program()`); inherited and mutating apart. `Programs` is an `Arc`: children
   that inherit them unchanged share them, so a creature holds a pointer, not a kilobyte. Each
   `Program` keeps a summary the world reads every tick (reach, threat range, hunt ratio, defence,
-  wander reach), recomputed whenever it changes.
+  defends, wander reach, home layer, shoots), recomputed whenever it changes.
+- **Settings** (bases = what the deleted genes and the world did, so the templates act as `/13`):
+  «есть и чужую пищу», «гнать соперников у еды» (×1.5 smaller), «за едой из слоя» (X% of depth) as
+  before; «слой» top 5%, bottom 100% (swapped if reversed; was `min_y`, `max_y`, `layer_bound`) —
+  where it wanders, rests and walks back to, `Phenotype::band` adding the body's margins; «плавный
+  ход» a course held 30 ticks, a turn ≤ 1.2 rad (69°) a tick (the social layer's smoothing, `steer.rs`);
+  «делиться» from 70% of the tank, the child 40% (at least 1%; was `repro_threshold`, `repro_share`);
+  «лечиться» with a tank above 50% and 60 ticks unstruck (automatic healing; the rate
+  `config::HEAL_SHARE` 0.2% of health a tick stays physiology, paid from the tank); «есть на ходу»
+  plants, corpses, while fullness ≤ 100% (whatever it touched; without it it eats only what its
+  deciding block goes for — the food blocks always eat their own food); «щадить детей» until the
+  child has grown to 100% (was `care`: `Kinship::knows_until`); «стрелять» from 50% of its range,
+  keeping 50% of its tank (was `shooter`, `fire_preference`, `fire_reserve`); «режим» K (1–4) on
+  for N ticks (60; 0 = off) — the program's memory (`Mind::modes`, both tracks read the same).
+  Healing and the kinship read the last tick's stance (healing at the start of `step`, the
+  neighbour snapshot); eating, combat, shots, defence and division read this tick's.
 - **Tests** (`Cond`): fullness, health, depth ≥ X%; a threat / a hunting stranger closer than X% of
   sight (`Senses::threats_near`); struck within X ticks (template 1); still fleeing; resting; food
-  seen; always (negated: never, which switches a block off).
-- **Actions** with parameters (`Action::params`, a `ParamSpec` each: range, base, nudge): fight
-  back (enemy at most ×1.5 bigger), flee (keep running 60 ticks after losing it, burst; under way
-  only a threat nearer than 33% of sight — the old flight distance — renews the flight, a farther one
-  only steers it), hunt (prey ×1.5 smaller, caution 100% = the old base weight, patience 30 ticks,
-  only if better than plants and corpses, burst, leave given-up prey alone 180 ticks), to a corpse
-  (only if better, pace), to a plant, to reported food, back to the circle, wander (pace, targets a
+  seen; prey its hunts would take within X% of sight (`Senses::nearest_prey`); a plant / a corpse it
+  eats seen; age ≥ X% of its lifespan; winded; the water ≥ X% cold; above / below / in its layer;
+  mode K on; always (negated: never, which switches a block off).
+- **Actions** with parameters (`Action::params`, a `ParamSpec` each: unit, range, base, nudge; an
+  index — a mode's number — does not drift, a nudge picks another; an angle is centiradians shown in
+  degrees; a tilt is 100 = straight): fight back (enemy at most ×1.5 bigger), flee (keep running 60
+  ticks after losing it, burst; under way only a threat nearer than 33% of sight — the old flight
+  distance — renews the flight, a farther one only steers it; pace 100%, tilt straight), hunt (prey
+  ×1.5 smaller, caution 100% = the old base weight, patience 30 ticks, only if better than plants
+  and corpses, burst, leave given-up prey alone 180 ticks, prey within 100% of sight, chase pace
+  100%), to a corpse (only if better, pace), to a plant (pace; keeps the plant it chose while it
+  stays visible; the nearest, or the most profitable `Senses::best_plant`), wander (pace, targets a
   quarter to 200% of sight away; the next target after a bite as far), ambush (stand), to the top /
   bottom of its layer (pace), rest (90 ticks, then a pause of 180), torpor (stands paying
   `TORPOR_UPKEEP` 30% of its standing upkeep and **eats nothing**, not even what touches it — no
-  sleeping filter feeder), and the three settings. Labels read in their units («33% зрения», «31
-  тик», plural by `program::ticks_word`).
-- **No behaviour genes and no world behaviour constants are left**: `bravery`, `prey_ratio`,
-  `caution`, `picky`, `rivalry`, `layer_reach`, `cruise`, `rest`, `torpor` were deleted from the gene
-  table (the user's call, breaking append-only once). `burst` stays: it is the muscles, a body stat
-  with a price; the flee and hunt blocks decide whether to use them.
+  sleeping filter feeder), defend its child, and the settings. Labels read in their units («33%
+  зрения», «31 тик», plural by `program::ticks_word`).
+- **«Защищать детёныша»** (replaced the aid phase and the pair grace): its child within 50% of its
+  sight, struck within 30 ticks by an enemy still in sight — or, while young, afraid of a threat it
+  sighted (`Mind::alarm`) — makes it go for the enemy and strike it whatever its size
+  (`Stance::defending`, `Senses::child_in_need`), with a tank above 50%, for at most 90 ticks, then
+  a pause of 60; an episode another block interrupts ends with the pause too (`Mind::aid`,
+  `aid_cooldown`). The child is its own only while its «щадить детей» holds. Hunters count a parent
+  in sight as the prey's ally only if its program defends.
+- **No behaviour genes and no world behaviour constants are left**: `/13` deleted `bravery`,
+  `prey_ratio`, `caution`, `picky`, `rivalry`, `layer_reach`, `cruise`, `rest`, `torpor`; `/14` the
+  layer (`min_y`, `max_y`, `layer_bound`), shooting (`shooter`, `fire_preference`, `fire_reserve`),
+  division (`repro_threshold`, `repro_share`), `care` and the six flock genes (the user's calls,
+  breaking append-only). `burst` stays: it is the muscles, a body stat with a price; the flee and
+  hunt blocks decide whether to use them.
 - **Templates**: the `strategy` gene («происхождение») picks the founders' template and never
   switches (`STRATEGY_SWITCH_CHANCE` 0); both tracks start from it. `Program::STANDARD` carries the
-  old genes' bases: below 30% fullness eat foreign food and drive rivals ×1.5 smaller; fight back
-  above 50% health; flee a hunter within 33% of sight, a calm stranger within 16%, keep fleeing;
-  hunt; rest from 95%, keep resting to 85%; corpse; plant; wander. `Program::LURKER` is the same,
-  wandering at 33% of its speed. While flocks are off the templates leave out the flock blocks (to
-  reported food, back to the circle: `Action::needs_flock`) and no mutation brings them in;
-  `Program::IN_FLOCKS` has them for the flock layer's tests.
+  old genes' and the world's bases: always the layer, smoothing, division, healing, eating on the
+  move and sparing its children; below 30% fullness eat foreign food and drive rivals ×1.5 smaller;
+  fight back above 50% health; flee a hunter within 33% of sight, a calm stranger within 16%, keep
+  fleeing; defend a child above 60% health; hunt; rest from 95%, keep resting to 85%; corpse; plant;
+  wander. `Program::LURKER` is the same, wandering at 33% of its speed.
+  `Program::founder(strategy, layer, shoots)` gives a founder its layer (5–100%; a quarter of them,
+  by a hash, 0–100%; scavengers 50–100%) and the 5% shooters «стрелять» after the leading settings;
+  a founder is placed in its program's first unconditional layer.
 - **Heredity** (`CreatureGenome::inherit`): one clone draw for genome and programs (a clone shares
-  them); else the genes mutate, then each program **drifts** — every number but the flags moves by
-  gauss(0, its nudge × `program_drift` (rule, base 1) × mutability): a threshold ~10 points, a ratio
-  0.2, a time a quarter of its base, as the genes drift by 30% (through the rare mutation alone a
-  given number moved in one child of ~1700, and the old genes' adaptations could not happen) — and
-  with `program_mutation` (rule, base 5%) × mutability gets one mutation: nudge a number 35%,
-  replace a test 12%, negate one 8%, replace the action 8%, swap with a neighbour 15%, duplicate 8%,
-  delete 8% (keeps ≥ 1), insert a random block 6%. One that cannot apply or lands where it was
-  changes nothing, its draws spent. `Program::changes` counts the mutations that changed something
-  (not the drift). Past its end a program is filled with the same block, so equal blocks are equal
-  programs.
+  them); else the genes mutate, then each program **drifts** — every number but the flags and the
+  indices moves by gauss(0, its nudge × `program_drift` (rule, base 1) × mutability): a threshold ~10
+  points, a ratio 0.2, a time a quarter of its base, as the genes drift by 30% (through the rare
+  mutation alone a given number moved in one child of ~1700, and the old genes' adaptations could not
+  happen) — and with `program_mutation` (rule, base 5%) × mutability gets one mutation: nudge a
+  number 35%, replace a test 12%, negate one 8%, replace the action 8%, swap with a neighbour 15%,
+  duplicate 8%, delete 8% (keeps ≥ 1), insert a random block 6%. One that cannot apply or lands where
+  it was changes nothing, its draws spent. `Program::changes` counts the mutations that changed
+  something (not the drift). Past its end a program is filled with the same block, so equal blocks
+  are equal programs. A mutation can switch off division, healing or eating on the move: such
+  children die out — the catch is the consequence.
 - **Free behaviour**: no upkeep, no energy made — an action only chooses where to step or how to
-  stand, `act` pays. Others fear a creature by the most permissive hunt block of the program it
-  lives by (`Program::hunt_ratio`, `Herd`); a hunter expects strikes back only as the prey's program
-  gives them (`Program::defence`: a hunter within its first fight-back block's ratio, for the share
-  of the killing strikes above that block's health threshold) — the templates' prey never strikes a
-  template hunter, which is ≥ 1.5 times bigger. Aid and flock guards read `stands_firm` (its
-  fight-back block's health threshold).
+  stand and a setting what the phases may do; `act`, combat, division and healing pay as before.
+  Others fear a creature by the most permissive hunt block of the program it lives by
+  (`Program::hunt_ratio`, `Herd`); a hunter expects strikes back only as the prey's program gives
+  them (`Program::defence`: a hunter within its first fight-back block's ratio, for the share of the
+  killing strikes above that block's health threshold) — the templates' prey never strikes a
+  template hunter, which is ≥ 1.5 times bigger.
 - The interpreter: `scene.rs` (perception, lazily memoised queries), `actions.rs` (one function per
-  action), `strategy::plan` (settings, then the deciding blocks, then `social::adjust`). `Cond`,
-  `Action` and their parameter tables are append-only, like gene tables. The game shows both tracks
-  as flowcharts (card button «Поведение (B)», `life-app/src/behaviour.rs`): the settings as their
-  own section on top, then the decisions, this tick's path lit with «не вышло» where a block's
-  action failed. The report groups each track by shape (`Program::shape`: tests, actions and flags,
-  no numbers), prints the three most common with the medians of their numbers (`Program::median`)
-  and `METRIC` lines for sweeps (`{juvenile,adult}_shapes`, `_template_share`, `_hunt_ratio`,
-  `_threat_range`).
+  action and setting), `steer.rs` (the step: the band, smoothing), `strategy::plan` (settings, then
+  the deciding blocks, then the step). `Cond`, `Action` and their parameter tables are append-only,
+  like gene tables (`/14` broke it once, dropping the flock actions). The game shows both tracks as
+  flowcharts (card button «Поведение (B)», `life-app/src/behaviour.rs`): the modes on in the header,
+  the settings as their own section on top, then the decisions, this tick's path lit with «не вышло»
+  where a block's action failed. The report groups each track by shape (`Program::shape`: tests,
+  actions, flags and indices, no numbers), prints the three most common with the medians of their
+  numbers (`Program::median`) and `METRIC` lines for sweeps (`{juvenile,adult}_shapes`,
+  `_template_share` (the templates' and the shooting founders' shape), `_hunt_ratio`, `_threat_range`,
+  `_mode_share` (a working «режим»), `_conditional_layer_share` (a «слой» under a condition)).
 
 **Diets** — the `diet` choice gene, variant order H/O/S/C (the order of every `DIET_*` table in
 `config.rs`). Digestion (`DIET_DIGESTION`: plants, fresh meat, rot, bones; 0 = neither eats nor
@@ -171,14 +206,14 @@ goes for it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{
   warm-blooded) makes a body cheaper (−50% at 100% in full cold, `COLD_SAVING`) and slower (−40%,
   `COLD_SLOWING`) in cold water (`Phenotype::temper`, applied in `act` at the current depth). It
   moves by points (`Mutation::Shift`, ±10), since a factor never leaves zero.
-- **Layer reach**: the program's «за едой из слоя» setting (% of depth; without it anywhere, and the
-  templates have none) — how far past its layer a creature goes for food it sees; checked inside
-  the plant, corpse and prey choices (`Phenotype::within_reach(y, reach)`), so it takes the best
-  food within reach. A behaviour, not a wall.
+- **Layer and reach**: the program's «слой» setting is its home band; «за едой из слоя» (% of
+  depth; without it anywhere, and the templates have none) is how far past it a creature goes for
+  food it sees, checked inside the plant, corpse and prey choices (`Taste::admits`), so it takes the
+  best food within reach. A behaviour, not a wall.
 - **Paying for the step taken**: upkeep = the body and eyes (`still_upkeep`) + the speed term for
   the step actually taken (`Phenotype::step_cost`); standing, eating or resting costs no speed.
   `upkeep` is the full-speed figure, for showing and weighing.
-- **Movement**: the pace of wandering and of going to plants, reported food, corpses and the
+- **Movement**: the pace of wandering, fleeing, chasing and of going to plants, corpses and the
   layer's edges is each block's pace parameter (% of speed, at least `MIN_PACE` 10%). Resting
   (`Action::Rest`: stands at home up to its length, then its pause without resting; it ends when
   its block no longer decides) and torpor (`Action::Torpor`, `Creature::torpid`, «в оцепенении» on
@@ -197,7 +232,22 @@ goes for it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{
 
 ## Where the work stands
 
-- **Behaviour programs** (plan `~/.claude/plans/starry-jumping-shannon.md`, 2026-09-28): stage 1
+- **Round 3: every behaviour in blocks, flocks removed** (plan
+  `~/.claude/plans/starry-jumping-shannon.md`, 2026-09-28, model `/14`). Stages: A the flock layer
+  removed (tag `flocks-final`), B the language (three tests, eight parameters, 32 blocks, units, the
+  new tests and modes, flight/hunt/plant parameters, the first setting of a kind wins), C1 the layer,
+  smoothing, division, healing, eating on the move, sparing and shooting moved into settings and
+  their genes deleted, C2 «защищать детёныша» replacing the aid phase and the pair grace, D the
+  window, the report, the docs. A, B and C1 were proven **bit for bit** (a behaviour digest at
+  `clone_share=1` over five configs, against the stage before); C2 changes behaviour and is covered
+  by tests; golden re-recorded. Validation (sweep 2026-09-28, 8 seeds × 20 000): all 24 worlds
+  survive. Baseline: carnivores hold in 7 of 8 (2.6% late), scavengers in 2, population late 1179,
+  minimum 511, 1.74 ms/tick. ×1 base: carnivores hold in 8 (25.5% late), late population 89,
+  herbivores died out at the end of seed 1; ×1 calm: carnivores in 7 (15.7%), 214. No working mode
+  and no conditional layer evolved (their shares 0). Tick rate at ×100 (1000 ticks, seeds 1 2, one
+  thread): 24–27 ms against 45–49 at `83cdf72` — the flock layer's scans were half the tick. `/13`
+  itself was never measured, so `/13` → `/14` is not separated.
+- **Behaviour programs** (same plan, 2026-09-28): stage 1
   (the interpreter replacing `standard.rs`/`lurker.rs`) was proven bit for bit against the old
   strategies; stage 2 (mutating programs), stage 3 (the window, the report) and round 2 (two tracks,
   all behaviour in blocks, nine genes deleted) made the model `/13`, golden re-recorded on Windows.
@@ -240,12 +290,12 @@ goes for it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{
   parent paying for the child's body (halved populations, no meat diets); birth at ¼ size; a nose
   paid like sight (killed the niche); `melee_size_power` 1.75 (carnivores boomed and starved) or 1.0
   (they died out).
-- Golden digests are re-recorded for `/13` (2026-09-28, Windows). Both references
+- Golden digests are re-recorded for `/14` (2026-09-28, Windows). Both references
   (`reference/fingerprint.json`, `calm-fingerprint.json`) are still the `/9` ones, so `--compare`
   refuses them (another model) and CI fails there by design: re-take them with `--save-reference`
   once the user accepts the balance (8 seeds × 20 000 each).
-- `README.md` and `AGENTS.md` describe the `/13` model in short; `BEHAVIOR.md` is the history of
-  the models, its first section the food web to the ocean reform. This file is the exact model.
+- `README.md` and `AGENTS.md` describe the `/14` model in short; `BEHAVIOR.md` is the history of
+  the models, newest first. This file is the exact model.
   When a mechanic changes, update all four.
 
 **Baseline conditions** — the user's own game; judge balance here, not on ×1 defaults:
@@ -341,15 +391,14 @@ runner and the observer, `life-app` alone knows the screen.
 - `creature/` — `mod.rs` (`act`, feeding, division, `grow_old`), `phenotype.rs`, behaviour:
   `program.rs` (blocks, parameter tables, templates, mutation), `scene.rs` (perception),
   `actions.rs` (one function per action), `strategy.rs` (`Mind`, `Intent`, `Stance`, the
-  interpreter `plan`); `plant.rs`, `flora.rs`.
+  interpreter `plan`), `steer.rs` (the step); `plant.rs`, `flora.rs`.
 - `senses.rs` — what a creature can learn (traits, grid-backed views, queries + brute-force tests);
   `grid.rs` — counting-sort spatial grid; `rng.rs`, `space.rs`.
-- `combat.rs` (simultaneous strikes), `corpse.rs`, and the dormant flock layer (`flock.rs`,
-  `battle.rs`, `social.rs`, `territory.rs`, `kin_grace.rs`).
+- `combat.rs` (simultaneous strikes and shots, a parent's defence), `corpse.rs`.
 
 `life-sim`: `simulate()`/`run()` under limits; `observe.rs` — snapshots, the event chronicle (the
 game reuses it), ASCII maps. `life-report`: `main.rs`, `story.rs`, `json.rs` (format
-`life-report/11`), `metrics.rs` (`--compare`), `bin/life-sweep.rs`.
+`life-report/12`), `metrics.rs` (`--compare`), `bin/life-sweep.rs`.
 
 ### Determinism and the golden test
 
@@ -372,9 +421,9 @@ design; re-take with `--save-reference reference/fingerprint.json` (and the calm
 
 ### Tick order
 
-Plants → old age → (flock circles, battles), neighbour snapshot and territories → decisions,
-ageing and movement → eating plants → simultaneous strikes and winners feeding → reproduction →
-removing the dead and adding children → flock membership → tick number. Strikes are collected
+Plants → old age → neighbour snapshot → decisions (settings, then a deciding block), healing,
+ageing and movement → eating plants → simultaneous strikes and shots → the survivors eating
+corpses → reproduction → removing the dead and adding children → tick number. Strikes are collected
 before damage, so mutual death is possible; a death has one cause (`Starved`, `OldAge`, `Combat`).
 A creature killed in combat gets no prey and does not reproduce.
 
@@ -388,8 +437,7 @@ A creature killed in combat gets no prey and does not reproduce.
 - `Creature::step` is the hot path: genome-derived values are precomputed in `Phenotype::of`,
   distances compared squared, block dispatch is a `match` over `Action`, never `Box<dyn>`, and the
   scene asks the senses only what a block needs (a memo per tick). The eating phase
-  copies only the corpses claimed that tick (`world.rs`, `claimed`), and `social::prepare_in` skips
-  the neighbour scan of a creature whose label counts one member. For refactors,
+  copies only the corpses claimed that tick (`world.rs`, `claimed`). For refactors,
   compare ms/tick against the previous build in a worktree, alternating runs
   (`life-report --scale 100 --ticks 1000 --seeds 1 2 --threads 1`).
   `тик_растёт_линейно_с_численностью` guards against queries degrading to a full scan.
@@ -399,9 +447,9 @@ A creature killed in combat gets no prey and does not reproduce.
 
 ### Space and food
 
-- The layer genes (`min_y`, `max_y`) are a preference, not a wall: a creature goes for any visible
-  food and walks back to its home band otherwise; physics clamps only to the world. Never add moves
-  that teleport.
+- The layer («слой», a setting) is a preference, not a wall: a creature goes for any visible food
+  within its reach and walks back to its home band otherwise; physics clamps only to the world.
+  Never add moves that teleport.
 - Real units are for showing only (`units.rs`, `docs/scale.md`): 1 px = 0.5 cm (the base fish is
   20 cm), a tick is 0.25 s of swimming but ~9 hours of life (3000 ticks = 3 years).
 - Scale is area, shape (1:1, 3:2 default, 2:1, strip) is proportions (`Space::new`); at ×1 3:2 is
@@ -425,9 +473,11 @@ A creature killed in combat gets no prey and does not reproduce.
 `GeneSpec { key, label, about, kind, base, mutation }`, `kind` = `Absolute` | `Percent` |
 `Choice(&[Variant])`. Everything walks the table, never positions. **Tables are append-only** — the
 order fixes the RNG draw order and positions in references and JSON; the only in-place
-replacements were `carnivory` → `diet` (row 11) and `life_pace` → `maturation` (row 9), same law so
-same draws, and the one deletion the nine behaviour genes that moved into the programs (`/13`, the
-user's call). A choice gene with one variant is inert (draws nothing, hidden in the UI).
+replacements were `carnivory` → `diet` and `life_pace` → `maturation`, same law so same draws, and
+the deletions the behaviour genes that moved into the programs (nine in `/13`, fifteen with the
+flock genes in `/14`, the user's calls). Ten genes are left: `size`, `speed`, `vision`, `strategy`,
+`mutability`, `maturation`, `diet`, `lifespan`, `cold_blood`, `burst`. A choice gene with one
+variant is inert (draws nothing, hidden in the UI).
 
 Mutation (`genome::Heredity`, built from the rules): `CLONE_CHANCE` 50% of children are exact
 copies; otherwise `Scale` for numbers (× (1 + gauss(0, σ·mutability)), multiplier ≥ 0.1), `Shift`
@@ -440,7 +490,8 @@ Mutability is clamped to `MIN_MUTABILITY` 0.1 (without a floor selection froze e
 nothing. Start mixes (strategies, diets) are dealt without draws (`variant_for`, `spread_ranks`).
 
 A program **decides** (`strategy::decide(&Me, &Program, &mut Mind, &mut Rng, &senses) -> Intent`),
-the creature **acts** (`act`); a block cannot move, feed or divide the creature. The strategies
+the creature **acts** (`act`); a block cannot move, feed or divide the creature — a setting only
+allows a phase to. The strategies
 (`Strategy`, `VARIANTS`) are only the founders' templates: `standard`, and `lurker`, which wanders
 at a third of its speed.
 
@@ -470,7 +521,8 @@ window, tests of it in `strategy.rs`, re-record golden. Adding a template: a var
   patches, selection, minimap.
 - `game.rs` (game screen, «Графики» panel, the lab by topic tabs, creature card with the diet's
   edges), `behaviour.rs` (the selected creature's programs as flowcharts, a tab per track, the
-  settings as a section on top, this tick's path lit with «не вышло» where an action failed; the
+  modes on in the header, the settings as a section on top, conditions of up to three tests, this
+  tick's path lit with «не вышло» where an action failed; the
   card's «Поведение (B)», key B), `diets.rs` («Кто живёт», «Кто кого»,
   highlight), `stats.rs` («Статистика», area
   selection), `screens.rs` (menu, «Новый мир», prefs, help), `charts.rs` (painter, no plot crate),

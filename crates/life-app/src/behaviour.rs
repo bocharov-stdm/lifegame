@@ -1,16 +1,17 @@
 //! The selected creature's behaviour programs as flowcharts, in their own window «Поведение»: two
-//! tabs, the juvenile track (while it grows) and the adult one. The settings come first, as the
-//! engine runs them: every setting whose condition holds applies, wherever it stands in the
-//! program (a pill-shaped box, its down arrow «дальше»). Then the deciding blocks in order — a
-//! condition, «да» to its action with the action's parameters, «нет» down to the next — ending in
-//! «ничего не подошло: стоит». Blocks keep their numbers in the program. On the track it lives by
-//! now the path of the current tick is lit: the settings that applied, the blocks whose condition
-//! held but whose action could not be done («не вышло»), and the block that decided. Deciding
-//! blocks after one that always fires are faded: their turn never comes. Hovering a box tells
-//! what it checks or does.
+//! tabs, the juvenile track (while it grows) and the adult one, and the modes on in the header. The
+//! settings come first, as the engine runs them: of each kind the first whose conditions hold
+//! applies, wherever it stands in the program (a pill-shaped box, its down arrow «дальше»). Then the
+//! deciding blocks in order — a condition of up to three tests, «да» to its action with the
+//! action's parameters, «нет» down to the next — ending in «ничего не подошло: стоит». Blocks keep
+//! their numbers in the program. On the track it lives by now the path of the current tick is lit:
+//! the settings that applied, the blocks whose condition held but whose action could not be done
+//! («не вышло»), and the block that decided. Deciding blocks after one that always fires are
+//! faded: their turn never comes. Hovering a box tells what it checks or does.
 
 use eframe::egui::text::LayoutJob;
 use eframe::egui::{self, Align2, Color32, FontId, Galley, Pos2, Rect, Sense, Shape, Stroke, Vec2};
+use life_core::creature::program::{MODES, ticks_word};
 use life_core::creature::strategy::VARIANTS as STRATEGIES;
 use life_core::creature::{ADULT, Action, Block, JUVENILE, Program};
 use life_core::genome::creature::Gene;
@@ -25,8 +26,8 @@ const COND_W: f32 = 236.0;
 const GAP: f32 = 58.0;
 const ACTION_W: f32 = 190.0;
 const WIDTH: f32 = NUMBER_W + COND_W + GAP + ACTION_W + 6.0;
-/// A condition box's height (an action box is at least as tall) and the room below a row for the
-/// «нет» arrow.
+/// A condition box's least height (a row is as tall as its taller box) and the room below a row
+/// for the «нет» arrow.
 const BOX_H: f32 = 46.0;
 const ARROW_H: f32 = 24.0;
 const START_H: f32 = 22.0;
@@ -83,15 +84,27 @@ pub(crate) fn behaviour_window(ctx: &egui::Context, open: &mut bool, s: &Selecte
                  удаление, новый блок. Числа ещё и дрейфуют понемногу у каждого мутирующего ребёнка — \
                  это мутацией не считается.",
             );
+            let on: Vec<String> = (0..MODES)
+                .filter(|&k| s.modes[k] > 0)
+                .map(|k| {
+                    let left = s.modes[k].min(u64::from(u16::MAX)) as u16;
+                    format!("{} (ещё {left} {})", k + 1, ticks_word(left))
+                })
+                .collect();
+            let modes = if on.is_empty() { "все выключены".to_string() } else { on.join(", ") };
+            ui.label(format!("Режимы: {modes}")).on_hover_text(
+                "Режим — память программы: установка «режим» включает его на время, условие «режим» \
+                 проверяет. Режимы общие для обеих дорожек.",
+            );
             let live = tab == s.stage;
             let note = if live {
-                "Каждый тик: сначала все установки (овалы), чьё условие выполнено, где бы они ни стояли; \
-                 потом решает первый блок, чьё условие выполнено и чьё действие возможно. Жёлтым — путь \
-                 этого тика."
+                "Каждый тик: сначала установки (овалы) — из каждого рода первая, чьё условие выполнено, \
+                 где бы она ни стояла; потом решает первый блок, чьё условие выполнено и чьё действие \
+                 возможно. Жёлтым — путь этого тика."
             } else {
-                "Каждый тик: сначала все установки (овалы), чьё условие выполнено, где бы они ни стояли; \
-                 потом решает первый блок, чьё условие выполнено и чьё действие возможно. Сейчас живёт \
-                 по другой дорожке (●)."
+                "Каждый тик: сначала установки (овалы) — из каждого рода первая, чьё условие выполнено, \
+                 где бы она ни стояла; потом решает первый блок, чьё условие выполнено и чьё действие \
+                 возможно. Сейчас живёт по другой дорожке (●)."
             };
             ui.add(egui::Label::new(egui::RichText::new(note).color(MUTED)).wrap());
             ui.add_space(4.0);
@@ -188,7 +201,19 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
     let order: Vec<usize> = settings.iter().chain(&deciders).copied().collect();
     let texts: Vec<ActionText> =
         order.iter().map(|&i| ActionText::of(ui, &blocks[i], if p.live(i) { TEXT } else { MUTED })).collect();
-    let box_h: Vec<f32> = texts.iter().map(|t| BOX_H.max(t.height() + 12.0)).collect();
+    // a condition of three tests wraps to more lines: its box grows, and the row with it
+    let conditions: Vec<Arc<Galley>> = order
+        .iter()
+        .map(|&i| {
+            let b = &blocks[i];
+            let dead = (!b.action.is_setting() && i >= reachable) || b.off();
+            let color = if dead { MUTED } else { TEXT };
+            layout(ui, format!("{}?", b.condition_label()), 13.0, color, COND_W - 30.0)
+        })
+        .collect();
+    let cond_h: Vec<f32> = conditions.iter().map(|g| BOX_H.max(g.size().y + 14.0)).collect();
+    let box_h: Vec<f32> =
+        texts.iter().zip(&cond_h).map(|(t, &c)| c.max(BOX_H.max(t.height() + 12.0))).collect();
     // the sections' captions: above the settings, if any, and above the decisions
     let captions = usize::from(!settings.is_empty()) + 1;
     let rows: f32 = box_h.iter().map(|h| h + ARROW_H).sum();
@@ -232,7 +257,7 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
     painter.arrow(Pos2::new(mid, start.bottom()), Vec2::new(0.0, first - start.bottom() - 2.0), start_stroke);
     for (y, of_settings) in caption_at {
         let caption = if of_settings {
-            "сначала — все установки"
+            "сначала — установки"
         } else {
             "потом — первый, кто смог"
         };
@@ -245,9 +270,10 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
         );
     }
 
-    for (k, (&i, text)) in order.iter().zip(texts).enumerate() {
+    for (k, ((&i, text), galley)) in order.iter().zip(texts).zip(conditions).enumerate() {
         let b = &blocks[i];
         let h = box_h[k];
+        let ch = cond_h[k];
         let top = tops[k];
         let next = tops.get(k + 1).copied().unwrap_or(end_top);
         let setting = b.action.is_setting();
@@ -261,7 +287,7 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
         let tried = !decided && path.is_some_and(|p| !setting && Path::has(p.tried, i));
         // the settings are all looked at; the deciding blocks down to the one that decided
         let on_path = depth.is_some_and(|d| setting || i <= d);
-        let cond = Rect::from_min_size(Pos2::new(cond_x, top), Vec2::new(COND_W, BOX_H));
+        let cond = Rect::from_min_size(Pos2::new(cond_x, top), Vec2::new(COND_W, ch));
         let action = Rect::from_min_size(Pos2::new(action_x, top), Vec2::new(ACTION_W, h));
 
         // the number, and a marker at the block that decided
@@ -301,7 +327,6 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
         };
         painter.add(Shape::convex_polygon(hexagon, CARD, cond_stroke));
         let text_color = if dead { MUTED } else { TEXT };
-        let galley = layout(ui, format!("{}?", b.condition_label()), 13.0, text_color, COND_W - 30.0);
         painter.galley(Pos2::new(cond.center().x, cy - galley.size().y / 2.0), galley, text_color);
         let about: Vec<String> = b
             .when
@@ -364,7 +389,10 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
             action_hint.push_str(&format!("\nЗдесь: {args}."));
         }
         if setting {
-            action_hint.push_str("\nУстановка не решает ход и действует, где бы ни стояла в программе.");
+            action_hint.push_str(
+                "\nУстановка не решает ход и действует, где бы ни стояла в программе; из установок \
+                 одного рода действует первая, чьё условие выполнено.",
+            );
         } else if !b.action.never_fails() {
             action_hint.push_str("\nЕсли сделать нельзя — решает следующий блок.");
         }
@@ -388,7 +416,7 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
             "нет"
         };
         painter.text(
-            Pos2::new(mid + 6.0, cond.bottom() + (h - BOX_H + ARROW_H) / 2.0),
+            Pos2::new(mid + 6.0, cond.bottom() + (h - ch + ARROW_H) / 2.0),
             Align2::LEFT_CENTER,
             word,
             FontId::proportional(12.0),

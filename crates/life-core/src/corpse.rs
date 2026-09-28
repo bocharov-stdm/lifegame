@@ -25,7 +25,6 @@ use crate::space::Space;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Corpse {
     pub owner: u64,
-    pub flock: u64,
     pub x: f64,
     /// Where it lies now: `y0` while fresh, then sinking to `bottom`.
     pub y: f64,
@@ -130,7 +129,6 @@ impl Corpse {
         let initial = meat(v);
         Self {
             owner: v.id,
-            flock: v.flock,
             x: v.x,
             y: v.y,
             y0: v.y,
@@ -342,7 +340,6 @@ mod tests {
             Rng::new(1),
         );
         v.id = 7;
-        v.flock = 3;
         v
     }
 
@@ -358,7 +355,7 @@ mod tests {
         assert_eq!(c.initial, 40.0 + grown);
         v.energy = 0.0;
         assert_eq!(Corpse::from_creature(&v, 12).initial, grown, "a starved body");
-        assert_eq!((c.owner, c.flock, c.born), (7, 3, 12));
+        assert_eq!((c.owner, c.born), (7, 12));
         v.birth_size = v.pheno.size;
         v.energy = 3.0;
         assert_eq!(Corpse::from_creature(&v, 12).initial, 3.0, "a newborn is its tank");

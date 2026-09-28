@@ -442,7 +442,6 @@ fn спокойный_профиль_работает_на_паузе() {
         h.state_mut().side_open = false;
         settle(h);
         let tick = h.state().view.frame.as_ref().unwrap().tick;
-        assert!(h.query_by_label("Стаи").is_none(), "flocks are off: no button for them");
         h.get_by_label("Спокойнее").click();
         for _ in 0..100 {
             h.step();
@@ -460,190 +459,8 @@ fn спокойный_профиль_работает_на_паузе() {
 }
 
 #[test]
-fn flock_scenes_and_card_without_a_window() {
-    use life_core::{CreatureGenome, Rules, World, genome::creature::Gene, plant::Plant, social::Activity};
-    let _gpu = gpu();
-    let fixture = || {
-        let mut w = World::new(&WorldConfig {
-            seed: 42,
-            n_creatures: Some(0),
-            rules: Rules::default().with("plant_rate", 0.0).unwrap(),
-            ..Default::default()
-        });
-        for (x, y) in [(2800.0, 1900.0), (2900.0, 2000.0), (3000.0, 2100.0), (3100.0, 1900.0)] {
-            w.spawn(CreatureGenome::BASE, x, y, Some(65.0));
-        }
-        for v in &mut w.creatures {
-            v.flock = 1;
-            v.reproduction_wait = 10000;
-        }
-        w
-    };
-    let mut w = fixture();
-    for x in [2870.0, 2990.0, 3070.0] {
-        w.plants.push(Plant::at(x, 2000.0));
-    }
-    w.step();
-    let mut scenes = vec![("кормёжка", w.clone())];
-    for _ in 0..240 {
-        w.step();
-    }
-    assert!(w.plants.is_empty());
-    scenes.push(("переход", w));
-    let mut w = fixture();
-    // a big meat-eater: a herbivore would frighten nobody
-    w.spawn(
-        CreatureGenome::BASE.with(Gene::Size, 120.0).with(Gene::Diet, CARNIVORE),
-        2950.0,
-        2000.0,
-        Some(180.0),
-    );
-    let hunter = w.creatures.last_mut().unwrap();
-    hunter.age = hunter.pheno.lifespan - 12.0;
-    let (mut alarm, mut back) = (false, false);
-    for _ in 0..200 {
-        w.step();
-        if !alarm && w.creatures.iter().any(|v| v.mind.social.activity == Activity::Alarm) {
-            scenes.push(("тревога", w.clone()));
-            alarm = true;
-        }
-        // after the alarm the members walk back into their circle
-        if alarm
-            && !back
-            && w.creatures.iter().all(|v| v.mind.social.activity != Activity::Alarm)
-            && w.creatures.iter().any(|v| v.mind.social.activity == Activity::Gathering)
-        {
-            scenes.push(("возврат", w.clone()));
-            back = true;
-        }
-    }
-    assert!(alarm && back, "after the threat is gone the flock returns to its circle");
-    // two hard flocks side by side fight for room
-    let mut w = fixture();
-    w.creatures.clear();
-    let hard = CreatureGenome::BASE.with(Gene::Territoriality, 2.0);
-    for (i, x) in [2500.0, 2540.0, 2580.0, 2620.0, 3380.0, 3420.0, 3460.0, 3500.0].into_iter().enumerate() {
-        w.spawn(hard, x, 1970.0 + (i % 2) as f64 * 60.0, Some(65.0));
-    }
-    let n = w.creatures.len();
-    let (left, right) = (w.creatures[n - 8].flock, w.creatures[n - 4].flock);
-    for (k, v) in w.creatures[n - 8..].iter_mut().enumerate() {
-        v.flock = if k < 4 { left } else { right };
-        v.reproduction_wait = 10000;
-    }
-    life_core::flock::update(&mut w.flocks, &mut w.creatures, &w.space, 42, false);
-    let sides: std::collections::BTreeMap<u64, usize> = [(left, 4), (right, 4)].into();
-    w.battles.active.push(life_core::battle::Battle { id: 0, since: w.tick, sides });
-    for tag in [left, right] {
-        w.flocks.get_mut(&tag).unwrap().battle = Some(0);
-    }
-    scenes.push(("бой-стай", w));
-    for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
-        let mut h = harness(size);
-        h.state_mut().side_open = false;
-        h.state_mut().flock_colors = true;
-        for (name, w) in &scenes {
-            let generation = h.state().view.frame.as_ref().unwrap().world_gen;
-            h.state_mut().sim.send(Command::TestWorld(Box::new(w.clone())));
-            for _ in 0..200 {
-                h.step();
-                if h.state()
-                    .view
-                    .frame
-                    .as_ref()
-                    .is_some_and(|f| f.world_gen > generation && !f.flock_areas.is_empty())
-                {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            assert!(h.state().view.frame.as_ref().unwrap().world_gen > generation);
-            if let Some(cam) = &mut h.state_mut().view.camera {
-                let (sx, sy) = cam.to_screen(3000.0, 2000.0);
-                cam.zoom_at(sx, sy, 2.5);
-                cam.center_on(3000.0, 2000.0);
-            }
-            std::thread::sleep(std::time::Duration::from_millis(750));
-            settle(&mut h);
-            shot(&mut h, &format!("поведение-{name}-{tag}"));
-        }
-        let area = h.state().view.frame.as_ref().unwrap().flock_areas[0].clone();
-        // Точка внутри области, но вне тел: выбор именно стаи.
-        let w = &scenes.last().unwrap().1;
-        let point = (0..36)
-            .map(|i| {
-                let a = i as f64 * std::f64::consts::TAU / 36.0;
-                (area.x + area.radius * 0.7 * a.cos(), area.y + area.radius * 0.7 * a.sin())
-            })
-            .find(|&(x, y)| w.pick(x, y, 0.0).is_none())
-            .unwrap();
-        h.state_mut().sim.send(Command::Pick { x: point.0, y: point.1, radius: 0.0 });
-        h.state_mut().side_open = true;
-        h.state_mut().side_tab = SideTab::Creature;
-        for _ in 0..100 {
-            h.step();
-            if h.state().view.frame.as_ref().unwrap().selected_flock.is_some() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        assert_eq!(h.state().view.frame.as_ref().unwrap().selected_flock.as_ref().unwrap().id, area.id);
-        settle(&mut h);
-        check_layout(&h, size, "карточка стаи", None);
-        shot(&mut h, &format!("карточка-стаи-{tag}"));
-        let v = &w.creatures[0];
-        h.state_mut().sim.send(Command::Pick { x: v.x, y: v.y, radius: 0.0 });
-        for _ in 0..100 {
-            h.step();
-            if h.state().view.frame.as_ref().unwrap().selected.is_some() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        assert!(h.state().view.frame.as_ref().unwrap().selected_flock.is_none());
-        assert_eq!(h.state().view.frame.as_ref().unwrap().selected.unwrap().id, v.id);
-
-        let territory = fixture();
-        let generation = h.state().view.frame.as_ref().unwrap().world_gen;
-        h.state_mut().sim.send(Command::TestWorld(Box::new(territory.clone())));
-        for _ in 0..100 {
-            h.step();
-            if h.state()
-                .view
-                .frame
-                .as_ref()
-                .is_some_and(|f| f.world_gen > generation && !f.flock_areas.is_empty())
-            {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        // the circle is the territory: a click near its edge, away from bodies, picks the flock
-        let area = h.state().view.frame.as_ref().unwrap().flock_areas[0].clone();
-        let outside_group = (0..72)
-            .map(|i| {
-                let angle = i as f64 * std::f64::consts::TAU / 72.0;
-                (area.x + area.radius * 0.9 * angle.cos(), area.y + area.radius * 0.9 * angle.sin())
-            })
-            .find(|&(x, y)| territory.pick(x, y, 0.0).is_none())
-            .expect("a part of the circle without bodies");
-        h.state_mut().sim.send(Command::Pick { x: outside_group.0, y: outside_group.1, radius: 0.0 });
-        for _ in 0..100 {
-            h.step();
-            if h.state().view.frame.as_ref().unwrap().selected_flock.is_some() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        assert_eq!(h.state().view.frame.as_ref().unwrap().selected_flock.as_ref().unwrap().id, area.id);
-        settle(&mut h);
-        check_layout(&h, size, "территория стаи", None);
-        shot(&mut h, &format!("территория-стаи-{tag}"));
-    }
-}
-
-#[test]
 fn следы_залпа_и_труп_рисуются_без_окна() {
+    use life_core::creature::{Program, Programs, Strategy};
     use life_core::{CreatureGenome, Rules, Shot, World, corpse::Corpse, genome::creature::Gene};
     let _gpu = gpu();
     let mut scene = World::new(&WorldConfig {
@@ -653,16 +470,9 @@ fn следы_залпа_и_труп_рисуются_без_окна() {
         ..Default::default()
     });
     for x in [1000.0, 1020.0, 1040.0] {
-        scene.spawn(
-            CreatureGenome::BASE.with(Gene::Size, 40.0).with(Gene::Shooter, 1.0),
-            x,
-            1000.0,
-            Some(90.0),
-        );
-    }
-    let tag = scene.creatures[0].flock;
-    for v in &mut scene.creatures {
-        v.flock = tag;
+        scene.spawn(CreatureGenome::BASE.with(Gene::Size, 40.0), x, 1000.0, Some(90.0));
+        scene.creatures.last_mut().unwrap().programs =
+            Programs::both(Program::founder(Strategy::Standard, (5, 100), true));
     }
     scene.spawn(CreatureGenome::BASE.with(Gene::Size, 80.0), 1140.0, 1000.0, Some(130.0));
     scene.spawn(CreatureGenome::BASE, 1090.0, 1050.0, Some(65.0));
@@ -671,11 +481,9 @@ fn следы_залпа_и_труп_рисуются_без_окна() {
     for from in [(1000.0, 1000.0), (1020.0, 1000.0), (1040.0, 1000.0)] {
         scene.shots.push(Shot { from, to: (1140.0, 1000.0), tick: 0 });
     }
-    life_core::flock::update(&mut scene.flocks, &mut scene.creatures, &scene.space, 43, false);
     for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
         let mut h = harness(size);
         h.state_mut().side_open = false;
-        h.state_mut().flock_colors = true;
         let generation = h.state().view.frame.as_ref().unwrap().world_gen;
         h.state_mut().sim.send(Command::TestWorld(Box::new(scene.clone())));
         for _ in 0..100 {
@@ -688,7 +496,6 @@ fn следы_залпа_и_труп_рисуются_без_окна() {
         let frame = h.state().view.frame.as_ref().unwrap();
         assert_eq!(frame.shots.len(), 3);
         assert_eq!(frame.corpses.len(), 1);
-        assert_eq!(frame.flock_areas.len(), 1);
         if let Some(cam) = &mut h.state_mut().view.camera {
             let (sx, sy) = cam.to_screen(1070.0, 1020.0);
             cam.zoom_at(sx, sy, 5.0);
@@ -696,89 +503,6 @@ fn следы_залпа_и_труп_рисуются_без_окна() {
         }
         h.step();
         shot(&mut h, &format!("залп-и-труп-{tag}"));
-    }
-}
-
-#[test]
-fn последовательность_обхода_предупреждения_залпа_и_кормёжки_без_окна() {
-    use life_core::{CreatureGenome, Rules, World, flock, genome::creature::Gene};
-    let _gpu = gpu();
-    let mut world = World::new(&WorldConfig {
-        seed: 43,
-        n_creatures: Some(0),
-        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
-        ..Default::default()
-    });
-    // meat-eaters: they eat the corpse they leave
-    let shooter = CreatureGenome::BASE
-        .with(Gene::Shooter, 1.0)
-        .with(Gene::FirePreference, 100.0)
-        .with(Gene::FireReserve, 0.0)
-        .with(Gene::Diet, CARNIVORE);
-    for x in [1000.0, 1020.0, 1040.0] {
-        world.spawn(shooter, x, 1000.0, Some(100.0));
-    }
-    let home = world.creatures[0].flock;
-    for v in &mut world.creatures[..3] {
-        v.flock = home;
-    }
-    let enemy = world.spawn(CreatureGenome::BASE.with(Gene::Size, 80.0), 1140.0, 1000.0, Some(120.0));
-    world.creatures[3].health = 0.8;
-    flock::update(&mut world.flocks, &mut world.creatures, &world.space, 43, false);
-    let mut scenes = vec![("граница", world.clone())];
-    let before = world.creatures[3].x;
-    world.step();
-    assert!(world.creatures[3].x > before, "чужак уходит из чужой области");
-    scenes.push(("обход", world));
-
-    let mut warning = scenes[0].1.clone();
-    warning.tick = 30;
-    warning.territory.encounters.insert((home, enemy), 0);
-    let targets = warning.territory.prepare(&mut warning.flocks, &mut warning.creatures, &warning.space, 30);
-    assert_eq!(warning.flocks[&home].warned, 1);
-    assert_eq!(targets.iter().filter(|&&target| target == Some(enemy)).count(), 3);
-    scenes.push(("предупреждение", warning.clone()));
-    warning.step();
-    assert_eq!(warning.counters.ranged_shots, 3);
-    assert_eq!(warning.corpses.len(), 1);
-    scenes.push(("залп-и-труп", warning.clone()));
-    let corpse = &warning.corpses[0];
-    warning.creatures[0].x = corpse.x;
-    warning.creatures[0].y = corpse.y;
-    warning.creatures[0].energy = 20.0;
-    warning.step();
-    assert!(warning.counters.meat_bites > 0);
-    scenes.push(("кормёжка", warning));
-
-    for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
-        let mut h = harness(size);
-        h.state_mut().side_open = false;
-        h.state_mut().flock_colors = true;
-        for (name, scene) in &scenes {
-            let generation = h.state().view.frame.as_ref().unwrap().world_gen;
-            h.state_mut().sim.send(Command::TestWorld(Box::new(scene.clone())));
-            for _ in 0..100 {
-                h.step();
-                if h.state().view.frame.as_ref().is_some_and(|f| f.world_gen > generation) {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            let frame = h.state().view.frame.as_ref().unwrap();
-            assert!(frame.world_gen > generation);
-            assert_eq!(frame.tick, scene.tick);
-            if *name == "залп-и-труп" {
-                assert_eq!(frame.shots.len(), 3);
-                assert_eq!(frame.corpses.len(), 1);
-            }
-            if let Some(cam) = &mut h.state_mut().view.camera {
-                let (sx, sy) = cam.to_screen(1070.0, 1000.0);
-                cam.zoom_at(sx, sy, 9.0);
-                cam.center_on(1070.0, 1000.0);
-            }
-            settle(&mut h);
-            shot(&mut h, &format!("территория-{name}-{tag}"));
-        }
     }
 }
 
@@ -976,7 +700,7 @@ fn режимы_рендера_и_размер_трупа_без_окна() {
         let f = h.state().view.frame.as_ref().unwrap();
         assert!(!f.render_world && !f.dots && f.selected.is_some());
         assert!(h.state().view.instances().is_empty());
-        assert!(f.corpses.is_empty() && f.shots.is_empty() && f.flock_areas.is_empty());
+        assert!(f.corpses.is_empty() && f.shots.is_empty());
         assert!(f.density.is_none() && f.minimap.is_none());
         h.state_mut().side_open = true;
         h.state_mut().side_tab = SideTab::Creature;
@@ -1048,6 +772,8 @@ fn поведение_выбранного_помещается_в_окно() {
         assert_eq!(full.blocks().len(), MAX_BLOCKS);
         // a founder is grown: it lives by the adult track, the mutated one
         w.creatures[0].programs = [Program::LURKER, full].into();
+        // a mode on for a while: the header lists it
+        w.creatures[0].mind.modes[1] = 1000;
         let cases = [(w.creatures[1].id, "шаблон"), (w.creatures[0].id, "мутант")];
         let generation = h.state().view.frame.as_ref().unwrap().world_gen;
         h.state_mut().sim.send(Command::TestWorld(Box::new(w)));
@@ -1090,7 +816,7 @@ fn поведение_выбранного_помещается_в_окно() {
                     h.get_by_label(track).click();
                     settle(h);
                 }
-                for text in ["Поведение №", "Шаблон:", "Мутаций от шаблона", "Каждый тик", track]
+                for text in ["Поведение №", "Шаблон:", "Мутаций от шаблона", "Режимы:", "Каждый тик", track]
                 {
                     let r = h.get_by_label_contains(text).rect();
                     assert!(window.contains_rect(r), "{name}, {tag}: «{text}» out of the window: {r:?}");

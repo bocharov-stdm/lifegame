@@ -5,7 +5,8 @@ table of genes that mutates when it divides. Nobody scripts selection: the genom
 themselves survive. The game, the headless runs and the balance report are Rust; the earlier
 Python and pygame version is kept under the tag `python-final`.
 
-The current model is `life-behavior/13` (behaviour programs on the ocean reform).
+The current model is `life-behavior/14` (every behaviour in evolving programs, on the ocean
+reform).
 [CLAUDE.md](CLAUDE.md) is its exact
 description and the project's working rules; [BEHAVIOR.md](BEHAVIOR.md) records how the model got
 here and how each stage was checked.
@@ -26,20 +27,21 @@ here and how each stage was checked.
   decays down to the bones; bones feed only the scavenger.
 - **The deep is cold** below a thermocline. The `cold_blood` gene makes a body cheaper and slower
   there.
-- **Behaviour is a program that evolves**: an ordered list of blocks «if a test and a test → an
-  action with its parameters», such as: flee a hunter closer than a third of its sight, hunt prey 1.5 times
-  smaller with some caution, rest when full, wander at a third of its speed, sleep when hungry. The
-  settings (eat foreign food, drive off rivals, how far to go for food) apply first; then the first
-  block that fires decides the step. A creature has two programs, one while it grows and one when
-  grown. On division a child's numbers drift a little, like genes, and now and then a program
-  mutates: a number moves, a test or an action changes, a block is swapped, copied, deleted or
-  added. Founders start from a template (standard or lurker).
+- **Behaviour is a program that evolves**: an ordered list of blocks «if up to three tests → an
+  action with its parameters», such as: flee a hunter closer than a third of its sight, hunt prey
+  1.5 times smaller with some caution, defend its child, rest when full, wander at a third of its
+  speed, sleep when hungry. The settings apply first — its layer, when it divides and heals, whether
+  it eats on the move, spares its children or shoots, eats foreign food, drives off rivals, and
+  modes, the program's memory; then the first block that fires decides the step. Everything a
+  creature does is in its program: without a division setting it never divides. A creature has two
+  programs, one while it grows and one when grown. On division a child's numbers drift a little,
+  like genes, and now and then a program mutates: a number moves, a test or an action changes, a
+  block is swapped, copied, deleted or added. Founders start from a template (standard or lurker).
   Behaviour costs nothing: it is held back by what it does, never by upkeep. The game draws the
   selected creature's programs as flowcharts (B).
 - **Energy is never made from nothing**: it enters the world only in plants and passes along the
   chain, losing some at every step.
-- Flocks exist in the code but are switched off (`config::FLOCKS = false`); every creature is a
-  loner.
+- Every creature is a loner: flocks were removed (the tag `flocks-final` keeps them).
 
 ## How to run
 
@@ -85,7 +87,7 @@ cargo run -p life-report --release -- --rule plant_energy=80 --rule cost_scale=3
 cargo run -p life-report --release -- --scale 100 --shape 1:1       # bigger and square
 cargo run -p life-report --release -- --mix 1 1 --diet-mix 50 0 0 50   # strategy and founder diet mixes
 cargo run -p life-report --release -- --ticks 20000 --maps 3        # story and text maps
-cargo run -p life-report --release -- --ticks 5000 --json run.json  # everything as JSON (life-report/11)
+cargo run -p life-report --release -- --ticks 5000 --json run.json  # everything as JSON (life-report/12)
 ```
 
 Seeds run in parallel. Every run is capped by ticks, a population ceiling, a work budget and a

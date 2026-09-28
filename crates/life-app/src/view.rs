@@ -15,7 +15,6 @@ use crate::frame::{self, Area, CREATURE_COLOR, Frame, Instance, Raster, ViewRequ
 use crate::render::Circles;
 use crate::sim::{Command, SimHandle};
 use crate::theme::{ACCENT, BG, DANGER, LINE, MUTED, rgb};
-use life_core::flock::Territoriality;
 use life_core::flora::Patch;
 
 /// Полос глубины на фоне: у поверхности светлее, на глубине темнее.
@@ -27,8 +26,6 @@ const ANIMATION: f32 = 0.7;
 pub const PICK_RADIUS: f64 = 10.0;
 /// Меньше этого по стороне, точек экрана, — не область, а промах мышью.
 const MIN_AREA: f64 = 4.0;
-/// A flock circle smaller than this on screen, points, gets no label.
-const MIN_LABEL_CIRCLE: f32 = 14.0;
 
 /// Что случилось в мире по мыши за кадр.
 pub enum Click {
@@ -54,8 +51,6 @@ pub struct WorldView {
     interval: f64,
     /// Выделенное в прошлом кадре: кольцо едет вместе с кружком.
     prev_selected: Option<(u64, f64, f64)>,
-    /// Flock circles of the previous frame (x, y, radius): circles glide like the bodies.
-    prev_circles: std::collections::BTreeMap<u64, (f64, f64, f64)>,
     /// The world's food patches, as the last frame that carried them had them.
     patches: Arc<[Patch]>,
     /// Перетаскивание рисует область, а не двигает камеру (инструмент «Область»).
@@ -148,11 +143,6 @@ impl WorldView {
         }
         self.arrived = Some(now);
         self.prev_selected = self.frame.as_ref().and_then(|old| old.selected).map(|s| (s.id, s.x, s.y));
-        self.prev_circles = self
-            .frame
-            .as_ref()
-            .map(|old| old.flock_areas.iter().map(|a| (a.id, (a.x, a.y, a.radius))).collect())
-            .unwrap_or_default();
 
         self.density = f.density.take().map(|r| {
             let tex = match self.density.take() {
@@ -177,7 +167,6 @@ impl WorldView {
         if self.frame.as_ref().is_some_and(|old| old.world_gen != f.world_gen) {
             self.camera = None;
             self.prev_selected = None;
-            self.prev_circles.clear();
         }
         self.frame = Some(f);
     }
@@ -337,56 +326,9 @@ impl WorldView {
 
         // Food patches: a faint tint of the sea floor under the sprouts, so the islands read as
         // islands. Denser patches are a little darker green.
-        let flock_painter = painter.with_clip_rect(world_rect.intersect(rect));
+        let world_painter = painter.with_clip_rect(world_rect.intersect(rect));
         if !f.dots {
-            paint_patches(&flock_painter, cam, rect, &self.patches);
-        }
-
-        // Flock circles under the bodies, clipped to the world. A circle glides between frames
-        // like the bodies; its stroke tells the territoriality, red is a battle for room.
-        let mut labels = Vec::new();
-        for flock in &f.flock_areas {
-            let (fx, fy, fr) = match self.prev_circles.get(&flock.id) {
-                Some(&(px, py, pr)) => {
-                    let k = k as f64;
-                    (px + (flock.x - px) * k, py + (flock.y - py) * k, pr + (flock.radius - pr) * k)
-                }
-                None => (flock.x, flock.y, flock.radius),
-            };
-            let (x, y) = cam.to_screen(fx, fy);
-            let center = pos(x, y);
-            let radius = ((fr * cam.zoom) as f32).max(3.0);
-            if !Rect::from_center_size(center, Vec2::splat(radius * 2.0)).intersects(rect) {
-                continue;
-            }
-            let [r, g, b] = flock.color;
-            let (width, alpha) = match flock.details.territoriality {
-                Territoriality::None => (0.8, 90),
-                Territoriality::Moderate => (1.4, 150),
-                Territoriality::Hard => (2.4, 210),
-            };
-            let stroke = if flock.details.battle.is_some() {
-                DANGER
-            } else if flock.details.warned > 0 {
-                Color32::from_rgba_unmultiplied(255, 156, 92, 210)
-            } else {
-                Color32::from_rgba_unmultiplied(r, g, b, alpha)
-            };
-            flock_painter.circle_filled(center, radius, Color32::from_rgba_unmultiplied(r, g, b, 18));
-            flock_painter.circle_stroke(center, radius, Stroke::new(width, stroke));
-            flock_painter.circle_filled(center, 2.5, rgb(flock.color));
-            let mut text = format!("№{} · {} · {}", flock.id, flock.members, flock.details.kind.label());
-            if flock.details.battle.is_some() {
-                text.push_str(" · бой");
-            }
-            let galley = flock_painter.layout_no_wrap(text, FontId::proportional(11.0), rgb(flock.color));
-            labels.push((LabelItem { center, radius, size: galley.size(), weight: flock.members }, galley));
-        }
-        let items: Vec<_> = labels.iter().map(|(item, _)| *item).collect();
-        for ((_, galley), place) in labels.into_iter().zip(place_labels(&items)) {
-            if let Some(at) = place {
-                flock_painter.galley(at.min, galley, MUTED);
-            }
+            paint_patches(&world_painter, cam, rect, &self.patches);
         }
 
         for corpse in &f.corpses {
@@ -408,9 +350,9 @@ impl WorldView {
                 );
                 continue;
             }
-            flock_painter.circle_filled(center, radius, fill);
+            world_painter.circle_filled(center, radius, fill);
             let rim = |c: u8| c.saturating_add(50);
-            flock_painter.circle_stroke(
+            world_painter.circle_stroke(
                 center,
                 radius,
                 Stroke::new(1.0, Color32::from_rgba_unmultiplied(rim(r), rim(g), rim(b), alpha)),
@@ -617,74 +559,10 @@ impl WorldView {
     }
 }
 
-/// A flock label to place above its circle, in screen points.
-#[derive(Clone, Copy, Debug)]
-struct LabelItem {
-    center: Pos2,
-    radius: f32,
-    size: Vec2,
-    /// Bigger flocks get their labels first.
-    weight: usize,
-}
-
-/// Where flock labels go, bigger flocks first: a label over one already placed, or of a circle
-/// under `MIN_LABEL_CIRCLE` points, is left out.
-fn place_labels(items: &[LabelItem]) -> Vec<Option<Rect>> {
-    let mut order: Vec<usize> = (0..items.len()).collect();
-    order.sort_by_key(|&i| (std::cmp::Reverse(items[i].weight), i));
-    let mut placed: Vec<Rect> = Vec::new();
-    let mut out = vec![None; items.len()];
-    for i in order {
-        let it = &items[i];
-        if it.radius < MIN_LABEL_CIRCLE {
-            continue;
-        }
-        let bottom = it.center.y - it.radius.min(80.0) - 7.0;
-        let rect = Rect::from_min_size(Pos2::new(it.center.x - it.size.x / 2.0, bottom - it.size.y), it.size);
-        if placed.iter().any(|p| p.intersects(rect)) {
-            continue;
-        }
-        placed.push(rect);
-        out[i] = Some(rect);
-    }
-    out
-}
-
 /// Где выделенное сейчас на экране: между прошлым кадром и новым.
 fn between(prev: Option<(u64, f64, f64)>, s: &frame::Selected, k: f32) -> (f64, f64) {
     match prev {
         Some((id, px, py)) if id == s.id => (px + (s.x - px) * k as f64, py + (s.y - py) * k as f64),
         _ => (s.x, s.y),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn item(x: f32, y: f32, radius: f32, weight: usize) -> LabelItem {
-        LabelItem { center: Pos2::new(x, y), radius, size: Vec2::new(90.0, 14.0), weight }
-    }
-
-    #[test]
-    fn labels_never_overlap_bigger_flocks_come_first_tiny_circles_go_without() {
-        let items = [
-            item(100.0, 300.0, 40.0, 5),
-            item(130.0, 300.0, 40.0, 9), // over the first one, but bigger: it wins
-            item(400.0, 300.0, 40.0, 3),
-            item(700.0, 300.0, 10.0, 50), // too small on screen
-        ];
-        let placed = place_labels(&items);
-        assert!(placed[0].is_none() && placed[1].is_some() && placed[2].is_some());
-        assert!(placed[3].is_none());
-        let rects: Vec<_> = placed.iter().flatten().collect();
-        for (i, a) in rects.iter().enumerate() {
-            for b in &rects[i + 1..] {
-                assert!(!a.intersects(**b), "labels overlap: {a:?} {b:?}");
-            }
-        }
-        // a label sits above its circle
-        let r = placed[2].unwrap();
-        assert!(r.max.y <= 300.0 - 40.0 && (r.center().x - 400.0).abs() < 1e-3);
     }
 }

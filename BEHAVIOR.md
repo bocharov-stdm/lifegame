@@ -3,9 +3,75 @@
 This file is the history of the behaviour model, newest stage first: what changed at each stage
 and how it was checked. The exact current model is in `CLAUDE.md`; everything below the first
 section describes earlier models and is kept as a record (flocks, cannibalism as a rule and the
-`--rule cannibalism` commands no longer exist or are switched off).
+`--rule cannibalism` commands no longer exist).
 
-## Behaviour programs (`life-behavior/13`, this stage)
+## Every behaviour in blocks, flocks removed (`life-behavior/14`, this stage)
+
+Model `life-behavior/14`, format `life-report/12`.
+
+After `/13` behaviour still lived outside the blocks: genes (the layer `min_y`, `max_y`,
+`layer_bound`; shooting `shooter`, `fire_preference`, `fire_reserve`; division `repro_threshold`,
+`repro_share`; `care`; the flock genes), world logic (automatic healing, eating whatever it
+touches, the social layer's held course and turn limit, the kept plant, the parent's aid, kin
+grace, flight straight away at full speed, the nearest plant) — and the language was too weak for
+complex strategies (no memory, two tests, few senses). The user: «всё должно быть зашито в блоки…
+возможно придётся апгрейдить сильно, но так надо сделать». Decisions from three question rounds:
+division, healing, eating on the move and care for children into blocks; the layer and shooting
+as settings with their genes deleted; memory as modes; flocks removed now; three tests a block;
+senses of food and prey, body and age, place; parameters of flight, hunt, plant choice and the
+step's smoothness; structural mutation stays 5%; of two settings of a kind the first that applies
+wins.
+
+What changed:
+- **Flocks removed** (tag `flocks-final` on the commit before): flocks, flock battles, territories,
+  the social layer, kin grace, the six flock genes, the flock blocks, the game's «Стаи», the flock
+  events and snapshot fields. What loners still took from the social layer became blocks.
+- **The language**: blocks of up to three tests and eight parameters, programs of up to 32 blocks;
+  new units (a mode's number that a nudge replaces, an angle, a tilt); new tests (prey seen within
+  X% of sight, a plant seen, a corpse seen, age, winded, cold water, above / below / in its layer,
+  mode K); flight with a pace and a tilt, a hunt with a distance and a chase pace, a plant chosen
+  by keeping it and by profit.
+- **Settings**, each with the old gene's or the world's value as its base: «слой», «плавный ход»,
+  «делиться», «лечиться», «есть на ходу», «щадить детей», «стрелять», «режим». Without a setting of
+  a kind a creature does not do it at all; of a kind the first whose tests hold applies, and a test
+  sees what the settings above it set this tick. The templates begin with the six always-on ones,
+  so they act as `/13`; a founder's layer (5–100%, a free quarter 0–100%, scavengers 50–100%) and
+  the 5% shooters' «стрелять» are written into its program.
+- **«Защищать детёныша»** replaced the parent's aid phase and the pair grace: a child within half
+  its sight struck lately (or, while young, afraid of a threat) sends the parent at the enemy
+  whatever its size, with more than half a tank, for at most 90 ticks, then a pause of 60. The
+  templates defend above 60% health. Hunters count a parent in sight as the prey's ally only if its
+  program defends.
+- Ten genes are left: `size`, `speed`, `vision`, `strategy`, `mutability`, `maturation`, `diet`,
+  `lifespan`, `cold_blood`, `burst`.
+- The game: the behaviour window shows three-test conditions, the modes on and the new settings;
+  the card's layer and the shooters' share come from the programs. The report prints
+  `{juvenile,adult}_mode_share` and `_conditional_layer_share`.
+
+How it was checked: each stage against the one before with a throwaway behaviour digest (ids,
+positions, energy, health, age, size, plants, corpses, counters) over five configs (seed 1 default,
+seed 3 four diets, seed 5 strategies ×10, seed 2 baseline ×20, seed 8 giants with shooters and
+scavengers) at `clone_share=1`, so that the drift of the new numbers did not shift the seeds. The
+flock removal, the language and the move into settings were **bit for bit** identical; the
+defence changes behaviour and is covered by tests (the block's range, tank, duration and pause,
+an interrupted episode, a world where a parent defends its child only while it knows it, hunters
+not counting a parent that does not defend). Tests cover each setting (without «делиться» no
+division, without «лечиться» no healing, without «есть на ходу» only what the block goes for, the
+layer and a conditional layer, sparing, shooting, smoothing), the first setting of a kind winning,
+modes set, seen, expiring and switched off, the new tests, the flight's pace and tilt, the hunt's
+distance and pace, the plant choice, and the brute-force check of the prey and best-plant queries.
+Golden re-recorded.
+
+Validation (a `life-sweep`, 8 seeds × 20 000 ticks each): all 24 worlds survive. Baseline
+conditions: carnivores hold in 7 of 8 (2.6% of the late population), scavengers in 2, late
+population 1179, minimum 511. ×1 base: carnivores hold in all 8 (25.5%), late population 89, the
+herbivores of seed 1 died out at the end; ×1 calm: carnivores in 7 (15.7%), 214. No working mode
+or conditional layer evolved in 20 000 ticks. The tick at ×100 takes 24–27 ms against 45–49 before
+(the flock layer's scans went). `/13` was never measured on its own, so what `/14` changed against
+it is not separated. A mutation can now switch off division, healing or eating on the move; such
+children die out.
+
+## Behaviour programs (`life-behavior/13`)
 
 Model `life-behavior/13`, format `life-report/11` (gene keys by name; nine of them are gone).
 

@@ -50,19 +50,7 @@ impl LifeApp {
         self.diets_line(ui);
         let snaps = self.history.snapshots.points();
         if let Some(s) = snaps.last() {
-            let young = format!("Молодых {:.0}%", 100.0 * s.juveniles as f64 / s.creatures.max(1) as f64);
-            // flocks are off (`config::FLOCKS`): the game hides them
-            ui.label(if life_core::config::FLOCKS {
-                format!(
-                    "{young} · стайный ген {} ({:.0}%) · в стаях {} · стай {}",
-                    s.pack_carriers,
-                    s.pack_share * 100.0,
-                    s.pack_members,
-                    s.flocks
-                )
-            } else {
-                young
-            });
+            ui.label(format!("Молодых {:.0}%", 100.0 * s.juveniles as f64 / s.creatures.max(1) as f64));
             if let Some(first) = snaps.first() {
                 ui.label(life_sim::observe::describe_flows(&s.counters.since(&first.counters)));
             }
@@ -276,8 +264,8 @@ mod tests {
         let spec = &creature::GENES[Gene::Size as usize];
         let at = |mean| GeneStat::Number(Spread { p10: mean, p50: mean, p90: mean, mean });
         assert_eq!(row(spec, &at(60.0), Some(&at(40.0))), ("60".into(), "40".into(), "+50%".into()));
-        let layer = &creature::GENES[Gene::MinY as usize];
-        assert_eq!(row(layer, &at(30.0), Some(&at(40.0))).2, "-10 п.п.");
+        let maturation = &creature::GENES[Gene::Maturation as usize];
+        assert_eq!(row(maturation, &at(30.0), Some(&at(40.0))).2, "-10 п.п.");
         let strategy = &creature::GENES[Gene::Strategy as usize];
         let mut a = [0.0; life_sim::observe::MAX_VARIANTS];
         a[1] = 0.75;

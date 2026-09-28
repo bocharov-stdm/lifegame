@@ -9,11 +9,12 @@ mod actions;
 mod phenotype;
 pub mod program;
 mod scene;
+mod steer;
 pub mod strategy;
 
 pub use phenotype::{Diet, Phenotype, melee_damage, vigour};
 pub use program::{ADULT, Action, Block, Cond, JUVENILE, Program, Programs, Test};
-pub use strategy::{Chase, Intent, Me, Mind, Stance, Strategy};
+pub use strategy::{Activity, Aid, Chase, Food, Intent, Me, Mind, Sighting, Stance, Strategy};
 
 use crate::config::*;
 use crate::genome::CreatureGenome;
@@ -32,9 +33,9 @@ pub struct Kinship {
     pub parent: u64,
     /// Body diameter over the inherited adult size: 1 is adult.
     pub growth: f64,
-    /// A parent knows its child while the child's `growth` is below this: `2 × care`, at most 1.
-    /// The base parent knows it until it is adult, a careless one only while it is small; below
-    /// 25% care not even at birth, since children are born at half of their adult size.
+    /// A parent knows its child while the child's `growth` is below this: its program's
+    /// «щадить детей» (`Stance::spare`) as it last applied. The template knows it until it is
+    /// adult; below 50% not even at birth, since children are born at half of their adult size.
     pub knows_until: f64,
 }
 
@@ -42,7 +43,7 @@ impl Kinship {
     /// Family: oneself, and a parent with its child while the parent still knows the child.
     /// Family neither strikes nor flees from each other. Once the child has grown past what its
     /// parent remembers they are strangers, as are siblings and grandchildren: whom to spare
-    /// is inherited (`care`), not a rule of the world.
+    /// is its program's (`Action::Spare`), not a rule of the world.
     #[inline(always)]
     pub fn kin(self, other: Kinship) -> bool {
         self.id == other.id
@@ -87,9 +88,6 @@ pub struct Creature {
     /// Номер родителя; 0 — стартовое или подсаженное. Родителя может уже не
     /// быть в живых: братья и сёстры узнают друг друга и без него.
     pub parent: u64,
-    pub flock: u64,
-    /// The circle of the family flock: where it feeds. None for loners.
-    pub circle: Option<crate::flock::Circle>,
     pub x: f64,
     pub y: f64,
     pub energy: f64,
@@ -126,9 +124,9 @@ pub struct Creature {
 }
 
 impl Creature {
-    /// Новое существо. Координата None — случайная в своей домашней полосе;
-    /// заданная зажимается только в мир: ребёнок рождается у родителя, а слой у
-    /// него свой, мутировавший, — домой он дойдёт сам, телепорт был бы прыжком.
+    /// Новое существо с программами шаблона своей стратегии. Координата None — случайная в
+    /// своей домашней полосе; заданная зажимается только в мир: ребёнок рождается у родителя, а
+    /// слой у него свой, мутировавший, — домой он дойдёт сам, телепорт был бы прыжком.
     /// energy None — полбака; заданная не больше бака.
     pub fn new(
         space: &Space,
@@ -136,6 +134,31 @@ impl Creature {
         genome: CreatureGenome,
         x: Option<f64>,
         y: Option<f64>,
+        energy: Option<f64>,
+        rng: Rng,
+    ) -> Self {
+        let programs = Programs::both(Program::template(Strategy::from_gene(genome[Gene::Strategy])));
+        Self::made(space, rules, genome, programs, (x, y), energy, rng)
+    }
+
+    /// A founder with its own programs (`Program::founder`), placed at random in its adult
+    /// program's home layer (`Program::home_layer`), with half a tank.
+    pub fn founder(
+        space: &Space,
+        rules: &Rules,
+        genome: CreatureGenome,
+        programs: Programs,
+        rng: Rng,
+    ) -> Self {
+        Self::made(space, rules, genome, programs, (None, None), None, rng)
+    }
+
+    fn made(
+        space: &Space,
+        rules: &Rules,
+        genome: CreatureGenome,
+        programs: Programs,
+        (x, y): (Option<f64>, Option<f64>),
         energy: Option<f64>,
         mut rng: Rng,
     ) -> Self {
@@ -145,13 +168,12 @@ impl Creature {
             None => pheno.max_energy * 0.5,
         };
         let x = x.unwrap_or_else(|| rng.uniform(pheno.x_lo, pheno.x_hi)).clamp(pheno.x_lo, pheno.x_hi);
-        let y = y.unwrap_or_else(|| rng.uniform(pheno.body_lo, pheno.body_hi)).clamp(pheno.y_lo, pheno.y_hi);
+        let (lo, hi) = pheno.band(programs[ADULT].home_layer());
+        let y = y.unwrap_or_else(|| rng.uniform(lo, hi)).clamp(pheno.y_lo, pheno.y_hi);
 
         Creature {
             id: 0,
             parent: 0,
-            flock: 0,
-            circle: None,
             x,
             y,
             energy,
@@ -164,7 +186,7 @@ impl Creature {
             reproduction_wait: DIVIDE_PERIOD,
             death: None,
             genome,
-            programs: Programs::both(Program::template(pheno.strategy)),
+            programs,
             pheno,
             mind: Mind::default(),
             rng,
@@ -187,7 +209,7 @@ impl Creature {
             id: self.id,
             parent: self.parent,
             growth: self.pheno.size / self.genome[Gene::Size].max(0.01),
-            knows_until: (2.0 * self.pheno.care).min(1.0),
+            knows_until: self.mind.stance.spare,
         }
     }
 
@@ -198,7 +220,7 @@ impl Creature {
         if !self.alive {
             return;
         }
-        self.mind.social.tick += 1;
+        self.mind.tick += 1;
         self.age += 1.0;
         if self.age >= self.pheno.lifespan {
             self.alive = false;
@@ -207,10 +229,14 @@ impl Creature {
         }
         self.health = self.health.min(self.max_health());
         self.peaceful_ticks = self.peaceful_ticks.saturating_add(1);
-        if self.peaceful_ticks >= 60 && self.energy > self.pheno.max_energy * 0.5 {
-            let healed = (self.max_health() * 0.002)
+        // it heals as its program said last tick (`Action::Heal`)
+        if let Some(heal) = self.mind.stance.heal
+            && self.peaceful_ticks >= heal.calm
+            && self.energy > self.pheno.max_energy * heal.tank
+        {
+            let healed = (self.max_health() * HEAL_SHARE)
                 .min(self.max_health() - self.health)
-                .min(self.energy - self.pheno.max_energy * 0.5)
+                .min(self.energy - self.pheno.max_energy * heal.tank)
                 .max(0.0);
             self.health += healed;
             self.energy -= healed;
@@ -223,20 +249,14 @@ impl Creature {
             y: self.y,
             energy: self.energy,
             kinship: self.kinship(),
-            flock: self.flock,
-            circle: self.circle,
             health_share: self.health / self.max_health(),
             health: self.health,
+            age: self.age,
+            winded: self.winded > 0,
             pheno: &self.pheno,
         };
         let program = &self.programs[self.stage()];
         let intent = strategy::decide(&me, program, &mut self.mind, &mut self.rng, senses);
-        let intent = crate::territory::steer(self, intent);
-        if self.mind.social.territory_guard.is_some() && intent.attack.is_some() && !self.fleeing() {
-            self.mind.social.activity = crate::social::Activity::Alarm;
-            self.mind.social.rest_until = 0;
-            self.mind.social.course = None;
-        }
         self.mind.attack = intent.attack;
         self.act(intent);
     }
@@ -290,7 +310,7 @@ impl Creature {
         let moved = (self.x - x, self.y - y);
         let step = moved.0.hypot(moved.1);
         if step > 1e-9 {
-            self.mind.social.heading = Some(moved);
+            self.mind.heading = Some(moved);
         }
 
         // the speed term is paid for the step actually taken: standing, resting or eating costs
@@ -350,13 +370,28 @@ impl Creature {
             y: self.y,
             energy: self.energy,
             kinship: self.kinship(),
-            flock: self.flock,
-            circle: self.circle,
             health_share: self.health / self.max_health(),
             health: self.health,
+            age: self.age,
+            winded: self.winded > 0,
             pheno: &self.pheno,
         };
         strategy::after_eating(&me, &mut self.mind, &mut self.rng, reach);
+    }
+
+    /// What its program knows about itself now (the step builds the same from its fields).
+    pub fn me(&self) -> Me<'_> {
+        Me {
+            x: self.x,
+            y: self.y,
+            energy: self.energy,
+            kinship: self.kinship(),
+            health_share: self.health / self.max_health(),
+            health: self.health,
+            age: self.age,
+            winded: self.winded > 0,
+            pheno: &self.pheno,
+        }
     }
 
     /// Растёт только на усвоенной пище: the `maturation` share of it until grown; the rest fills
@@ -384,20 +419,6 @@ impl Creature {
         self.pheno.size * self.pheno.health_bonus * self.pheno.vigour
     }
 
-    /// The inherited flock mode is the same: flocking, territoriality, strategy, shooting,
-    /// flock kind, layer switch and diet. A child with another mode leaves the family flock: a
-    /// circle is a feeding place, and a meat-eater finds nothing to eat among its own.
-    pub fn same_mode(&self, other: &Creature) -> bool {
-        let (a, b) = (&self.pheno, &other.pheno);
-        a.pack_instinct == b.pack_instinct
-            && a.territoriality == b.territoriality
-            && a.strategy == b.strategy
-            && a.shooter == b.shooter
-            && a.flock_kind == b.flock_kind
-            && a.layer_bound == b.layer_bound
-            && a.diet == b.diet
-    }
-
     /// Достигнут наследственный размер.
     pub fn adult(&self) -> bool {
         self.pheno.size >= self.genome[Gene::Size]
@@ -414,24 +435,19 @@ impl Creature {
         &self.programs[self.stage()]
     }
 
-    /// Whether it still stands up for itself or others now: its program fights back, and its health
-    /// is above that block's threshold by a margin. Aid for kin and flock guards read it.
-    pub fn stands_firm(&self) -> bool {
-        self.program().defends_to().is_some_and(|share| self.health / self.max_health() > share + 0.1)
-    }
-
     /// Бежит ли сейчас от кого-то (для окна игры и наблюдателя).
     pub fn fleeing(&self) -> bool {
-        self.mind.flee_ticks > 0 || self.mind.social.shared_flee
+        self.mind.flee_ticks > 0
     }
 
-    /// Ребёнок, если после деления у родителя остаётся резерв. Номер ребёнку
-    /// выдаёт мир.
+    /// Ребёнок, если его программа делится в этот тик (`Action::Divide`) и после деления у
+    /// родителя остаётся резерв. Номер ребёнку выдаёт мир.
     pub fn maybe_divide(&mut self, space: &Space, rules: &Rules) -> Option<Creature> {
+        let divide = self.mind.stance.divide?;
         if !self.alive || !self.adult() || self.reproduction_wait > 0 {
             return None;
         }
-        let threshold = self.pheno.max_energy * (self.genome[Gene::ReproThreshold] / 100.0);
+        let threshold = self.pheno.max_energy * divide.tank;
         if self.energy < threshold + REPRO_RESERVE {
             return None;
         }
@@ -442,8 +458,7 @@ impl Creature {
         let mut next_rng = self.rng.clone();
         let (genome, programs) =
             self.genome.inherit(&self.programs, &crate::genome::Heredity::of(rules), &mut next_rng);
-        let child_energy = (self.energy * (self.genome[Gene::ReproShare] / 100.0))
-            .min(genome[Gene::Size] * 0.5 * ENERGY_PER_SIZE);
+        let child_energy = (self.energy * divide.share).min(genome[Gene::Size] * 0.5 * ENERGY_PER_SIZE);
         let left = self.energy - child_energy - rules.repro_cost;
         if left < REPRO_RESERVE {
             return None;
@@ -461,8 +476,6 @@ impl Creature {
         child.genome = genome;
         child.programs = programs;
         child.parent = self.id;
-        let same_mode = self.pheno.pack_instinct && child.pheno.pack_instinct && self.same_mode(&child);
-        child.flock = if same_mode && self.rng.random() < 0.99 { self.flock } else { 0 };
         child.reproduction_wait = DIVIDE_PERIOD;
         child.birth_size = child.genome[Gene::Size] * 0.5;
         child.pheno = Phenotype::at_size(&child.genome, rules, space, child.birth_size);

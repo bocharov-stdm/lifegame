@@ -265,14 +265,9 @@ pub fn genome(ui: &mut egui::Ui, table: &[GeneSpec], points: &[GenePoint], color
     );
 }
 
-/// Genes that act only through flocks: while flocks are off (`config::FLOCKS`) they drift unseen.
-const FLOCK_GENES: [&str; 5] = ["pack_instinct", "territoriality", "flock_kind", "flock_spacing", "forage"];
-
-/// Whether to show a gene: a choice gene with one variant tells nothing apart, and the flock genes
-/// do nothing while flocks are off.
+/// Whether to show a gene: a choice gene with one variant tells nothing apart.
 pub fn shown(spec: &GeneSpec) -> bool {
     spec.variants().is_none_or(|v| v.len() >= 2)
-        && (life_core::config::FLOCKS || !FLOCK_GENES.contains(&spec.key))
 }
 
 fn spread_at(p: &GenePoint, g: usize) -> Spread {

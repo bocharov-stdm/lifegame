@@ -2,9 +2,8 @@
 
 use super::{GeneKind, GeneSpec, Genome, Mutation, Variant, bases};
 use crate::config::{
-    CHOICE_SWITCH_CHANCE, COLD_BLOOD_STEP, DIET_JUMP_CHANCE, DIET_MEAT_STEP_CHANCE, DIET_STEP_CHANCE, FLOCKS,
-    HERBIVORE_LEAP_CARNIVORE, HERBIVORE_LEAP_SCAVENGER, LIFESPAN_BASE, LIFESPAN_MAX, LIFESPAN_MIN,
-    STRATEGY_SWITCH_CHANCE,
+    COLD_BLOOD_STEP, DIET_JUMP_CHANCE, DIET_MEAT_STEP_CHANCE, DIET_STEP_CHANCE, HERBIVORE_LEAP_CARNIVORE,
+    HERBIVORE_LEAP_SCAVENGER, LIFESPAN_BASE, LIFESPAN_MAX, LIFESPAN_MIN, STRATEGY_SWITCH_CHANCE,
 };
 use crate::creature::Programs;
 use crate::creature::strategy::VARIANTS as STRATEGIES;
@@ -17,25 +16,10 @@ pub enum Gene {
     Size,
     Speed,
     Vision,
-    ReproThreshold,
-    ReproShare,
-    MinY,
-    MaxY,
     Strategy,
     Mutability,
     Maturation,
     Diet,
-    Sociability,
-    Shooter,
-    FirePreference,
-    FireReserve,
-    PackInstinct,
-    Territoriality,
-    Care,
-    FlockKind,
-    LayerBound,
-    FlockSpacing,
-    Forage,
     Lifespan,
     ColdBlood,
     Burst,
@@ -46,81 +30,17 @@ impl Gene {
         Gene::Size,
         Gene::Speed,
         Gene::Vision,
-        Gene::ReproThreshold,
-        Gene::ReproShare,
-        Gene::MinY,
-        Gene::MaxY,
         Gene::Strategy,
         Gene::Mutability,
         Gene::Maturation,
         Gene::Diet,
-        Gene::Sociability,
-        Gene::Shooter,
-        Gene::FirePreference,
-        Gene::FireReserve,
-        Gene::PackInstinct,
-        Gene::Territoriality,
-        Gene::Care,
-        Gene::FlockKind,
-        Gene::LayerBound,
-        Gene::FlockSpacing,
-        Gene::Forage,
         Gene::Lifespan,
         Gene::ColdBlood,
         Gene::Burst,
     ];
 }
 
-pub const N: usize = 25;
-
-pub const PACK_VARIANTS: [Variant; 2] = [
-    Variant {
-        key: "solitary", label: "одиночка", about: "Не образует стаю с потомками."
-    },
-    Variant {
-        key: "social", label: "стайный", about: "Потомки могут оставаться в семейной стае."
-    },
-];
-
-pub const TERRITORIALITY_VARIANTS: [Variant; 3] = [
-    Variant { key: "none", label: "нет", about: "Не защищает территорию." },
-    Variant {
-        key: "moderate", label: "умеренная", about: "Предупреждает чужака перед защитой."
-    },
-    Variant {
-        key: "hard", label: "жёсткая", about: "Защищает территорию сразу после вторжения."
-    },
-];
-
-/// Наследуемая возможность стрелять. Пять процентов основателей — стрелки.
-pub const SHOOTER_VARIANTS: [Variant; 2] = [
-    Variant {
-        key: "no", label: "без выстрела", about: "Атакует только при соприкосновении."
-    },
-    Variant {
-        key: "yes", label: "стреляет", about: "Может потратить энергию на слабый дальний удар."
-    },
-];
-
-/// How a family flock's circle moves (`flock.rs`). Labels are game UI and stay Russian.
-pub const FLOCK_KIND_VARIANTS: [Variant; 4] = [
-    Variant {
-        key: "settled",
-        label: "оседлые",
-        about: "Круг стоит на месте и переезжает, когда еда в нём кончается.",
-    },
-    Variant {
-        key: "nomadic",
-        label: "кочевые",
-        about: "Круг медленно идёт по курсу вдоль слоя и разворачивается у преград.",
-    },
-    Variant {
-        key: "scout", label: "разведчики", about: "Круг идёт к еде, которую заметили участники."
-    },
-    Variant {
-        key: "migrant", label: "мигранты", about: "Круг циклично ходит вверх и вниз по глубине."
-    },
-];
+pub const N: usize = 10;
 
 /// Which diets a child's diet may step to: the herbivore only to the omnivore; the omnivore is a
 /// fork to the herbivore, the scavenger and the carnivore, a third each; the scavenger and the
@@ -164,25 +84,15 @@ pub const DIET_VARIANTS: [Variant; 4] = [
     },
 ];
 
-/// Whether the depth layer genes hold the creature (and its flock's circle).
-pub const LAYER_VARIANTS: [Variant; 2] = [
-    Variant {
-        key: "bound", label: "держится слоя", about: "Без еды возвращается в свой слой."
-    },
-    Variant {
-        key: "free", label: "свободно", about: "Не привязан к слою: бродит по всей глубине."
-    },
-];
-
 /// Мутация существ: множитель не ниже 0.1, выпавшее ниже перетягивается
 /// заново, как в Python. Сигма — из правил мира.
 const SCALE: Mutation = Mutation::Scale { keep_above: None, reject_below: Some(-0.9) };
 
 /// Таблица генов. Только дописывать в конец (см. `genome/mod.rs`).
 ///
-/// Процентные гены при мутации держатся в 0‒100. Для слоя это граница мира;
-/// для порога и доли выше 100 размножение всё равно невозможно, но число
-/// вроде 180% в среднем геноме только путало бы.
+/// Процентные гены при мутации держатся в 0‒100. The layer, the division, the shooting and the
+/// care for children were genes until `life-behavior/14`: they are settings of the behaviour
+/// programs now (`program.rs`).
 pub const GENES: [GeneSpec; N] = [
     GeneSpec {
         key: "size",
@@ -206,38 +116,6 @@ pub const GENES: [GeneSpec; N] = [
         about: "Радиус поиска еды.",
         kind: GeneKind::Absolute,
         base: 400.0,
-        mutation: SCALE,
-    },
-    GeneSpec {
-        key: "repro_threshold",
-        label: "порог_разм",
-        about: "С какой доли полного бака делится, %.",
-        kind: GeneKind::Percent,
-        base: 70.0,
-        mutation: SCALE,
-    },
-    GeneSpec {
-        key: "repro_share",
-        label: "доля_потомку",
-        about: "Сколько энергии отдаёт потомку, %.",
-        kind: GeneKind::Percent,
-        base: 40.0,
-        mutation: SCALE,
-    },
-    GeneSpec {
-        key: "min_y",
-        label: "min_y%",
-        about: "Верх слоя, где держится, % глубины мира; за видимой едой выходит из слоя.",
-        kind: GeneKind::Percent,
-        base: 5.0,
-        mutation: SCALE,
-    },
-    GeneSpec {
-        key: "max_y",
-        label: "max_y%",
-        about: "Низ слоя, где держится, % глубины мира; без еды возвращается в слой.",
-        kind: GeneKind::Percent,
-        base: 100.0,
         mutation: SCALE,
     },
     GeneSpec {
@@ -281,96 +159,6 @@ pub const GENES: [GeneSpec; N] = [
             up: &DIET_TOWARDS_MEAT,
             leaps: &DIET_LEAPS,
         },
-    },
-    GeneSpec {
-        key: "sociability",
-        label: "общительность",
-        about: "Привязанность к своим, сообщения и помощь ценой личного времени, %.",
-        kind: GeneKind::Percent,
-        base: 50.0,
-        mutation: SCALE,
-    },
-    GeneSpec {
-        key: "shooter",
-        label: "стрелок",
-        about: "Редко наследуемая способность стрелять на расстоянии.",
-        kind: GeneKind::Choice(&SHOOTER_VARIANTS),
-        base: 0.0,
-        mutation: Mutation::Switch { chance: CHOICE_SWITCH_CHANCE },
-    },
-    GeneSpec {
-        key: "fire_preference",
-        label: "предпочтение_выстрела",
-        about: "Насколько рано стреляет при сближении с целью, %.",
-        kind: GeneKind::Percent,
-        base: 50.0,
-        mutation: SCALE,
-    },
-    GeneSpec {
-        key: "fire_reserve",
-        label: "резерв_стрельбы",
-        about: "Минимальная доля запаса энергии после выстрела, %.",
-        kind: GeneKind::Percent,
-        base: 50.0,
-        mutation: SCALE,
-    },
-    GeneSpec {
-        key: "pack_instinct",
-        label: "стайность",
-        about: "Живёт в семейной стае или отдельно от потомков.",
-        kind: GeneKind::Choice(&PACK_VARIANTS),
-        // flocks are off: the base genome (a spawned creature, the founders' start) is a loner, and
-        // a loner's child never turns flocking (the draw stays)
-        base: if FLOCKS { 1.0 } else { 0.0 },
-        mutation: Mutation::Switch { chance: if FLOCKS { CHOICE_SWITCH_CHANCE } else { 0.0 } },
-    },
-    GeneSpec {
-        key: "territoriality",
-        label: "территориальность",
-        about: "Не защищает территорию, предупреждает чужака или нападает сразу.",
-        kind: GeneKind::Choice(&TERRITORIALITY_VARIANTS),
-        base: 1.0,
-        mutation: Mutation::Switch { chance: CHOICE_SWITCH_CHANCE },
-    },
-    GeneSpec {
-        key: "care",
-        label: "защита_детей",
-        about: "Защищает своих невзрослых детей и не трогает их, пока они растут; при малой заботе узнаёт только самых маленьких, %.",
-        kind: GeneKind::Percent,
-        base: 50.0,
-        mutation: SCALE,
-    },
-    GeneSpec {
-        key: "flock_kind",
-        label: "тип_стаи",
-        about: "Как перемещается круг семейной стаи.",
-        kind: GeneKind::Choice(&FLOCK_KIND_VARIANTS),
-        base: 0.0,
-        mutation: Mutation::Switch { chance: CHOICE_SWITCH_CHANCE },
-    },
-    GeneSpec {
-        key: "layer_bound",
-        label: "слой",
-        about: "Держится ли своего слоя глубины или бродит по всей глубине.",
-        kind: GeneKind::Choice(&LAYER_VARIANTS),
-        base: 0.0,
-        mutation: Mutation::Switch { chance: CHOICE_SWITCH_CHANCE },
-    },
-    GeneSpec {
-        key: "flock_spacing",
-        label: "простор_стаи",
-        about: "Радиус круга стаи на корень из числа участников (50–500).",
-        kind: GeneKind::Absolute,
-        base: 200.0,
-        mutation: SCALE,
-    },
-    GeneSpec {
-        key: "forage",
-        label: "вылазки",
-        about: "Ниже этой доли запаса член стаи кормится и вне своего круга, пока не наберёт в 1,75 раза больше, %.",
-        kind: GeneKind::Percent,
-        base: 40.0,
-        mutation: SCALE,
     },
     GeneSpec {
         key: "lifespan",
@@ -511,16 +299,6 @@ mod tests {
         keys.dedup();
         assert_eq!(keys.len(), N, "имена генов не повторяются");
         assert_eq!(CreatureGenome::BASE.get("vision"), Some(400.0));
-        assert_eq!(CreatureGenome::BASE[Gene::Shooter], 0.0);
-        assert_eq!(CreatureGenome::BASE[Gene::FirePreference], 50.0);
-        assert_eq!(CreatureGenome::BASE[Gene::FireReserve], 50.0);
-        assert_eq!(
-            CreatureGenome::BASE[Gene::PackInstinct],
-            f64::from(FLOCKS),
-            "a loner while flocks are off"
-        );
-        assert_eq!(CreatureGenome::BASE[Gene::Territoriality], 1.0);
-        assert_eq!(CreatureGenome::BASE[Gene::Care], 50.0);
         assert_eq!(CreatureGenome::BASE[Gene::Diet], 0.0, "a spawned creature is a herbivore");
     }
 
@@ -659,22 +437,5 @@ mod tests {
         );
         let capped = CreatureGenome::BASE.with(Gene::Mutability, 1e300).mutate(0.3, &mut Rng::new(1));
         assert!(capped.to_values().iter().all(|v| v.is_finite()), "потолок: геном конечен");
-    }
-
-    #[test]
-    fn способность_стрелять_возникает_редко_и_наследуется() {
-        let mut rng = Rng::new(81);
-        let mut shooters = 0;
-        for _ in 0..20_000 {
-            let child = CreatureGenome::BASE.mutate(0.0, &mut rng);
-            shooters += (child[Gene::Shooter] == 1.0) as usize;
-        }
-        assert!((5..=40).contains(&shooters), "редкие стрелки: {shooters}");
-        let parent = CreatureGenome::BASE.with(Gene::Shooter, 1.0);
-        let mut inherited = 0;
-        for _ in 0..1000 {
-            inherited += (parent.mutate(0.0, &mut rng)[Gene::Shooter] == 1.0) as usize;
-        }
-        assert!(inherited >= 990, "способность обычно наследуется: {inherited}");
     }
 }

@@ -69,7 +69,6 @@ pub enum Command {
     /// Один тик — только на паузе.
     Step,
     SetSpeed(usize),
-    FlockColors(bool),
     /// Не строить графическое содержимое кадра, сохраняя статистику и управление.
     RenderWorld(bool),
     View(ViewRequest),
@@ -178,7 +177,6 @@ struct Sim {
     watch_explosion: bool,
     view: Option<ViewRequest>,
     selected: Option<u64>,
-    selected_flock: Option<u64>,
     region: Option<Area>,
     render_world: bool,
     dots: bool,
@@ -244,7 +242,6 @@ impl Sim {
             watch_explosion: true,
             view: None,
             selected: None,
-            selected_flock: None,
             region: None,
             render_world: true,
             dots: false,
@@ -345,11 +342,9 @@ impl Sim {
                 }
                 self.world_gen += 1;
                 self.selected = None;
-                self.selected_flock = None;
                 self.paused = true;
                 self.ended = None;
                 self.motion = Motion::default();
-                self.motion.flock_colors = true;
                 self.last_minimap = None;
                 self.dirty = true;
             }
@@ -366,19 +361,9 @@ impl Sim {
                 self.reset_tps();
                 self.dirty = true;
             }
-            Command::FlockColors(enabled) => {
-                if !enabled {
-                    self.selected_flock = None;
-                }
-                self.motion.flock_colors = enabled;
-                self.last_minimap = None;
-                self.dirty = true;
-            }
             Command::RenderWorld(enabled) => {
                 if self.render_world != enabled {
-                    let colored = self.motion.flock_colors;
                     self.motion = Motion::default();
-                    self.motion.flock_colors = colored;
                     self.dots = false;
                     self.recent_shots.clear();
                 }
@@ -395,29 +380,11 @@ impl Sim {
                 }
             }
             Command::Pick { x, y, radius } => {
-                self.selected = self.world.pick(x, y, 0.0);
-                self.selected_flock = if self.selected.is_none() && self.motion.flock_colors {
-                    frame::flock_areas(&self.world)
-                        .into_iter()
-                        .filter(|s| (s.x - x).hypot(s.y - y) <= s.radius.max(radius * 1.2))
-                        .min_by(|a, b| {
-                            (a.x - x)
-                                .hypot(a.y - y)
-                                .total_cmp(&(b.x - x).hypot(b.y - y))
-                                .then(a.id.cmp(&b.id))
-                        })
-                        .map(|s| s.id)
-                } else {
-                    None
-                };
-                if self.selected.is_none() && self.selected_flock.is_none() {
-                    self.selected = self.world.pick(x, y, radius);
-                }
+                self.selected = self.world.pick(x, y, 0.0).or_else(|| self.world.pick(x, y, radius));
                 self.dirty = true;
             }
             Command::Select(c) => {
                 self.selected = c;
-                self.selected_flock = None;
                 self.dirty = true;
             }
             Command::SetRegion(area) => {
@@ -481,14 +448,11 @@ impl Sim {
         self.ended = None;
         self.watch_explosion = true;
         self.selected = None;
-        self.selected_flock = None;
         self.region = None;
         self.due = 0.0;
         self.last_time = Instant::now();
         self.last_minimap = None;
-        let flock_colors = self.motion.flock_colors;
         self.motion = Motion::default();
-        self.motion.flock_colors = flock_colors;
         self.recent_shots.clear();
         self.tick_ms = 0.0;
         self.snapshot_ms = 0.0;
@@ -671,15 +635,13 @@ impl Sim {
             if self.dots {
                 if px_size >= 3.5 {
                     self.dots = false;
-                    let colored = self.motion.flock_colors;
                     self.motion = Motion::default();
-                    self.motion.flock_colors = colored;
                 }
             } else if px_size <= 2.5 {
                 self.dots = true;
             }
             let collected = if self.dots {
-                frame::dots_colored(w, rect, &mut instances, self.motion.flock_colors)
+                frame::dots(w, rect, &mut instances)
             } else {
                 self.motion.collect(w, rect, &mut instances)
             };
@@ -688,14 +650,8 @@ impl Sim {
                 // Карта плотности ровно по видимой области, клетка — пара пикселей.
                 let (dw, dh) =
                     ((view.px_w as usize / 2).clamp(1, 1024), (view.px_h as usize / 2).clamp(1, 1024));
-                density = Some(frame::density_colored(
-                    w,
-                    (view.x0, view.y0, view.x1, view.y1),
-                    dw,
-                    dh,
-                    Raster::default(),
-                    self.motion.flock_colors,
-                ));
+                density =
+                    Some(frame::density(w, (view.x0, view.y0, view.x1, view.y1), dw, dh, Raster::default()));
             }
         } else {
             instances.clear();
@@ -704,39 +660,11 @@ impl Sim {
             if self.render_world && self.last_minimap.is_none_or(|t| t.elapsed() >= MINIMAP_INTERVAL) {
                 self.last_minimap = Some(Instant::now());
                 let (mw, mh) = frame::minimap_size(w.space.width, w.space.height);
-                Some(frame::density_colored(
-                    w,
-                    (0.0, 0.0, w.space.width, w.space.height),
-                    mw,
-                    mh,
-                    Raster::default(),
-                    self.motion.flock_colors,
-                ))
+                Some(frame::density(w, (0.0, 0.0, w.space.width, w.space.height), mw, mh, Raster::default()))
             } else {
                 None
             };
         let pending = std::mem::take(&mut self.pending);
-        let mut flock_areas =
-            if self.render_world && (self.motion.flock_colors || self.selected_flock.is_some()) {
-                frame::flock_areas(w)
-            } else {
-                Vec::new()
-            };
-        let selected_flock = self.selected_flock.and_then(|id| {
-            flock_areas
-                .iter()
-                .find(|s| s.id == id)
-                .map(|s| s.details.clone())
-                .or_else(|| life_core::flock::summary(w, id))
-        });
-        if let Some(view) = self.view.filter(|_| self.motion.flock_colors) {
-            let (x0, y0, x1, y1) = view.padded();
-            flock_areas.retain(|s| {
-                s.x + s.radius >= x0 && s.x - s.radius <= x1 && s.y + s.radius >= y0 && s.y - s.radius <= y1
-            });
-        } else {
-            flock_areas.clear();
-        }
         let prev_tick = self.last_frame_tick.min(w.tick);
         self.last_frame_tick = w.tick;
         let corpses = if self.render_world {
@@ -801,14 +729,12 @@ impl Sim {
             dots: self.dots && self.render_world,
             origin,
             instances,
-            flock_areas,
             patches,
             corpses,
             shots,
             density,
             minimap,
             selected: self.selected.and_then(|id| Selected::of(w, id)),
-            selected_flock,
             samples: pending.samples,
             snapshots: pending.snapshots,
             region: pending.region,
@@ -824,21 +750,6 @@ impl Sim {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn выключенный_рендер_сохраняет_карточку_стаи_без_областей() {
-        let cfg = WorldConfig { n_creatures: Some(2), ..Default::default() };
-        let (_tx, rx) = mpsc::channel();
-        let (_recycle_tx, recycled) = mpsc::channel();
-        let mut sim = Sim::new(cfg, rx, recycled, Arc::new(Mutex::new(None)), Box::new(|| {}));
-        let id = sim.world.creatures[0].flock;
-        sim.world.creatures[1].flock = id;
-        sim.selected_flock = Some(id);
-        sim.render_world = false;
-        let frame = sim.build_frame();
-        assert!(frame.flock_areas.is_empty());
-        assert_eq!(frame.selected_flock.unwrap().members, 2);
-    }
 
     /// Диагностика разделяет цену среза и построения графического кадра.
     /// Запускается вручную: цифры зависят от машины и не являются порогом теста.

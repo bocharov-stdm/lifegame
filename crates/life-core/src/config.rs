@@ -113,6 +113,9 @@ pub const GROWTH_ENERGY_PER_SIZE: f64 = 2.25;
 pub const REPRO_RESERVE: f64 = 20.0;
 /// Фиксированный штраф за размножение.
 pub const REPRO_COST: f64 = 10.0;
+/// A healing creature (`Action::Heal`) gains this share of its full health a tick, paid one for
+/// one from its tank: physiology, not a choice — whether and when it heals is its program's.
+pub const HEAL_SHARE: f64 = 0.002;
 
 // ── Стоимость содержания статов (энергии за тик) ────────────────────────────
 // расход = COEF * стат ** POWER, суммарно по трём статам.
@@ -143,12 +146,8 @@ pub const SPEED_MASS_POWER: f64 = 1.0;
 /// стратегии). При 10 сигма существ 3.0: геном потомка почти случаен —
 /// дальше расти незачем, а без потолка множитель мог бы уйти в бесконечность.
 pub const MAX_MUTABILITY: f64 = 10.0;
-/// Flocks are off for now (the user's call, 2026-09-26: they spoiled more than they gave): every
-/// founder is a loner and the pack gene never switches on, so no flock of two ever forms. The flock
-/// code stays until it is removed under the tag `flocks-final`.
-pub const FLOCKS: bool = false;
 /// Floor of the mutability gene. Selection pulls it down (a less mutated child is fitter on
-/// average), and at 0 evolution froze: one diet, one strategy, one flock kind, forever.
+/// average), and at 0 evolution froze: one diet, one strategy, forever.
 pub const MIN_MUTABILITY: f64 = 0.1;
 /// Share of children born an exact copy of their parent, no gene mutated. A lineage keeps its
 /// proven genome through them, so selection has less reason to push mutability down.
@@ -181,7 +180,7 @@ pub const PROGRAM_NUDGE_POINTS: f64 = 10.0;
 /// given number moved in about one child of 1700, and the old genes' adaptations (the pace to
 /// ~55%, the rest to ~78%, the layer reach to 69% within 20 000 ticks) could not happen.
 pub const PROGRAM_DRIFT: f64 = 1.0;
-/// The same rare switch for the other choice genes: shooting, territoriality, flock kind, layer.
+/// The same rare switch for the other choice genes: shooting, layer.
 pub const CHOICE_SWITCH_CHANCE: f64 = 0.001;
 /// Ближний удар: доля диаметра, одновременно базовый урон и цена энергии.
 pub const MELEE_DAMAGE_SHARE: f64 = 0.05;
@@ -294,9 +293,9 @@ pub const DIET_OWN: [[bool; 4]; 4] = [
     [false, false, true, true],  // падальщик
     [false, true, false, false], // мясоед
 ];
-/// Founders dealt the scavenger diet start with this layer, % of depth (the `min_y`/`max_y`
-/// genes): in the deep, where rot will settle. A start condition, not a rule — the genes mutate.
-pub const SCAVENGER_START_LAYER: (f64, f64) = (50.0, 100.0);
+/// Founders dealt the scavenger diet start with this layer, % of depth (their program's «слой»):
+/// in the deep, where rot will settle. A start condition, not a rule — the program drifts.
+pub const SCAVENGER_START_LAYER: (u16, u16) = (50, 100);
 /// Founders dealt a meat diet (scavenger, carnivore) start this many times bigger. Equal to the
 /// others they had no prey (a hunter took prey `prey_ratio` times smaller, 2.5 then, and newborns
 /// are half grown) and starved by tick ~400 without a single strike. A start condition: the gene

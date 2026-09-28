@@ -1,5 +1,6 @@
 //! Регрессии жизненного цикла.
 use life_core::corpse::Stage;
+use life_core::creature::strategy::Divide;
 use life_core::creature::{Action, Block, Creature, Diet, Phenotype, Program};
 use life_core::genome::creature::Gene;
 use life_core::rng::Rng;
@@ -9,31 +10,20 @@ fn with_diet(g: CreatureGenome, diet: Diet) -> CreatureGenome {
     g.with(Gene::Diet, diet as usize as f64)
 }
 
+/// A full grown creature whose program divides from 30% of its tank, giving the template's 40%.
 fn parent() -> Creature {
     let mut v = Creature::new(
         &Space::default(),
         &Rules::default(),
-        CreatureGenome::BASE.with(Gene::ReproThreshold, 30.0),
+        CreatureGenome::BASE,
         Some(1000.0),
         Some(1000.0),
         Some(100.0),
         Rng::new(7),
     );
     v.reproduction_wait = 0;
+    v.mind.stance.divide = Some(Divide { tank: 0.3, share: 0.4 });
     v
-}
-
-/// Diet is part of the flock mode: a child that stepped to another diet leaves the family
-/// flock, since the circle is a feeding place.
-#[test]
-fn ребёнок_с_другой_диетой_уходит_из_стаи() {
-    let r = Rules::default();
-    let p = parent();
-    let mut same = p.clone();
-    assert!(p.same_mode(&same));
-    same.genome = with_diet(same.genome, Diet::Omnivore);
-    same.apply_rules(&r, &Space::default());
-    assert!(!p.same_mode(&same), "another diet — another mode");
 }
 
 #[test]
@@ -70,13 +60,12 @@ fn рождение_передаёт_энергию_из_резерва_без_�
     let r = Rules::default().with("mutation_sigma", 0.0).unwrap();
     let mut p = parent();
     let child = p.maybe_divide(&Space::default(), &r).unwrap();
-    assert_eq!(CreatureGenome::BASE[Gene::ReproShare], 40.0);
+    assert_eq!(Block::does(Action::Divide).arg(1), 0.4, "the template gives 40%");
     assert_eq!(child.energy, 40.0);
     assert_eq!(p.energy, 50.0);
 
     let mut p = parent();
-    p.genome = p.genome.with(Gene::ReproShare, 80.0);
-    p.apply_rules(&r, &Space::default());
+    p.mind.stance.divide = Some(Divide { tank: 0.3, share: 0.8 });
     let before = p.energy;
     let child = p.maybe_divide(&Space::default(), &r).unwrap();
     assert_eq!(child.energy, child.pheno.max_energy);
@@ -92,7 +81,7 @@ fn родитель_больше_не_кормит_подросшего_ребё
         rules: Rules::default().with("plant_rate", 0.0).unwrap(),
         ..Default::default()
     });
-    let parent_id = w.spawn(CreatureGenome::BASE.with(Gene::Care, 100.0), 1000.0, 1000.0, Some(100.0));
+    let parent_id = w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(100.0));
     w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(20.0));
     w.creatures[0].reproduction_wait = 1000;
     w.creatures[1].parent = parent_id;
@@ -414,20 +403,16 @@ fn a_cold_blooded_body_is_slower_and_cheaper_in_the_cold() {
 /// It takes the best food within its reach, not the nearest dropped.
 #[test]
 fn the_reach_setting_limits_where_it_goes_for_food() {
+    use life_core::senses::Taste;
     use life_core::{World, WorldConfig, plant::Plant};
     let space = Space::default();
-    let strict =
-        CreatureGenome::BASE.with(Gene::MinY, 10.0).with(Gene::MaxY, 30.0).with(Gene::LayerBound, 0.0);
-    let p = Phenotype::of(&strict, &Rules::default(), &space);
     let (lo, hi, reach) = (space.height * 0.1, space.height * 0.3, space.height * 0.05);
-    assert!(p.within_reach(lo - reach + 1.0, reach) && p.within_reach(hi + reach - 1.0, reach));
-    assert!(!p.within_reach(lo - reach - 1.0, reach) && !p.within_reach(hi + reach + 1.0, reach));
-    let free = Phenotype::of(&strict.with(Gene::LayerBound, 1.0), &Rules::default(), &space);
-    assert!(
-        free.within_reach(space.height, reach) && free.within_reach(0.0, reach),
-        "a free one has no layer"
-    );
-    assert!(p.within_reach(space.height, f64::INFINITY), "without the setting: anywhere");
+    let p = Taste { foreign: false, reach, layer: (lo, hi) };
+    assert!(p.admits(lo - reach + 1.0) && p.admits(hi + reach - 1.0));
+    assert!(!p.admits(lo - reach - 1.0) && !p.admits(hi + reach + 1.0));
+    let free = Taste { layer: (0.0, space.height), ..p };
+    assert!(free.admits(space.height) && free.admits(0.0), "the whole depth its layer");
+    assert!(Taste { reach: f64::INFINITY, ..p }.admits(space.height), "without the setting: anywhere");
 
     // on its layer's lower edge: the nearer plant is past its reach, the farther one inside it
     let mut w = World::new(&WorldConfig {
@@ -435,8 +420,9 @@ fn the_reach_setting_limits_where_it_goes_for_food() {
         rules: Rules::default().with("plant_rate", 0.0).unwrap(),
         ..Default::default()
     });
-    w.spawn(strict.with(Gene::Sociability, 0.0), 1000.0, hi, Some(40.0));
+    w.spawn(CreatureGenome::BASE, 1000.0, hi, Some(40.0));
     let near = Program::of(&[
+        Block::does(Action::Layer).with(0, 10).with(1, 30),
         Block::does(Action::Reach).with(0, 5),
         Block::does(Action::EatPlant),
         Block::does(Action::Wander),
@@ -445,51 +431,7 @@ fn the_reach_setting_limits_where_it_goes_for_food() {
     w.plants.push(Plant::at(1000.0, hi + reach + 100.0));
     w.plants.push(Plant::at(1000.0, hi - 200.0));
     w.step();
-    assert_eq!(w.creatures[0].mind.social.personal_food, Some((1000.0, hi - 200.0)));
-}
-
-#[test]
-fn стая_защищает_неродных_и_исчезает_без_участников() {
-    use life_core::{World, WorldConfig};
-    let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
-    let a = w.spawn(CreatureGenome::BASE.with(Gene::Size, 100.0), 1000.0, 1000.0, Some(200.0));
-    w.spawn(CreatureGenome::BASE.with(Gene::Size, 30.0), 1000.0, 1000.0, None);
-    w.creatures[1].flock = a;
-    w.step();
-    assert_eq!(w.creatures.len(), 2);
-    assert_eq!(w.counters.combat, 0);
-    assert!(w.creatures.iter().all(|v| v.health == v.max_health() && v.circle.is_some()));
-    assert_eq!(w.flocks[&a].members, 2);
-    for v in &mut w.creatures {
-        v.age = v.pheno.lifespan;
-    }
-    w.step();
-    assert!(w.creatures.is_empty() && w.flocks.is_empty());
-    assert_eq!(w.counters.old_age, 2);
-}
-
-/// A flocking parent's children keep its label, a few leave (flocks are off: the base genome is a
-/// loner, so the parent is made flocking by hand).
-#[test]
-fn метка_наследуется_с_редким_отделением() {
-    let mut p = parent();
-    p.genome = p.genome.with(Gene::PackInstinct, 1.0);
-    p.apply_rules(&Rules::default(), &Space::default());
-    p.flock = 17;
-    let mut same = 0;
-    let mut split = 0;
-    for _ in 0..1000 {
-        p.energy = p.pheno.max_energy;
-        p.reproduction_wait = 0;
-        let c = p.maybe_divide(&Space::default(), &Rules::default()).unwrap();
-        if c.flock == 17 {
-            same += 1;
-        } else {
-            assert_eq!(c.flock, 0);
-            split += 1;
-        }
-    }
-    assert!(same > 950 && split > 0 && split < 30);
+    assert_eq!(w.creatures[0].mind.personal_food, Some((1000.0, hi - 200.0)));
 }
 
 #[test]
@@ -569,7 +511,6 @@ fn один_остаток_трупа_получает_едок_с_меньши�
         w.spawn(with_diet(CreatureGenome::BASE, Diet::Carnivore), 1000.0, 1000.0, Some(30.0));
         w.creatures.last_mut().unwrap().reproduction_wait = 1000;
     }
-    w.creatures[1].flock = w.creatures[0].flock;
     let mut corpse = Corpse::from_creature(&w.creatures[0], 0);
     corpse.owner = 99;
     // one bite of flesh is left: a spawned body is no meat, so the corpse is its tank of 30, 3 of
@@ -595,7 +536,6 @@ fn исчерпанный_труп_не_лишает_следующего_едо
         w.spawn(with_diet(CreatureGenome::BASE, Diet::Omnivore), 1000.0, 1000.0, Some(30.0));
         w.creatures.last_mut().unwrap().reproduction_wait = 1000;
     }
-    w.creatures[1].flock = w.creatures[0].flock;
     let mut corpse = Corpse::from_creature(&w.creatures[0], 0);
     corpse.owner = 99;
     corpse.remaining = 10.0;
@@ -621,13 +561,11 @@ fn потерявший_растение_ест_труп_который_каса
         rules: Rules::default().with("plant_rate", 0.0).unwrap(),
         ..Default::default()
     });
-    let herbivore = CreatureGenome::BASE.with(Gene::Sociability, 0.0);
+    let herbivore = CreatureGenome::BASE;
     w.spawn(herbivore, 1000.0, 1000.0, Some(30.0));
     w.spawn(with_diet(herbivore, Diet::Omnivore), 1000.0, 1000.0, Some(30.0));
     w.spawn(herbivore, 1080.0, 1000.0, Some(30.0));
-    let flock = w.creatures[0].flock;
     for v in &mut w.creatures {
-        v.flock = flock;
         v.reproduction_wait = 1000;
     }
     // long dead and fully rotten, but lying here: the omnivore prefers the plant
@@ -650,28 +588,6 @@ fn потерявший_растение_ест_труп_который_каса
     assert!(matches!(w.creatures[0].meal.map(|m| m.food), Some(Morsel::Plant)));
     assert!(matches!(w.creatures[1].meal.map(|m| m.food), Some(Morsel::Corpse { stage: Stage::Rot })));
     assert!(w.creatures[2].meal.is_none(), "the herbivore beside the corpse ate nothing");
-}
-
-#[test]
-fn a_pair_gets_a_family_circle_a_loner_none() {
-    use life_core::{World, WorldConfig};
-    let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
-    let id = w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, None);
-    w.step();
-    assert!(w.creatures[0].circle.is_none());
-    w.spawn(CreatureGenome::BASE, 1100.0, 1000.0, None);
-    w.creatures[1].flock = id;
-    w.step();
-    let circle = w.flocks[&id].circle.expect("у пары есть круг");
-    assert!(w.creatures.iter().all(|v| v.circle == Some(circle)));
-    // A pair is a young family: its circle is at least as wide as the members see.
-    let v = &w.creatures[0];
-    let want = (v.pheno.flock_spacing * 2f64.sqrt())
-        .max(v.pheno.vision)
-        .clamp(life_core::flock::MIN_RADIUS, life_core::flock::MAX_RADIUS);
-    assert!((circle.radius - want).abs() < 1e-9, "{} vs {want}", circle.radius);
-    assert!(circle.x >= circle.radius && circle.x <= w.space.width - circle.radius);
-    assert!((w.creatures[0].pheno.layer_lo..=w.creatures[0].pheno.layer_hi).contains(&circle.y));
 }
 
 #[test]

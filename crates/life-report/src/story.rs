@@ -42,8 +42,8 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     );
     println!("Растения за прогон: выросло {}, съедено {}.", c.plants_grown, c.plants_eaten);
     println!(
-        "Питание: порций растений {}, трупов {} (из них гнили {}, костей {}). Выстрелов {}, территориальных ударов {}.",
-        c.plant_bites, c.meat_bites, c.rot_bites, c.bone_bites, c.ranged_shots, c.territorial_fights
+        "Питание: порций растений {}, трупов {} (из них гнили {}, костей {}). Выстрелов {}.",
+        c.plant_bites, c.meat_bites, c.rot_bites, c.bone_bites, c.ranged_shots
     );
     println!(
         "Трупы: появилось {}, убрано {}; из убранных лежали на дне с мясом {}, дошли до костей {}, лежали в среднем {:.0} тиков.",
@@ -56,47 +56,8 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     print_diets(&c.by_diet, last);
 
     println!("Молодых {} из {}.", last.juveniles, last.creatures);
-    for (i, a) in life_core::social::Activity::ALL.iter().enumerate() {
+    for (i, a) in life_core::creature::Activity::ALL.iter().enumerate() {
         println!("  {}: {}", a.label(), percent(last.activities[i] as u64, last.creatures as u64));
-    }
-    // flocks are off (`config::FLOCKS`): the flock lines would only say zero
-    let social = last.social_counts;
-    if life_core::config::FLOCKS {
-        println!(
-            "Стайный ген {} ({:.0}%), участников стай {}, стай {}.",
-            last.pack_carriers,
-            last.pack_share * 100.0,
-            last.pack_members,
-            last.flocks
-        );
-        println!(
-            "Стаи: тревог {}, завершено {}, вмешательств {}, отделений {}, ушедших взрослых {}.",
-            social.alarms, social.alarm_ends, social.interventions, social.splits, social.departures
-        );
-    }
-    if let Some(s) = last.flock_spread {
-        println!("Разброс стай: {}.", spread(&s));
-    }
-    if let Some(r) = last.flock_radius {
-        let kinds: Vec<String> = life_core::flock::FlockKind::ALL
-            .iter()
-            .map(|k| format!("{} {}", k.label(), last.flock_kinds[*k as usize]))
-            .collect();
-        println!(
-            "Flock circles: radius {}; inside their circle {}; by kind: {}.",
-            spread(&r),
-            last.inside_share.map_or("-".into(), |s| format!("{:.0}%", s * 100.0)),
-            kinds.join(", ")
-        );
-        let o = last.overlaps;
-        println!(
-            "Overlaps: strict {} (depth {:.0}), soft {} (depth {:.0}); strays {}, relocations {}.",
-            o.strict_pairs, o.strict_depth, o.soft_pairs, o.soft_depth, social.strays, social.relocations
-        );
-        println!(
-            "Battles for room: {} started, {} flocks beaten and moved away; now {} with {} flocks.",
-            social.battles, social.battle_retreats, last.battles, last.fighting_flocks
-        );
     }
     print_intervals(snaps, rows);
     print_genome(first, last);
@@ -200,9 +161,10 @@ fn print_genome(first: &Snapshot, last: &Snapshot) {
 /// of every mutating child drift, so programs are grouped by their shape (`Program::shape`: tests,
 /// actions and flags, no numbers): how many shapes, how many keep the founders' one, and the three
 /// most common, each with the medians of its numbers. `METRIC` lines give a sweep the same: shapes,
-/// the template's share, and the medians of the hunt's ratio and of how far the threat tests look.
+/// the template's share, the medians of the hunt's ratio and of how far the threat tests look, and
+/// the shares that remember (a working «режим» setting) and switch their layer by a condition.
 fn print_programs(world: &life_core::World) {
-    use life_core::creature::{ADULT, JUVENILE, Program};
+    use life_core::creature::{ADULT, Action, JUVENILE, Program, Strategy};
     let total = world.creatures.len();
     if total == 0 {
         return;
@@ -211,8 +173,10 @@ fn print_programs(world: &life_core::World) {
         xs.sort_by(f64::total_cmp);
         xs.get(xs.len() / 2).copied().unwrap_or(f64::NAN)
     };
-    // both templates have one shape: the lurker differs only in a number
+    // both templates have one shape: the lurker differs only in a number; a shooting founder has
+    // one more block, and a founder's layer is a number
     let template = Program::STANDARD.shape();
+    let shooter = Program::founder(Strategy::Standard, (5, 100), true).shape();
     for (stage, track, key) in [(JUVENILE, "детская", "juvenile"), (ADULT, "взрослая", "adult")]
     {
         let mut groups: std::collections::BTreeMap<Vec<u64>, Vec<Program>> = Default::default();
@@ -220,7 +184,8 @@ fn print_programs(world: &life_core::World) {
             let p = v.programs[stage];
             groups.entry(p.shape()).or_default().push(p);
         }
-        let on_template = groups.get(&template).map_or(0, Vec::len);
+        let on_template =
+            [&template, &shooter].map(|s| groups.get(s).map_or(0, Vec::len)).iter().sum::<usize>();
         let changed = world.creatures.iter().filter(|v| v.programs[stage].changes > 0).count();
         println!(
             "\nПрограммы поведения к концу, {track} дорожка: {} форм у {total} существ; форма шаблона у {}, \
@@ -234,6 +199,8 @@ fn print_programs(world: &life_core::World) {
         for (shape, group) in top.into_iter().take(3) {
             let name = if *shape == template {
                 " — форма шаблонов основателей"
+            } else if *shape == shooter {
+                " — форма основателей-стрелков"
             } else {
                 ""
             };
@@ -246,10 +213,21 @@ fn print_programs(world: &life_core::World) {
         let programs = || world.creatures.iter().map(|v| v.programs[stage]);
         let hunt = median(programs().filter_map(|p| p.hunt_ratio()).collect());
         let threat = median(programs().map(|p| p.threat_range()).collect());
+        let having = |works: &dyn Fn(&Program, usize) -> bool| {
+            let n = programs().filter(|p| (0..p.blocks().len()).any(|i| p.live(i) && works(p, i))).count();
+            n as f64 / total as f64
+        };
+        let modes = having(&|p, i| p.blocks()[i].action == Action::Mode);
+        let layers = having(&|p, i| {
+            let b = &p.blocks()[i];
+            b.action == Action::Layer && b.when.iter().any(|t| !t.always())
+        });
         println!("METRIC {key}_shapes {}", groups.len());
         println!("METRIC {key}_template_share {:.4}", on_template as f64 / total as f64);
         println!("METRIC {key}_hunt_ratio {hunt:.3}");
         println!("METRIC {key}_threat_range {threat:.3}");
+        println!("METRIC {key}_mode_share {modes:.4}");
+        println!("METRIC {key}_conditional_layer_share {layers:.4}");
     }
 }
 

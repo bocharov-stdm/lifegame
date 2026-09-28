@@ -4,33 +4,67 @@
 //! (`apply_setting`). An action only chooses a point or a way to stand; `Creature::act` moves and
 //! pays.
 
-use super::program::{Action, Block};
-use super::scene::{Scene, behind_border};
-use super::strategy::{Chase, Intent, Me, Mind};
+use super::program::{Action, Block, MODES};
+use super::scene::{PlantChoice, Scene};
+use super::strategy::{Aid, Chase, Divide, Graze, Heal, Intent, Me, Mind, Shoot, Smooth};
 use crate::config::MIN_PACE;
 use crate::rng::Rng;
-use crate::senses::{Hunting, Senses, Taste};
+use crate::senses::{Hunting, Senses};
 
-/// Which kind of move an action made: the social layer adjusts each differently.
+/// Which kind of move an action made: the steering adjusts each differently (`steer::adjust`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Mode {
     Flee,
     Food,
     Wander,
-    /// Back into the flock's circle, at full pace: the circle does not wait for ever.
-    Return,
-    /// Resting: it stands, and the social layer shows it resting.
+    /// Resting: it stands, and shows it resting.
     Rest,
+    /// Defending its child: it goes for the enemy, not smoothed, in alarm.
+    Defend,
 }
 
-/// A setting's effect on this tick (`Action::is_setting`).
-pub(super) fn apply_setting(b: &Block, scene: &mut Scene, me: &Me) {
+/// A setting's effect on this tick (`Action::is_setting`); a mode lasts its ticks.
+pub(super) fn apply_setting(b: &Block, scene: &mut Scene, me: &Me, mind: &mut Mind) {
     match b.action {
         Action::EatForeign => scene.stance.foreign = true,
         Action::Rival => scene.stance.rival = b.arg(0),
         Action::Reach => {
             let share = b.arg(0);
             scene.stance.reach = if share >= 1.0 { f64::INFINITY } else { share * me.pheno.height };
+        }
+        Action::Layer => {
+            let (a, z) = (b.arg(0), b.arg(1));
+            scene.stance.layer = if a <= z { (a, z) } else { (z, a) };
+        }
+        // the rest leave what it takes for food as it is
+        Action::Mode => {
+            let k = usize::from(b.args[0]).clamp(1, MODES) - 1;
+            mind.modes[k] = mind.tick + u64::from(b.args[1]);
+            return;
+        }
+        Action::Smooth => {
+            scene.stance.smooth = Some(Smooth { ticks: b.args[0].into(), turn: b.arg(1) });
+            return;
+        }
+        Action::Divide => {
+            scene.stance.divide = Some(Divide { tank: b.arg(0), share: b.arg(1) });
+            return;
+        }
+        Action::Heal => {
+            scene.stance.heal = Some(Heal { tank: b.arg(0), calm: b.args[1].into() });
+            return;
+        }
+        Action::Graze => {
+            scene.stance.graze = Some(Graze { plants: b.flag(0), corpses: b.flag(1), until: b.arg(2) });
+            return;
+        }
+        Action::Spare => {
+            scene.stance.spare = b.arg(0);
+            return;
+        }
+        Action::Shoot => {
+            scene.stance.shoot = Some(Shoot { from: b.arg(0), keep: b.arg(1) });
+            return;
         }
         _ => unreachable!("not a setting: {:?}", b.action),
     }
@@ -52,40 +86,39 @@ pub(super) fn act(
         Action::Flee => flee(b, scene, me, mind, senses),
         Action::Hunt => hunt(b, scene, me, mind, senses),
         Action::EatCorpse => {
-            let c = scene.corpse(me, mind, senses)?;
+            let c = scene.corpse(me, senses)?;
             if b.flag(0) && c.score <= scene.plant_score(me, mind, senses) {
                 return None;
             }
-            mind.social.personal_food = None;
+            mind.personal_food = None;
             let (tx, ty) = approach(me, c.x, c.y, me.pheno.size + c.half);
             Some((go(tx, ty, b.arg(1)), Mode::Food))
         }
         Action::EatPlant => {
-            let (px, py) = scene.plant(me, mind, senses)?;
+            let how = PlantChoice { keep: b.flag(1), best: b.flag(2) };
+            let (px, py) = if how == PlantChoice::USUAL {
+                scene.plant(me, mind, senses)?
+            } else {
+                let plant = scene.plant_by(me, senses, how)?;
+                mind.personal_food = Some(plant);
+                plant
+            };
             let (tx, ty) = approach(me, px, py, me.pheno.size);
             Some((go(tx, ty, b.arg(0)), Mode::Food))
         }
-        Action::FollowReport => {
-            // Reports of food elsewhere guide loners (and desperate members); a flock member's
-            // reports move the circle instead (`flock::food_goals`).
-            if scene.bound.is_some() || !crate::social::follows_reports(me, mind) {
-                return None;
-            }
-            let f = mind.social.food.filter(|f| !behind_border(me, mind, f.x, f.y))?;
-            Some((go(f.x, f.y, b.arg(0)), Mode::Wander))
-        }
-        Action::ReturnToCircle => return_to_circle(me, mind),
         Action::Wander => {
             let pace = b.arg(0).max(MIN_PACE);
-            let (tx, ty) = wander(me, mind, rng, me.pheno.speed * pace, b.arg(1) * me.pheno.vision);
+            let band = me.pheno.band(scene.stance.layer);
+            let (tx, ty) = wander(me, mind, rng, me.pheno.speed * pace, b.arg(1) * me.pheno.vision, band);
             Some((go(tx, ty, pace), Mode::Wander))
         }
         Action::Ambush => Some((stand(me), Mode::Wander)),
-        Action::Surface => to_layer_edge(me, mind, me.pheno.body_lo, b.arg(0)),
-        Action::Dive => to_layer_edge(me, mind, me.pheno.body_hi, b.arg(0)),
-        Action::Rest => rest(b, me, mind),
+        Action::Surface => to_layer_edge(me, mind, me.pheno.band(scene.stance.layer).0, b.arg(0)),
+        Action::Dive => to_layer_edge(me, mind, me.pheno.band(scene.stance.layer).1, b.arg(0)),
+        Action::Rest => rest(b, me, mind, me.pheno.band(scene.stance.layer)),
         Action::Torpor => Some((Intent { torpor: true, ..stand(me) }, Mode::Wander)),
-        Action::EatForeign | Action::Rival | Action::Reach => unreachable!("a setting decides nothing"),
+        Action::DefendChild => defend_child(b, scene, me, mind, senses),
+        _ => unreachable!("a setting decides nothing: {:?}", b.action),
     }
 }
 
@@ -119,15 +152,55 @@ fn fight_back(
         return None;
     }
     mind.flee_ticks = 0;
-    mind.social.shared_flee = false;
     Some((Intent { attack: Some(t.id), ..stand(me) }, Mode::Food))
+}
+
+/// The defence of its child in need (`Action::DefendChild`): go for the enemy and strike it, any
+/// size. Not while resting from the last defence, not with a tank at or below the block's share;
+/// an episode against one enemy lasts at most the block's ticks, then it rests from defending.
+fn defend_child(
+    b: &Block,
+    scene: &mut Scene,
+    me: &Me,
+    mind: &mut Mind,
+    senses: &impl Senses,
+) -> Option<(Intent, Mode)> {
+    if mind.tick < mind.aid_cooldown || me.energy <= me.pheno.max_energy * b.arg(1) {
+        end_defence(mind);
+        return None;
+    }
+    let within = b.arg(0) * me.pheno.vision;
+    let prefer = mind.aid.map(|a| a.victim);
+    let Some((victim, enemy)) = senses.child_in_need(me, within, mind.tick, u64::from(b.args[4]), prefer)
+    else {
+        end_defence(mind);
+        return None;
+    };
+    let started = match mind.aid {
+        Some(a) if a.victim == victim && a.enemy == enemy.id => a.started,
+        _ => mind.tick,
+    };
+    if mind.tick.saturating_sub(started) >= u64::from(b.args[2]) {
+        end_defence(mind);
+        return None;
+    }
+    mind.aid = Some(Aid { victim, enemy: enemy.id, started, pause: b.args[3] });
+    scene.stance.defending = Some(enemy.id);
+    Some((Intent { attack: Some(enemy.id), ..Intent::to(enemy.x, enemy.y) }, Mode::Defend))
+}
+
+/// A defence under way ends: it rests from defending for its block's pause.
+pub(super) fn end_defence(mind: &mut Mind) {
+    if let Some(aid) = mind.aid.take() {
+        mind.aid_cooldown = mind.tick + u64::from(aid.pause);
+    }
 }
 
 /// Flight from the nearest threat in sight (the enemy that struck it first); out of sight, on its
 /// last course for its memory of ticks — out of sight is not gone. A flight starts from whatever
 /// its block saw; under way, only a threat nearer than the block's «again» share of sight (the old
 /// flight distance) makes it run its whole memory again, a farther one only steers it while the
-/// memory runs down.
+/// memory runs down. It runs at the block's pace, its course tilted down or up by the block's tilt.
 fn flee(
     b: &Block,
     scene: &mut Scene,
@@ -154,12 +227,20 @@ fn flee(
                 mind.flee_dx = angle.cos();
                 mind.flee_dy = angle.sin();
             }
+            // straight (100) leaves the course exactly as it is
+            if b.args[4] != 100 {
+                let (dx, dy) = (mind.flee_dx, mind.flee_dy + b.arg(4));
+                let d = dx.hypot(dy);
+                if d > 0.0 {
+                    (mind.flee_dx, mind.flee_dy) = (dx / d, dy / d);
+                }
+            }
         }
         None if mind.flee_ticks > 0 => mind.flee_ticks -= 1,
         None => return None,
     }
     let speed = me.pheno.speed;
-    let intent = go(me.x + mind.flee_dx * speed, me.y + mind.flee_dy * speed, 1.0);
+    let intent = go(me.x + mind.flee_dx * speed, me.y + mind.flee_dy * speed, b.arg(3));
     Some((Intent { burst: b.flag(1), ..intent }, Mode::Flee))
 }
 
@@ -175,24 +256,25 @@ fn hunt(
     senses: &impl Senses,
 ) -> Option<(Intent, Mode)> {
     let (ratio, caution, patience) = (b.arg(0), b.arg(1), b.args[2]);
-    let taste = Taste { foreign: scene.stance.foreign, reach: scene.stance.reach };
-    let p = scene.prey(me, mind, senses, Hunting { ratio, caution, taste })?;
+    let taste = scene.taste(me);
+    let range = b.arg(6) * me.pheno.vision;
+    let p = scene.prey(me, mind, senses, Hunting { ratio, caution, taste, range })?;
     if b.flag(3) && mind.attack != Some(p.id) {
-        let corpse = scene.corpse(me, mind, senses).map_or(0.0, |c| c.score);
+        let corpse = scene.corpse(me, senses).map_or(0.0, |c| c.score);
         if p.score <= scene.plant_score(me, mind, senses).max(corpse) {
             return None;
         }
     }
-    match chase(me, mind.social.tick, scene.chasing, &p, u64::from(patience)) {
+    match chase(me, mind.tick, scene.chasing, &p, u64::from(patience)) {
         Some(c) => {
             mind.chase = Some(c);
-            mind.social.personal_food = None;
+            mind.personal_food = None;
             scene.stance.strike_ratio = ratio;
-            let intent = Intent { attack: Some(p.id), burst: b.flag(4), ..Intent::to(p.x, p.y) };
+            let intent = Intent { attack: Some(p.id), burst: b.flag(4), ..go(p.x, p.y, b.arg(7)) };
             Some((intent, Mode::Food))
         }
         None => {
-            mind.given_up = Some((p.id, mind.social.tick + u64::from(b.args[5])));
+            mind.given_up = Some((p.id, mind.tick + u64::from(b.args[5])));
             None
         }
     }
@@ -217,41 +299,22 @@ fn chase(
     }
 }
 
-/// A rest in its layer (its circle for a member): it starts one of the block's length unless in
-/// the pause after the last, and goes on with one it started. It ends when the block no longer
-/// decides (`strategy::plan`).
-fn rest(b: &Block, me: &Me, mind: &mut Mind) -> Option<(Intent, Mode)> {
-    let in_layer = me.y >= me.pheno.body_lo && me.y <= me.pheno.body_hi;
-    let at_home = me.circle.map_or(in_layer, |c| c.holds(me.x, me.y, 0.0));
+/// A rest in its home band: it starts one of the block's length unless in the pause after the
+/// last, and goes on with one it started. It ends when the block no longer decides
+/// (`strategy::plan`).
+fn rest(b: &Block, me: &Me, mind: &mut Mind, (lo, hi): (f64, f64)) -> Option<(Intent, Mode)> {
+    let at_home = me.y >= lo && me.y <= hi;
     if !at_home {
         return None;
     }
-    let m = &mut mind.social;
-    if m.rest_until <= m.tick {
-        if m.tick < m.rest_ready {
+    if mind.rest_until <= mind.tick {
+        if mind.tick < mind.rest_ready {
             return None;
         }
-        m.rest_until = m.tick + u64::from(b.args[0]);
-        m.rest_ready = m.rest_until + u64::from(b.args[1]);
+        mind.rest_until = mind.tick + u64::from(b.args[0]);
+        mind.rest_ready = mind.rest_until + u64::from(b.args[1]);
     }
     Some((stand(me), Mode::Rest))
-}
-
-/// Back into its flock's circle when outside it; around a neighbour's border that lies on the way.
-fn return_to_circle(me: &Me, mind: &mut Mind) -> Option<(Intent, Mode)> {
-    let c = me.circle.filter(|c| !c.holds(me.x, me.y, 0.0))?;
-    let (mut tx, mut ty) = c.toward(me.x, me.y, 0.7);
-    if behind_border(me, mind, tx, ty)
-        && let Some(a) = mind.social.territory_avoid
-    {
-        // the part of its own circle away from the neighbour
-        let away = c.toward(2.0 * c.x - a.x, 2.0 * c.y - a.y, 0.7);
-        if !behind_border(me, mind, away.0, away.1) {
-            (tx, ty) = away;
-        }
-    }
-    mind.target = None;
-    Some((go(tx, ty, 1.0), Mode::Return))
 }
 
 /// Up or down its layer to depth `edge`, straight at `pace`; not done once within a unit of it.
@@ -264,26 +327,15 @@ fn to_layer_edge(me: &Me, mind: &mut Mind, edge: f64, pace: f64) -> Option<(Inte
     Some((go(me.x, edge, pace), Mode::Wander))
 }
 
-/// The wander target, a new one once reached (within one `step`), outside the circle or behind a
-/// border; a new one lies at most `reach` away.
-fn wander(me: &Me, mind: &mut Mind, rng: &mut Rng, step: f64, reach: f64) -> (f64, f64) {
-    let stale = match mind.target {
-        None => true,
-        Some((tx, ty)) => {
-            let (dx, dy) = (me.x - tx, me.y - ty);
-            dx * dx + dy * dy < step * step
-                || me.circle.is_some_and(|c| !c.holds(tx, ty, 0.0))
-                || behind_border(me, mind, tx, ty)
-        }
-    };
+/// The wander target, a new one once reached (within one `step`); a new one lies at most `reach`
+/// away in its home band `band`.
+fn wander(me: &Me, mind: &mut Mind, rng: &mut Rng, step: f64, reach: f64, band: (f64, f64)) -> (f64, f64) {
+    let stale = mind.target.is_none_or(|(tx, ty)| {
+        let (dx, dy) = (me.x - tx, me.y - ty);
+        dx * dx + dy * dy < step * step
+    });
     if stale {
-        // a few more draws when the target falls behind a border
-        for _ in 0..4 {
-            pick_random_target(me, mind, rng, reach);
-            if mind.target.is_none_or(|(tx, ty)| !behind_border(me, mind, tx, ty)) {
-                break;
-            }
-        }
+        pick_random_target(me, mind, rng, reach, band);
     }
     mind.target.unwrap()
 }
@@ -304,24 +356,14 @@ fn approach(me: &Me, fx: f64, fy: f64, reach: f64) -> (f64, f64) {
 /// It has just eaten: a new target at once, at most `reach` away, so it does not tread on the spot
 /// (in flight too).
 #[inline(always)]
-pub(crate) fn after_eating(me: &Me, mind: &mut Mind, rng: &mut Rng, reach: f64) {
-    pick_random_target(me, mind, rng, reach);
+pub(crate) fn after_eating(me: &Me, mind: &mut Mind, rng: &mut Rng, reach: f64, band: (f64, f64)) {
+    pick_random_target(me, mind, rng, reach, band);
 }
 
-/// A new wander target. A flock member wanders inside its circle. Anyone else stays in its
-/// home band: outside the band, the nearest band point by depth (it walks back to its layer);
-/// inside, a random point from a quarter of `reach` to `reach` away; 10 tries, else stand.
-fn pick_random_target(me: &Me, mind: &mut Mind, rng: &mut Rng, reach: f64) {
-    if let Some(c) = me.circle {
-        let angle = rng.uniform(0.0, std::f64::consts::TAU);
-        let d = c.radius * 0.8 * rng.random().sqrt();
-        mind.target = Some((
-            (c.x + angle.cos() * d).clamp(me.pheno.x_lo, me.pheno.x_hi),
-            (c.y + angle.sin() * d).clamp(me.pheno.y_lo, me.pheno.y_hi),
-        ));
-        return;
-    }
-    let (lo, hi) = (me.pheno.body_lo, me.pheno.body_hi);
+/// A new wander target in its home band: outside the band, the nearest band point by depth (it
+/// walks back to its layer); inside, a random point from a quarter of `reach` to `reach` away; 10
+/// tries, else stand.
+fn pick_random_target(me: &Me, mind: &mut Mind, rng: &mut Rng, reach: f64, (lo, hi): (f64, f64)) {
     if me.y < lo || me.y > hi {
         mind.target = Some((me.x, me.y.clamp(lo, hi)));
         return;

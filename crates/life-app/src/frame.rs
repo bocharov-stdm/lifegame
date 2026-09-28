@@ -138,7 +138,6 @@ pub struct Selected {
     pub age: f64,
     pub health: f64,
     pub max_health: f64,
-    pub flock: Option<u64>,
     pub state: &'static str,
     pub id: u64,
     pub x: f64,
@@ -152,13 +151,15 @@ pub struct Selected {
     /// Расход энергии за тик.
     pub upkeep: f64,
     pub genome: [f64; creature::N],
-    /// Слой по глубине (y от и до): где ему можно жить и есть.
+    /// Its depth layer (y from and to), as its program set it this tick.
     pub layer: (f64, f64),
     /// What it bit on the frame's tick or the one before, if anything.
     pub eating: Option<life_core::creature::Morsel>,
     /// Its behaviour programs, the juvenile and the adult one, and the one it lives by now.
     pub programs: [life_core::creature::Program; 2],
     pub stage: usize,
+    /// How many ticks each of its modes stays on, from its last decision (0: off).
+    pub modes: [u64; life_core::creature::program::MODES],
     /// In the program it lives by: the block that decided this tick (None: none did, it stands),
     /// the settings that applied, and the deciding blocks whose tests held (bit i: block i).
     pub fired: Option<u8>,
@@ -172,7 +173,6 @@ impl Selected {
             age: v.age,
             health: v.health,
             max_health: v.max_health(),
-            flock: world.flocks.get(&v.flock).filter(|f| f.members >= 2).map(|_| v.flock),
             state: if v.fleeing() {
                 "убегает"
             } else if v.torpid {
@@ -186,7 +186,7 @@ impl Selected {
             } else if !v.adult() {
                 "растёт"
             } else {
-                v.mind.social.activity.label()
+                v.mind.activity.label()
             },
             id,
             x: v.x,
@@ -198,10 +198,11 @@ impl Selected {
             max_energy: v.pheno.max_energy,
             upkeep: v.pheno.upkeep,
             genome: v.genome.to_values(),
-            layer: (v.pheno.layer_lo, v.pheno.layer_hi),
+            layer: v.pheno.layer(v.mind.stance.layer),
             eating: v.meal.filter(|m| m.tick + 1 >= world.tick).map(|m| m.food),
             programs: *v.programs,
             stage: v.stage(),
+            modes: v.mind.modes.map(|until| until.saturating_sub(v.mind.tick)),
             fired: v.mind.fired,
             applied: v.mind.applied,
             tried: v.mind.tried,
@@ -216,34 +217,6 @@ pub struct LogEntry {
     pub tick: u64,
     pub kind: Option<EventKind>,
     pub text: String,
-}
-
-/// A flock's circle: where its members feed and what it guards.
-#[derive(Clone, Debug)]
-pub struct FlockArea {
-    pub details: life_core::flock::Summary,
-    pub id: u64,
-    pub x: f64,
-    pub y: f64,
-    pub radius: f64,
-    pub members: usize,
-    pub color: [u8; 3],
-}
-
-pub fn flock_areas(world: &World) -> Vec<FlockArea> {
-    life_core::flock::summaries(world)
-        .into_iter()
-        .map(|s| FlockArea {
-            id: s.id,
-            x: s.x,
-            y: s.y,
-            members: s.members,
-            // a flock gets its circle at the next update; until then the members' spread
-            radius: if s.radius > 0.0 { s.radius } else { s.spread },
-            color: creature_color(world, s.id, true),
-            details: s,
-        })
-        .collect()
 }
 
 /// A visible corpse: what is left of it sets the mark's opacity, its stage the colour.
@@ -305,7 +278,6 @@ pub struct Frame {
     pub origin: (f64, f64),
     /// Растения, потом существа — в таком порядке и рисуются.
     pub instances: Vec<Instance>,
-    pub flock_areas: Vec<FlockArea>,
     /// The food patches, when they are new: in the first frame of a world and after a rules
     /// change (frames are never dropped, so the window keeps the last ones it got).
     pub patches: Option<Arc<[Patch]>>,
@@ -316,7 +288,6 @@ pub struct Frame {
     /// Весь мир крупными клетками; приходит не в каждом кадре.
     pub minimap: Option<Raster>,
     pub selected: Option<Selected>,
-    pub selected_flock: Option<life_core::flock::Summary>,
     /// Новое с прошлого кадра: точки графиков и записи хроники. Кадры не
     /// теряются (поток кладёт новый, только когда окно забрало прошлый),
     /// поэтому приращений достаточно.
@@ -339,12 +310,7 @@ pub struct Frame {
 
 /// Лёгкие экземпляры для дальнего масштаба: нет сопоставления кадров,
 /// призраков, курсов и сортировки. Тела и растения сохраняют цвета.
-pub fn dots_colored(
-    world: &World,
-    rect: (f64, f64, f64, f64),
-    out: &mut Vec<Instance>,
-    colored: bool,
-) -> bool {
+pub fn dots(world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) -> bool {
     use crate::motion::{DOT_BIT, KIND_CREATURE, KIND_PLANT, OLD};
 
     let (x0, y0, x1, y1) = rect;
@@ -372,8 +338,8 @@ pub fn dots_colored(
             return false;
         }
     }
+    let color = rgba(CREATURE_COLOR, 255);
     for v in &world.creatures {
-        let color = rgba(creature_color(world, v.flock, colored), 255);
         if !add(v.x, v.y, color, KIND_CREATURE) {
             out.clear();
             return false;
@@ -410,32 +376,7 @@ pub fn plant_color() -> [u8; 3] {
 /// Карта плотности: сколько растений и существ в каждой клетке
 /// прямоугольника мира, в цвете. Считается за один проход по миру, поэтому
 /// её цена не зависит от того, сколько существ видно.
-#[cfg(test)]
 pub fn density(world: &World, rect: (f64, f64, f64, f64), w: usize, h: usize, out: Raster) -> Raster {
-    density_colored(world, rect, w, h, out, false)
-}
-
-/// Цвет стаи устойчив между кадрами и не расходует генераторы симуляции.
-pub fn creature_color(world: &World, tag: u64, colored: bool) -> [u8; 3] {
-    if !colored {
-        return CREATURE_COLOR;
-    }
-    if world.flocks.get(&tag).is_none_or(|f| f.members < 2) {
-        return [160, 166, 178];
-    }
-    let hue = (life_core::rng::mix(tag) % 360) as f32 / 360.0;
-    let rgb = eframe::egui::ecolor::Hsva::new(hue, 0.55, 0.95, 1.0).to_srgb();
-    [rgb[0], rgb[1], rgb[2]]
-}
-
-pub fn density_colored(
-    world: &World,
-    rect: (f64, f64, f64, f64),
-    w: usize,
-    h: usize,
-    out: Raster,
-    colored: bool,
-) -> Raster {
     let (x0, y0, x1, y1) = rect;
     let (sx, sy) = (w as f64 / (x1 - x0), h as f64 / (y1 - y0));
     let mut counts = vec![[0u32; 2]; w * h];
@@ -453,7 +394,7 @@ pub fn density_colored(
         }
     };
     world.plants.iter().for_each(|p| add(p.x, p.y, 0, PLANT_COLOR));
-    world.creatures.iter().for_each(|v| add(v.x, v.y, 1, creature_color(world, v.flock, colored)));
+    world.creatures.iter().for_each(|v| add(v.x, v.y, 1, CREATURE_COLOR));
 
     let mut rgba = out.rgba;
     rgba.clear();
@@ -493,28 +434,6 @@ mod tests {
     #[test]
     fn кружок_ровно_32_байта() {
         assert_eq!(std::mem::size_of::<Instance>(), 32);
-    }
-
-    #[test]
-    fn a_flock_area_is_its_circle_and_goes_with_the_flock() {
-        let mut world = World::new(&WorldConfig { seed: 7, n_creatures: Some(3), ..Default::default() });
-        let tag = world.creatures[0].flock;
-        world.creatures[1].flock = tag;
-        for (v, x) in world.creatures.iter_mut().zip([1000.0, 1200.0, 3000.0]) {
-            v.x = x;
-            v.y = 1000.0;
-        }
-        life_core::flock::update(&mut world.flocks, &mut world.creatures, &world.space, 1, false);
-        let areas = flock_areas(&world);
-        assert_eq!(areas.len(), 1, "a loner has no area");
-        let a = &areas[0];
-        let circle = world.flocks[&tag].circle.unwrap();
-        assert_eq!((a.id, a.members, a.x, a.y, a.radius), (tag, 2, circle.x, circle.y, circle.radius));
-        assert!((a.details.spread - 100.0).abs() < 1e-9, "the members' spread stays in the card");
-        assert_eq!(a.details.warned, 0);
-        world.creatures[1].alive = false;
-        assert!(flock_areas(&world).is_empty(), "a flock gone leaves no area");
-        assert_eq!(world.tick, 0, "drawing does not move the simulation");
     }
 
     /// Страж скорости кадра: 200 тыс. видимых существ собираются в кадр

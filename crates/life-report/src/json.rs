@@ -46,7 +46,6 @@ fn counters(c: &Counters) -> Value {
         "rot_bites": c.rot_bites,
         "bone_bites": c.bone_bites,
         "ranged_shots": c.ranged_shots,
-        "territorial_fights": c.territorial_fights,
         "born": c.born,
         "starved": c.starved,
         "old_age": c.old_age,
@@ -116,21 +115,7 @@ fn snapshot(s: &Snapshot) -> Value {
         "plant_cap": s.plant_cap,
         "creatures": s.creatures,
         "juveniles": s.juveniles,
-        "pack_carriers": s.pack_carriers,
-        "pack_share": s.pack_share,
-        "pack_members": s.pack_members,
-        "flocks": s.flocks,
-        "activities": life_core::social::Activity::ALL.iter().enumerate().map(|(i,a)| json!({"name":a.label(),"count":s.activities[i],"share": if s.creatures>0 {s.activities[i] as f64/s.creatures as f64} else {0.0}})).collect::<Vec<_>>(),
-        "flock_spread": s.flock_spread.as_ref().map(spread),
-        "flock_radius": s.flock_radius.as_ref().map(spread),
-        "flock_kinds": life_core::flock::FlockKind::ALL.iter().map(|k| json!({"kind": life_core::genome::creature::FLOCK_KIND_VARIANTS[*k as usize].key, "flocks": s.flock_kinds[*k as usize]})).collect::<Vec<_>>(),
-        "inside_share": s.inside_share,
-        "overlaps": {"strict_pairs": s.overlaps.strict_pairs, "strict_depth": s.overlaps.strict_depth, "soft_pairs": s.overlaps.soft_pairs, "soft_depth": s.overlaps.soft_depth},
-        "social": {"alarms":s.social_counts.alarms,"alarm_ends":s.social_counts.alarm_ends,"interventions":s.social_counts.interventions,"splits":s.social_counts.splits,"departures":s.social_counts.departures,"strays":s.social_counts.strays,"relocations":s.social_counts.relocations,"battles":s.social_counts.battles,"battle_retreats":s.social_counts.battle_retreats},
-        "squeezed_flocks": s.squeezed_flocks,
-        "pressed_flocks": s.pressed_flocks,
-        "battles": s.battles,
-        "fighting_flocks": s.fighting_flocks,
+        "activities": life_core::creature::Activity::ALL.iter().enumerate().map(|(i,a)| json!({"name":a.label(),"count":s.activities[i],"share": if s.creatures>0 {s.activities[i] as f64/s.creatures as f64} else {0.0}})).collect::<Vec<_>>(),
         "counters": counters(&s.counters),
         "genes": genes,
         "depth_pct": s.depth.as_ref().map(spread),
@@ -159,7 +144,7 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
     let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(rules.get(k)))).collect();
     let space = cfg.space();
     json!({
-        "format": "life-report/11",
+        "format": "life-report/12",
         "world": { "scale": cfg.scale, "shape": cfg.shape.key(), "width": space.width, "height": space.height },
         "ticks": ticks,
         "sample_every": sample_every,
@@ -182,17 +167,6 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
                 "ms_per_tick": r(run.res.ms_per_tick()),
                 "pace": run.pace.iter().map(|&(tick, ms)| json!([tick, r(ms)])).collect::<Vec<_>>(),
                 "totals": counters(&last.counters.since(&first.counters)),
-                "social_totals": {
-                    "alarms": last.social_counts.alarms - first.social_counts.alarms,
-                    "alarm_ends": last.social_counts.alarm_ends - first.social_counts.alarm_ends,
-                    "interventions": last.social_counts.interventions - first.social_counts.interventions,
-                    "splits": last.social_counts.splits - first.social_counts.splits,
-                    "departures": last.social_counts.departures - first.social_counts.departures,
-                    "strays": last.social_counts.strays - first.social_counts.strays,
-                    "relocations": last.social_counts.relocations - first.social_counts.relocations,
-                    "battles": last.social_counts.battles - first.social_counts.battles,
-                    "battle_retreats": last.social_counts.battle_retreats - first.social_counts.battle_retreats,
-                },
                 "events": run.events.iter().map(event).collect::<Vec<_>>(),
                 "maps": run.maps.iter().map(|(t, rows)| json!({ "tick": t, "rows": rows })).collect::<Vec<_>>(),
                 "snapshots": snaps.iter().map(snapshot).collect::<Vec<_>>(),
@@ -217,7 +191,7 @@ mod tests {
         let runs =
             [Run { seed: cfg.seed, res: &res, events: &[], maps: &[], pace: &[(500, 2.5), (1000, 7.25)] }];
         let data = report(&cfg, &cfg.rules, 0, 1, &runs);
-        assert_eq!(data["format"], "life-report/11");
+        assert_eq!(data["format"], "life-report/12");
         let run = &data["runs"][0];
         assert_eq!(run["pace"], json!([[500, 2.5], [1000, 7.25]]), "the tick rate by laps");
         let snap = &run["snapshots"][0];
@@ -227,7 +201,6 @@ mod tests {
             "rot_bites",
             "bone_bites",
             "ranged_shots",
-            "territorial_fights",
             "corpses",
             "corpses_gone",
             "corpses_bottom",
@@ -237,21 +210,16 @@ mod tests {
             assert!(run["totals"][key].as_u64().is_some(), "нет итогового счётчика {key}");
             assert!(snap["counters"][key].as_u64().is_some(), "нет счётчика среза {key}");
         }
-        for key in ["pack_instinct", "territoriality", "care", "diet"] {
+        for key in ["size", "burst", "diet"] {
             assert!(data["genes"]["creature"].as_array().unwrap().iter().any(|row| row["key"] == key));
             assert!(snap["genes"][key].is_object(), "нет сводки гена {key}");
         }
-        for key in ["pack_carriers", "pack_members", "flocks"] {
-            assert!(snap[key].as_u64().is_some(), "нет численности {key}");
-        }
-        assert!(snap["pack_share"].as_f64().is_some());
+        assert!(snap["activities"].as_array().is_some_and(|a| !a.is_empty()));
         for diet in DIETS {
             assert!(run["totals"]["by_diet"]["born"][diet].as_u64().is_some(), "no births of {diet}");
             assert!(run["totals"]["by_diet"]["kills"]["carnivore"][diet].as_u64().is_some());
             assert!(snap["counters"]["by_diet"]["deaths"][diet]["starved"].as_u64().is_some());
         }
         assert_eq!(snap["corpses"], 1);
-        assert_eq!(snap["social"]["departures"], 0);
-        assert_eq!(run["social_totals"]["departures"], 0);
     }
 }

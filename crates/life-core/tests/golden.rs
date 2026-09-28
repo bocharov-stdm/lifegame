@@ -5,8 +5,8 @@
 //! формулы. Отпечаток мира на контрольных тиках — FNV-1a по битам того, что
 //! переживает любой рефакторинг: координаты, энергия, номера, гены и проба
 //! генератора каждого существа (лишний или пропущенный розыгрыш меняет пробу
-//! сразу, а не через сотню тиков). В отпечаток также входит память поведения,
-//! включая временную защиту отделившихся стай.
+//! сразу, а не через сотню тиков). В отпечаток также входит память поведения
+//! и временная защита пар «родитель — ребёнок другого образа жизни».
 //!
 //! Намеренная смена поведения (новый ген, новая стратегия) ломает тест по
 //! определению: тогда константы переписываются отдельным коммитом, вместе с
@@ -48,20 +48,6 @@ impl Fnv {
 fn digest(w: &World) -> u64 {
     let mut h = Fnv::new();
     h.u64(w.tick);
-    h.u64(w.next_flock);
-    for ((a, b), until) in w.grace.entries() {
-        h.u64(a);
-        h.u64(b);
-        h.u64(until);
-    }
-    for byte in format!(
-        "{:?}{:?}{:?}{:?}",
-        w.split_watches, w.social_counts, w.territory.encounters, w.territory.attacks
-    )
-    .bytes()
-    {
-        h.u64(byte as u64);
-    }
     let c = w.counters;
     for v in [
         c.plants_grown,
@@ -69,7 +55,6 @@ fn digest(w: &World) -> u64 {
         c.plant_bites,
         c.meat_bites,
         c.ranged_shots,
-        c.territorial_fights,
         c.born,
         c.starved,
         c.old_age,
@@ -101,11 +86,10 @@ fn digest(w: &World) -> u64 {
     h.u64(w.creatures.len() as u64);
     for v in &w.creatures {
         h.u64(v.id);
-        for byte in format!("{:?}", v.mind.social).bytes() {
+        for byte in format!("{:?}", v.mind).bytes() {
             h.u64(byte as u64);
         }
         h.u64(v.parent);
-        h.u64(v.flock);
         h.f64(v.birth_size);
         h.f64(v.pheno.size);
         h.f64(v.age);
@@ -121,12 +105,6 @@ fn digest(w: &World) -> u64 {
         if let Some((x, y)) = v.mind.target {
             h.f64(x);
             h.f64(y);
-        }
-        h.u64(v.circle.is_some() as u64);
-        if let Some(c) = v.circle {
-            for n in [c.x, c.y, c.radius] {
-                h.f64(n);
-            }
         }
         h.f64(v.x);
         h.f64(v.y);
@@ -147,21 +125,6 @@ fn digest(w: &World) -> u64 {
             h.u64(u64::from(p.changes));
         }
         h.u64(v.rng.clone().next_u64());
-    }
-    h.u64(w.flocks.len() as u64);
-    for (id, f) in &w.flocks {
-        for byte in format!("{f:?}").bytes() {
-            h.u64(byte as u64);
-        }
-        h.u64(*id);
-        h.u64(f.members as u64);
-        h.u64(f.remaining as u64);
-        if let Some(c) = f.circle {
-            for n in [c.x, c.y, c.radius, f.target.0, f.target.1] {
-                h.f64(n);
-            }
-        }
-        h.u64(f.rng.clone().next_u64());
     }
     // поток мира и счётчик номеров: подсадка в копии мира
     let mut probe = w.clone();
@@ -296,21 +259,21 @@ fn run(case: &Case) -> (Vec<(u64, u64)>, World, Seen) {
 #[rustfmt::skip]
 const GOLDEN: &[&[(u64, u64)]] = &[
     // A: сид 1, по умолчанию
-    &[(1, 0x76463a29cc1198cf), (2, 0xf3a24dfd4927630a), (10, 0xfe0f31d318dbeca8), (31, 0x5a4386660936eebf), (100, 0xb343821d6bad5c41), (250, 0x15b7c23d70adfb10), (500, 0x8fe821465dba016c), (1000, 0x52468e750cc64d53), (2000, 0xe27ecd8d1cec76cd), (3000, 0x050edf6c6eb5e572), ],
+    &[(1, 0x5e19ba4f3dfc3315), (2, 0x1a59056a3304b2d0), (10, 0x9314b5d49241748c), (31, 0x90a18df8c1e9ca51), (100, 0x8a607b31a03557ef), (250, 0x22153b0e2e609be4), (500, 0xd875e3e42e3e64a8), (1000, 0x8cf627f4abee340c), (2000, 0x4adc2e4ce65913db), (3000, 0x95f5f71144761c40), ],
     // B: сид 3, гиганты
-    &[(1, 0xb9b3e1598fb799f1), (2, 0xf49ae265608b8de1), (10, 0xedcb31e9bba5b7c2), (31, 0xccecabbb23708ca7), (100, 0x237bebad6a18c41c), (250, 0x2b014d9b910097d7), (500, 0x985909e62428b72c), (1000, 0x6775ef641fa8ee60), (2000, 0xfd0402401f44d02a), ],
+    &[(1, 0x6411f5c331fa53e4), (2, 0xc2b333c94b0c4dad), (10, 0x0d18286e8bd4bf39), (31, 0x653c57bf6864d1c1), (100, 0x01a13d5ccc896a9b), (250, 0x1c3f5cefccf7f4c9), (500, 0x52deebf3198e17ae), (1000, 0x69f6ed334dd1f305), (2000, 0xcd44020c9e1413c3), ],
     // C: сид 7, лаборатория
-    &[(1, 0x02b3ae83052b83dd), (2, 0x10d77735ff46c9a0), (10, 0x3bdf9372e4d43a8a), (31, 0x32cf80d6f5a70c1c), (100, 0x795f11aee032b697), (250, 0x92e68802e783bede), (500, 0x0339d792973403f6), (1000, 0x2baf01e0def2b042), (2000, 0xa044ebf6c9451c03), (3000, 0xdd30f7f5b00cdfa7), ],
+    &[(1, 0xd34b6099dcaec19a), (2, 0xb509ce0e769adf3b), (10, 0x7ad1f2e501739cd2), (31, 0x699fa3d6cc4b5777), (100, 0xe1fed2f794cba630), (250, 0x2a48b33649697f37), (500, 0x5b4b7e884df4af10), (1000, 0x53671ba9d7bc7e89), (2000, 0x3ab9865e82a0cae6), (3000, 0x8bf6a27c1d367a7e), ],
     // D: сид 2, масштаб 10
-    &[(1, 0xac086a8948368bf6), (2, 0x642b36ad84389c2e), (10, 0x4122c1084c1ec2c2), (31, 0x1887f3194f3c9616), (100, 0x030c9189680c3649), (250, 0x1f3ade96292535f1), (500, 0x993147787f63f81a), ],
+    &[(1, 0x060fcc7182def373), (2, 0x2f694834705d912a), (10, 0x39e9d92e15bfbb64), (31, 0x16c2e3d8977a91e0), (100, 0xfd8c705862ed6b39), (250, 0xb9eaf24c810ec12e), (500, 0x7684fe81fc6ed1cb), ],
     // E: сид 3, правила на ходу и подсадка
-    &[(1, 0x45434c31faf1f89d), (2, 0xdedaa72e2570c1cd), (10, 0xdb055fa7893cf2b3), (31, 0x2eed6af143d62db0), (100, 0xb77cc1acb269e701), (250, 0x76259ee75a2730a8), (500, 0x558f74bcf44fa165), (1000, 0x3f2f5527d7663f19), ],
+    &[(1, 0x3296835985831824), (2, 0x4551e9badfdef199), (10, 0x404e48936cfbdb82), (31, 0xbb88766a73890091), (100, 0x0194f8582c1ed67d), (250, 0x64d8a18ad0af7a44), (500, 0xace1b0af644afb77), (1000, 0x1c6102cda5b03618), ],
     // F: сид 5, смесь стратегий
-    &[(1, 0xfafa91651ec4b441), (2, 0x4a6fe4fc0698c57e), (10, 0x0b546cb18b4e4508), (31, 0x5b9fe5b56c0c4b5f), (100, 0xe7b372c671b49711), (250, 0x514cc10f8f4f7ff6), (500, 0xf4f1e9744df7f9aa), (1000, 0x937e4c2923c85c4f), (2000, 0xb1ac21591635b74a), ],
+    &[(1, 0x5f930a716b3d0745), (2, 0xff3a3a5a5d2cc4d9), (10, 0xf912cfa932f7bc23), (31, 0x05caf8e72aeb9e2a), (100, 0x4845e8b0039084ab), (250, 0x2d4fda62dfa6942a), (500, 0xc11480137b1b1012), (1000, 0x688d582f4133e4ff), (2000, 0x80e405312385cda4), ],
     // G: сид 6, квадрат x10, еда линейно и волнами
-    &[(1, 0x5a48e9cf2ba621a5), (2, 0xf8035414fd0be5ee), (10, 0x2304c4ab1f519bae), (31, 0x4c808577774a2f93), (100, 0x4af00a425bd832f1), (250, 0x3517278fffc7c23a), (500, 0xf15414520ec48c90), (1000, 0x1e75045550b5a58b), ],
+    &[(1, 0x316a0050afabb123), (2, 0x0f129ee645c9d467), (10, 0xf4a2e8105bafc532), (31, 0xd0446a37e08f9540), (100, 0x71bbe321a2a07776), (250, 0xe541871ec174e7b7), (500, 0xf92d4fb9b3d20329), (1000, 0xe703957a1704c94f), ],
     // H: сид 8, бои
-    &[(1, 0x40f45dcb21325591), (2, 0x5278f5558073e891), (10, 0x9c0114e39561d175), (31, 0xf6aead7e1617a1a8), (100, 0x2fa25e5d13cf6891), (250, 0x2e7892495af9efbb), (500, 0x048ec47af32a7920), (1000, 0x0a4e38fd41f937b2), (2000, 0x928a4bc13261eca6), ],
+    &[(1, 0x2b4fc30cc50b28c0), (2, 0x3222278f776584ea), (10, 0xf0d011b1cfd9b4d7), (31, 0x5042718eae962a97), (100, 0x4003f3d635ba9389), (250, 0x0cee5e8b28caa804), (500, 0x81dd0bbc5f6b7d9b), (1000, 0xceb536b27130ae94), (2000, 0xbb6ffb0026c8b299), ],
 ];
 
 #[cfg(not(windows))]

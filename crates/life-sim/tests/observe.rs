@@ -41,9 +41,7 @@ fn срез_раскладывает_всех_по_глубине() {
             }
         }
     }
-    let packs = g[Gene::PackInstinct as usize].shares().unwrap()[1];
-    let shooters = g[Gene::Shooter as usize].shares().unwrap()[1];
-    assert_eq!(packs, 0.0, "flocks are off: every founder is a loner");
+    let shooters = s.shooters as f64 / s.creatures as f64;
     let by_diet: usize = s.diets.iter().map(|d| d.creatures).sum();
     assert_eq!(
         (by_diet, s.all.creatures),
@@ -102,7 +100,7 @@ fn мелочь_не_попадает_в_хронику() {
     let mut w = world();
     w.creatures.truncate(25);
     // Проверяем именно численность: случайный состав маленькой выборки
-    // основателей может сам по себе дать заметный сдвиг долей стайности.
+    // основателей может сам по себе дать заметный сдвиг долей генов-выборов.
     for v in &mut w.creatures {
         v.genome = life_core::CreatureGenome::BASE;
     }

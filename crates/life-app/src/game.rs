@@ -31,14 +31,15 @@ fn speed_label(index: usize) -> String {
 /// What the world eats and how it shoots in the last snapshot: diet shares in % and the share of
 /// shooters in %. (How much smaller prey must be lives in each creature's program now.)
 pub(crate) fn hunting_summary(history: &History) -> Option<([f64; 4], f64)> {
-    let genes = history.snapshots.last()?.genes.as_ref()?;
+    let last = history.snapshots.last()?;
+    let genes = last.genes.as_ref()?;
     let shares = |gene: creature::Gene| match genes[gene as usize] {
         GeneStat::Shares(shares) => Some(shares),
         _ => None,
     };
     let diets = shares(creature::Gene::Diet)?;
     let diets = [0, 1, 2, 3].map(|k| diets[k] * 100.0);
-    Some((diets, shares(creature::Gene::Shooter)?[1] * 100.0))
+    Some((diets, last.shooters as f64 / last.creatures as f64 * 100.0))
 }
 
 /// Команда `life-report`, которая повторяет партию без окна.
@@ -323,14 +324,6 @@ impl LifeApp {
             if self.view.area.is_some() && ui.button("Убрать рамку").on_hover_text("Снять область (Esc)").clicked() {
                 self.clear_region();
             }
-            if life_core::config::FLOCKS
-                && ui
-                    .toggle_value(&mut self.flock_colors, "Стаи")
-                    .on_hover_text("Показать круги стай и раскрасить существ по стаям")
-                    .changed()
-            {
-                self.sim.send(Command::FlockColors(self.flock_colors));
-            }
             let was_rendering = self.render_world;
             egui::ComboBox::from_id_salt("рендер мира")
                 .selected_text(if self.render_world { "Рендер: авто" } else { "Рендер: выкл" })
@@ -384,7 +377,7 @@ impl LifeApp {
         }
     }
 
-    /// Hunting, shooting and flocks: minor facts, folded away.
+    /// Hunting and shooting: minor facts, folded away.
     fn other_facts(&self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("Прочее").default_open(false).show(ui, |ui| {
             if let Some((_, shooters)) = hunting_summary(&self.history) {
@@ -393,17 +386,6 @@ impl LifeApp {
                     spaced(self.history.shots_in_window())
                 ))
                 .on_hover_text("Выстрел слабее удара вблизи и дорого стоит, поэтому стрелков мало.");
-            }
-            if let Some(s) = self.history.snapshots.points().last()
-                && life_core::config::FLOCKS
-            {
-                ui.label(format!(
-                    "Стайный ген: {} ({:.0}%) · в стаях: {} · стай: {}",
-                    spaced(s.pack_carriers as u64),
-                    s.pack_share * 100.0,
-                    spaced(s.pack_members as u64),
-                    s.flocks
-                ));
             }
         });
     }
@@ -472,9 +454,7 @@ impl LifeApp {
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             for e in self.log.iter().rev() {
                 let color = match e.kind {
-                    Some(
-                        EventKind::CreaturesCrash | EventKind::CreaturesExtinct | EventKind::FlockBattle,
-                    ) => DANGER,
+                    Some(EventKind::CreaturesCrash | EventKind::CreaturesExtinct) => DANGER,
                     Some(EventKind::CreaturesRise) => GOOD,
                     Some(EventKind::GeneShift | EventKind::StrategyShift) => rgb(CREATURE_COLOR),
                     Some(_) => TEXT,
@@ -499,45 +479,6 @@ impl LifeApp {
     }
 
     fn creature_tab(&mut self, ui: &mut egui::Ui) {
-        if let Some(s) = self.view.frame.as_ref().and_then(|f| f.selected_flock.as_ref()) {
-            ui.heading(format!("Стая № {}", s.id));
-            ui.label(format!("Участников: {} · молодых: {}", s.members, s.juveniles));
-            ui.label(format!(
-                "Стайность: {} · территориальность: {}",
-                if s.pack_instinct { "есть" } else { "нет" },
-                s.territoriality.label()
-            ));
-            ui.label(format!(
-                "Тип: {} · слой: {}",
-                s.kind.label(),
-                life_core::genome::creature::LAYER_VARIANTS[usize::from(!s.layer_bound)].label
-            ));
-            ui.label(format!("Сейчас: {}", s.activity.label()));
-            ui.label(format!("Общительность: {:.0}%", s.sociability * 100.0));
-            ui.label(format!("Сытость: {:.0}%", s.fullness * 100.0));
-            ui.label(if s.compress < 0.99 {
-                format!("Круг: радиус {:.0}, сжат до {:.0}%", s.radius, s.compress * 100.0)
-            } else {
-                format!("Круг: радиус {:.0}", s.radius)
-            });
-            ui.label(format!("Простор: {:.0} · разброс: {:.0}", s.spacing, s.spread));
-            ui.label(format!("В круге: {} из {}", s.inside, s.members));
-            if s.battle.is_some() {
-                ui.colored_label(DANGER, "Бьётся за место");
-            }
-            ui.label(if s.warned > 0 {
-                format!("Предупреждённых вторженцев: {}", s.warned)
-            } else {
-                "Территория спокойна".to_string()
-            });
-            if let Some((x, y)) = s.goal {
-                ui.label(format!("Цель: {x:.0}, {y:.0}"));
-            }
-            if ui.button("Снять выбор").clicked() {
-                self.sim.send(Command::Select(None));
-            }
-            return;
-        }
         let Some((s, rules)) = self.view.frame.as_ref().and_then(|f| Some((f.selected?, f.rules.clone())))
         else {
             ui.colored_label(MUTED, "Никто не выбран. Кликните по существу в мире.");
@@ -773,7 +714,6 @@ fn creature_card(
         "В настоящих единицах: базовое существо — рыба в 20 см. Жизнь ускорена: тик жизни ≈ 9 часов.",
     );
     ui.label(format!("Здоровье {:.1} / {:.1} · {}", s.health, s.max_health, s.state));
-    ui.label(s.flock.map_or("Одиночка".into(), |id| format!("Стая № {id}")));
     let diet_index = (s.genome[creature::Gene::Diet as usize] as usize).min(3);
     let diet = &creature::DIET_VARIANTS[diet_index];
     let program = &s.programs[s.stage];

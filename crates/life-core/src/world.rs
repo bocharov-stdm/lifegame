@@ -12,7 +12,7 @@
 
 use crate::config::*;
 use crate::creature::strategy as creature_strategy;
-use crate::creature::{Creature, Diet, Meal, Morsel};
+use crate::creature::{Creature, Diet, Food, Meal, Morsel};
 use crate::flora::Flora;
 use crate::genome::{CreatureGenome, creature, variant_for};
 use crate::grid::Grid;
@@ -94,7 +94,6 @@ pub struct Counters {
     pub rot_bites: u64,
     pub bone_bites: u64,
     pub ranged_shots: u64,
-    pub territorial_fights: u64,
     pub born: u64,
     pub starved: u64,
     pub old_age: u64,
@@ -150,7 +149,6 @@ impl Counters {
             rot_bites: self.rot_bites - earlier.rot_bites,
             bone_bites: self.bone_bites - earlier.bone_bites,
             ranged_shots: self.ranged_shots - earlier.ranged_shots,
-            territorial_fights: self.territorial_fights - earlier.territorial_fights,
             born: self.born - earlier.born,
             starved: self.starved - earlier.starved,
             old_age: self.old_age - earlier.old_age,
@@ -169,14 +167,7 @@ impl Counters {
 pub struct World {
     pub corpses: Vec<crate::corpse::Corpse>,
     pub shots: Vec<crate::Shot>,
-    pub territory: crate::territory::State,
-    pub battles: crate::battle::Battles,
-    pub grace: crate::kin_grace::Grace,
-    pub next_flock: u64,
-    pub split_watches: Vec<crate::flock::SplitWatch>,
-    pub social_counts: crate::social::Counters,
-    pub flocks: std::collections::BTreeMap<u64, crate::flock::Flock>,
-    /// The world's seed: keys the flock and patch streams.
+    /// The world's seed: keys the patch streams.
     seed: u64,
     pub space: Space,
     pub rules: Rules,
@@ -211,12 +202,6 @@ impl World {
         let mut w = World {
             corpses: Vec::new(),
             shots: Vec::new(),
-            territory: Default::default(),
-            battles: Default::default(),
-            grace: Default::default(),
-            next_flock: 1,
-            split_watches: Vec::new(),
-            social_counts: Default::default(),
             flora: Flora::new(&rules, &space, cfg.seed),
             plant_cells: Occupancy::stale(),
             space,
@@ -225,7 +210,6 @@ impl World {
             plants: Vec::new(),
             creatures: Vec::with_capacity(n_start),
             counters: Counters::default(),
-            flocks: Default::default(),
             seed: cfg.seed,
             next_id: 1,
             rng: Rng::new(0),
@@ -236,67 +220,44 @@ impl World {
             bitten_plants: Vec::new(),
         };
         let variants = creature_strategy::VARIANTS.len();
-        let kinds = creature::FLOCK_KIND_VARIANTS.len();
-        // Flock kinds are dealt in turn among the flocking founders: any first part of them
-        // has every kind in equal shares.
-        let mut flocking = 0;
         let diet_ranks = crate::genome::spread_ranks(n_start);
         for (i, &diet_rank) in diet_ranks.iter().enumerate() {
             let k = variant_for(i, n_start, &cfg.strategies, variants);
             let diet = variant_for(diet_rank, n_start, &cfg.diets, creature::DIET_VARIANTS.len());
             // Независимые от потока мира жребии не меняют места рождения и растения.
             let mut founder = Rng::keyed(cfg.seed, 0x5A6C_5A6C_0000_0000 ^ i as u64);
-            // Every other founder is flocking: a draw left 3 to 15 of 20 calm founders flocking,
-            // and the flocks of a world were decided by that lottery. The draw stays, so the
-            // founders' other draws are the same.
+            // The first two draws decided a founder's flock and territoriality until flocks went
+            // (tag `flocks-final`); they stay, so the shooters are the same founders.
             let _ = founder.random();
-            let pack = FLOCKS && i % 2 == 0;
-            let territory = founder.random();
+            let _ = founder.random();
             let shooter = founder.random() < 0.05;
-            // Loners carry territoriality too: it acts only through a flock's circle, so for them
-            // it is neutral variation that a flock descending from them inherits.
-            let mode = if territory < 0.5 {
-                0.0
-            } else if territory < 0.9 {
-                1.0
-            } else {
-                2.0
-            };
-            let kind = if pack {
-                flocking += 1;
-                (flocking - 1) % kinds
-            } else {
-                0
-            };
-            // A quarter of the founders is not held by its layer: by a hash, not a draw, and
-            // independent of the kind.
+            // A quarter of the founders is not held by its layer: by a hash, not a draw.
             let free = mix(cfg.seed ^ mix(0x1A7E_0000_0000_0000 ^ i as u64)).is_multiple_of(4);
             let genome = CreatureGenome::BASE
                 .with(creature::Gene::Strategy, k as f64)
-                .with(creature::Gene::PackInstinct, f64::from(pack as u8))
-                .with(creature::Gene::Territoriality, mode)
-                .with(creature::Gene::Shooter, f64::from(shooter as u8))
-                .with(creature::Gene::FlockKind, kind as f64)
-                .with(creature::Gene::LayerBound, f64::from(free as u8))
                 .with(creature::Gene::Diet, diet as f64);
             // Scavengers start held in the deep, where rot will settle, and cold-blooded.
-            let genome = if diet == crate::creature::Diet::Scavenger as usize {
-                let (top, bottom) = crate::config::SCAVENGER_START_LAYER;
-                genome
-                    .with(creature::Gene::MinY, top)
-                    .with(creature::Gene::MaxY, bottom)
-                    .with(creature::Gene::LayerBound, 0.0)
-                    .with(creature::Gene::ColdBlood, crate::config::SCAVENGER_START_COLD)
+            let scavenger = diet == crate::creature::Diet::Scavenger as usize;
+            let genome = if scavenger {
+                genome.with(creature::Gene::ColdBlood, crate::config::SCAVENGER_START_COLD)
             } else {
                 genome
             };
+            let layer = match (scavenger, free) {
+                (true, _) => crate::config::SCAVENGER_START_LAYER,
+                (false, true) => (0, 100),
+                (false, false) => crate::creature::Program::STANDARD.home_layer_pct(),
+            };
+            let strategy = crate::creature::Strategy::from_gene(k as f64);
+            let programs =
+                crate::creature::Programs::both(crate::creature::Program::founder(strategy, layer, shooter));
             // Meat-eating founders start bigger, so the first herbivores' children are their prey.
             let genome = if matches!(Diet::ALL[diet], Diet::Scavenger | Diet::Carnivore) {
                 genome.with(creature::Gene::Size, genome[creature::Gene::Size] * cfg.meat_founder_size)
             } else {
                 genome
             };
-            let v = Creature::new(&w.space, &w.rules, genome, None, None, None, rng.fork());
+            let v = Creature::founder(&w.space, &w.rules, genome, programs, rng.fork());
             w.add_creature(v);
         }
         w.rng = rng;
@@ -311,12 +272,6 @@ impl World {
 
     pub fn add_creature(&mut self, mut v: Creature) {
         v.id = self.take_id();
-        if v.flock == 0 {
-            v.flock = self.next_flock;
-            self.next_flock += 1;
-        } else {
-            self.next_flock = self.next_flock.max(v.flock + 1);
-        }
         self.creatures.push(v);
     }
 
@@ -361,7 +316,6 @@ impl World {
 
     fn update_creatures(&mut self) {
         let now = self.tick + 1;
-        self.grace.prune(now);
         self.shots.retain(|s| now.saturating_sub(s.tick) <= 8);
         let counters = &mut self.counters;
         self.corpses.retain_mut(|c| {
@@ -377,31 +331,9 @@ impl World {
         // old age weakens before anyone looks: the snapshot and the moves see the aged bodies
         for v in &mut self.creatures {
             v.grow_old(&self.rules);
+            // its step counts it on to this tick
+            v.mind.tick = self.tick;
         }
-        crate::flock::food_goals(&mut self.flocks, &self.creatures, self.tick);
-        self.social_counts.relocations +=
-            crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.seed, true);
-        let outcome =
-            self.battles.update(&mut self.flocks, &self.creatures, &self.space, self.tick, &self.grace);
-        self.social_counts.battles += outcome.started;
-        self.social_counts.battle_retreats += outcome.retreats;
-        self.prey_grid.rebuild(&self.space, self.creatures.iter().map(|v| (v.x, v.y)));
-        // a creature whose label counts one member (the roll `flock::update` just took) has no
-        // flockmates to look for
-        let flocks = &self.flocks;
-        crate::social::prepare_in(&mut self.creatures, &self.prey_grid, self.tick, |v| {
-            flocks.get(&v.flock).is_none_or(|f| f.members < 2)
-        });
-        let territorial_targets = self.territory.prepare_full(
-            &mut self.flocks,
-            &mut self.creatures,
-            &self.space,
-            self.tick,
-            &self.grace,
-            &self.prey_grid,
-        );
-        self.social_counts.interventions +=
-            crate::social::prepare_aid_with_grace(&mut self.creatures, self.tick, &self.grace);
         let World {
             space,
             rules,
@@ -424,7 +356,7 @@ impl World {
         bitten_plants.resize(plants.len(), false);
         // Сородичей видят такими, какими они были в начале фазы: исход не
         // зависит от порядка ходов.
-        herd.rebuild_with_grace(space, creatures, &self.grace, now);
+        herd.rebuild(space, creatures);
 
         let mut offspring = Vec::new();
         for v in creatures.iter_mut() {
@@ -464,8 +396,10 @@ impl World {
             claimed.iter().find(|(k, _)| *k == j).map_or(&corpses[j], |(_, c)| c)
         }
         // Whether it eats another niche's food was its program's setting for this tick
-        // (`Stance::foreign`), the same in both feeding phases.
+        // (`Stance::foreign`), the same in both feeding phases; what it eats on contact too
+        // (`Stance::eats`: what its block went for, and on the move).
         let foreign: Vec<bool> = creatures.iter().map(|v| v.mind.stance.foreign).collect();
+        let takes = |v: &Creature, food| v.mind.stance.eats(food, v.energy / v.pheno.max_energy);
         // What each one eats this tick: rivals fight only over the same food.
         let mut feeding = vec![crate::combat::Feeding::Nothing; creatures.len()];
         let plant_bite = rules.plant_energy * rules.plant_bite_yield / f64::from(crate::plant::PORTIONS);
@@ -474,21 +408,25 @@ impl World {
             // Only what the diet digests is eaten at all: a meat-eater does not take a plant from
             // a herbivore for nothing, a herbivore does not touch a corpse. Sated, only its own.
             let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.stage(now), foreign[i]) > 0.0;
-            let corpse = crate::corpse::contact_by(
-                corpse_grid,
-                |j| shadow(&claimed, lying, j),
-                (v.x, v.y),
-                v.pheno.size,
-                max_corpse_half,
-                now,
-                eats,
-            );
+            let corpse = if takes(v, Food::Corpse) {
+                crate::corpse::contact_by(
+                    corpse_grid,
+                    |j| shadow(&claimed, lying, j),
+                    (v.x, v.y),
+                    v.pheno.size,
+                    max_corpse_half,
+                    now,
+                    eats,
+                )
+            } else {
+                None
+            };
             let prefer_corpse = corpse.is_some_and(|j| {
                 let c = shadow(&claimed, lying, j);
                 c.portion(rules.plant_energy) * v.pheno.corpse_efficiency(c.stage(now), foreign[i])
                     > plant_bite * v.pheno.plant_efficiency
             });
-            let plant = if prefer_corpse || !v.pheno.eats_plants() {
+            let plant = if prefer_corpse || !v.pheno.eats_plants() || !takes(v, Food::Plant) {
                 None
             } else {
                 bite_plant(food_grid, plants, bitten_plants, v.x, v.y, v.pheno.size)
@@ -513,28 +451,20 @@ impl World {
             }
         }
         // Все уже сходили; новорождённых ещё нет. Удары одновременны.
-        let result = crate::combat::resolve_with_grace(
+        let result = crate::combat::resolve_with(
             space,
             rules,
             creatures,
             prey_grid,
             counters,
             now,
-            crate::combat::CombatPolicy {
-                territorial_targets: &territorial_targets,
-                grace: &self.grace,
-                feeding: &feeding,
-            },
+            crate::combat::CombatPolicy { feeding: &feeding },
         );
-        counters.ranged_shots += result.shots.len() as u64;
-        counters.territorial_fights += result.territorial_attacks;
-        shots.extend(result.shots);
-        for (flock, enemy) in result.attacked_flocks {
-            self.territory.attacks.insert((flock, enemy, now));
-        }
+        counters.ranged_shots += result.len() as u64;
+        shots.extend(result);
         // Трупы прошлого тика делятся между выжившими по порядку ID.
         for (i, v) in creatures.iter_mut().enumerate() {
-            if !v.alive || fed[i] || v.torpid {
+            if !v.alive || fed[i] || v.torpid || !takes(v, Food::Corpse) {
                 continue;
             }
             let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.stage(now), foreign[i]) > 0.0;
@@ -563,11 +493,7 @@ impl World {
         }
         for v in creatures.iter_mut().filter(|v| v.alive) {
             if let Some(child) = v.maybe_divide(space, rules) {
-                // У неизменной одиночной линии каждая метка принадлежит одному
-                // существу. Родитель и ребёнок уже защищены родством; хранить
-                // ещё 600-тиковую пару для каждого такого рождения незачем.
-                let protect = v.pheno.pack_instinct || !v.same_mode(&child);
-                offspring.push((child, v.flock, protect));
+                offspring.push(child);
             }
         }
         let before = corpses.len();
@@ -587,52 +513,11 @@ impl World {
             p.alive()
         }); // выметаем съеденное
         counters.born += offspring.len() as u64;
-        for (child, _, _) in &offspring {
+        for child in &offspring {
             counters.by_diet.born[child.pheno.diet as usize] += 1;
         }
-        let mut transitions = Vec::new();
-        for (child, former_flock, protect) in offspring {
-            let separate = child.flock == 0;
+        for child in offspring {
             self.add_creature(child);
-            if separate && protect {
-                transitions.push((former_flock, self.next_flock - 1));
-            }
-        }
-        if (self.tick + 1).is_multiple_of(60) {
-            self.prey_grid.rebuild(&self.space, self.creatures.iter().map(|v| (v.x, v.y)));
-            self.social_counts.splits += crate::flock::split_with_transitions(
-                &mut self.creatures,
-                &self.prey_grid,
-                &mut self.split_watches,
-                &mut self.next_flock,
-                self.tick + 1,
-                &mut transitions,
-            );
-            self.social_counts.strays +=
-                crate::flock::stragglers(&mut self.creatures, &mut self.next_flock, now, &mut transitions);
-        }
-        self.social_counts.departures += crate::flock::departures_with_transitions(
-            &mut self.creatures,
-            &mut self.next_flock,
-            now,
-            &mut transitions,
-        );
-        self.grace.register_transitions(&transitions, now);
-        let prior_alarms: Vec<_> = self.flocks.iter().filter(|(_, f)| f.alarmed).map(|(&id, _)| id).collect();
-        crate::flock::update(&mut self.flocks, &mut self.creatures, &self.space, self.seed, false);
-        self.social_counts.alarm_ends +=
-            prior_alarms.iter().filter(|id| !self.flocks.contains_key(id)).count() as u64;
-        let alarmed: std::collections::BTreeSet<_> = self
-            .creatures
-            .iter()
-            .filter(|v| v.mind.social.activity == crate::social::Activity::Alarm)
-            .map(|v| v.flock)
-            .collect();
-        for (id, f) in &mut self.flocks {
-            let active = f.members >= 2 && alarmed.contains(id);
-            self.social_counts.alarms += (active && !f.alarmed) as u64;
-            self.social_counts.alarm_ends += (!active && f.alarmed) as u64;
-            f.alarmed = active;
         }
     }
 
@@ -800,7 +685,7 @@ mod occupancy_tests {
 #[cfg(test)]
 mod trait_tests {
     use super::*;
-    use crate::genome::creature::Gene;
+    use crate::creature::ADULT;
 
     /// The diet split adds up to the totals: every birth and death is counted once, under its
     /// diet; combat deaths never outnumber the kills plus the deaths nobody struck hardest.
@@ -820,34 +705,15 @@ mod trait_tests {
     }
 
     #[test]
-    fn founders_deal_flock_kinds_evenly_and_free_a_quarter_of_layers() {
+    fn founders_free_a_quarter_of_layers() {
         let cfg = WorldConfig { seed: 17, n_creatures: Some(400), ..Default::default() };
         let (first, again) = (World::new(&cfg), World::new(&cfg));
-        let mut kinds = [0usize; 4];
         let mut free = 0;
         for (a, b) in first.creatures.iter().zip(&again.creatures) {
             assert_eq!(a.genome, b.genome);
-            if a.pheno.pack_instinct {
-                kinds[a.pheno.flock_kind as usize] += 1;
-            }
-            free += !a.pheno.layer_bound as usize;
+            free += (a.programs[ADULT].home_layer() == (0.0, 1.0)) as usize;
         }
-        let (lo, hi) = (kinds.iter().min().unwrap(), kinds.iter().max().unwrap());
-        assert!(hi - lo <= 1, "kinds are dealt evenly: {kinds:?}");
         assert!((70..=130).contains(&free), "a quarter of the founders is free of its layer: {free}");
-    }
-
-    #[test]
-    fn a_child_of_another_flock_kind_or_layer_switch_is_of_another_mode() {
-        let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
-        let base = CreatureGenome::BASE.with(Gene::PackInstinct, 1.0);
-        for genome in [base, base.with(Gene::FlockKind, 2.0), base.with(Gene::LayerBound, 1.0)] {
-            w.spawn(genome, 1000.0, 1000.0, None);
-        }
-        let v = &w.creatures;
-        assert!(v[0].same_mode(&v[0].clone()));
-        assert!(!v[0].same_mode(&v[1]), "another flock kind");
-        assert!(!v[0].same_mode(&v[2]), "another layer switch");
     }
 
     #[test]
@@ -856,59 +722,15 @@ mod trait_tests {
         let first = World::new(&cfg);
         let again = World::new(&cfg);
         let extended = World::new(&WorldConfig { n_creatures: Some(401), ..cfg });
-        let mut modes = [0usize; 3];
         let mut shooters = 0;
         for ((a, b), c) in first.creatures.iter().zip(&again.creatures).zip(&extended.creatures) {
             assert_eq!(a.genome, b.genome);
             assert_eq!((a.x, a.y), (b.x, b.y));
             // An extra founder does not shift the independent draws.
-            assert_eq!(a.pheno.pack_instinct, c.pheno.pack_instinct);
-            assert_eq!(a.pheno.territoriality, c.pheno.territoriality);
-            assert_eq!(a.pheno.shooter, c.pheno.shooter);
+            assert_eq!(a.programs[ADULT].shoots(), c.programs[ADULT].shoots());
             assert_eq!((a.x, a.y), (c.x, c.y));
-            assert!(!a.pheno.pack_instinct, "flocks are off: every founder is a loner");
-            shooters += a.pheno.shooter as usize;
-            // loners carry territoriality too, as neutral variation
-            modes[a.genome[Gene::Territoriality] as usize] += 1;
+            shooters += a.programs[ADULT].shoots() as usize;
         }
-        assert!(modes[0] > modes[1] && modes[1] > modes[2], "modes 50/40/10: {modes:?}");
         assert!((8..=36).contains(&shooters), "five percent of the founders shoot: {shooters}");
-    }
-
-    #[test]
-    fn неизменная_одиночная_линия_не_создаёт_лишнюю_защиту_между_метками() {
-        let rules = Rules::default().with("plant_rate", 0.0).unwrap().with("mutation_sigma", 0.0).unwrap();
-        let mut world = World::new(&WorldConfig { n_creatures: Some(0), rules, ..Default::default() });
-        let genome = CreatureGenome::BASE
-            .with(Gene::PackInstinct, 0.0)
-            .with(Gene::Territoriality, 0.0)
-            .with(Gene::Mutability, 0.0);
-        let parent_id = world.spawn(genome, 1000.0, 1000.0, Some(100.0));
-        world.creatures[0].reproduction_wait = 0;
-        world.step();
-        assert_eq!(world.counters.born, 1);
-        assert_eq!(world.creatures[1].parent, parent_id);
-        assert_ne!(world.creatures[0].flock, world.creatures[1].flock);
-        assert_eq!(world.grace.entries().count(), 0);
-    }
-
-    #[test]
-    fn взрослый_после_ухода_из_переполненной_стаи_защищён_от_бывших_своих() {
-        let rules = Rules::default().with("plant_rate", 0.0).unwrap();
-        let mut world = World::new(&WorldConfig { n_creatures: Some(0), rules, ..Default::default() });
-        for i in 0..55 {
-            world.spawn(CreatureGenome::BASE, 1000.0 + i as f64, 1000.0, Some(100.0));
-        }
-        let former = world.creatures[0].flock;
-        for v in &mut world.creatures {
-            v.flock = former;
-            v.reproduction_wait = 10_000;
-        }
-        world.step();
-        assert_eq!(world.social_counts.departures, 1);
-        let departed = world.creatures.iter().find(|v| v.flock != former).unwrap();
-        assert_eq!(world.grace.entries().count(), 1);
-        assert!(world.grace.contains(former, departed.flock, 601));
-        assert!(!world.grace.contains(former, departed.flock, 602));
     }
 }

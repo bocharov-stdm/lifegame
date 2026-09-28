@@ -3,21 +3,21 @@
 //!
 //! This crate knows nothing of the screen and depends on nothing graphical: the tests and the
 //! balance runs stand on it without a window. `life-app` draws.
+//!
+//! Flocks (family circles, territories, battles, the social layer) lived here until the tag
+//! `flocks-final`.
 
-pub mod battle;
 pub mod config;
 pub mod corpse;
 pub mod creature;
 pub mod flora;
 pub mod genome;
 pub mod grid;
-pub mod kin_grace;
 pub mod plant;
 pub mod rng;
 pub mod rules;
 pub mod senses;
 pub mod space;
-pub mod territory;
 pub mod units;
 pub mod world;
 
@@ -28,6 +28,3 @@ pub use world::{Counters, DietCounters, Stats, World, WorldConfig};
 
 mod combat;
 pub use combat::Shot;
-
-pub mod flock;
-pub mod social;

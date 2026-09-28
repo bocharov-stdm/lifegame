@@ -1,9 +1,12 @@
-//! Behaviour programs: a creature's behaviour is an ordered list of blocks «if TESTS → ACTION».
-//! Each tick the **settings** (`Action::is_setting`) whose tests hold apply first, wherever they
-//! stand — eat the other niche's food too, strike rivals at food, go no farther from the layer for
-//! food — and then the first deciding block whose tests hold and whose action can be done decides
-//! the step (`strategy::plan`); an action that cannot be done (no prey, no corpse in sight, a
-//! hopeless chase) falls through to the next block. When nothing decides, the creature stands.
+//! Behaviour programs: a creature's behaviour is an ordered list of blocks «if TESTS → ACTION», up
+//! to three tests a block. Each tick the **settings** (`Action::is_setting`) whose tests hold apply
+//! first, wherever they stand — eat the other niche's food too, strike rivals at food, go no
+//! farther from the layer for food, switch a mode on — the first of each kind that applies wins
+//! (`Block::setting_kind`), and a test sees what the settings above it set; then the first deciding
+//! block whose tests hold and whose action can be done decides the step (`strategy::plan`); an
+//! action that cannot be done (no prey, no corpse in sight, a hopeless chase) falls through to the
+//! next block. When nothing decides, the creature stands. Modes (`Action::Mode`, `Cond::Mode`) are
+//! its memory: a setting switches one on for a while, and any block may test it.
 //!
 //! Every number of behaviour lives in the blocks, never in the world or the genome: thresholds of
 //! the tests (`Cond::param`), and each action's parameters (`Action::params`: how much smaller its
@@ -27,15 +30,20 @@
 
 use super::strategy::Strategy;
 use crate::config::{
-    CHASE_GIVE_UP_TICKS, CHASE_PATIENCE, FLEE_SIGHT_SHARE, FLEE_TICKS, FLOCKS, PROGRAM_NUDGE_POINTS,
+    CHASE_GIVE_UP_TICKS, CHASE_PATIENCE, FLEE_SIGHT_SHARE, FLEE_TICKS, PROGRAM_NUDGE_POINTS,
 };
 use crate::rng::Rng;
 use std::sync::Arc;
 
-/// At most this many blocks: a duplicate or an insertion into a full program does nothing.
-pub const MAX_BLOCKS: usize = 24;
+/// At most this many blocks: a duplicate or an insertion into a full program does nothing. The
+/// window's path masks (`Mind::applied`, `Mind::tried`) have a bit a block.
+pub const MAX_BLOCKS: usize = 32;
 /// At most this many parameters an action reads.
-pub const MAX_ARGS: usize = 6;
+pub const MAX_ARGS: usize = 8;
+/// Tests a block has; «always» fills the unused ones.
+pub const TESTS: usize = 3;
+/// Modes a creature can switch on (`Action::Mode`, `Cond::Mode`), numbered from 1.
+pub const MODES: usize = 4;
 
 /// How a parameter's raw number reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +57,12 @@ pub enum Unit {
     Ticks,
     /// Yes or no: 1 or 0; a mutation flips it, the drift leaves it.
     Flag,
+    /// A number among a few (a mode): the drift leaves it, a mutation picks another.
+    Index,
+    /// An angle in hundredths of a radian (120 = 1.2 rad), shown in degrees.
+    Angle,
+    /// A tilt of a course, raw 0‒200: 100 is straight, above it down by (raw − 100)%, below up.
+    Tilt,
 }
 
 /// A number a test or an action reads: what it is, its range and base, and how far a mutation
@@ -86,16 +100,27 @@ impl ParamSpec {
         ParamSpec { label, unit: Unit::Flag, lo: 0, hi: 1, base: base as u16, nudge: 0.0 }
     }
 
+    const fn index(label: &'static str, hi: u16) -> ParamSpec {
+        ParamSpec { label, unit: Unit::Index, lo: 1, hi, base: 1, nudge: 0.0 }
+    }
+
+    /// Straight by base; a mutation tilts it by 10 points.
+    const fn tilt(label: &'static str) -> ParamSpec {
+        ParamSpec { label, unit: Unit::Tilt, lo: 0, hi: 200, base: 100, nudge: PROGRAM_NUDGE_POINTS }
+    }
+
     /// The value as the engine reads it: a share for percents (0.5), times for ratios (1.5),
-    /// ticks, 1 or 0 for a flag.
+    /// ticks, 1 or 0 for a flag, the number of an index, radians, a tilt's vertical share
+    /// (+0.3 down, −0.3 up).
     pub fn value(&self, raw: u16) -> f64 {
         match self.unit {
-            Unit::Percent | Unit::Sight | Unit::Ratio => f64::from(raw) / 100.0,
-            Unit::Ticks | Unit::Flag => f64::from(raw),
+            Unit::Percent | Unit::Sight | Unit::Ratio | Unit::Angle => f64::from(raw) / 100.0,
+            Unit::Ticks | Unit::Flag | Unit::Index => f64::from(raw),
+            Unit::Tilt => (f64::from(raw) - 100.0) / 100.0,
         }
     }
 
-    /// Game UI: the amount alone, «30%», «33% зрения», «1,5 раза», «31 тик».
+    /// Game UI: the amount alone, «30%», «33% зрения», «1,5 раза», «31 тик», «69°», «вниз 30%».
     pub fn amount(&self, raw: u16) -> String {
         match self.unit {
             Unit::Percent => format!("{raw}%"),
@@ -103,16 +128,27 @@ impl ParamSpec {
             Unit::Ratio => format!("{} раза", format!("{:.1}", f64::from(raw) / 100.0).replace('.', ",")),
             Unit::Ticks => format!("{raw} {}", ticks_word(raw)),
             Unit::Flag => (if raw != 0 { "да" } else { "нет" }).to_string(),
+            Unit::Index => raw.to_string(),
+            Unit::Angle => format!("{:.0}°", f64::from(raw) / 100.0 * 180.0 / std::f64::consts::PI),
+            Unit::Tilt if raw > 100 => format!("вниз {}%", raw - 100),
+            Unit::Tilt if raw < 100 => format!("вверх {}%", 100 - raw),
+            Unit::Tilt => "прямо".to_string(),
         }
     }
 
-    /// Game UI: «добыча мельче в 1,5 раза», «рывком», «не рывком».
+    /// Game UI: «добыча мельче в 1,5 раза», «рывком», «не рывком», «вниз 30%».
     pub fn show(&self, raw: u16) -> String {
         match self.unit {
             Unit::Flag if raw != 0 => self.label.to_string(),
             Unit::Flag => format!("не {}", self.label),
+            Unit::Tilt => self.amount(raw),
             _ => format!("{} {}", self.label, self.amount(raw)),
         }
+    }
+
+    /// Whether the drift moves it: every number but a flag and an index.
+    const fn drifts(&self) -> bool {
+        !matches!(self.unit, Unit::Flag | Unit::Index)
     }
 
     /// The number moved by gauss(0, `sigma`), held in range.
@@ -121,12 +157,17 @@ impl ParamSpec {
         moved.round().clamp(f64::from(self.lo), f64::from(self.hi)) as u16
     }
 
-    /// A mutation's new value: a flag flips; a number moves by gauss(0, `nudge`), held in range.
+    /// A mutation's new value: a flag flips, an index becomes another one; a number moves by
+    /// gauss(0, `nudge`), held in range.
     fn nudged(&self, raw: u16, rng: &mut Rng) -> u16 {
-        if self.unit == Unit::Flag {
-            return u16::from(raw == 0);
+        match self.unit {
+            Unit::Flag => u16::from(raw == 0),
+            Unit::Index => {
+                let other = rng.randint(i64::from(self.lo), i64::from(self.hi) - 1) as u16;
+                if other >= raw { other + 1 } else { other }
+            }
+            _ => self.moved(raw, self.nudge, rng),
         }
-        self.moved(raw, self.nudge, rng)
     }
 
     /// A random value in range: a new test's threshold.
@@ -168,6 +209,27 @@ pub enum Cond {
     Resting,
     /// A plant or a corpse it eats is in sight.
     FoodSeen,
+    /// A stranger its hunts would take (by its most permissive hunt's ratio, the food it takes this
+    /// tick) closer to its body's edge than the threshold of its sight.
+    PreySeen,
+    /// A plant it eats is in sight, within its reach.
+    PlantSeen,
+    /// A corpse it eats is in sight (or smelt), within its reach.
+    CorpseSeen,
+    /// At least the threshold of its lifespan old.
+    Age,
+    /// Winded after a burst (`Creature::winded`).
+    Winded,
+    /// The water where it stands at least the threshold cold (`Phenotype::coldness`).
+    Cold,
+    /// Above its layer.
+    AboveLayer,
+    /// Below its layer.
+    BelowLayer,
+    /// Inside its layer.
+    InLayer,
+    /// Its mode of the threshold's number is on (`Action::Mode`).
+    Mode,
 }
 
 /// The flight distance of the templates, % of sight (`FLEE_SIGHT_SHARE`).
@@ -183,9 +245,14 @@ const THREAT: ParamSpec = ParamSpec::sight("угроза ближе", 0, 100, FL
 const HUNTER: ParamSpec = ParamSpec::sight("охотник ближе", 0, 100, FLEE_PCT, PROGRAM_NUDGE_POINTS);
 /// The old fixed window: struck on the last tick.
 const STRUCK: ParamSpec = ParamSpec { label: "за", unit: Unit::Ticks, lo: 1, hi: 100, base: 1, nudge: 3.0 };
+const PREY: ParamSpec = ParamSpec::sight("добыча ближе", 0, 100, 100, PROGRAM_NUDGE_POINTS);
+/// Old age sets in at 70% of the lifespan (`phenotype::vigour`).
+const AGE: ParamSpec = ParamSpec::percent("возраст", 0, 100, 70);
+const COLD: ParamSpec = ParamSpec::percent("холод", 0, 100, 50);
+const MODE: ParamSpec = ParamSpec::index("режим", MODES as u16);
 
 impl Cond {
-    pub const ALL: [Cond; 10] = [
+    pub const ALL: [Cond; 20] = [
         Cond::Always,
         Cond::Fullness,
         Cond::Health,
@@ -196,6 +263,16 @@ impl Cond {
         Cond::Fleeing,
         Cond::Resting,
         Cond::FoodSeen,
+        Cond::PreySeen,
+        Cond::PlantSeen,
+        Cond::CorpseSeen,
+        Cond::Age,
+        Cond::Winded,
+        Cond::Cold,
+        Cond::AboveLayer,
+        Cond::BelowLayer,
+        Cond::InLayer,
+        Cond::Mode,
     ];
 
     /// The threshold a test reads, if it has one.
@@ -207,6 +284,10 @@ impl Cond {
             Cond::ThreatNear => Some(THREAT),
             Cond::HunterNear => Some(HUNTER),
             Cond::Struck => Some(STRUCK),
+            Cond::PreySeen => Some(PREY),
+            Cond::Age => Some(AGE),
+            Cond::Cold => Some(COLD),
+            Cond::Mode => Some(MODE),
             _ => None,
         }
     }
@@ -224,6 +305,16 @@ impl Cond {
             Cond::Fleeing => ("ещё убегает", "не убегает"),
             Cond::Resting => ("отдыхает", "не отдыхает"),
             Cond::FoodSeen => ("видит еду", "не видит еды"),
+            Cond::PreySeen => ("добыча ближе", "добычи нет ближе"),
+            Cond::PlantSeen => ("видит растение", "не видит растения"),
+            Cond::CorpseSeen => ("чует падаль", "не чует падали"),
+            Cond::Age => ("возраст ≥", "возраст <"),
+            Cond::Winded => ("запыхался", "не запыхался"),
+            Cond::Cold => ("холод ≥", "холод <"),
+            Cond::AboveLayer => ("выше своего слоя", "не выше своего слоя"),
+            Cond::BelowLayer => ("ниже своего слоя", "не ниже своего слоя"),
+            Cond::InLayer => ("в своём слое", "вне своего слоя"),
+            Cond::Mode => ("включён режим", "выключен режим"),
         }
     }
 
@@ -244,6 +335,25 @@ impl Cond {
             }
             Cond::Resting => "Уже отдыхает: отдых начат и не кончился.",
             Cond::FoodSeen => "Видит растение или падаль, которую ест.",
+            Cond::PreySeen => {
+                "Чужак, которого взял бы его самый смелый блок охоты, ближе этой доли зрения (до края \
+                 тела). Без блока охоты или без вкуса к свежему мясу — никогда."
+            }
+            Cond::PlantSeen => "Видит растение, которое ест, в пределах своего выхода за слой.",
+            Cond::CorpseSeen => "Видит или чует падаль, которую ест, в пределах своего выхода за слой.",
+            Cond::Age => "Прожил эту долю своей жизни, %. Старость начинается с 70%.",
+            Cond::Winded => "Запыхался после рывка и пока не может рвануть снова.",
+            Cond::Cold => {
+                "Насколько холодна вода там, где оно сейчас: 0% — тёплая вода наверху, 100% — холод \
+                 глубины."
+            }
+            Cond::AboveLayer => "Выше верхнего края своего слоя.",
+            Cond::BelowLayer => "Ниже нижнего края своего слоя.",
+            Cond::InLayer => "Внутри своего слоя.",
+            Cond::Mode => {
+                "Режим с этим номером включён установкой «включить режим» и ещё не истёк: память \
+                 существа о том, что оно начало."
+            }
         }
     }
 }
@@ -264,10 +374,6 @@ pub enum Action {
     EatCorpse,
     /// Go to its plant and eat.
     EatPlant,
-    /// Go where neighbours reported food (flocks are off: never done by a loner).
-    FollowReport,
-    /// Back into its flock's circle (flocks are off: never done by a loner).
-    ReturnToCircle,
     /// Wander in its layer.
     Wander,
     /// Stand still: no step to pay for.
@@ -287,20 +393,53 @@ pub enum Action {
     Rival,
     /// Setting: this tick it goes for food no farther than this share of the depth past its layer.
     Reach,
+    /// Setting: switches its mode of this number on for this many ticks from now (0: off). The
+    /// modes are its memory (`Cond::Mode`).
+    Mode,
+    /// Setting: its layer this tick, from and to these shares of the world's depth (swapped when
+    /// reversed); without it the whole depth. Where it wanders, rests and walks back to.
+    Layer,
+    /// Setting: a calm walk holds its course this many ticks while it goes to the same point, and
+    /// turns at most this angle a tick inside its layer; without it every step goes straight.
+    Smooth,
+    /// Setting: this tick it divides from this share of its tank, giving the child this share of
+    /// its energy; without it it never divides.
+    Divide,
+    /// Setting: from the next tick it heals (`config::HEAL_SHARE` of its health a tick, paid from
+    /// the tank) while its tank holds more than this share and nobody struck it this many ticks;
+    /// without it it never heals.
+    Heal,
+    /// Setting: this tick it eats on the move — plants, corpses — whatever of its food it touches,
+    /// while its tank is no fuller than this share; without it it eats only what its deciding
+    /// block goes for.
+    Graze,
+    /// Setting: it knows its child — neither strikes nor fears it — until the child has grown to
+    /// this share of its adult size; without it not at all.
+    Spare,
+    /// Setting: this tick it shoots its target from this share of its range, keeping this share
+    /// of its tank; without it it never shoots.
+    Shoot,
+    /// Goes for the enemy of its child in need — struck lately, or while young afraid of a threat —
+    /// and strikes it whatever its size (`Stance::defending`), while the child is this near, its
+    /// tank fuller than this share, for at most this many ticks, then not again for a pause.
+    DefendChild,
 }
 
 const PACE: ParamSpec = ParamSpec::percent("ход", 10, 100, 100);
 const BURST: ParamSpec = ParamSpec::flag("рывком", true);
 const BEST: ParamSpec = ParamSpec::flag("только если выгоднее", true);
 const FIGHT_PARAMS: [ParamSpec; 1] = [ParamSpec::ratio("враг крупнее не более чем в", 150)];
-const FLEE_PARAMS: [ParamSpec; 3] = [
+const FLEE_PARAMS: [ParamSpec; 5] = [
     ParamSpec::ticks("бежать ещё", 0, 600, FLEE_TICKS as u16),
     BURST,
     // under way, only a threat this near makes it run its whole memory again (the old flight
     // distance); a farther one only steers it
     ParamSpec::sight("снова пугается угрозы ближе", 0, 100, FLEE_PCT, PROGRAM_NUDGE_POINTS),
+    PACE,
+    // straight away from the threat by base; a tilt turns the flight down or up
+    ParamSpec::tilt("уклон"),
 ];
-const HUNT_PARAMS: [ParamSpec; 6] = [
+const HUNT_PARAMS: [ParamSpec; 8] = [
     ParamSpec::ratio("добыча мельче в", 150),
     // the weight of the strikes it expects: 100% is the old base caution, 0 ignores them
     ParamSpec {
@@ -310,25 +449,61 @@ const HUNT_PARAMS: [ParamSpec; 6] = [
     BEST,
     BURST,
     ParamSpec::ticks("брошенную не трогать", 0, 3000, CHASE_GIVE_UP_TICKS as u16),
+    ParamSpec::sight("добыча не дальше", 10, 100, 100, PROGRAM_NUDGE_POINTS),
+    ParamSpec::percent("ход погони", 10, 100, 100),
 ];
 const CORPSE_PARAMS: [ParamSpec; 2] = [BEST, PACE];
+/// The old plant choice: the plant it goes to while it lives and is seen, else the nearest.
+const PLANT_PARAMS: [ParamSpec; 3] =
+    [PACE, ParamSpec::flag("держится выбранного", true), ParamSpec::flag("самое выгодное", false)];
 const PACE_PARAMS: [ParamSpec; 1] = [PACE];
 const WANDER_PARAMS: [ParamSpec; 2] = [PACE, ParamSpec::sight("цели до", 20, 500, WANDER_REACH_PCT, 25.0)];
 const REST_PARAMS: [ParamSpec; 2] =
     [ParamSpec::ticks("отдых", 1, 600, 90), ParamSpec::ticks("пауза", 0, 1000, 180)];
 const RIVAL_PARAMS: [ParamSpec; 1] = [ParamSpec::ratio("соперник мельче в", 150)];
 const REACH_PARAMS: [ParamSpec; 1] = [ParamSpec::percent("за слой не дальше", 0, 100, 100)];
+const MODE_PARAMS: [ParamSpec; 2] = [MODE, ParamSpec::ticks("на", 0, 600, 60)];
+/// The old genes' bases: the layer 5‒100% (`min_y`, `max_y`), a division from 70% of the tank
+/// giving 40% (`repro_threshold`, `repro_share`), shots from half the range keeping half the tank
+/// (`fire_preference`, `fire_reserve`), the children known until grown (`care` 50%: twice it).
+const LAYER_PARAMS: [ParamSpec; 2] =
+    [ParamSpec::percent("сверху", 0, 100, 5), ParamSpec::percent("снизу", 0, 100, 100)];
+/// The old social layer's smoothing: a course held 30 ticks, a turn of at most 1.2 rad a tick.
+const SMOOTH_PARAMS: [ParamSpec; 2] = [
+    ParamSpec::ticks("держит курс", 0, 300, 30),
+    ParamSpec { label: "поворот до", unit: Unit::Angle, lo: 0, hi: 314, base: 120, nudge: 15.0 },
+];
+/// A child gets at least 1% of the tank: one of nothing would be born dead.
+const DIVIDE_PARAMS: [ParamSpec; 2] =
+    [ParamSpec::percent("с бака", 0, 100, 70), ParamSpec::percent("потомку", 1, 100, 40)];
+const HEAL_PARAMS: [ParamSpec; 2] =
+    [ParamSpec::percent("при баке больше", 0, 100, 50), ParamSpec::ticks("без ударов", 0, 600, 60)];
+const GRAZE_PARAMS: [ParamSpec; 3] = [
+    ParamSpec::flag("растения", true),
+    ParamSpec::flag("падаль", true),
+    ParamSpec::percent("пока сытость не больше", 0, 100, 100),
+];
+const SPARE_PARAMS: [ParamSpec; 1] = [ParamSpec::percent("пока ребёнок не вырос до", 0, 100, 100)];
+const SHOOT_PARAMS: [ParamSpec; 2] =
+    [ParamSpec::percent("с доли дальности", 0, 100, 50), ParamSpec::percent("оставляя бак", 0, 100, 50)];
+/// The old parent's cover: a child within half its sight (the `care` gene's base), a tank more
+/// than half full, 90 ticks at most, then 60 of rest; a child struck within 30 ticks.
+const DEFEND_PARAMS: [ParamSpec; 5] = [
+    ParamSpec::sight("ребёнок ближе", 0, 100, 50, PROGRAM_NUDGE_POINTS),
+    ParamSpec::percent("при баке больше", 0, 100, 50),
+    ParamSpec::ticks("не дольше", 1, 600, 90),
+    ParamSpec::ticks("потом пауза", 0, 1000, 60),
+    ParamSpec::ticks("ребёнка ударили за", 1, 300, 30),
+];
 const NO_PARAMS: [ParamSpec; 0] = [];
 
 impl Action {
-    pub const ALL: [Action; 16] = [
+    pub const ALL: [Action; 23] = [
         Action::FightBack,
         Action::Flee,
         Action::Hunt,
         Action::EatCorpse,
         Action::EatPlant,
-        Action::FollowReport,
-        Action::ReturnToCircle,
         Action::Wander,
         Action::Ambush,
         Action::Surface,
@@ -338,6 +513,15 @@ impl Action {
         Action::EatForeign,
         Action::Rival,
         Action::Reach,
+        Action::Mode,
+        Action::Layer,
+        Action::Smooth,
+        Action::Divide,
+        Action::Heal,
+        Action::Graze,
+        Action::Spare,
+        Action::Shoot,
+        Action::DefendChild,
     ];
 
     /// The parameters the action reads, in the order of `Block::args`.
@@ -347,12 +531,22 @@ impl Action {
             Action::Flee => &FLEE_PARAMS,
             Action::Hunt => &HUNT_PARAMS,
             Action::EatCorpse => &CORPSE_PARAMS,
-            Action::EatPlant | Action::FollowReport | Action::Surface | Action::Dive => &PACE_PARAMS,
+            Action::EatPlant => &PLANT_PARAMS,
+            Action::Surface | Action::Dive => &PACE_PARAMS,
             Action::Wander => &WANDER_PARAMS,
             Action::Rest => &REST_PARAMS,
             Action::Rival => &RIVAL_PARAMS,
             Action::Reach => &REACH_PARAMS,
-            Action::ReturnToCircle | Action::Ambush | Action::Torpor | Action::EatForeign => &NO_PARAMS,
+            Action::Mode => &MODE_PARAMS,
+            Action::Layer => &LAYER_PARAMS,
+            Action::Smooth => &SMOOTH_PARAMS,
+            Action::Divide => &DIVIDE_PARAMS,
+            Action::Heal => &HEAL_PARAMS,
+            Action::Graze => &GRAZE_PARAMS,
+            Action::Spare => &SPARE_PARAMS,
+            Action::Shoot => &SHOOT_PARAMS,
+            Action::DefendChild => &DEFEND_PARAMS,
+            Action::Ambush | Action::Torpor | Action::EatForeign => &NO_PARAMS,
         }
     }
 
@@ -371,19 +565,26 @@ impl Action {
     /// A setting does not decide the step: it applies before the deciding blocks, wherever it
     /// stands.
     pub const fn is_setting(self) -> bool {
-        matches!(self, Action::EatForeign | Action::Rival | Action::Reach)
+        matches!(
+            self,
+            Action::EatForeign
+                | Action::Rival
+                | Action::Reach
+                | Action::Mode
+                | Action::Layer
+                | Action::Smooth
+                | Action::Divide
+                | Action::Heal
+                | Action::Graze
+                | Action::Spare
+                | Action::Shoot
+        )
     }
 
     /// Whether the action is always done when reached: the deciding blocks after an unconditional
     /// one of these are never reached.
     pub const fn never_fails(self) -> bool {
         matches!(self, Action::Wander | Action::Ambush | Action::Torpor)
-    }
-
-    /// Whether it can do anything only in a flock: with flocks off (`config::FLOCKS`) the
-    /// templates leave it out and no mutation brings it in.
-    pub const fn needs_flock(self) -> bool {
-        matches!(self, Action::FollowReport | Action::ReturnToCircle)
     }
 
     /// Game UI.
@@ -394,8 +595,6 @@ impl Action {
             Action::Hunt => "охотиться",
             Action::EatCorpse => "к падали",
             Action::EatPlant => "к растению",
-            Action::FollowReport => "к еде из вестей",
-            Action::ReturnToCircle => "в круг стаи",
             Action::Wander => "бродить",
             Action::Ambush => "замереть",
             Action::Surface => "к верху слоя",
@@ -405,6 +604,15 @@ impl Action {
             Action::EatForeign => "есть и чужую пищу",
             Action::Rival => "гнать соперников у еды",
             Action::Reach => "за едой из слоя",
+            Action::Mode => "включить режим",
+            Action::Layer => "слой",
+            Action::Smooth => "плавный ход",
+            Action::Divide => "делиться",
+            Action::Heal => "лечиться",
+            Action::Graze => "есть на ходу",
+            Action::Spare => "щадить детей",
+            Action::Shoot => "стрелять",
+            Action::DefendChild => "защищать детёныша",
         }
     }
 
@@ -419,24 +627,25 @@ impl Action {
             Action::Flee => {
                 "Бежит от ближайшей угрозы в поле зрения; потеряв её из виду, бежит ещё столько тиков. \
                  На бегу память бегства обновляет только угроза ближе порога «снова пугается», дальняя \
-                 лишь задаёт направление. Рывком — быстрее, насколько позволяют мышцы (ген «рывок»)."
+                 лишь задаёт направление. Рывком — быстрее, насколько позволяют мышцы (ген «рывок»). \
+                 Ход — доля скорости; уклон уводит бегство вниз или вверх."
             }
             Action::Hunt => {
-                "Гонится за самой выгодной добычей, которая мельче его в столько раз, и бьёт её. \
-                 Осторожность — насколько боится ответных ударов (100% — обычная, 0 — не боится); \
-                 погоню, которая за «терпение» тиков не сократила разрыв, бросает и столько тиков эту \
-                 добычу не трогает. «Только если выгоднее» — не охотится, когда растение или падаль \
-                 дают не меньше."
+                "Гонится за самой выгодной добычей, которая мельче его в столько раз и не дальше этой \
+                 доли зрения, и бьёт её. Осторожность — насколько боится ответных ударов (100% — \
+                 обычная, 0 — не боится); погоню, которая за «терпение» тиков не сократила разрыв, \
+                 бросает и столько тиков эту добычу не трогает. «Только если выгоднее» — не охотится, \
+                 когда растение или падаль дают не меньше. Ход погони — доля скорости."
             }
             Action::EatCorpse => {
                 "Идёт к лучшей видимой падали, которую ест, и ест. «Только если выгоднее» — когда \
                  растение даёт не больше."
             }
-            Action::EatPlant => "Идёт к своему растению и ест.",
-            Action::FollowReport => {
-                "Идёт к еде, о которой сообщили соседи по стае. Стаи выключены: не срабатывает."
+            Action::EatPlant => {
+                "Идёт к растению и ест. «Держится выбранного» — к тому, к которому уже шло, пока оно \
+                 цело и видно; «самое выгодное» — иначе к тому, что даст больше за тик пути и еды, а \
+                 не к ближайшему."
             }
-            Action::ReturnToCircle => "Возвращается в круг своей стаи. Стаи выключены: не срабатывает.",
             Action::Wander => {
                 "Бродит по своему слою глубины, выбирая новые точки от четверти до «цели до» своего \
                  зрения."
@@ -463,24 +672,47 @@ impl Action {
                 "Установка на этот тик: за едой, которую видит, выходит из своего слоя не дальше этой \
                  доли глубины мира. Без неё — куда угодно."
             }
+            Action::Mode => {
+                "Установка: включает режим с этим номером на столько тиков вперёд (0 — выключает). \
+                 Режим — память: любой блок может проверить, включён ли он."
+            }
+            Action::Layer => {
+                "Установка: слой глубины на этот тик, в процентах глубины мира. В нём бродит, \
+                 отдыхает и в него возвращается; за видимой едой выходит. Без неё — вся глубина."
+            }
+            Action::Smooth => {
+                "Установка: спокойный шаг держит курс столько тиков, пока цель та же, и поворачивает \
+                 не больше этого угла за тик. Без неё каждый шаг идёт прямо к цели."
+            }
+            Action::Divide => {
+                "Установка: делится, когда бак полон на эту долю, и отдаёт потомку эту долю энергии. \
+                 Без неё не делится вовсе."
+            }
+            Action::Heal => {
+                "Установка: со следующего тика лечится (0,2% здоровья за тик, платит из бака), пока \
+                 бак полнее этой доли и его столько тиков не били. Без неё не лечится."
+            }
+            Action::Graze => {
+                "Установка: на этот тик ест на ходу своё — растения, падаль, — к чему прикоснётся, \
+                 пока бак не полнее этой доли. Без неё ест только то, к чему идёт решающий блок."
+            }
+            Action::Spare => {
+                "Установка: узнаёт своих детей — не бьёт их и не боится, — пока ребёнок не вырос до \
+                 этой доли своего взрослого размера. Без неё не узнаёт вовсе."
+            }
+            Action::Shoot => {
+                "Установка: на этот тик стреляет в свою цель, когда та ближе этой доли дальности \
+                 выстрела, и оставляет в баке эту долю. Без неё не стреляет."
+            }
+            Action::DefendChild => {
+                "Идёт на врага своего ребёнка и бьёт его, какого бы размера тот ни был: ребёнка \
+                 недавно ударили или, пока он мал, его напугала угроза. Только пока ребёнок ближе \
+                 этой доли зрения, бак полнее этой доли, не дольше столько тиков — потом пауза. \
+                 Охотники считают такого родителя защитником его детей."
+            }
         }
     }
 }
-
-/// The actions a mutation may bring into a program: all of them, but those that need a flock
-/// while flocks are off (`Action::needs_flock`), and how many there are.
-const POOL: ([Action; Action::ALL.len()], usize) = {
-    let mut pool = [Action::Wander; Action::ALL.len()];
-    let (mut n, mut i) = (0, 0);
-    while i < Action::ALL.len() {
-        if FLOCKS || !Action::ALL[i].needs_flock() {
-            pool[n] = Action::ALL[i];
-            n += 1;
-        }
-        i += 1;
-    }
-    (pool, n)
-};
 
 /// One check of a block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -537,10 +769,10 @@ impl Test {
     }
 }
 
-/// «If both tests hold → the action with its parameters».
+/// «If all its tests hold → the action with its parameters».
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Block {
-    pub when: [Test; 2],
+    pub when: [Test; TESTS],
     pub action: Action,
     /// The action's parameters, raw, in the order of `Action::params`; the rest are zero.
     pub args: [u16; MAX_ARGS],
@@ -552,15 +784,28 @@ const FILLER: Block = Block::does(Action::Wander);
 impl Block {
     /// Unconditional, the parameters at their bases.
     pub const fn does(action: Action) -> Block {
-        Block { when: [Test::ALWAYS, Test::ALWAYS], action, args: action.base_args() }
+        Block::when3(Test::ALWAYS, Test::ALWAYS, Test::ALWAYS, action)
     }
 
     pub const fn when(test: Test, action: Action) -> Block {
-        Block { when: [test, Test::ALWAYS], action, args: action.base_args() }
+        Block::when3(test, Test::ALWAYS, Test::ALWAYS, action)
     }
 
     pub const fn when2(a: Test, b: Test, action: Action) -> Block {
-        Block { when: [a, b], action, args: action.base_args() }
+        Block::when3(a, b, Test::ALWAYS, action)
+    }
+
+    pub const fn when3(a: Test, b: Test, c: Test, action: Action) -> Block {
+        Block { when: [a, b, c], action, args: action.base_args() }
+    }
+
+    /// A setting's kind as a bit: of the settings of one kind whose tests hold, only the first
+    /// applies. Each mode is a kind of its own, so one tick can switch several on.
+    pub const fn setting_kind(&self) -> u64 {
+        match self.action {
+            Action::Mode => 1 << (48 + self.args[0]),
+            a => 1 << a as u8,
+        }
     }
 
     /// The same block with parameter `i` set, raw.
@@ -581,12 +826,12 @@ impl Block {
 
     /// Switched off: a test never holds.
     pub const fn off(&self) -> bool {
-        self.when[0].never() || self.when[1].never()
+        self.when[0].never() || self.when[1].never() || self.when[2].never()
     }
 
     /// Whether it decides every time it is reached.
     pub const fn always_fires(&self) -> bool {
-        self.when[0].always() && self.when[1].always() && self.action.never_fails()
+        self.when[0].always() && self.when[1].always() && self.when[2].always() && self.action.never_fails()
     }
 
     /// Its tests as one line: «сытость < 40% и его ударили за 1 тик»; «всегда» when there are none.
@@ -601,47 +846,57 @@ impl Block {
         params.iter().zip(self.args).map(|(p, raw)| p.show(raw)).collect::<Vec<_>>().join(", ")
     }
 
-    /// Everything about the block packed into numbers: for digests and counting programs.
-    pub fn code(&self) -> [u64; 2] {
+    /// Everything about the block packed into numbers: for digests and counting programs. A test
+    /// takes 18 bits (condition 5, negation 1, threshold 12), the action 5, a parameter 12.
+    pub fn code(&self) -> [u64; 3] {
         let test = |t: Test| u64::from(t.cond as u8) | u64::from(t.negate) << 5 | u64::from(t.param) << 6;
-        let tests = test(self.when[0])
-            | test(self.when[1]) << 22
-            | u64::from(self.action as u8) << 44
-            | u64::from(self.args[5]) << 52;
-        let mut args = 0;
-        for (i, a) in self.args[..5].iter().enumerate() {
-            args |= u64::from(*a) << (12 * i);
+        let head = test(self.when[0])
+            | test(self.when[1]) << 18
+            | test(self.when[2]) << 36
+            | u64::from(self.action as u8) << 54;
+        let mut args = [0; 2];
+        for (i, a) in self.args.iter().enumerate() {
+            args[i / 5] |= u64::from(*a) << (12 * (i % 5));
         }
-        [tests, args]
+        [head, args[0], args[1]]
     }
 
-    /// The block without its numbers — its tests' conditions and negations, its action and its
-    /// flags: what stays while the numbers drift. The report groups programs by it.
+    /// The block without its numbers — its tests' conditions and negations, its action, its flags
+    /// and its indices (a mode's number): what stays while the numbers drift. The report groups
+    /// programs by it.
     pub fn shape(&self) -> u64 {
-        let test = |t: Test| u64::from(t.cond as u8) | u64::from(t.negate) << 5;
-        let mut flags = 0_u64;
+        let test = |t: Test| {
+            let index = if t.cond.param().is_some_and(|p| p.unit == Unit::Index) { t.param } else { 0 };
+            u64::from(t.cond as u8) | u64::from(t.negate) << 5 | u64::from(index) << 6
+        };
+        let mut fixed = 0_u64;
         for (i, p) in self.action.params().iter().enumerate() {
-            if p.unit == Unit::Flag && self.args[i] != 0 {
-                flags |= 1 << i;
+            if !p.drifts() {
+                fixed |= u64::from(self.args[i]) << (3 * i);
             }
         }
-        test(self.when[0]) | test(self.when[1]) << 6 | u64::from(self.action as u8) << 12 | flags << 20
+        test(self.when[0])
+            | test(self.when[1]) << 9
+            | test(self.when[2]) << 18
+            | u64::from(self.action as u8) << 27
+            | fixed << 32
     }
 
     /// The numbers of the block the drift moves: each test's threshold and each parameter but the
-    /// flags, as (slot, its spec); slots 0‒1 are the tests, 2‒ the parameters.
+    /// flags and indices, as (slot, its spec); slots 0‒2 are the tests, 3‒ the parameters.
     fn numbers(&self) -> impl Iterator<Item = (usize, ParamSpec)> + '_ {
-        let tests = (0..2).filter_map(|s| self.when[s].cond.param().map(|p| (s, p)));
-        let args = self.action.params().iter().enumerate().filter(|(_, p)| p.unit != Unit::Flag);
-        tests.chain(args.map(|(i, p)| (2 + i, *p)))
+        let tests =
+            (0..TESTS).filter_map(|s| self.when[s].cond.param().filter(ParamSpec::drifts).map(|p| (s, p)));
+        let args = self.action.params().iter().enumerate().filter(|(_, p)| p.drifts());
+        tests.chain(args.map(|(i, p)| (TESTS + i, *p)))
     }
 
     fn number(&mut self, slot: usize) -> &mut u16 {
-        if slot < 2 { &mut self.when[slot].param } else { &mut self.args[slot - 2] }
+        if slot < TESTS { &mut self.when[slot].param } else { &mut self.args[slot - TESTS] }
     }
 
     fn get(&self, slot: usize) -> u16 {
-        if slot < 2 { self.when[slot].param } else { self.args[slot - 2] }
+        if slot < TESTS { self.when[slot].param } else { self.args[slot - TESTS] }
     }
 }
 
@@ -660,6 +915,13 @@ struct Summary {
     fight_health: u16,
     /// How far its first wander looks for a target, % of sight.
     wander: u16,
+    /// Its home layer, % of the depth: its first live unconditional layer setting (a founder is
+    /// placed there); the whole depth without one.
+    layer: (u16, u16),
+    /// It has a live shooting setting.
+    shoots: bool,
+    /// It has a live block defending its children: hunters count it as its child's ally.
+    defends: bool,
 }
 
 impl Summary {
@@ -673,15 +935,24 @@ impl Summary {
             }
             i += 1;
         }
-        let mut s =
-            Summary { reachable: reachable as u8, threat: 0, hunt: 0, fight: 0, fight_health: 0, wander: 0 };
-        let (mut fights, mut wanders) = (false, false);
+        let mut s = Summary {
+            reachable: reachable as u8,
+            threat: 0,
+            hunt: 0,
+            fight: 0,
+            fight_health: 0,
+            wander: 0,
+            layer: (0, 100),
+            shoots: false,
+            defends: false,
+        };
+        let (mut fights, mut wanders, mut layered) = (false, false, false);
         i = 0;
         while i < len {
             let b = &blocks[i];
             if !b.off() && (b.action.is_setting() || i < reachable) {
                 let mut t = 0;
-                while t < 2 {
+                while t < TESTS {
                     let test = b.when[t];
                     if !test.negate
                         && matches!(test.cond, Cond::ThreatNear | Cond::HunterNear)
@@ -697,7 +968,7 @@ impl Summary {
                         fights = true;
                         s.fight = b.args[0];
                         let mut t = 0;
-                        while t < 2 {
+                        while t < TESTS {
                             let test = b.when[t];
                             if !test.negate
                                 && matches!(test.cond, Cond::Health)
@@ -712,6 +983,15 @@ impl Summary {
                         wanders = true;
                         s.wander = b.args[1];
                     }
+                    Action::Layer
+                        if !layered && b.when[0].always() && b.when[1].always() && b.when[2].always() =>
+                    {
+                        layered = true;
+                        let (a, z) = (b.args[0], b.args[1]);
+                        s.layer = if a <= z { (a, z) } else { (z, a) };
+                    }
+                    Action::Shoot => s.shoots = true,
+                    Action::DefendChild => s.defends = true,
                     _ => {}
                 }
             }
@@ -740,12 +1020,20 @@ pub const JUVENILE: usize = 0;
 pub const ADULT: usize = 1;
 
 /// The founders' behaviour — the old hand-written strategy with the base values of the behaviour
-/// genes the programs replaced — wandering and going to reported food at `pace` % of its speed.
-/// Without `flocks` the blocks that need a flock are left out.
-const fn founders(pace: u16, flocks: bool) -> Program {
+/// genes the programs replaced — wandering at `pace` % of its speed.
+const fn founders(pace: u16) -> Program {
     // the old bravery 50%: a calm stranger may come half as near as a hunting one
     let calm = FLEE_PCT / 2;
-    let list = [
+    Program::of(&[
+        // what the genes and the world did until `life-behavior/14`: the layer 5‒100%, the social
+        // layer's smoothing, the division, the healing, eating whatever it touches, the children
+        // spared until grown
+        Block::does(Action::Layer),
+        Block::does(Action::Smooth),
+        Block::does(Action::Divide),
+        Block::does(Action::Heal),
+        Block::does(Action::Graze),
+        Block::does(Action::Spare),
         // below the old picky and rivalry (30%) it eats the other niche's food and fights for its own
         Block::when(Test::at(Cond::Fullness, 30).not(), Action::EatForeign),
         Block::when(Test::at(Cond::Fullness, 30).not(), Action::Rival),
@@ -754,38 +1042,24 @@ const fn founders(pace: u16, flocks: bool) -> Program {
         Block::when(Test::at(Cond::HunterNear, FLEE_PCT), Action::Flee),
         Block::when(Test::at(Cond::ThreatNear, calm), Action::Flee),
         Block::when(Test::is(Cond::Fleeing), Action::Flee),
+        // the old parent's cover, while it stood firm: 10 points above its fight-back threshold
+        Block::when(Test::at(Cond::Health, 60), Action::DefendChild),
         Block::does(Action::Hunt),
         // the old rest gene: from 95% fullness, given up 10 points lower
         Block::when(Test::at(Cond::Fullness, 95), Action::Rest),
         Block::when2(Test::is(Cond::Resting), Test::at(Cond::Fullness, 85), Action::Rest),
         Block::does(Action::EatCorpse),
         Block::does(Action::EatPlant),
-        Block::does(Action::FollowReport).with(0, pace),
-        Block::does(Action::ReturnToCircle),
         Block::does(Action::Wander).with(0, pace),
-    ];
-    let mut kept = [FILLER; MAX_BLOCKS];
-    let (mut n, mut i) = (0, 0);
-    while i < list.len() {
-        if flocks || !list[i].action.needs_flock() {
-            kept[n] = list[i];
-            n += 1;
-        }
-        i += 1;
-    }
-    Program::made(kept, n)
+    ])
 }
 
 impl Program {
     /// The standard behaviour: wandering at full speed.
-    pub const STANDARD: Program = founders(100, FLOCKS);
+    pub const STANDARD: Program = founders(100);
 
-    /// The lurker: the same, but it wanders (and goes to reported food) at a third of its speed.
-    pub const LURKER: Program = founders(33, FLOCKS);
-
-    /// The standard behaviour with the flock blocks (back to the circle, to reported food), as the
-    /// template is when flocks are on: the dormant flock layer's tests give it to their members.
-    pub const IN_FLOCKS: Program = founders(100, true);
+    /// The lurker: the same, but it wanders at a third of its speed.
+    pub const LURKER: Program = founders(33);
 
     /// A program of these blocks; panics on none or more than `MAX_BLOCKS`.
     pub const fn of(list: &[Block]) -> Program {
@@ -809,6 +1083,40 @@ impl Program {
             Strategy::Standard => Program::STANDARD,
             Strategy::Lurker => Program::LURKER,
         }
+    }
+
+    /// A founder's program: its strategy's template in the layer `layer` (% of the depth), with a
+    /// shooting setting for a shooter (after the other settings).
+    pub fn founder(strategy: Strategy, layer: (u16, u16), shoots: bool) -> Program {
+        let mut p = Program::template(strategy)
+            .tuned(Action::Layer, |b| b.args[..2].copy_from_slice(&[layer.0, layer.1]));
+        if shoots {
+            let at = p.blocks().iter().take_while(|b| b.action.is_setting()).count();
+            p.insert(at, Block::does(Action::Shoot));
+            p.summary = Summary::of(&p.blocks, usize::from(p.len));
+        }
+        p
+    }
+
+    /// Its home layer, shares of the depth: where a founder is placed (`Summary::layer`).
+    pub fn home_layer(&self) -> (f64, f64) {
+        let (lo, hi) = self.summary.layer;
+        (f64::from(lo) / 100.0, f64::from(hi) / 100.0)
+    }
+
+    /// Its home layer, % of the depth.
+    pub fn home_layer_pct(&self) -> (u16, u16) {
+        self.summary.layer
+    }
+
+    /// Whether it ever shoots (a live shooting setting).
+    pub fn shoots(&self) -> bool {
+        self.summary.shoots
+    }
+
+    /// Whether it defends its children (a live «защищать детёныша» block).
+    pub fn defends(&self) -> bool {
+        self.summary.defends
     }
 
     pub fn blocks(&self) -> &[Block] {
@@ -848,11 +1156,6 @@ impl Program {
     pub fn defence(&self) -> Option<(f64, f64)> {
         let s = self.summary;
         (s.fight > 0).then(|| (f64::from(s.fight) / 100.0, f64::from(s.fight_health) / 100.0))
-    }
-
-    /// The health share down to which it defends itself (`defence`).
-    pub fn defends_to(&self) -> Option<f64> {
-        self.defence().map(|(_, health)| health)
     }
 
     /// The farthest a threat test looks, a share of sight: the first threat query covers it.
@@ -952,37 +1255,40 @@ impl Program {
         }
         match MUTATIONS[op].0 {
             Mutation::Nudge => {
-                // every number of the program: the tests' thresholds (slots 0‒1) and the action's (2‒)
+                // every number of the program: the tests' thresholds (slots 0‒2) and the action's (3‒)
                 let slots: Vec<(usize, usize)> = (0..len)
-                    .flat_map(|i| (0..2 + MAX_ARGS).map(move |s| (i, s)))
-                    .filter(|&(i, s)| match s {
-                        0 | 1 => self.blocks[i].when[s].cond.param().is_some(),
-                        _ => s - 2 < self.blocks[i].action.params().len(),
+                    .flat_map(|i| (0..TESTS + MAX_ARGS).map(move |s| (i, s)))
+                    .filter(|&(i, s)| {
+                        if s < TESTS {
+                            self.blocks[i].when[s].cond.param().is_some()
+                        } else {
+                            s - TESTS < self.blocks[i].action.params().len()
+                        }
                     })
                     .collect();
                 if !slots.is_empty() {
                     let (i, s) = slots[pick(rng, slots.len())];
                     let b = &mut self.blocks[i];
-                    let spec = if s < 2 {
+                    let spec = if s < TESTS {
                         b.when[s].cond.param().expect("a test with a threshold")
                     } else {
-                        b.action.params()[s - 2]
+                        b.action.params()[s - TESTS]
                     };
                     let raw = b.number(s);
                     *raw = spec.nudged(*raw, rng);
                 }
             }
             Mutation::Condition => {
-                let (i, s) = (pick(rng, len), pick(rng, 2));
+                let (i, s) = (pick(rng, len), pick(rng, TESTS));
                 self.blocks[i].when[s] = random_test(rng);
             }
             Mutation::Negate => {
-                let (i, s) = (pick(rng, len), pick(rng, 2));
+                let (i, s) = (pick(rng, len), pick(rng, TESTS));
                 self.blocks[i].when[s].negate ^= true;
             }
             Mutation::Action => {
                 let i = pick(rng, len);
-                let action = POOL.0[pick(rng, POOL.1)];
+                let action = Action::ALL[pick(rng, Action::ALL.len())];
                 self.blocks[i].action = action;
                 self.blocks[i].args = action.base_args();
             }
@@ -1010,7 +1316,7 @@ impl Program {
                 if len < MAX_BLOCKS {
                     let at = pick(rng, len + 1);
                     let test = random_test(rng);
-                    let action = POOL.0[pick(rng, POOL.1)];
+                    let action = Action::ALL[pick(rng, Action::ALL.len())];
                     self.insert(at, Block::when(test, action));
                 }
             }
@@ -1122,20 +1428,21 @@ mod tests {
             for p in params {
                 assert!(p.lo <= p.base && p.base <= p.hi, "{a:?}: {p:?}");
                 assert!(p.hi < 1 << 12, "{a:?}: {p:?} fits the block's code");
-                assert!(p.unit == Unit::Flag || p.nudge >= 1.0, "{a:?}: {p:?} moves");
+                assert!(!p.drifts() || p.nudge >= 1.0, "{a:?}: {p:?} moves");
+                assert!(p.drifts() || p.hi < 8, "{a:?}: {p:?} fits the block's shape");
             }
         }
         for c in Cond::ALL {
             if let Some(p) = c.param() {
                 assert!(p.lo <= p.base && p.base <= p.hi, "{c:?}");
-                assert!(p.nudge >= 1.0, "{c:?} moves");
+                assert!(!p.drifts() || p.nudge >= 1.0, "{c:?} moves");
+                assert!(p.hi < 1 << 12 && (p.drifts() || p.hi < 8), "{c:?} fits the code and the shape");
             }
         }
+        assert!(Cond::ALL.len() <= 32 && Action::ALL.len() <= 32, "5 bits each in the code");
+        const { assert!(MAX_ARGS <= 10 && MAX_BLOCKS <= 32) };
         let total: f64 = MUTATIONS.iter().map(|m| m.1).sum();
         assert!((total - 1.0).abs() < 1e-12, "the shares sum to 1: {total}");
-        let pool = &POOL.0[..POOL.1];
-        assert_eq!(pool.iter().any(|a| a.needs_flock()), FLOCKS, "flock actions only with flocks");
-        assert!(pool.contains(&Action::Hunt) && pool.contains(&Action::Reach));
     }
 
     /// The templates carry the old behaviour genes' bases; the lurker differs only in its paces.
@@ -1146,31 +1453,46 @@ mod tests {
         assert_eq!(Program::template(Strategy::Standard), s);
         assert_eq!(Program::template(Strategy::Lurker), l);
         let differ: Vec<usize> = (0..s.blocks().len()).filter(|&i| s.blocks()[i] != l.blocks()[i]).collect();
-        assert_eq!(
-            differ.len(),
-            if FLOCKS { 2 } else { 1 },
-            "the lurker differs only in its paces: {differ:?}"
-        );
-        assert_eq!(s.blocks().iter().any(|b| b.action.needs_flock()), FLOCKS);
-        let flock = Program::IN_FLOCKS;
-        assert!(flock.blocks().iter().any(|b| b.action == Action::ReturnToCircle));
-        assert_eq!(flock.blocks().len(), s.blocks().len() + if FLOCKS { 0 } else { 2 });
+        assert_eq!(differ.len(), 1, "the lurker differs only in its wander's pace: {differ:?}");
         assert_eq!(s.hunt_ratio(), Some(1.5));
         assert_eq!(s.defence(), Some((1.5, 0.5)));
         assert_eq!(s.wander_reach(), 2.0);
         assert!((s.threat_range() - 0.33).abs() < 1e-12);
+        assert_eq!((s.home_layer(), s.shoots()), ((0.05, 1.0), false));
         let text = s.describe();
-        assert_eq!(text[0], "1. если сытость < 30% → установка: есть и чужую пищу");
-        assert_eq!(text[2], "3. если здоровье ≥ 50% → дать сдачи (враг крупнее не более чем в 1,5 раза)");
+        // what the genes and the world did: the settings on top
         assert_eq!(
-            text[3],
-            "4. если охотник ближе 33% зрения → убегать (бежать ещё 60 тиков, рывком, снова пугается угрозы \
-             ближе 33% зрения)"
+            text[..6],
+            [
+                "1. если всегда → установка: слой (сверху 5%, снизу 100%)",
+                "2. если всегда → установка: плавный ход (держит курс 30 тиков, поворот до 69°)",
+                "3. если всегда → установка: делиться (с бака 70%, потомку 40%)",
+                "4. если всегда → установка: лечиться (при баке больше 50%, без ударов 60 тиков)",
+                "5. если всегда → установка: есть на ходу (растения, падаль, пока сытость не больше 100%)",
+                "6. если всегда → установка: щадить детей (пока ребёнок не вырос до 100%)",
+            ]
+        );
+        assert_eq!(text[6], "7. если сытость < 30% → установка: есть и чужую пищу");
+        assert_eq!(text[8], "9. если здоровье ≥ 50% → дать сдачи (враг крупнее не более чем в 1,5 раза)");
+        assert_eq!(
+            text[12],
+            "13. если здоровье ≥ 60% → защищать детёныша (ребёнок ближе 50% зрения, при баке больше 50%, \
+             не дольше 90 тиков, потом пауза 60 тиков, ребёнка ударили за 30 тиков)"
         );
         assert_eq!(
-            text[6],
-            "7. если всегда → охотиться (добыча мельче в 1,5 раза, осторожность 100%, терпение 30 тиков, \
-             только если выгоднее, рывком, брошенную не трогать 180 тиков)"
+            text[9],
+            "10. если охотник ближе 33% зрения → убегать (бежать ещё 60 тиков, рывком, снова пугается угрозы \
+             ближе 33% зрения, ход 100%, прямо)"
+        );
+        assert_eq!(
+            text[13],
+            "14. если всегда → охотиться (добыча мельче в 1,5 раза, осторожность 100%, терпение 30 тиков, \
+             только если выгоднее, рывком, брошенную не трогать 180 тиков, добыча не дальше 100% зрения, \
+             ход погони 100%)"
+        );
+        assert_eq!(
+            text[17],
+            "18. если всегда → к растению (ход 100%, держится выбранного, не самое выгодное)"
         );
         assert_eq!(
             *text.last().unwrap(),
@@ -1188,7 +1510,10 @@ mod tests {
             Block::does(Action::EatForeign),
         ]);
         assert_eq!(p.reachable(), 2);
-        assert_eq!(p.describe()[0], "1. если сытость < 40% → к растению (ход 100%)");
+        assert_eq!(
+            p.describe()[0],
+            "1. если сытость < 40% → к растению (ход 100%, держится выбранного, не самое выгодное)"
+        );
         assert!(!p.live(2), "a deciding block after one that always fires is never reached");
         assert!(p.live(3), "a setting applies wherever it stands");
         // a negated «always» is «never»: the block is off and does not end the program
@@ -1221,7 +1546,6 @@ mod tests {
                     None => assert_eq!(*a, 0, "{b:?}"),
                 }
             }
-            assert!(FLOCKS || !b.action.needs_flock(), "{b:?} needs a flock");
         }
         assert!(p.blocks[usize::from(p.len)..].iter().all(|b| *b == FILLER), "the tail stays the filler");
         assert_eq!(p.summary, Summary::of(&p.blocks, usize::from(p.len)), "the summary is up to date");
@@ -1302,7 +1626,29 @@ mod tests {
         }
         assert!(longer > 600 && shorter > 300, "insertions and copies {longer}, deletions {shorter}");
         assert!(negated > 400 && reordered > 900, "{negated} {reordered}");
-        assert!(nudged > 2000 && flipped > 300, "nudged {nudged}, a flag flipped {flipped}");
+        assert!(nudged > 2000 && flipped > 250, "nudged {nudged}, a flag flipped {flipped}");
+    }
+
+    /// A mutation moves an index to another of its values, never where it was; the drift leaves it.
+    #[test]
+    fn an_index_is_picked_anew_and_does_not_drift() {
+        let mut rng = Rng::new(8);
+        let mut seen = [0; MODES + 1];
+        for _ in 0..4000 {
+            let k = MODE.nudged(2, &mut rng);
+            assert_ne!(k, 2);
+            seen[usize::from(k)] += 1;
+        }
+        assert!(seen[1] > 1000 && seen[3] > 1000 && seen[4] > 1000, "{seen:?}");
+        let mut p = Program::of(&[
+            Block::when(Test::at(Cond::Mode, 3), Action::Ambush),
+            Block::does(Action::Mode).with(0, 4),
+            Block::does(Action::Wander),
+        ]);
+        for _ in 0..100 {
+            p.drift(3.0, &mut rng);
+        }
+        assert_eq!((p.blocks()[0].when[0].param, p.blocks()[1].args[0]), (3, 4), "the drift leaves indices");
     }
 
     /// The drift moves the numbers, never the shape or a flag, keeps them in range, is not counted
@@ -1345,26 +1691,54 @@ mod tests {
 
     #[test]
     fn codes_tell_blocks_apart() {
-        let mut codes: Vec<[u64; 2]> = Vec::new();
+        let mut codes: Vec<[u64; 3]> = Vec::new();
         for c in Cond::ALL {
             for a in Action::ALL {
                 for negate in [false, true] {
                     let t = Test { cond: c, negate, param: c.param().map_or(0, |p| p.hi) };
-                    codes.push(Block::when2(t, Test::ALWAYS, a).code());
-                    codes.push(Block::when2(Test::ALWAYS, t, a).code());
+                    let a_ = Test::ALWAYS;
+                    codes.push(Block::when3(t, a_, a_, a).code());
+                    codes.push(Block::when3(a_, t, a_, a).code());
+                    codes.push(Block::when3(a_, a_, t, a).code());
                 }
             }
         }
         let n = codes.len();
         codes.sort_unstable();
         codes.dedup();
-        // a test in either slot with «always» in the other is the same block only for «always»
-        assert_eq!(codes.len(), n - Action::ALL.len());
+        // a test in any slot with «always» in the others is the same block only for «always»
+        assert_eq!(codes.len(), n - 2 * Action::ALL.len());
         let b = Block::does(Action::Hunt);
-        assert_ne!(b.code(), b.with(4, 0).code(), "the fifth parameter counts");
-        assert_ne!(b.code(), b.with(5, 0).code(), "the sixth parameter counts");
-        assert_eq!(b.shape(), b.with(5, 0).with(0, 300).shape(), "numbers are no part of the shape");
+        for i in 0..MAX_ARGS {
+            assert_ne!(b.code(), b.with(i, b.args[i] + 1).code(), "parameter {i} counts");
+        }
+        assert_eq!(
+            b.shape(),
+            b.with(5, 0).with(0, 300).with(7, 50).shape(),
+            "numbers are no part of the shape"
+        );
         assert_ne!(b.shape(), b.with(4, 0).shape(), "flags are");
+        let mode = Block::does(Action::Mode);
+        assert_ne!(mode.shape(), mode.with(0, 2).shape(), "a mode's number is");
+        assert_eq!(mode.shape(), mode.with(1, 300).shape());
+        let tested = |k| Block::when(Test::at(Cond::Mode, k), Action::Ambush).shape();
+        assert_ne!(tested(1), tested(2), "so is a tested one's");
+    }
+
+    /// Of the settings of one kind the first that applies wins; each mode is a kind of its own.
+    #[test]
+    fn settings_of_a_kind_and_modes_have_their_kinds() {
+        let rival = Block::does(Action::Rival);
+        assert_eq!(rival.setting_kind(), rival.with(0, 300).setting_kind());
+        assert_ne!(rival.setting_kind(), Block::does(Action::Reach).setting_kind());
+        let mode = Block::does(Action::Mode);
+        let kinds: Vec<u64> = (1..=MODES as u16).map(|k| mode.with(0, k).setting_kind()).collect();
+        for (i, a) in kinds.iter().enumerate() {
+            assert_eq!(a.count_ones(), 1);
+            assert!(kinds[i + 1..].iter().all(|b| a & b == 0), "modes differ in kind");
+            assert!(Action::ALL.iter().all(|&x| Block::does(x).setting_kind() & a == 0 || x == Action::Mode));
+        }
+        assert_eq!(mode.setting_kind(), mode.with(1, 5).setting_kind(), "the time is no part of it");
     }
 
     #[test]
@@ -1382,6 +1756,24 @@ mod tests {
         assert_eq!(Test::at(Cond::Struck, 22).not().label(), "его не били за 22 тика");
         let words: Vec<&str> = [1, 2, 5, 11, 12, 21, 24, 111].into_iter().map(ticks_word).collect();
         assert_eq!(words, ["тик", "тика", "тиков", "тиков", "тиков", "тик", "тика", "тиков"]);
+        // the new units: a tilt, an angle, an index
+        let tilt = Action::Flee.params()[4];
+        assert_eq!([tilt.show(130), tilt.show(70), tilt.show(100)], ["вниз 30%", "вверх 30%", "прямо"]);
+        assert_eq!((tilt.value(130), tilt.value(100)), (0.3, 0.0));
+        let angle =
+            ParamSpec { label: "поворот", unit: Unit::Angle, lo: 0, hi: 314, base: 120, nudge: 10.0 };
+        assert_eq!((angle.show(120), angle.value(120)), ("поворот 69°".to_string(), 1.2));
+        assert_eq!(Test::at(Cond::Mode, 2).label(), "включён режим 2");
+        assert_eq!(Test::at(Cond::Mode, 3).not().label(), "выключен режим 3");
+        assert_eq!(Test::at(Cond::Age, 70).not().label(), "возраст < 70%");
+        assert_eq!(Block::does(Action::Mode).args_label(), "режим 1, на 60 тиков");
+        let three = Block::when3(
+            Test::at(Cond::Fullness, 40).not(),
+            Test::is(Cond::PlantSeen),
+            Test::is(Cond::Winded).not(),
+            Action::EatPlant,
+        );
+        assert_eq!(three.condition_label(), "сытость < 40% и видит растение и не запыхался");
     }
 
     /// Programs are shared, compared by content, read as an array.

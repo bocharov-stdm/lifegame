@@ -7,13 +7,14 @@
 //! What it decides is its behaviour program for its stage of life (`program.rs`): each tick it
 //! perceives the scene (`scene.rs`); the settings whose tests hold set how this tick goes,
 //! wherever they stand; then its deciding blocks run in order and the first whose action can be
-//! done decides (`actions.rs`); the social layer adjusts the step (`social::adjust`). What the
-//! settings set (`Stance`) stays in its memory for the world's eating and fighting phases. The
+//! done decides (`actions.rs`); a calm step is smoothed and a parent covering its child goes for
+//! the enemy (`steer::adjust`). What the settings set (`Stance`) stays in its memory for the
+//! world's eating and fighting phases. The
 //! `strategy` gene names the template a founder's programs start from: after that they are
 //! inherited, drift and mutate on their own.
 
 use super::actions::{self, Mode};
-use super::program::{Action, Program};
+use super::program::{Action, MODES, Program};
 use super::scene::Scene;
 use super::{Kinship, Phenotype};
 use crate::genome::Variant;
@@ -61,8 +62,11 @@ pub const VARIANTS: [Variant; 2] = [
     },
 ];
 
-/// What its program set for this tick (`Action::is_setting`), and the size limit of the target it
-/// chose: the world's eating and fighting phases read it after the moves.
+/// What its program set for this tick (`Action::is_setting`), the size limit of the target it
+/// chose and the food its deciding block went for: the world's eating, fighting and dividing
+/// phases read it after the moves, the healing and the kinship of the next tick before them.
+/// Without a setting its default is «nothing»: the whole depth, no smoothing, no division, no
+/// healing, no eating on the move, no children spared, no shots.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stance {
     /// It eats the other niche's food too (`Action::EatForeign`).
@@ -74,19 +78,177 @@ pub struct Stance {
     /// The prey it chose to strike must be this many times smaller (its hunt's ratio); 0: it
     /// chose none to hunt.
     pub strike_ratio: f64,
+    /// Its layer, shares of the world's depth, top and bottom (`Action::Layer`,
+    /// `Phenotype::band`).
+    pub layer: (f64, f64),
+    /// A calm walk holds its course and turns smoothly (`Action::Smooth`).
+    pub smooth: Option<Smooth>,
+    /// It divides (`Action::Divide`).
+    pub divide: Option<Divide>,
+    /// It heals from the next tick (`Action::Heal`).
+    pub heal: Option<Heal>,
+    /// It eats on the move (`Action::Graze`).
+    pub graze: Option<Graze>,
+    /// It knows its child until the child has grown to this share (`Action::Spare`); 0: never.
+    pub spare: f64,
+    /// It shoots (`Action::Shoot`).
+    pub shoot: Option<Shoot>,
+    /// What its deciding block went for this tick: it eats that food on contact whether it eats on
+    /// the move or not.
+    pub goes_for: Option<Food>,
+    /// The enemy of its child it defends this tick: it strikes it whatever its size.
+    pub defending: Option<u64>,
 }
 
 impl Default for Stance {
     fn default() -> Self {
-        Stance { foreign: false, rival: 0.0, reach: f64::INFINITY, strike_ratio: 0.0 }
+        Stance {
+            foreign: false,
+            rival: 0.0,
+            reach: f64::INFINITY,
+            strike_ratio: 0.0,
+            layer: (0.0, 1.0),
+            smooth: None,
+            divide: None,
+            heal: None,
+            graze: None,
+            spare: 0.0,
+            shoot: None,
+            goes_for: None,
+            defending: None,
+        }
     }
+}
+
+impl Stance {
+    /// Whether it eats `food` it touches now, with `fullness` of its tank.
+    #[inline]
+    pub fn eats(&self, food: Food, fullness: f64) -> bool {
+        self.goes_for == Some(food)
+            || self.graze.is_some_and(|g| {
+                fullness <= g.until
+                    && match food {
+                        Food::Plant => g.plants,
+                        Food::Corpse => g.corpses,
+                    }
+            })
+    }
+}
+
+/// Food a creature eats on contact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Food {
+    Plant,
+    Corpse,
+}
+
+/// `Action::Smooth`: a calm course held this many ticks, a turn of at most this many radians.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Smooth {
+    pub ticks: u64,
+    pub turn: f64,
+}
+
+/// `Action::Divide`: from this share of the tank, giving the child this share of its energy.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Divide {
+    pub tank: f64,
+    pub share: f64,
+}
+
+/// `Action::Heal`: while the tank holds more than this share and nobody struck it this many ticks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Heal {
+    pub tank: f64,
+    pub calm: u32,
+}
+
+/// `Action::Graze`: which food it eats on the move, while its tank is no fuller than `until`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Graze {
+    pub plants: bool,
+    pub corpses: bool,
+    pub until: f64,
+}
+
+/// `Action::Shoot`: from this share of its range, keeping this share of its tank.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shoot {
+    pub from: f64,
+    pub keep: f64,
+}
+
+/// What a creature is doing, as the report counts it. `Alarm`: it fights — stands striking back or
+/// covers its child — and a defence strikes a body of any size (`combat::defending`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Activity {
+    Feeding,
+    Resting,
+    #[default]
+    Travelling,
+    Alarm,
+}
+
+impl Activity {
+    pub const ALL: [Self; 4] = [Self::Feeding, Self::Resting, Self::Travelling, Self::Alarm];
+
+    /// Game UI and the chronicle.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Feeding => "кормятся",
+            Self::Resting => "отдыхают",
+            Self::Travelling => "переходят",
+            Self::Alarm => "тревога",
+        }
+    }
+}
+
+/// Somebody seen at a place and a tick: the enemy that struck it, the threat it found.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sighting {
+    pub enemy: u64,
+    pub x: f64,
+    pub y: f64,
+    pub tick: u64,
+}
+
+/// A parent defending its child (`Action::DefendChild`): whom, against whom, since when, and the
+/// pause its block rests from defending after it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Aid {
+    pub victim: u64,
+    pub enemy: u64,
+    pub started: u64,
+    pub pause: u16,
 }
 
 /// A creature's memory between ticks, the same for every program: new state goes here (the
 /// struct stays `Copy`).
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Mind {
-    pub social: crate::social::Memory,
+    /// The world's tick as this creature last lived it.
+    pub tick: u64,
+    pub activity: Activity,
+    /// The enemy that struck it last.
+    pub hit: Option<Sighting>,
+    /// The last threat it met: found by its program, or the one that struck it. A parent covers a
+    /// young child by it.
+    pub alarm: Option<Sighting>,
+    /// When it last shot.
+    pub last_shot: u64,
+    /// The rest it is in, until what tick, and when the next may start (`Action::Rest`).
+    pub rest_until: u64,
+    pub rest_ready: u64,
+    /// The direction of its last step, and the course a calm walk holds (`steer::adjust`).
+    pub heading: Option<(f64, f64)>,
+    pub course: Option<(f64, f64)>,
+    pub course_target: Option<(f64, f64)>,
+    pub course_until: u64,
+    /// The plant it goes to: it keeps it while it lives and is seen.
+    pub personal_food: Option<(f64, f64)>,
+    /// The child it defends, and from when it may defend one again (`Action::DefendChild`).
+    pub aid: Option<Aid>,
+    pub aid_cooldown: u64,
     /// The target it chose to strike this tick.
     pub attack: Option<u64>,
     /// Ticks it still runs after losing its threat from sight (`Action::Flee`).
@@ -101,6 +263,9 @@ pub struct Mind {
     pub chase: Option<Chase>,
     /// The prey it gave up chasing, and until what tick it does not choose it again.
     pub given_up: Option<(u64, u64)>,
+    /// Until what tick each of its modes is on (`Action::Mode`, `Cond::Mode`); both of its
+    /// programs read the same modes.
+    pub modes: [u64; MODES],
     /// What its program set this tick.
     pub stance: Stance,
     /// The block of its current program that decided this tick (None: none did), the settings
@@ -126,13 +291,14 @@ pub struct Me<'a> {
     pub energy: f64,
     /// Its number and parent: the senses do not show family as a threat.
     pub kinship: Kinship,
-    pub flock: u64,
-    /// The flock's circle: food is taken inside it.
-    pub circle: Option<crate::flock::Circle>,
     pub pheno: &'a Phenotype,
     pub health_share: f64,
     /// Health now: a hunter weighs the strikes it expects against it.
     pub health: f64,
+    /// Its age, ticks (`Cond::Age`).
+    pub age: f64,
+    /// Winded after a burst (`Cond::Winded`).
+    pub winded: bool,
 }
 
 /// The decision of a tick: the point to step towards. The step goes no farther than `pace` of its
@@ -172,7 +338,7 @@ pub(crate) fn decide(
 }
 
 /// Where to go and which kind of move it is: the scene, the settings, the first block that
-/// decides, the social layer.
+/// decides, the steering.
 #[inline(always)]
 pub(super) fn plan(
     me: &Me,
@@ -181,19 +347,22 @@ pub(super) fn plan(
     rng: &mut Rng,
     senses: &impl Senses,
 ) -> (Intent, Mode) {
-    let mut scene = Scene::perceive(me, mind, senses, program.threat_range());
+    let mut scene = Scene::perceive(me, mind, senses, program);
     let blocks = program.blocks();
-    // The settings first, wherever they stand: a swap cannot hide one behind a deciding block.
-    let mut applied = 0_u32;
+    // The settings first, wherever they stand: a swap cannot hide one behind a deciding block. Of
+    // one kind the first that applies wins; the later ones are not even tested.
+    let (mut applied, mut kinds) = (0_u32, 0_u64);
     for (i, block) in blocks.iter().enumerate().filter(|(_, b)| b.action.is_setting()) {
-        if scene.test(block.when[0], me, mind, senses) && scene.test(block.when[1], me, mind, senses) {
-            actions::apply_setting(block, &mut scene, me);
+        let kind = block.setting_kind();
+        if kinds & kind == 0 && scene.holds(block, me, mind, senses) {
+            actions::apply_setting(block, &mut scene, me, mind);
             applied |= 1 << i;
+            kinds |= kind;
         }
     }
     let (mut decided, mut tried) = (None, 0_u32);
     for (i, block) in blocks.iter().enumerate().filter(|(_, b)| !b.action.is_setting()) {
-        if !(scene.test(block.when[0], me, mind, senses) && scene.test(block.when[1], me, mind, senses)) {
+        if !scene.holds(block, me, mind, senses) {
             continue;
         }
         tried |= 1 << i;
@@ -202,43 +371,53 @@ pub(super) fn plan(
             break;
         }
     }
-    mind.stance = scene.stance;
     (mind.applied, mind.tried) = (applied, tried);
     if let Some(t) = scene.found_threat() {
-        mind.social.observed_alarm =
-            Some(crate::social::Alarm { enemy: t.id, x: t.x, y: t.y, tick: mind.social.tick });
+        mind.alarm = Some(Sighting { enemy: t.id, x: t.x, y: t.y, tick: mind.tick });
     }
     // Nothing decided: it stands.
     let (action, (intent, mode)) = match decided {
         Some((_, action, done)) => (Some(action), done),
         None => (None, (Intent::to(me.x, me.y), Mode::Wander)),
     };
+    // the food its block went for it eats on contact, on the move or not
+    scene.stance.goes_for = match action {
+        Some(Action::EatPlant) => Some(Food::Plant),
+        Some(Action::EatCorpse) => Some(Food::Corpse),
+        _ => None,
+    };
+    mind.stance = scene.stance;
     mind.fired = decided.map(|(i, ..)| i as u8);
-    // A flight lasts while it chooses to flee, a rest while it chooses to rest.
+    // A flight lasts while it chooses to flee, a rest while it chooses to rest, a defence of its
+    // child while it chooses to defend it (then it pauses).
     if action != Some(Action::Flee) {
         mind.flee_ticks = 0;
     }
     if action != Some(Action::Rest) {
-        mind.social.rest_until = 0;
+        mind.rest_until = 0;
     }
-    if intent.attack.is_some() && intent.tx == me.x && intent.ty == me.y {
-        mind.social.activity = crate::social::Activity::Alarm;
-        mind.social.course = None;
+    if action != Some(Action::DefendChild) {
+        actions::end_defence(mind);
+    }
+    if mode == Mode::Defend || (intent.attack.is_some() && intent.tx == me.x && intent.ty == me.y) {
+        mind.activity = Activity::Alarm;
+        mind.course = None;
         return (intent, mode);
     }
-    let intent =
-        crate::social::adjust(me, mind, intent, mode == Mode::Food, mode == Mode::Flee, mode == Mode::Return);
-    if mode == Mode::Rest && mind.social.activity != crate::social::Activity::Alarm {
-        mind.social.activity = crate::social::Activity::Resting;
-        mind.social.course = None;
+    let intent = super::steer::adjust(me, mind, intent, mode == Mode::Food, mode == Mode::Flee);
+    if mode == Mode::Rest && mind.activity != Activity::Alarm {
+        mind.activity = Activity::Resting;
+        mind.course = None;
     }
     (intent, mode)
 }
 
-/// It has just eaten (`me` with its new energy); its next wander target lies at most `reach` away.
+/// It has just eaten (`me` with its new energy); its next wander target lies at most `reach` away,
+/// in the band of this tick's layer.
 #[inline(always)]
 pub(crate) fn after_eating(me: &Me, mind: &mut Mind, rng: &mut Rng, reach: f64) {
-    actions::after_eating(me, mind, rng, reach);
+    let band = me.pheno.band(mind.stance.layer);
+    actions::after_eating(me, mind, rng, reach, band);
 }
 
 #[cfg(test)]
@@ -246,7 +425,6 @@ mod tests {
     use super::*;
     use crate::config::{CHASE_GIVE_UP_TICKS, CHASE_PATIENCE};
     use crate::creature::{Creature, Diet, Programs};
-    use crate::flock::Circle;
     use crate::genome::creature::Gene;
     use crate::senses::{CorpseFood, Hunting, Prey, Taste, Threat};
     use crate::{CreatureGenome, Rules, Space};
@@ -276,159 +454,6 @@ mod tests {
         }
     }
 
-    /// One plant east of the circle, within sight.
-    struct PlantOutside;
-
-    impl Senses for PlantOutside {
-        fn nearest_plant(&self, x: f64, y: f64, r2: f64) -> Option<(f64, f64)> {
-            ((1300.0 - x).powi(2) + (1000.0 - y).powi(2) <= r2).then_some((1300.0, 1000.0))
-        }
-
-        fn best_corpse(&self, _: &Me, _: Taste) -> Option<CorpseFood> {
-            None
-        }
-
-        fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
-            None
-        }
-
-        fn prey(&self, _: &Me, _: Option<u64>, _: Option<u64>, _: Hunting) -> Option<Prey> {
-            None
-        }
-    }
-
-    /// Two plants: a near one at (1100, 1000) and a farther one at (800, 1000).
-    struct TwoPlants;
-
-    impl Senses for TwoPlants {
-        fn nearest_plant(&self, x: f64, y: f64, r2: f64) -> Option<(f64, f64)> {
-            self.nearest_plant_where(x, y, r2, |_, _| true)
-        }
-
-        fn nearest_plant_where(
-            &self,
-            x: f64,
-            y: f64,
-            r2: f64,
-            keep: impl Fn(f64, f64) -> bool,
-        ) -> Option<(f64, f64)> {
-            [(1100.0, 1000.0), (800.0, 1000.0)]
-                .into_iter()
-                .filter(|&(px, py)| keep(px, py) && (px - x).powi(2) + (py - y).powi(2) < r2)
-                .min_by(|a, b| ((a.0 - x).abs()).total_cmp(&(b.0 - x).abs()))
-        }
-
-        fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
-            None
-        }
-    }
-
-    #[test]
-    fn food_behind_a_respected_border_is_no_target_unless_starving() {
-        let v = Creature::new(
-            &Space::default(),
-            &Rules::default(),
-            CreatureGenome::BASE,
-            Some(1000.0),
-            Some(1000.0),
-            None,
-            Rng::new(1),
-        );
-        for (share, want) in [(0.5, 800.0), (0.2, 1100.0)] {
-            let me = Me {
-                x: v.x,
-                y: v.y,
-                energy: v.pheno.max_energy * share,
-                kinship: v.kinship(),
-                flock: v.flock,
-                circle: None,
-                pheno: &v.pheno,
-                health_share: 1.0,
-                health: v.pheno.size,
-            };
-            let mut mind = Mind::default();
-            // the near plant lies in a neighbour's area it walks around
-            mind.social.territory_avoid =
-                Some(crate::territory::Area { flock: 99, x: 1150.0, y: 1000.0, radius: 80.0 });
-            let (intent, mode) = plan(&me, &Program::STANDARD, &mut mind, &mut Rng::new(3), &TwoPlants);
-            assert_eq!(mode, Mode::Food, "fullness {share}");
-            // it walks up to the edge of its reach of that plant
-            let stop = want + (v.x - want).signum() * v.pheno.size * crate::config::EAT_STOP_SHARE;
-            assert!(
-                (intent.tx - stop).abs() < 1e-9,
-                "fullness {share}: which plant it goes for, {}",
-                intent.tx
-            );
-        }
-    }
-
-    #[test]
-    fn how_hungry_a_member_leaves_its_circle_is_inherited() {
-        for (forage, leaves) in [(20.0, false), (60.0, true)] {
-            let genome = CreatureGenome::BASE.with(Gene::Forage, forage);
-            let v = Creature::new(
-                &Space::default(),
-                &Rules::default(),
-                genome,
-                Some(1000.0),
-                Some(1000.0),
-                None,
-                Rng::new(1),
-            );
-            let me = Me {
-                x: v.x,
-                y: v.y,
-                energy: v.pheno.max_energy * 0.3,
-                kinship: v.kinship(),
-                flock: v.flock,
-                circle: Some(Circle { x: 1000.0, y: 1000.0, radius: 150.0 }),
-                pheno: &v.pheno,
-                health_share: 1.0,
-                health: v.pheno.size,
-            };
-            let mut mind = Mind::default();
-            let (_, mode) = plan(&me, &Program::STANDARD, &mut mind, &mut Rng::new(3), &PlantOutside);
-            assert_eq!(mind.social.foraging, leaves, "forage {forage}% at 30% of the store");
-            assert_eq!(mode == Mode::Food, leaves, "forage {forage}%: the plant outside");
-        }
-    }
-
-    #[test]
-    fn a_hungry_member_forages_outside_its_circle_until_it_is_fed() {
-        let v = Creature::new(
-            &Space::default(),
-            &Rules::default(),
-            CreatureGenome::BASE,
-            Some(1000.0),
-            Some(1000.0),
-            Some(30.0),
-            Rng::new(1),
-        );
-        let circle = Circle { x: 1000.0, y: 1000.0, radius: 150.0 };
-        let mut mind = Mind::default();
-        let mut rng = Rng::new(3);
-        for (share, forages) in [(0.8, false), (0.3, true), (0.6, true), (0.75, false), (0.5, false)] {
-            let me = Me {
-                x: v.x,
-                y: v.y,
-                energy: v.pheno.max_energy * share,
-                kinship: v.kinship(),
-                flock: v.flock,
-                circle: Some(circle),
-                pheno: &v.pheno,
-                health_share: 1.0,
-                health: v.pheno.size,
-            };
-            let (_, mode) = plan(&me, &Program::STANDARD, &mut mind, &mut rng, &PlantOutside);
-            assert_eq!(mind.social.foraging, forages, "fullness {share}");
-            assert_eq!(
-                mode == Mode::Food,
-                forages,
-                "fullness {share}: the plant outside is taken only when foraging"
-            );
-        }
-    }
-
     #[test]
     fn мясоед_идёт_к_падали_травоядный_к_растению_оба_встают_у_края() {
         use crate::config::EAT_STOP_SHARE;
@@ -448,12 +473,12 @@ mod tests {
                 Rng::new(1),
             );
             let me = Me {
+                age: 0.0,
+                winded: false,
                 x: v.x,
                 y: v.y,
                 energy: v.energy,
                 kinship: v.kinship(),
-                flock: v.flock,
-                circle: None,
                 pheno: &v.pheno,
                 health_share: 1.0,
                 health: v.pheno.size,
@@ -516,18 +541,18 @@ mod tests {
             Rng::new(1),
         );
         let me = Me {
+            age: 0.0,
+            winded: false,
             x: v.x,
             y: v.y,
             energy: v.energy,
             kinship: v.kinship(),
-            flock: v.flock,
-            circle: None,
             pheno: &v.pheno,
             health_share: 1.0,
             health: v.pheno.size,
         };
         let hunt = |mind: &mut Mind, gap: f64| {
-            mind.social.tick += 1;
+            mind.tick += 1;
             let (intent, _) = plan(&me, &Program::STANDARD, mind, &mut Rng::new(3), &Ahead { gap });
             mind.attack = intent.attack;
             intent.attack
@@ -539,9 +564,9 @@ mod tests {
         }
         assert_eq!(hunt(&mut mind, 100.0), None, "given up");
         let until = mind.given_up.expect("remembered").1;
-        assert_eq!(until, mind.social.tick + CHASE_GIVE_UP_TICKS);
+        assert_eq!(until, mind.tick + CHASE_GIVE_UP_TICKS);
         assert_eq!(hunt(&mut mind, 100.0), None, "not chosen again");
-        mind.social.tick = until - 1;
+        mind.tick = until - 1;
         assert_eq!(hunt(&mut mind, 100.0), Some(9), "chosen again later");
 
         // it closes a step every few ticks: the chase goes on
@@ -568,12 +593,12 @@ mod tests {
             Rng::new(1),
         );
         let me = Me {
+            age: 0.0,
+            winded: false,
             x: v.x,
             y: v.y,
             energy: v.energy,
             kinship: v.kinship(),
-            flock: v.flock,
-            circle: None,
             pheno: &v.pheno,
             health_share: 1.0,
             health: v.pheno.size,
@@ -595,22 +620,8 @@ mod tests {
         Creature { energy, ..v }
     }
 
-    fn me_of(v: &Creature) -> Me<'_> {
-        Me {
-            x: v.x,
-            y: v.y,
-            energy: v.energy,
-            kinship: v.kinship(),
-            flock: v.flock,
-            circle: None,
-            pheno: &v.pheno,
-            health_share: v.health / v.max_health(),
-            health: v.health,
-        }
-    }
-
     fn run(v: &Creature, program: &Program, mind: &mut Mind, senses: &impl Senses) -> (Intent, Mode) {
-        plan(&me_of(v), program, mind, &mut Rng::new(3), senses)
+        plan(&v.me(), program, mind, &mut Rng::new(3), senses)
     }
 
     #[test]
@@ -632,8 +643,10 @@ mod tests {
             assert_eq!(mind.fired, Some(0), "{action:?}");
             assert_eq!(intent.pace, 0.5, "{action:?}: at its block's pace");
             assert!((intent.tx - v.x).abs() < 1e-9 && (intent.ty > v.y) == down, "{action:?}: {intent:?}");
-            // at the edge it is done: the next block decides
-            let edge = if down { v.pheno.body_hi } else { v.pheno.body_lo };
+            // at the edge of its band (no layer setting: the whole depth) it is done: the next block
+            // decides
+            let (lo, hi) = v.pheno.band((0.0, 1.0));
+            let edge = if down { hi } else { lo };
             let there = body(CreatureGenome::BASE, Some(edge), 0.5);
             let mut mind = Mind::default();
             let (intent, _) = run(&there, &program, &mut mind, &Blind);
@@ -678,10 +691,10 @@ mod tests {
     }
 
     /// Settings apply and the program goes on; what they set stays in its memory for the world's
-    /// eating and fighting phases, and the window sees which applied.
+    /// eating and fighting phases, and the window sees which applied. Of one kind the first that
+    /// applies wins.
     #[test]
     fn settings_apply_and_the_program_goes_on() {
-        let v = body(CreatureGenome::BASE, Some(1000.0), 0.2);
         let program = Program::of(&[
             Block::when(Test::at(Cond::Fullness, 30).not(), Action::EatForeign),
             Block::when(Test::at(Cond::Fullness, 10).not(), Action::Rival),
@@ -689,16 +702,331 @@ mod tests {
             Block::does(Action::Reach).with(0, 10),
             Block::does(Action::Wander),
         ]);
+        let v = body(CreatureGenome::BASE, Some(1000.0), 0.2);
         let mut mind = Mind::default();
         run(&v, &program, &mut mind, &Blind);
         assert_eq!(mind.fired, Some(4), "a setting does not decide");
-        assert_eq!(mind.applied, 0b1101, "which settings applied");
+        assert_eq!(mind.applied, 0b1101, "the first rival's test failed: the second applied");
         assert!(mind.stance.foreign);
-        assert_eq!(mind.stance.rival, 2.5, "the last rival setting counts");
+        assert_eq!(mind.stance.rival, 2.5);
         assert!((mind.stance.reach - 0.1 * v.pheno.height).abs() < 1e-9);
+        let starving = body(CreatureGenome::BASE, Some(1000.0), 0.05);
+        let mut mind = Mind::default();
+        run(&starving, &program, &mut mind, &Blind);
+        assert_eq!(mind.applied, 0b1011, "the first rival that applies wins, the later is not lit");
+        assert_eq!(mind.stance.rival, 1.5);
         // a new tick starts from no settings
         run(&v, &Program::of(&[Block::does(Action::Wander)]), &mut mind, &Blind);
         assert_eq!(mind.stance, Stance::default());
+    }
+
+    /// A mode setting switches its mode on for its ticks, a later block sees it this very tick, it
+    /// expires, and a time of 0 switches it off; both tracks share the modes.
+    #[test]
+    fn modes_are_switched_on_seen_and_expire() {
+        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let program = Program::of(&[
+            Block::when(Test::at(Cond::Fullness, 40), Action::Mode).with(0, 2).with(1, 5),
+            Block::when(Test::at(Cond::Mode, 2), Action::Ambush),
+            Block::does(Action::Wander),
+        ]);
+        let mut mind = Mind { tick: 100, ..Mind::default() };
+        run(&v, &program, &mut mind, &Blind);
+        assert_eq!((mind.fired, mind.modes), (Some(1), [0, 105, 0, 0]), "on this tick, seen at once");
+        let hungry = body(CreatureGenome::BASE, Some(1000.0), 0.2);
+        for (tick, fired) in [(104, 1), (105, 2)] {
+            mind.tick = tick;
+            run(&hungry, &program, &mut mind, &Blind);
+            assert_eq!(mind.fired, Some(fired), "tick {tick}: the mode lasts 5 ticks");
+        }
+        let off =
+            Program::of(&[Block::does(Action::Mode).with(0, 2).with(1, 0), Block::does(Action::Wander)]);
+        mind.modes[1] = 500;
+        run(&v, &off, &mut mind, &Blind);
+        assert_eq!(mind.modes[1], mind.tick, "0 ticks: off");
+        // two modes of different numbers apply in one tick
+        let both = Program::of(&[
+            Block::does(Action::Mode).with(0, 1),
+            Block::does(Action::Mode).with(0, 3).with(1, 7),
+            Block::does(Action::Mode).with(0, 1).with(1, 500),
+            Block::does(Action::Wander),
+        ]);
+        let mut mind = Mind { tick: 10, ..Mind::default() };
+        run(&v, &both, &mut mind, &Blind);
+        assert_eq!((mind.modes, mind.applied), ([70, 0, 17, 0], 0b011), "the second mode 1 is skipped");
+    }
+
+    /// The body, age and place tests read what they say.
+    #[test]
+    fn body_age_and_place_tests_read_themselves() {
+        let fires = |v: &Creature, test: Test| {
+            let program = Program::of(&[Block::when(test, Action::Ambush), Block::does(Action::Wander)]);
+            let mut mind = Mind::default();
+            run(v, &program, &mut mind, &Blind);
+            mind.fired == Some(0)
+        };
+        let mut v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        v.age = v.pheno.lifespan * 0.75;
+        assert!(fires(&v, Test::at(Cond::Age, 70)) && !fires(&v, Test::at(Cond::Age, 80)));
+        assert!(!fires(&v, Test::is(Cond::Winded)));
+        v.winded = 3;
+        assert!(fires(&v, Test::is(Cond::Winded)));
+        // the thermocline: warm to 15% of the depth, cold from 45%
+        let deep = body(CreatureGenome::BASE, Some(v.pheno.height * 0.6), 0.5);
+        let shallow = body(CreatureGenome::BASE, Some(v.pheno.height * 0.05), 0.5);
+        assert!(fires(&deep, Test::at(Cond::Cold, 100)) && !fires(&shallow, Test::at(Cond::Cold, 1)));
+        // a layer setting from 5% to 50% of the depth: the tests after it see its band
+        let layered = |v: &Creature, test: Test| {
+            let program = Program::of(&[
+                Block::does(Action::Layer).with(1, 50),
+                Block::when(test, Action::Ambush),
+                Block::does(Action::Wander),
+            ]);
+            let mut mind = Mind::default();
+            run(v, &program, &mut mind, &Blind);
+            mind.fired == Some(1)
+        };
+        let (lo, hi) = v.pheno.band((0.05, 0.5));
+        for (y, above, inside, below) in
+            [(lo - 5.0, true, false, false), (lo + 5.0, false, true, false), (hi + 5.0, false, false, true)]
+        {
+            let w = body(CreatureGenome::BASE, Some(y), 0.5);
+            assert_eq!(layered(&w, Test::is(Cond::AboveLayer)), above, "y {y}");
+            assert_eq!(layered(&w, Test::is(Cond::InLayer)), inside, "y {y}");
+            assert_eq!(layered(&w, Test::is(Cond::BelowLayer)), below, "y {y}");
+        }
+        let low = body(CreatureGenome::BASE, Some(hi + 5.0), 0.5);
+        assert!(layered(&low, Test::is(Cond::InLayer).not()), "a negated test");
+        assert!(fires(&low, Test::is(Cond::InLayer)), "without the setting the whole depth is its layer");
+    }
+
+    /// Three tests: the block fires only when all hold.
+    #[test]
+    fn a_block_fires_only_when_all_three_tests_hold() {
+        let program = |third: Test| {
+            Program::of(&[
+                Block::when3(Test::at(Cond::Fullness, 30), Test::at(Cond::Health, 50), third, Action::Ambush),
+                Block::does(Action::Wander),
+            ])
+        };
+        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        for (third, fired) in
+            [(Test::ALWAYS, 0), (Test::at(Cond::Depth, 90), 1), (Test::is(Cond::Winded).not(), 0)]
+        {
+            let mut mind = Mind::default();
+            run(&v, &program(third), &mut mind, &Blind);
+            assert_eq!(mind.fired, Some(fired), "{}", third.label());
+        }
+    }
+
+    /// Food and prey in sight: a plant, a corpse, and prey its hunt would take within the test's
+    /// share of sight; a program without a hunt sees no prey.
+    #[test]
+    fn food_and_prey_tests_see_what_the_senses_show() {
+        struct Around {
+            prey_gap: f64,
+        }
+        impl Senses for Around {
+            fn nearest_plant(&self, x: f64, y: f64, r2: f64) -> Option<(f64, f64)> {
+                (100.0 * 100.0 < r2).then_some((x + 100.0, y))
+            }
+            fn best_corpse(&self, me: &Me, _: Taste) -> Option<CorpseFood> {
+                let eats = me.pheno.meat_efficiency > 0.0 || me.pheno.rot_efficiency > 0.0;
+                eats.then_some(CorpseFood { owner: 2, x: me.x - 120.0, y: me.y, half: 10.0, score: 1.0 })
+            }
+            fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
+                None
+            }
+            fn nearest_prey(&self, me: &Me, ratio: f64, _: Taste, within: f64) -> Option<Threat> {
+                let t = Threat { id: 4, x: me.x + 50.0, y: me.y, gap: self.prey_gap, half: 5.0 };
+                (me.pheno.hunts() && ratio == 1.5 && t.gap < within).then_some(t)
+            }
+        }
+        let fires = |v: &Creature, test: Test, hunts: bool, gap: f64| {
+            let tail = if hunts { Action::Hunt } else { Action::Ambush };
+            let program = Program::of(&[
+                Block::when(test, Action::Ambush),
+                Block::does(tail),
+                Block::does(Action::Wander),
+            ]);
+            let mut mind = Mind::default();
+            run(v, &program, &mut mind, &Around { prey_gap: gap });
+            mind.fired == Some(0)
+        };
+        let grazer = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let carnivore =
+            body(CreatureGenome::BASE.with(Gene::Diet, Diet::Carnivore as usize as f64), Some(1000.0), 0.5);
+        assert!(fires(&grazer, Test::is(Cond::PlantSeen), false, 0.0));
+        assert!(!fires(&grazer, Test::is(Cond::CorpseSeen), false, 0.0));
+        assert!(fires(&carnivore, Test::is(Cond::CorpseSeen), false, 0.0));
+        let near = carnivore.pheno.vision * 0.2;
+        assert!(fires(&carnivore, Test::at(Cond::PreySeen, 30), true, near));
+        assert!(!fires(&carnivore, Test::at(Cond::PreySeen, 10), true, near), "farther than the test looks");
+        assert!(!fires(&carnivore, Test::at(Cond::PreySeen, 30), false, near), "no hunt block, no prey");
+        assert!(!fires(&grazer, Test::at(Cond::PreySeen, 30), true, near), "a grazer takes no prey");
+    }
+
+    /// A flight at its block's pace, tilted down or up; straight by default.
+    #[test]
+    fn a_flight_keeps_its_pace_and_tilt() {
+        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let threat = Threat { id: 7, x: 1030.0, y: 1000.0, gap: 5.0, half: 40.0 };
+        let senses = senses_from(|_, _, _| None).with_threat(threat);
+        let flee = |tilt: u16, pace: u16| {
+            let program = Program::of(&[
+                Block::when(Test::at(Cond::ThreatNear, 50), Action::Flee).with(3, pace).with(4, tilt),
+                Block::does(Action::Wander),
+            ]);
+            let mut mind = Mind::default();
+            run(&v, &program, &mut mind, &senses).0
+        };
+        let straight = flee(100, 100);
+        assert_eq!((straight.ty, straight.pace), (1000.0, 1.0), "straight west at full speed");
+        let down = flee(150, 40);
+        assert!(down.ty > 1000.0 && down.tx < 1000.0 && down.pace == 0.4, "{down:?}");
+        let (dx, dy) = (down.tx - 1000.0, down.ty - 1000.0);
+        assert!((dy / -dx - 0.5).abs() < 1e-9, "down by half a unit a unit away");
+        assert!(flee(50, 100).ty < 1000.0, "up");
+    }
+
+    /// Its child in need: `child`, struck by `enemy`; it records how near it asked.
+    struct Needs {
+        child: Option<(u64, Threat)>,
+        asked: std::cell::Cell<f64>,
+    }
+
+    impl Senses for Needs {
+        fn nearest_plant(&self, _: f64, _: f64, _: f64) -> Option<(f64, f64)> {
+            None
+        }
+        fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
+            None
+        }
+        fn child_in_need(
+            &self,
+            _: &Me,
+            within: f64,
+            _: u64,
+            window: u64,
+            _: Option<u64>,
+        ) -> Option<(u64, Threat)> {
+            assert_eq!(window, 30, "the block's window");
+            self.asked.set(within);
+            self.child
+        }
+    }
+
+    /// «Защищать детёныша»: it goes for its child's enemy and strikes it whatever its size, only
+    /// with a tank above the block's share, for at most the block's ticks, then rests from it; an
+    /// episode another block interrupts ends with the pause too.
+    #[test]
+    fn a_parent_defends_its_child_within_its_blocks_limits() {
+        let enemy = Threat { id: 9, x: 1200.0, y: 1000.0, gap: 150.0, half: 50.0 };
+        let needs = Needs { child: Some((5, enemy)), asked: std::cell::Cell::new(0.0) };
+        let program = Program::of(&[Block::does(Action::DefendChild), Block::does(Action::Wander)]);
+        let v = body(CreatureGenome::BASE, Some(1000.0), 0.8);
+        let mut mind = Mind { tick: 100, ..Mind::default() };
+        let (intent, mode) = run(&v, &program, &mut mind, &needs);
+        assert_eq!((mind.fired, mode, intent.attack), (Some(0), Mode::Defend, Some(9)));
+        assert_eq!((intent.tx, intent.ty, mind.stance.defending), (1200.0, 1000.0, Some(9)));
+        assert_eq!(mind.activity, Activity::Alarm);
+        assert!((needs.asked.get() - 0.5 * v.pheno.vision).abs() < 1e-9, "a child within half its sight");
+        assert_eq!(mind.aid.map(|a| (a.victim, a.enemy, a.started)), Some((5, 9, 100)));
+        // the episode goes on for 90 ticks, then ends with a pause of 60
+        mind.tick = 189;
+        run(&v, &program, &mut mind, &needs);
+        assert_eq!((mind.fired, mind.aid.map(|a| a.started)), (Some(0), Some(100)));
+        mind.tick = 190;
+        run(&v, &program, &mut mind, &needs);
+        assert_eq!((mind.fired, mind.aid, mind.aid_cooldown), (Some(1), None, 250));
+        mind.tick = 249;
+        run(&v, &program, &mut mind, &needs);
+        assert_eq!(mind.fired, Some(1), "resting from defending");
+        mind.tick = 250;
+        run(&v, &program, &mut mind, &needs);
+        assert_eq!(mind.fired, Some(0), "a new episode");
+        // a poor tank does not defend
+        let poor = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let mut mind = Mind::default();
+        run(&poor, &program, &mut mind, &needs);
+        assert_eq!(mind.fired, Some(1));
+        // another block decides first: the episode ends with its pause
+        let hungry = Program::of(&[
+            Block::when(Test::at(Cond::Fullness, 90).not(), Action::Ambush),
+            Block::does(Action::DefendChild),
+        ]);
+        let mut mind = Mind { tick: 10, ..Mind::default() };
+        run(&body(CreatureGenome::BASE, Some(1000.0), 0.95), &hungry, &mut mind, &needs);
+        assert!(mind.aid.is_some());
+        run(&v, &hungry, &mut mind, &needs);
+        assert_eq!((mind.fired, mind.aid, mind.aid_cooldown), (Some(0), None, 70));
+        // no child in need: nothing to do
+        let calm = Needs { child: None, asked: std::cell::Cell::new(0.0) };
+        let mut mind = Mind::default();
+        run(&v, &program, &mut mind, &calm);
+        assert_eq!(mind.fired, Some(1));
+    }
+
+    /// A hunt looks for prey no farther than its share of sight and chases at its pace.
+    #[test]
+    fn a_hunt_looks_as_far_and_chases_as_fast_as_its_block_says() {
+        struct Asks(std::cell::Cell<f64>);
+        impl Senses for Asks {
+            fn nearest_plant(&self, _: f64, _: f64, _: f64) -> Option<(f64, f64)> {
+                None
+            }
+            fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
+                None
+            }
+            fn prey(&self, me: &Me, _: Option<u64>, _: Option<u64>, hunt: Hunting) -> Option<Prey> {
+                self.0.set(hunt.range);
+                Some(Prey { id: 9, x: me.x + 200.0, y: me.y, half: 5.0, score: 1.0 })
+            }
+        }
+        let v =
+            body(CreatureGenome::BASE.with(Gene::Diet, Diet::Carnivore as usize as f64), Some(1000.0), 0.5);
+        let program =
+            Program::of(&[Block::does(Action::Hunt).with(6, 40).with(7, 60), Block::does(Action::Wander)]);
+        let asks = Asks(std::cell::Cell::new(0.0));
+        let mut mind = Mind::default();
+        let (intent, _) = run(&v, &program, &mut mind, &asks);
+        assert!((asks.0.get() - 0.4 * v.pheno.vision).abs() < 1e-9);
+        assert_eq!((intent.attack, intent.pace), (Some(9), 0.6));
+    }
+
+    /// The plant choice: the usual keeps the one it goes to and else takes the nearest; without
+    /// keeping it takes the nearest at once; «most profitable» asks the senses for the best.
+    #[test]
+    fn a_plant_block_chooses_as_its_flags_say() {
+        struct Two;
+        impl Senses for Two {
+            fn nearest_plant(&self, x: f64, y: f64, r2: f64) -> Option<(f64, f64)> {
+                // two plants: (1100, 1000) and (1200, 1000); the query at a plant finds it
+                [(1100.0, 1000.0), (1200.0, 1000.0)]
+                    .into_iter()
+                    .filter(|&(px, py)| (px - x).powi(2) + (py - y).powi(2) < r2)
+                    .min_by(|a, b| (a.0 - x).abs().total_cmp(&(b.0 - x).abs()))
+            }
+            fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
+                None
+            }
+            fn best_plant(&self, _: &Me, _: Taste) -> Option<(f64, f64)> {
+                Some((1200.0, 1000.0))
+            }
+        }
+        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let goes = |keep: u16, best: u16, kept: Option<(f64, f64)>| {
+            let program = Program::of(&[Block::does(Action::EatPlant).with(1, keep).with(2, best)]);
+            let mut mind = Mind { personal_food: kept, ..Mind::default() };
+            let (intent, _) = run(&v, &program, &mut mind, &Two);
+            (intent.tx > 1150.0, mind.personal_food)
+        };
+        let far = Some((1200.0, 1000.0));
+        assert_eq!(goes(1, 0, far), (true, far), "keeps the one it goes to");
+        assert!(!goes(1, 0, None).0, "else the nearest");
+        assert_eq!(goes(0, 0, far), (false, Some((1100.0, 1000.0))), "without keeping: the nearest");
+        assert_eq!(goes(0, 1, None), (true, far), "the most profitable");
+        assert!(!goes(1, 1, Some((1100.0, 1000.0))).0, "keeping comes first");
     }
 
     /// A setting applies wherever it stands, behind the deciding block too; the window learns which
@@ -764,9 +1092,11 @@ mod tests {
                 Block::when(Test::at(Cond::Struck, window), Action::Ambush),
                 Block::does(Action::Wander),
             ]);
-            let mut mind = Mind::default();
-            mind.social.tick = 100;
-            mind.social.hit = Some(crate::social::Alarm { enemy: 9, x: 1300.0, y: 1000.0, tick: 100 - ago });
+            let mut mind = Mind {
+                tick: 100,
+                hit: Some(Sighting { enemy: 9, x: 1300.0, y: 1000.0, tick: 100 - ago }),
+                ..Default::default()
+            };
             run(&v, &program, &mut mind, &Sees);
             assert_eq!(mind.fired, Some(fired), "window {window}, struck {ago} ticks ago");
         }

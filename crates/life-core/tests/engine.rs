@@ -33,6 +33,23 @@ fn creature(x: f64, y: f64, g: CreatureGenome) -> Creature {
     Creature::new(&Space::default(), &Rules::default(), g, Some(x), Some(y), None, Rng::new(0))
 }
 
+/// Its programs: the template in the layer from `lo` to `hi` % of the depth.
+fn layered(v: &mut Creature, lo: u16, hi: u16) {
+    use life_core::creature::{Program, Programs, Strategy};
+    v.programs = Programs::both(Program::founder(Strategy::Standard, (lo, hi), false));
+}
+
+/// Its home band: its adult program's home layer less a margin for the body.
+fn band(v: &Creature) -> (f64, f64) {
+    v.pheno.band(v.programs[life_core::creature::ADULT].home_layer())
+}
+
+/// A program that divides from `tank` of the store giving the child `share`, as the stance of a
+/// tick it applied.
+fn dividing(v: &mut Creature, tank: f64, share: f64) {
+    v.mind.stance.divide = Some(life_core::creature::strategy::Divide { tank, share });
+}
+
 // ── регрессии ───────────────────────────────────────────────────────────────
 
 /// Темп растений — ожидаемое число за тик, а не вероятность (было: ровно 1 за тик).
@@ -173,9 +190,12 @@ fn a_hunter_leaves_the_big_and_the_distant_alone() {
 #[test]
 fn kinship_is_a_parent_and_its_growing_child() {
     let mut w = empty_world(Rules::default());
-    let id = w.spawn(BASE.with(Gene::ReproThreshold, 30.0), 3000.0, 2000.0, None);
+    let id = w.spawn(BASE, 3000.0, 2000.0, None);
     let (s, r) = (w.space, w.rules.clone());
     let parent = &mut w.creatures[0];
+    dividing(parent, 0.3, 0.4);
+    parent.mind.stance.spare = 1.0; // the template's «щадить детей»: until grown
+    let stance = parent.mind.stance;
     assert_eq!(parent.parent, 0, "a spawned creature has no parent");
     let mut kids = Vec::new();
     for n in 0..2 {
@@ -192,6 +212,7 @@ fn kinship_is_a_parent_and_its_growing_child() {
     assert!(parent.kin(a) && a.kin(parent), "a parent and its newborn are family");
     assert!(!a.kin(b), "siblings are strangers");
     kids[0].nourish(10000.0, &r);
+    kids[0].mind.stance = stance;
     assert!(kids[0].adult());
     assert!(!parent.kin(kids[0].kinship()), "the parent forgets its grown child");
     kids[0].reproduction_wait = 0;
@@ -208,19 +229,28 @@ fn kinship_is_a_parent_and_its_growing_child() {
     assert!(!strangers.0.kin(strangers.1), "founders without a parent are strangers");
 }
 
-/// How long a parent knows its child is inherited: `care` sets the growth up to which it does.
+/// How long a parent knows its child is its program's: «щадить детей» sets the growth up to which
+/// it does, as it applied last tick; without it not at all.
 #[test]
 fn a_careless_parent_knows_only_its_tiny_children() {
+    use life_core::creature::{Action, Block, Program};
     let mut w = empty_world(Rules::default());
-    for care in [5.0, 50.0, 100.0] {
-        w.spawn(BASE.with(Gene::Care, care), 3000.0, 2000.0, None);
+    for spare in [Some(10), Some(100), None] {
+        w.spawn(BASE, 3000.0, 2000.0, None);
+        let mut blocks = vec![Block::does(Action::Ambush)];
+        if let Some(until) = spare {
+            blocks.insert(0, Block::does(Action::Spare).with(0, until));
+        }
+        let v = w.creatures.last_mut().unwrap();
+        v.programs = [Program::of(&blocks); 2].into();
+        v.step(&Blind);
     }
     let parents: Vec<Kinship> = w.creatures.iter().map(|v| v.kinship()).collect();
-    assert_eq!(parents.iter().map(|k| k.knows_until).collect::<Vec<_>>(), [0.1, 1.0, 1.0]);
-    for (growth, known) in [(0.05, [true, true, true]), (0.5, [false, true, true]), (1.0, [false; 3])] {
+    assert_eq!(parents.iter().map(|k| k.knows_until).collect::<Vec<_>>(), [0.1, 1.0, 0.0]);
+    for (growth, known) in [(0.05, [true, true, false]), (0.5, [false, true, false]), (1.0, [false; 3])] {
         for (p, known) in parents.iter().zip(known) {
             let child = Kinship { id: 99, parent: p.id, growth, knows_until: 1.0 };
-            assert_eq!(p.kin(child), known, "care {} growth {growth}", p.knows_until);
+            assert_eq!(p.kin(child), known, "spares until {} growth {growth}", p.knows_until);
         }
     }
 }
@@ -268,6 +298,7 @@ fn does_not_flee_a_parent_that_knows_it_nor_an_equal_or_distant_one() {
     let parent = |w: &mut World| {
         growing(w);
         w.creatures[1].parent = w.creatures[0].id;
+        w.creatures[0].mind.stance.spare = 1.0; // the template knows its child until grown
     };
     let cases: [(World, &str); 3] = [
         (threat_world(100.0, 150.0, parent), "from its parent"),
@@ -409,8 +440,8 @@ fn родитель_сохраняет_резерв() {
     let (s, r) = (Space::default(), Rules::default().with("mutation_sigma", 0.0).unwrap());
     let (mut divided, mut blocked) = (0, 0);
     for share in [10.0, 30.0, 50.0, 70.0, 90.0] {
-        let g = BASE.with(Gene::ReproThreshold, 30.0).with(Gene::ReproShare, share);
-        let mut p = Creature::new(&s, &r, g, Some(1000.0), Some(1000.0), Some(60.0), Rng::new(0));
+        let mut p = Creature::new(&s, &r, BASE, Some(1000.0), Some(1000.0), Some(60.0), Rng::new(0));
+        dividing(&mut p, 0.3, share / 100.0);
         p.reproduction_wait = 0;
         match p.maybe_divide(&s, &r) {
             Some(_) => {
@@ -431,11 +462,12 @@ fn родитель_сохраняет_резерв() {
 fn огромное_тело_не_прыгает() {
     let s = Space::default();
     for size in [2500.0, 3500.0, 4100.0, 9000.0] {
-        for (lo, hi) in [(5.0, 10.0), (0.0, 100.0), (90.0, 100.0)] {
-            let g =
-                BASE.with(Gene::Size, size).with(Gene::Speed, 60.0).with(Gene::MinY, lo).with(Gene::MaxY, hi);
+        for (lo, hi) in [(5, 10), (0, 100), (90, 100)] {
+            let g = BASE.with(Gene::Size, size).with(Gene::Speed, 60.0);
             let mut v = creature(100.0, 100.0, g);
-            assert!(v.pheno.x_lo <= v.pheno.x_hi && v.pheno.body_lo <= v.pheno.body_hi);
+            layered(&mut v, lo, hi);
+            let (body_lo, body_hi) = band(&v);
+            assert!(v.pheno.x_lo <= v.pheno.x_hi && body_lo <= body_hi);
             for _ in 0..30 {
                 let (x, y) = (v.x, v.y);
                 v.energy = v.pheno.max_energy;
@@ -457,8 +489,8 @@ fn огромное_тело_не_прыгает() {
 #[test]
 fn ребёнок_рождается_у_родителя() {
     let (s, r) = (Space::default(), Rules::default());
-    let g = BASE.with(Gene::ReproThreshold, 30.0);
-    let mut parent = Creature::new(&s, &r, g, Some(3000.0), Some(3900.0), None, Rng::new(0));
+    let mut parent = Creature::new(&s, &r, BASE, Some(3000.0), Some(3900.0), None, Rng::new(0));
+    dividing(&mut parent, 0.3, 0.4);
     let (mut diagonal, mut outside) = (0, 0);
     for _ in 0..300 {
         parent.reproduction_wait = 0;
@@ -471,7 +503,8 @@ fn ребёнок_рождается_у_родителя() {
             (c.x - parent.x).abs() <= span && (c.y - parent.y).abs() <= span,
             "ребёнок далеко от родителя"
         );
-        outside += (c.y < c.pheno.body_lo || c.y > c.pheno.body_hi) as u32;
+        let (lo, hi) = band(&c);
+        outside += (c.y < lo || c.y > hi) as u32;
         diagonal += ((c.x - parent.x) == (c.y - parent.y)) as u32;
         let (x, y) = (c.x, c.y);
         c.step(&Blind);
@@ -486,11 +519,12 @@ fn ребёнок_рождается_у_родителя() {
 fn еда_над_слоем_съедается() {
     // no plants grow: a nearer sprout between patches would be eaten first
     let mut w = empty_world(Rules::default().with("plant_rate", 0.0).unwrap());
-    let g = BASE.with(Gene::MinY, 50.0);
-    w.spawn(g, 3000.0, 2100.0, Some(80.0));
+    w.spawn(BASE, 3000.0, 2100.0, Some(80.0));
+    layered(&mut w.creatures[0], 50, 100);
     let v = &w.creatures[0];
-    assert!(v.y >= v.pheno.body_lo, "существо должно стартовать в своём слое");
-    let plant_y = v.pheno.layer_lo - 250.0;
+    let (body_lo, _) = band(v);
+    assert!(v.y >= body_lo, "существо должно стартовать в своём слое");
+    let plant_y = v.pheno.layer((0.5, 1.0)).0 - 250.0;
     w.plants.push(Plant::at(3000.0, plant_y));
     let there = |w: &World| w.plants.iter().any(|p| p.x == 3000.0 && p.y == plant_y);
     for _ in 0..60 {
@@ -500,14 +534,15 @@ fn еда_над_слоем_съедается() {
         }
     }
     assert!(!there(&w), "растение над слоем осталось несъеденным");
-    assert!(w.creatures[0].y < w.creatures[0].pheno.body_lo, "съело, не выходя из слоя?");
+    assert!(w.creatures[0].y < body_lo, "съело, не выходя из слоя?");
 }
 
 /// Вне своего слоя и без еды существо возвращается домой и дальше держится в слое.
 #[test]
 fn без_еды_возвращается_в_слой() {
-    let g = BASE.with(Gene::MinY, 50.0);
-    let mut v = creature(3000.0, 500.0, g);
+    let mut v = creature(3000.0, 500.0, BASE);
+    layered(&mut v, 50, 100);
+    let (body_lo, body_hi) = band(&v);
     assert_eq!(v.y, 500.0, "заданная позиция не зажимается в слой");
     let mut home = None;
     for t in 0..400 {
@@ -515,7 +550,7 @@ fn без_еды_возвращается_в_слой() {
         v.energy = v.pheno.max_energy;
         v.step(&Blind);
         assert!((v.x - x).hypot(v.y - y) <= v.pheno.speed + 1e-9, "прыжок дальше скорости");
-        let inside = v.pheno.body_lo <= v.y && v.y <= v.pheno.body_hi;
+        let inside = body_lo <= v.y && v.y <= body_hi;
         match home {
             None if inside => home = Some(t),
             Some(_) => assert!(inside, "вернулось в слой и снова ушло без еды: y={}", v.y),
@@ -523,22 +558,23 @@ fn без_еды_возвращается_в_слой() {
         }
     }
     let t = home.expect("за 400 тиков не вернулось в слой");
-    let ideal = ((v.pheno.body_lo - 500.0) / v.pheno.speed).ceil() as usize;
+    let ideal = ((body_lo - 500.0) / v.pheno.speed).ceil() as usize;
     assert!(t < ideal + 5, "шло домой {t} тиков вместо ~{ideal}: не по прямой");
 }
 
 /// Слой уже тела: существо живёт на линии и не стоит столбом.
 #[test]
 fn схлопнутый_слой_проходим() {
-    let g = BASE.with(Gene::MinY, 50.0).with(Gene::MaxY, 50.5);
-    let mut v = creature(3000.0, 2000.0, g);
-    assert_eq!(v.pheno.body_lo, v.pheno.body_hi);
+    let mut v = creature(3000.0, 2000.0, BASE);
+    layered(&mut v, 50, 50);
+    let (body_lo, body_hi) = band(&v);
+    assert_eq!(body_lo, body_hi);
     let x0 = v.x;
     for _ in 0..50 {
         // Сытость ниже порога отдыха: здесь проверяется именно движение по линии.
         v.energy = v.pheno.max_energy * 0.8;
         v.step(&Blind);
-        assert_eq!(v.y, v.pheno.body_lo);
+        assert_eq!(v.y, body_lo);
     }
     assert!(v.x != x0, "существо на схлопнутом слое стоит столбом");
 }
@@ -613,8 +649,9 @@ fn a_child_inherits_its_parents_program_and_it_mutates_now_and_then() {
     use life_core::creature::{ADULT, JUVENILE, Program};
     let s = Space::default();
     let r = Rules::default().with("program_mutation", 0.2).unwrap();
-    let g = BASE.with(Gene::ReproThreshold, 30.0).with(Gene::Strategy, 1.0);
+    let g = BASE.with(Gene::Strategy, 1.0);
     let mut parent = Creature::new(&s, &r, g, Some(3000.0), Some(1000.0), None, Rng::new(7));
+    dividing(&mut parent, 0.3, 0.4);
     assert_eq!(parent.programs, [Program::LURKER; 2], "a creature starts from its strategy's template");
     let n = 4000;
     let (mut mutated, mut drifted) = ([0; 2], [0; 2]);
@@ -682,7 +719,7 @@ fn a_world_of_mutating_programs_runs_and_stays_deterministic() {
     let state =
         |w: &World| w.creatures.iter().map(|v| (v.id, v.programs.clone(), v.x.to_bits())).collect::<Vec<_>>();
     assert!(state(&a) == state(&b), "the same seed, the same world and programs");
-    let mut distinct: Vec<Vec<[u64; 2]>> = a
+    let mut distinct: Vec<Vec<[u64; 3]>> = a
         .creatures
         .iter()
         .flat_map(|v| (*v.programs).map(|p| p.blocks().iter().map(|b| b.code()).collect()))
@@ -914,7 +951,8 @@ fn диеты_основателей_раздаются_по_долям_впер
             );
         }
         if b.pheno.diet == Diet::Scavenger {
-            assert!(b.y > height * 0.5 && b.pheno.layer_bound, "a scavenger starts in the deep: {}", b.y);
+            let layer = b.programs[life_core::creature::ADULT].home_layer();
+            assert!(b.y > height * 0.5 && layer == (0.5, 1.0), "a scavenger starts in the deep: {}", b.y);
         } else if b.pheno.diet == Diet::Carnivore {
             continue;
         } else {
@@ -939,7 +977,7 @@ fn стартовые_численности_известны_до_постро�
 
 /// Страж от обвала скорости: сетка держит тик почти линейным по численности, полный
 /// перебор делает его квадратичным. Два мира одной плотности — ×2,5 с 1000 существ и 1000
-/// растений и ×10 с 4000/4000, оба со стаями по 50 участников, — и отношение их тиков: с
+/// растений и ×10 с 4000/4000, оба с толпами по 50 существ, — и отношение их тиков: с
 /// сеткой большой дороже примерно вчетверо, при переборе — примерно в 16 раз. Порог 8 ловит
 /// поломку вроде «сетка перестала работать и всё стало O(n²)», а не скорость машины:
 /// абсолютные миллисекунды на медленном CI гуляли больше, чем вдвое. Замеры чередуются, от
@@ -960,7 +998,6 @@ fn тик_растёт_линейно_с_численностью() {
         let (dx, dy) = ((w.space.width - 1000.0) / cols as f64, (w.space.height - 1000.0) / rows as f64);
         for (i, v) in w.creatures.iter_mut().enumerate() {
             let pack = i / 50;
-            v.flock = pack as u64 + 1;
             v.x = 500.0 + (pack % cols) as f64 * dx + (i % 10) as f64 * 8.0;
             v.y = 500.0 + (pack / cols) as f64 * dy + (i % 50 / 10) as f64 * 8.0;
         }
@@ -1169,7 +1206,7 @@ fn a_rest_is_no_torpor() {
     v.programs = [standard_with(&[rest, torpor]); 2].into();
     v.energy = v.pheno.max_energy * 0.55;
     let (d, cost) = move_once(&mut v, &Blind);
-    assert_eq!(v.mind.social.activity, life_core::social::Activity::Resting);
+    assert_eq!(v.mind.activity, life_core::creature::Activity::Resting);
     assert!(!v.torpid && d == 0.0, "resting in place, awake");
     assert!(close(cost, v.pheno.still_upkeep), "paid {cost}");
     let mut w = creature(3000.0, 1000.0, BASE);
@@ -1181,15 +1218,22 @@ fn a_rest_is_no_torpor() {
 }
 
 /// A torpid creature eats nothing, not even the plant it lies on — no sleeping filter feeder at a
-/// third of the upkeep; one standing awake in ambush eats it.
+/// third of the upkeep; one standing awake in ambush eats it on the move, and without «есть на
+/// ходу» it does not.
 #[test]
 fn a_torpid_one_eats_nothing() {
     use life_core::creature::{Action, Block, Program, Programs};
-    for (action, eats) in [(Action::Ambush, true), (Action::Torpor, false)] {
+    let graze = Block::does(Action::Graze);
+    for (blocks, eats) in [
+        ([graze, Block::does(Action::Ambush)], true),
+        ([graze, Block::does(Action::Torpor)], false),
+        ([Block::does(Action::Ambush); 2], false),
+    ] {
+        let action = blocks[1].action;
         let rules = Rules::default().with("plant_rate", 0.0).unwrap();
         let mut w = World::new(&WorldConfig { seed: 3, n_creatures: Some(0), rules, ..Default::default() });
         w.spawn(BASE, 1000.0, 1000.0, Some(20.0));
-        w.creatures[0].programs = Programs::both(Program::of(&[Block::does(action)]));
+        w.creatures[0].programs = Programs::both(Program::of(&blocks));
         w.plants.push(life_core::plant::Plant::at(1000.0, 1000.0));
         w.step();
         assert_eq!(w.creatures[0].torpid, action == Action::Torpor);
