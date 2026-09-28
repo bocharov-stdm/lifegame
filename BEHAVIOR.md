@@ -1,6 +1,49 @@
 # Реформа поведения lifegame
 
-## Plant capacity in fertility cells (this stage)
+This file is the history of the behaviour model, newest stage first: what changed at each stage
+and how it was checked. The exact current model is in `CLAUDE.md`; everything below the first
+section describes earlier models and is kept as a record (flocks, cannibalism as a rule and the
+`--rule cannibalism` commands no longer exist or are switched off).
+
+## The food web, the life reform and the ocean reform (`life-behavior/10`–`/12`, this stage)
+
+Model `life-behavior/12`, format `life-report/11`.
+
+**Food web (`/10`).** The numeric `carnivory` gene became the `diet` choice gene: herbivore,
+omnivore, scavenger, carnivore (order H/O/S/C in every `DIET_*` table). Digestion of each food and
+the diets' edges (strike, health, the price of size and speed, smell, the juvenile gut) are world
+rules, keys `{diet}_{edge}`. Above its `picky` share of the store a creature takes only its own
+food. Founders are herbivores and omnivores (70/30); meat diets arise from mutants, with their own
+mutation chances towards meat and the herbivore's leaps. Corpses became the meat of the world: the
+body grown since birth plus the tank; a body got for free is no meat, so energy is never made from
+nothing. Combat is always on (the peaceful world and the `cannibalism` rule went just before); a
+creature strikes only a chosen target, a defence or a smaller rival at the same food, and a bigger
+body strikes disproportionately harder (`melee_size_power` 1.25). Flocks were switched off
+(`FLOCKS = false`): founders are loners (since 2026-09-27 the base genome too).
+
+**Life reform (`/11`).** `life_pace` gave way to `maturation` (the share of food that grows the
+body) and `lifespan` (base 3000, 500–10 000 ticks, free); from 70% of its lifespan a creature
+weakens linearly to 70% at 90% (speed, vision, strike, health and, since 2026-09-27, shots). A
+chase that does not close in within 30 ticks is given up; `prey_ratio` base 1.5.
+
+**Ocean reform (`/12`).** The «океаническое» depth profile (60% at the surface, a peak at 15% of
+depth, then an exponential fall) is the default. A corpse has three sharp stages, each its own
+food: fresh 300 ticks where it died; rot that sinks at 2 a tick while its flesh decays to the bones
+by 3000; bones (10% of the meat, only the scavenger digests them) that sink at 40 and lie 5000
+ticks. Below a thermocline (15–45% of depth) the water is cold, and the `cold_blood` gene (moved
+by points) makes a body up to 50% cheaper and 40% slower there; it replaced the scavenger's deep
+saving. Upkeep is the body and eyes plus the speed of the step actually taken. New free genes:
+`cruise` (wandering pace), `rest` (the fullness to rest from), `burst` (up to ×2 speed in a chase
+or flight for 20 ticks, the muscles cost standing), `torpor` (hungry with nothing in sight it
+stands at 30% of its standing upkeep; food in sight or a near threat wakes it, a rest is never
+torpor) and `layer_reach` (how far past its layer it goes for plants, corpses and prey).
+
+Measured on the user's baseline conditions (24 seeds × 20 000 ticks) up to stage D: carnivores
+held in 67–88% of worlds and scavengers in 38–46% depending on the stage; the burst, torpor and
+the ocean default are not measured yet. The numbers per stage are in `CLAUDE.md` («Where the work
+stands»). Golden digests follow the model; the balance references are still `life-behavior/9`.
+
+## Plant capacity in fertility cells (`life-behavior/9`)
 
 Model `life-behavior/9`, format `life-report/9` (unchanged).
 
@@ -550,7 +593,7 @@ cargo run -p life-report --release -- --compare reference/calm-fingerprint.json 
 Claude над родством и бегством. Она сохранена и включена в новый жизненный цикл.
 Параллельный тик, бенчмарк компьютера и `Relict/` не изменялись.
 
-## Механики
+## Механики (`life-behavior/8`, history)
 
 - Family is a parent and its child while the parent still knows it (`care`, see the first
   section). Family and carriers of the same flock label may not be attacked. Threats are read
@@ -596,7 +639,7 @@ Claude над родством и бегством. Она сохранена и
 удаление погибших и добавление детей. Дети не действуют в тик рождения.
 Обе стратегии используют общие правила; затаившийся медленно блуждает.
 
-## Форматы и отображение
+## Форматы и отображение (`life-behavior/8`, history)
 
 Карточка показывает текущий и взрослый размер, возраст, здоровье, состояние и стаю.
 Статистика показывает молодых, стаи и причины смерти. Рисование и выбор мышью
@@ -610,7 +653,7 @@ Golden переснят намеренно: старое мгновенное п
 решениями о родстве и бегстве. Новый отпечаток включает жизненное состояние,
 таймеры, намерения, родство, метки, цели и генераторы стай.
 
-## Проверка баланса
+## Проверка баланса (`life-behavior/8`, history)
 
 Все прогоны завершили ровно 20 000 тиков, без остановок по лимитам. Во всех
 снимках проверено: начальная численность + рождения − все причины смерти =

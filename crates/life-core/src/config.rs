@@ -206,8 +206,10 @@ pub const BURST_REST: u32 = 60;
 pub const BURST_UPKEEP_SHARE: f64 = 0.25;
 /// Torpor (the `torpor` gene, % of the store, base 0 = never): below it, with no food in sight,
 /// a creature stops and pays this share of its standing upkeep (times the cold's saving). It wakes
-/// the tick food comes into sight or smell; asleep it neither searches nor runs. It only saves:
-/// never below nothing, so it never makes energy. The gene moves by points (`Mutation::Shift`).
+/// the tick food comes into sight or smell, or a threat comes within its flight distance (then it
+/// flees as usual); asleep it does not search. A rest (`social::adjust`) is never torpor. It only
+/// saves: never below nothing, so it never makes energy. The gene moves by points
+/// (`Mutation::Shift`).
 pub const TORPOR_UPKEEP: f64 = 0.3;
 pub const TORPOR_STEP: f64 = 5.0;
 

@@ -225,6 +225,8 @@ impl Senses for GridSenses<'_> {
                 || me.kinship.kin(s.kinship)
                 || herd.grace.contains(me.flock, s.flock, herd.tick)
                 || Some(s.kinship.id) == avoid
+                // past its layer's reach, as plants and corpses (`layer_reach`)
+                || !me.pheno.within_reach(s.y)
             {
                 return;
             }
@@ -1004,6 +1006,7 @@ mod tests {
                                 && !(v.flock != 0 && v.flock == u.flock)
                                 && u.pheno.size <= v.pheno.size / v.pheno.prey_ratio
                                 && !v.kinship().kin(u.kinship())
+                                && v.pheno.within_reach(u.y)
                         })
                         .collect();
                     let flocks: std::collections::BTreeSet<u64> = w
@@ -1130,6 +1133,53 @@ mod tests {
             health: v.health,
         };
         view.prey(&me, None, None)
+    }
+
+    /// `layer_reach` holds the hunt too: a hunter keeping to the upper tenth of the depth with a
+    /// reach of 5% leaves prey far below alone, and takes it when it is within reach.
+    #[test]
+    fn a_hunter_leaves_prey_past_its_layers_reach() {
+        use crate::genome::creature::Gene;
+        let hunt = |prey_y: f64| {
+            let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
+            let hunter = crate::CreatureGenome::BASE
+                .with(Gene::Size, 80.0)
+                .with(Gene::Diet, CARNIVORE)
+                .with(Gene::MinY, 0.0)
+                .with(Gene::MaxY, 10.0)
+                .with(Gene::LayerReach, 5.0);
+            w.spawn(hunter, 1000.0, 300.0, None);
+            w.creatures[0].energy = w.creatures[0].pheno.max_energy * 0.3;
+            w.spawn(crate::CreatureGenome::BASE.with(Gene::Size, 20.0), 1000.0, prey_y, None);
+            w.creatures[1].birth_size = 10.0;
+            let mut herd = Herd::new();
+            herd.rebuild(&w.space, &w.creatures);
+            let food = Grid::new(GRID_CELL);
+            let view = GridSenses {
+                food: &food,
+                plants: &[],
+                corpse_grid: None,
+                corpses: &[],
+                now: 1,
+                herd: Some(&herd),
+            };
+            let v = &w.creatures[0];
+            let me = Me {
+                x: v.x,
+                y: v.y,
+                energy: v.energy,
+                kinship: v.kinship(),
+                flock: v.flock,
+                circle: None,
+                pheno: &v.pheno,
+                health_share: 1.0,
+                health: v.health,
+            };
+            view.prey(&me, None, None).map(|p| p.id)
+        };
+        // the layer ends at 400, the reach at 600; the hunter sees 400 around it
+        assert!(hunt(550.0).is_some(), "within reach");
+        assert!(hunt(680.0).is_none(), "past its reach, though in sight");
     }
 
     /// A small creature (size 20, grown from 10: its body is meat) at `x`; `flock` with a circle

@@ -110,7 +110,7 @@ pub struct Me<'a> {
 pub struct Intent {
     pub tx: f64,
     pub ty: f64,
-    /// Медленный ход: шаг `slow_speed` и расход `slow_upkeep` (`SLOW_PACE`).
+    /// The slow (wandering) pace: a step of `slow_speed`, paid for the step taken (`step_cost`).
     pub slow: bool,
     pub attack: Option<u64>,
 }

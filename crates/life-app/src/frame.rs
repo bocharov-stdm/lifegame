@@ -229,7 +229,7 @@ pub fn flock_areas(world: &World) -> Vec<FlockArea> {
         .collect()
 }
 
-/// Видимый остаток трупа; его сытость определяет прозрачность отметки, стадия — цвет.
+/// A visible corpse: what is left of it sets the mark's opacity, its stage the colour.
 #[derive(Clone, Copy, Debug)]
 pub struct CorpseMark {
     pub x: f64,

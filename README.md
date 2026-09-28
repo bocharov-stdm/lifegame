@@ -1,162 +1,106 @@
 # lifegame
 
-**Текущая модель поведения:** детёныши растут на пище, взрослые стареют; существа
-защищаются, охотятся и наследуют стаи. Подробные правила и результаты проверки —
-[BEHAVIOR.md](BEHAVIOR.md). Размер в геноме — взрослый предел, на экране — фактическое
-тело. JSON: `life-report/9`. A parent does not attack its growing child while it still knows it
-(the inherited care decides how long), and members of one flock never attack each other.
-A flock is a circle that moves as one object — settled, nomadic, scouts or vertical migrants —
-and its members feed inside it; the circle is also its territory. Circles without territoriality
-overlap freely, moderate ones push each other softly, hard ones never overlap. When there is no
-room left, territorial flocks fight for it, all against all, and the beaten move away. Borders are
-walked around, and what lies behind a respected one is not aimed at. How hungry a member leaves
-its circle, and how close a passer-by may come before it flees, are inherited. Shooters
-can drive off a large enemy. Plants and corpses are eaten in portions. The «Стаи» button shows
-the circles (the stroke tells the territoriality, red is a battle); a click opens the flock card.
-Родители защищают детей, пока помнят их, и передают им энергию при рождении; после отделения семьи бывшие
-участники 600 тиков не враждуют. Графики показывают последние 10 000 тиков.
+An evolutionary sandbox: plants and creatures in a 2D sea. Every creature carries a genome, a
+table of genes that mutates when it divides. Nobody scripts selection: the genomes that pay for
+themselves survive. The game, the headless runs and the balance report are Rust; the earlier
+Python and pygame version is kept under the tag `python-final`.
 
+The current model is `life-behavior/12` (the ocean reform). [CLAUDE.md](CLAUDE.md) is its exact
+description and the project's working rules; [BEHAVIOR.md](BEHAVIOR.md) records how the model got
+here and how each stage was checked.
 
-Эволюционная симуляция: растения и существа в двумерном мире. У существ
-есть геном — размер, скорость, зрение, порог размножения, доля энергии потомку
-и вертикальный слой обитания (`min_y`, `max_y`). Гены мутируют при делении,
-отбор идёт сам собой. Есть и **мутагенность** — множитель на разброс мутаций
-потомка: всех генов, включая её саму, и шанса сменить стратегию. Геном —
-таблица генов, а поведение — стратегия, которая тоже наследуется: так в мир
-добавляются новые гены и новые повадки.
+## The world in short
 
-Слой мягкий: существо держится своей глубины, но за видимой едой выходит из
-слоя и потом возвращается. Стратегий две: **стандартный** (идёт к еде, бродит)
-и **затаившийся** — то же, но пока не видит еды, бродит втрое медленнее и
-тратит меньше. Потомок изредка получает другую стратегию, и отбор решает,
-какая выживет.
+- **Plants** grow in patches over a depth profile. By default the profile is «океаническое»: 60%
+  of the food at the surface, a peak at 15% of the depth, then an exponential fall to a nearly dead
+  bottom. The world holds `PLANT_MAX` places for plants, one plant each, so growth is logistic.
+- **Creatures** eat plants and corpses in portions, grow from food to their size gene, divide when
+  grown and fed, and die of hunger, in a fight or of old age. A body's upkeep is its size and eyes
+  plus the speed of the step it actually takes.
+- **Diets** are a gene: herbivore, omnivore, scavenger and carnivore. Each has a body of its own
+  (the strike, health, the price of size and speed, the sense of smell) and its own foods among
+  plants, fresh meat, rot and bones. There are no meat-eating founders: carnivores and scavengers
+  arise from mutants.
+- **Corpses** stay fresh 300 ticks where the creature died, then rot and sink while the flesh
+  decays down to the bones; bones feed only the scavenger.
+- **The deep is cold** below a thermocline. The `cold_blood` gene makes a body cheaper and slower
+  there.
+- **Behaviour genes are free**: the wandering pace (`cruise`), when to rest (`rest`), a burst of
+  speed in a chase or flight (`burst`), torpor when hungry with nothing in sight (`torpor`), how far
+  past its layer a creature goes for food (`layer_reach`), and others. They are held back by what
+  they do, never by upkeep.
+- **Energy is never made from nothing**: it enters the world only in plants and passes along the
+  chain, losing some at every step.
+- Flocks exist in the code but are switched off (`config::FLOCKS = false`); every creature is a
+  loner.
 
-Хищники были отдельным видом до тега `predators-final`: их заменили мутации и
-каннибализм.
+## How to run
 
-**Cannibalism** turns on hunting, territory defence, shots, simultaneous fights and eating
-corpses. A growing child known to its parent and members of the same flock are protected. How
-much smaller a prey must be is the inherited `prey_ratio` gene alone (there is no world limit
-any more). A hunter weighs the meat it can still take in against the strikes it expects from the
-prey and the prey's visible allies; the inherited `caution` gene sets how much the risk weighs,
-and a chase that does not close in within 30 ticks is given up.
-Defending oneself or a territory may strike a bigger enemy. The game has it on by default, the report takes
-`--rule cannibalism=1`.
+1. Install Rust 1.95 or newer: https://rustup.rs (once).
+2. Run the game:
+   - **Windows**: double-click `play.bat`;
+   - **Linux and macOS**: `sh play.sh`.
 
-Проект переписан на Rust, чтобы миры могли быть в сотни раз больше: есть
-игра с окном, прогоны без окна и отчёт о балансе. Прежняя версия на Python и
-pygame лежит в истории под тегом `python-final`:
+The first build takes a few minutes, the next ones seconds. Flags pass through:
+`play.bat --scale 100 --seed 7` opens a world 100 times bigger with seed 7. The game needs a GPU
+with Vulkan, DirectX 12 or Metal (an integrated one is enough).
 
-```
-git checkout python-final
-cd python && pip install pygame && python main.py
-```
-
-## Как запустить
-
-1. Поставить Rust: https://rustup.rs (один раз).
-2. Запустить игру:
-   - **Windows** — двойной щелчок по `play.bat`;
-   - **Linux и macOS** — `sh play.sh`.
-
-Первый запуск собирает игру несколько минут, следующие — за секунды. Флаги
-передаются как есть: `play.bat --scale 100 --seed 7` сразу откроет мир в 100 раз
-больше с сидом 7.
-
-## Что нужно
-
-Rust stable 1.95 или новее (`rustup` ставит всё нужное). Для игры — видеокарта
-с Vulkan, DirectX 12 или Metal (подойдёт и встроенная).
-
-## Игра
+## The game
 
 ```
-cargo run -p life-app --release                          # меню (то же, что play.bat)
-cargo run -p life-app --release -- --scale 100 --seed 7  # сразу в игру
+cargo run -p life-app --release                          # the menu (same as play.bat)
+cargo run -p life-app --release -- --scale 100 --seed 7  # straight into a world
 ```
 
-Собранный `target/release/life-app.exe` запускается двойным щелчком, без
-консоли и без зависимостей.
+- **New world**: the scale (×1 to ×10 000) with a speed estimate for this machine, the shape
+  (1:1, 3:2, 2:1 or a strip), the seed, the founders' mixes, and every world rule by topic: food,
+  body, diets, combat, corpses, evolution.
+- **In the game**: Space pauses, → steps one tick, + and − change the speed, the wheel zooms to
+  the cursor, drag or WASD moves the camera, Home shows the whole world, a click selects a
+  creature, F follows it, Tab opens the side panel (populations by diet, who kills whom, the genome,
+  the chronicle, the creature card), L opens the lab (the rules mid-game), I opens the statistics
+  (fullness, where creatures live, an area's genome). Esc opens the menu.
+- **No freezes at any scale**: the simulation runs in its own thread and the window draws the
+  last finished frame. Far away the world turns into two-pixel dots or a density map; rendering can
+  be switched off while statistics and the card keep working.
+- **For research**: «Повторить без окна» gives the `life-report` command that repeats the game.
 
-- **Новый мир**: масштаб (от «Как раньше» ×1 до «Планеты» ×1000 или свой, до
-  ×10 000) с оценкой скорости на этой машине, форма мира (квадрат, 3:2, 2:1 или
-  полоса), сид, стартовая численность, рост растений, доля затаившихся на
-  старте; вкладка «Еда» — где растут растения, с картинкой;
-  вкладка «Лаборатория» — правила мира.
-- **В игре**: пауза (Пробел), тик (→), скорость (+/−), колесо — зум к курсору,
-  перетаскивание или WASD — камера, Home — весь мир, клик — выбрать существо,
-  F — следить за ним, Tab — боковая панель (графики численности и генома,
-  хроника событий, карточка существа), L — лаборатория: правила и еда прямо в
-  партии (и на паузе), I — окно «Статистика»: сытость, где живут существа и
-  где растёт еда (глубина во времени и по полосам); инструмент «Область» —
-  протянуть прямоугольник по миру и увидеть средний геном тех, кто внутри,
-  рядом со средним по миру. Подсадка существ кликом, «Заново» — та же
-  партия с начала, Esc — меню.
-- **Без фризов на любом масштабе**: симуляция идёт в своём потоке, окно рисует
-  последний готовый кадр и никогда не ждёт тика. В кадр попадает только то, что
-  видно на экране; при отдалении мир переходит на двухпиксельные квадраты, а
-  переключатель «Рендер мира: выкл» не собирает объекты кадра; карточка,
-  статистика и инструменты управления продолжают работать.
-  Когда объектов в кадре слишком много, рисуется карта плотности. Если тик не успевает за скоростью, вверху видно
-  «отстаёт: 24 из 60 т/с» — мир идёт медленнее, но окно не тормозит.
-- **Для исследователя**: «Повторить без окна» даёт команду `life-report`,
-  которая воспроизводит партию тем же сидом, масштабом и правилами.
+Settings live in `%APPDATA%\TinyLife\settings.json` (the user's config folder on Linux and macOS).
+A broken file does not matter: the game takes the defaults.
 
-Настройки хранятся в `%APPDATA%\TinyLife\settings.json` (на Linux и macOS — в
-папке настроек пользователя); битый файл не мешает, игра берёт значения по
-умолчанию.
-
-## Прогоны без окна
+## Headless runs
 
 ```
-cargo run -p life-report --release                                  # сид 1, 600 тиков
-cargo run -p life-report --release -- --seeds 1 2 3 --ticks 3000    # сводка по нескольким
-cargo run -p life-report --release -- --rule cannibalism=1           # с каннибализмом, как в игре
-cargo run -p life-report --release -- --rule plant_energy=80 --rule size_power=1.5
-cargo run -p life-report --release -- --scale 100 --ticks 2000      # мир в 100 раз больше
-cargo run -p life-report --release -- --scale 100 --shape 1:1       # и квадратный
-cargo run -p life-report --release -- --mix 1 1                 # стратегии поровну на старте
-cargo run -p life-report --release -- --rule plant_width_profile=waves   # еда полосами по ширине
+cargo run -p life-report --release                                  # seed 1, 600 ticks: story + summary
+cargo run -p life-report --release -- --seeds 1 2 3 --ticks 3000    # a summary over seeds
+cargo run -p life-report --release -- --rule plant_energy=80 --rule cost_scale=3
+cargo run -p life-report --release -- --scale 100 --shape 1:1       # bigger and square
+cargo run -p life-report --release -- --mix 1 1 --diet-mix 50 0 0 50   # strategy and founder diet mixes
+cargo run -p life-report --release -- --ticks 20000 --maps 3        # story and text maps
+cargo run -p life-report --release -- --ticks 5000 --json run.json  # everything as JSON (life-report/11)
 ```
 
-Сиды считаются параллельно. Прогон на 20 000 тиков занимает доли секунды.
-Любой прогон ограничен четырьмя лимитами (тики, потолок популяции, бюджет
-вычислений, дедлайн), поэтому зависнуть не может.
+Seeds run in parallel. Every run is capped by ticks, a population ceiling, a work budget and a
+wall-clock deadline, so it cannot hang. The story tells what happened and why: flows of births and
+deaths by diet, who killed whom, the genome from start to end, where creatures live by depth, the
+chronicle of events and text maps.
 
-### Что происходило и почему
+Balance searches run as `life-sweep` plans (variants × seeds, each its own process, with a
+progress window); see CLAUDE.md.
 
-Отчёт умеет рассказывать о прогоне — удобно и человеку, и ИИ:
-
-```
-cargo run -p life-report --release -- --ticks 20000 --maps 3      # рассказ и три карты
-cargo run -p life-report --release -- --seeds 1 2 3 --story       # рассказ по каждому сиду
-cargo run -p life-report --release -- --ticks 5000 --json -       # всё в JSON
-```
-
-В рассказе: итог; сколько существ съели сородичи и сколько умерло с голоду;
-таблица по промежуткам (рождения, смерти, медианы генов, слой глубины, сытость);
-геном от начала к концу с разбросом; кто где живёт по глубине; хроника событий —
-обвалы и подъёмы численности с причинами, вымирание, растения у потолка, сдвиги
-генов; текстовые карты мира.
-
-### Сверка с эталоном
+### The balance reference
 
 ```
 cargo run -p life-report --release -- --compare reference/fingerprint.json
-```
-
-`reference/fingerprint.json` — отпечаток баланса (8 сидов по 20 000 тиков).
-Сначала это был отпечаток последней Python-версии; после мягкого слоя и новых
-стратегий он переснят с Rust. Сверка повторяет те же сиды и проверяет, что
-статистика совпадает; при расхождении завершается с ошибкой.
-
-Если баланс меняется намеренно, эталон переснимается:
-
-```
 cargo run -p life-report --release -- --save-reference reference/fingerprint.json
 ```
 
-## Тесты
+`reference/*.json` are balance fingerprints (8 seeds × 20 000 ticks). The comparison repeats the
+same seeds and checks the statistics; a reference of another model is refused. The references in
+the repository are still `life-behavior/9` and wait to be re-taken once the current balance is
+accepted.
+
+## Tests
 
 ```
 cargo test --workspace
@@ -164,79 +108,48 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 ```
 
-Тесты движка переносят регрессии Python-версии: каждый закрывает баг, который
-уже случался. Бесконечных циклов в тестах нет: все прогоны ограничены. Тесты
-экранов игры рисуют без окна (egui_kittest) и проверяют, что всё помещается в
-960×600; с `TINYLIFE_SHOTS=папка` они сохраняют картинки экранов.
+Every run in the tests is bounded by a tick count. `tests/golden.rs` pins a digest of the whole
+world (asserted on Windows only, where it is recorded). The screen tests draw without a window
+(egui_kittest) at 960×600 and 1600×900; with `TINYLIFE_SHOTS=dir` they save pictures of every
+screen.
 
-## Устройство
+## Layout
 
-Проект — cargo workspace из четырёх crate'ов. Главное правило: **движок ничего не
-знает об экране**, и это граница между crate'ами — компилятор не даст движку
-подключить графику.
+A cargo workspace of four crates. The load-bearing rule: **the engine knows nothing of the
+screen**, and the crate boundary enforces it.
 
-| где | что делает |
+| where | what it does |
 |---|---|
-| `crates/life-core/` | движок: мир, один тик, сетка соседей, правила, геном |
-| `life-core/src/config.rs` | все настройки; там же объяснено, почему они такие |
-| `life-core/src/rules.rs` | правила мира, которые можно менять без правки конфига |
-| `life-core/src/world.rs` | состояние мира, тик, счётчики рождений и смертей |
-| `life-core/src/grid.rs` | сетка соседей: кому кого видно |
-| `life-core/src/creature/`, `plant.rs` | существа: фенотип, стратегии поведения |
-| `life-core/src/genome/` | таблица генов и мутация |
-| `life-core/src/senses.rs` | чувства: что существо узнаёт о мире |
-| `life-core/src/rng.rs`, `space.rs` | случайные числа, масштаб мира |
-| `crates/life-sim/` | прогон без окна с лимитами; наблюдатель (`observe.rs`) |
-| `crates/life-report/` | отчёт: сводка, рассказ, карты, JSON, сверка |
-| `crates/life-app/` | игра: окно (egui + wgpu), поток симуляции, экраны |
-| `reference/` | эталон баланса |
-| `Relict/` | **памятник 2025**: архив ранних прототипов, не редактируется |
+| `crates/life-core/` | the engine: world, tick, genome, rules, senses, combat, corpses, plants |
+| `crates/life-sim/` | bounded headless runs and the observer (snapshots, chronicle, maps) |
+| `crates/life-report/` | the report, JSON, the balance comparison and `life-sweep` |
+| `crates/life-app/` | the game (egui + wgpu) and the sweep's progress window |
+| `reference/` | balance references |
+| `docs/` | the parallel tick design, real units |
+| `Relict/` | a frozen 2025 archive of early prototypes; never edited |
 
-## О балансе
+## Scale and shape
 
-Ключевая идея в `config.rs` — показатели степени в стоимости статов. Цена
-стата должна расти круче, чем выгода от него, иначе эволюция качает его до
-бесконечности: радиус поедания равен размеру (выгода ~ размер²), радиус поиска
-еды равен зрению (выгода ~ зрение²), поэтому цены заданы как `размер ** 2.5` и
-`зрение ** 2`.
+`--scale N` makes the world N times bigger by area; `--shape` sets its proportions: `3:2` (the
+default), `1:1`, `2:1` or `strip` (4000 high, growing only in width). At ×1 both 3:2 and the strip
+are the base 6000×4000 world. Plant rate, the plant cap and the founders grow with the area, so the
+density, and with it the balance, stays the same. The vertical ecology is in % of depth.
 
-Растения ограничены потолком `PLANT_MAX`. Растение исчезает, только когда его
-съели, так что в мире без существ они копились бы бесконечно. Потолок разложен по
-миру профилем еды: мир делится на `PLANT_MAX` клеток равного плодородия (где еды
-много, клетки узкие, где мало — широкие), и в клетке растёт не больше одного
-растения. Семя, упавшее в занятую клетку, не прорастает. Поэтому объеденная
-поверхность не отдаёт своё место глубине, а рост замедляется по мере заполнения.
+## Where food grows
 
-Медленный ход затаившегося стоит дешевле: за скорость платится по фактическому
-шагу, по тому же закону `скорость ** 2`, поэтому треть скорости обходится в
-девятую часть. The current model passed 8 seeds × 20 000 ticks for the base and the calm
-profiles, with combat and without: all 32 worlds survived. Median final population: 1139 and
-732.5 without combat, 925 and 564 with combat. Detailed results and the limits of the current
-balance: [BEHAVIOR.md](BEHAVIOR.md).
+Plants are placed along two axes independently: depth (surface to bottom) and width (left to
+right), each with its own density profile, and in patches over it.
 
-## Масштаб и форма
-
-`--scale N` делает мир в N раз больше по площади, `--shape` задаёт пропорции:
-`3:2` (по умолчанию), `1:1`, `2:1` или `strip` — полоса высотой 4000, которая
-растёт только вширь, как было раньше. При масштабе 1 и 3:2, и полоса — это
-базовый мир 6000x4000. Темп растений, их потолок и стартовая популяция растут
-вместе с площадью, поэтому плотность — а с ней и баланс — остаётся прежней. Масштаб — от 1 до 10 000.
-
-## Где растёт еда
-
-Растения ставятся по двум осям независимо: по глубине (от поверхности ко дну) и
-по ширине (слева направо). У каждой оси свой профиль плотности:
-
-| профиль | что делает | параметр |
+| profile | what it does | parameter |
 |---|---|---|
-| равномерно | поровну по всей оси | — |
-| линейно | редеет по прямой | сколько еды у дальнего края, % |
-| экспонента | быстро редеет, дальше длинный хвост | крутизна |
-| логарифм | долго держится, потом обрыв | изгиб |
-| волны | несколько богатых полос | число полос, размах |
+| `uniform` | even along the axis | — |
+| `linear` | thins out along a straight line | food at the far edge, % |
+| `exp` | thins out fast, then a long tail | steepness |
+| `log` | holds long, then drops off | bend |
+| `waves` | several rich bands | bands, amplitude |
+| `game` («игровое») | flat to 20% of depth, then an exponential fall | steepness |
+| `ocean` («океаническое») | 60% at the surface, a peak at 15%, then an exponential fall | steepness |
 
-По умолчанию — экспонента с крутизной 8 по глубине и равномерно по ширине, как
-было всегда. У самой поверхности (5% глубины) растений нет при любом профиле.
-Гены слоя под еду не подстраиваются: существа сами ищут, где выгоднее жить.
-Профили — это правила мира: `--rule plant_depth_profile=linear`, в игре — вкладка
-«Еда» и лаборатория на ходу (выросшее остаётся, новое растёт по-новому).
+The default is `ocean` in depth and `uniform` in width, with 24 patches per base world holding 60%
+of the places. Profiles are world rules: `--rule plant_depth_profile=game`, or the «Еда» tab of the
+game and the lab (plants already grown stay, new ones follow the new profile).

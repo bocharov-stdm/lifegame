@@ -490,7 +490,7 @@ pub const GENES: [GeneSpec; N] = [
         key: "torpor",
         label: "оцепенение",
         about: "Ниже этой доли запаса, не видя и не чуя еды, замирает: тратит 30% расхода стоя, пока \
-                еда не покажется. В оцепенении не ищет и не убегает, %.",
+                еда не покажется. В оцепенении не ищет еду; близкая угроза будит, и оно убегает, %.",
         kind: GeneKind::Percent,
         // never, as before the gene; it moves off zero by points
         base: 0.0,

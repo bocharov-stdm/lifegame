@@ -587,11 +587,43 @@ impl Rules {
 
     /// Upkeep with the size and speed terms times the diet's factors (`DietEdges::size_upkeep`,
     /// `speed_upkeep`).
-    pub fn upkeep_diet(&self, size: f64, speed: f64, vision: f64, [size_cost, speed_cost]: [f64; 2]) -> f64 {
-        let mass = (size / BASE_SIZE).powf(self.speed_mass_power);
-        self.size_coef * size.powf(self.size_power) * size_cost
-            + self.speed_coef * speed.powf(self.speed_power) * mass * speed_cost
-            + self.sight_coef * vision.powf(self.sight_power)
+    pub fn upkeep_diet(&self, size: f64, speed: f64, vision: f64, costs: [f64; 2]) -> f64 {
+        self.upkeep_parts(size, vision, costs).at(speed)
+    }
+
+    /// The upkeep of one body and eyes at any speed (`UpkeepParts::at`): the size and sight terms
+    /// and the body's mass are computed once, for a phenotype that needs several speeds.
+    pub fn upkeep_parts(&self, size: f64, vision: f64, [size_cost, speed_cost]: [f64; 2]) -> UpkeepParts {
+        UpkeepParts {
+            size_term: self.size_coef * size.powf(self.size_power) * size_cost,
+            sight_term: self.sight_coef * vision.powf(self.sight_power),
+            mass: (size / BASE_SIZE).powf(self.speed_mass_power),
+            speed_coef: self.speed_coef,
+            speed_power: self.speed_power,
+            speed_cost,
+        }
+    }
+}
+
+/// `Rules::upkeep_diet` with the terms that do not depend on the speed already computed.
+#[derive(Clone, Copy, Debug)]
+pub struct UpkeepParts {
+    size_term: f64,
+    sight_term: f64,
+    mass: f64,
+    speed_coef: f64,
+    speed_power: f64,
+    speed_cost: f64,
+}
+
+impl UpkeepParts {
+    /// The upkeep a tick at `speed`: the same operations in the same order as the sum of the three
+    /// terms, so bit for bit what `upkeep_diet` gave before the parts.
+    #[inline]
+    pub fn at(&self, speed: f64) -> f64 {
+        self.size_term
+            + self.speed_coef * speed.powf(self.speed_power) * self.mass * self.speed_cost
+            + self.sight_term
     }
 }
 

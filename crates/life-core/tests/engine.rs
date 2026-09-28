@@ -1093,3 +1093,15 @@ fn torpor_saves_the_hungry_and_ends_at_food() {
     move_once(&mut base, &Blind);
     assert!(!fed.torpid && !base.torpid);
 }
+
+/// A rest is no torpor: with the `rest` gene below the `torpor` one a creature between them rests
+/// at its standing upkeep, not asleep at the torpor's share.
+#[test]
+fn a_rest_is_no_torpor() {
+    let mut v = creature(3000.0, 1000.0, BASE.with(Gene::Rest, 50.0).with(Gene::Torpor, 60.0));
+    v.energy = v.pheno.max_energy * 0.55;
+    let (d, cost) = move_once(&mut v, &Blind);
+    assert_eq!(v.mind.social.activity, life_core::social::Activity::Resting);
+    assert!(!v.torpid && d == 0.0, "resting in place, awake");
+    assert!(close(cost, v.pheno.still_upkeep), "paid {cost}");
+}

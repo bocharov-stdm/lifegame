@@ -232,19 +232,23 @@ impl Creature {
         self.act(intent);
     }
 
-    /// Шаг ровно на speed к точке намерения (и дальше неё), зажим в свою полосу,
-    /// расход энергии за сделанный шаг, смерть от голода. Бродит — медленным ходом (`slow_speed`).
+    /// A step of exactly its speed towards the intent's point (never past it), clamped to the
+    /// world, the energy for the step actually taken, death from hunger. Wandering goes at the
+    /// slow pace (`slow_speed`); torpor, the cold and a burst change the step here.
     #[inline(always)]
     fn act(&mut self, intent: Intent) {
         let speed = if intent.slow { self.pheno.slow_speed } else { self.pheno.speed };
         let (x, y) = (self.x, self.y);
         // a cold-blooded body in cold water is slower and cheaper (`Phenotype::temper`)
         let (slower, cheaper) = self.pheno.temper(y);
-        // torpor: hungry, only wandering (no food, prey or threat in sight), it stands and sleeps
+        // torpor: hungry, only wandering (no food, prey or threat in sight), it stands and sleeps.
+        // A rest is slow too, but it is a sated creature's choice with food maybe in sight: resting
+        // pays its standing upkeep, never the torpor's share.
         self.torpid = self.energy < self.pheno.max_energy * self.pheno.torpor
             && intent.slow
             && intent.attack.is_none()
-            && !self.fleeing();
+            && !self.fleeing()
+            && self.mind.social.activity != crate::social::Activity::Resting;
         if self.torpid {
             self.energy -= self.pheno.still_upkeep * TORPOR_UPKEEP * cheaper;
             if self.energy <= 0.0 {

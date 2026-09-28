@@ -853,6 +853,10 @@ fn diet_bonuses(gene: f64, rules: &Rules) -> String {
     if e.young_plants > e.digestion[0] {
         parts.push(format!("растения в детстве {:.0}%", e.young_plants * 100.0));
     }
+    // bones feed only the scavenger by default: its own niche
+    if e.digestion[3] > 0.0 {
+        parts.push(format!("кости {:.0}%", e.digestion[3] * 100.0));
+    }
     if parts.is_empty() { "без особых сил".into() } else { parts.join(" · ") }
 }
 

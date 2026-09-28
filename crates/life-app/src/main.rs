@@ -1,10 +1,10 @@
-//! lifegame — игра. Окно на eframe (egui + wgpu), симуляция в своём потоке.
+//! lifegame, the game: a window on eframe (egui + wgpu), the simulation in its own thread.
 //!
-//!     cargo run -p life-app --release                       # меню
-//!     cargo run -p life-app --release -- --scale 10 --seed 3 # сразу в игру
+//!     cargo run -p life-app --release                        # the menu
+//!     cargo run -p life-app --release -- --scale 10 --seed 3 # straight into a world
 //!
-//! Флаги мира — как у `life-report`, так что партию из игры можно повторить
-//! без окна тем же сидом, масштабом и правилами.
+//! The world's flags are the same as `life-report`'s, so a game can be repeated without the window
+//! with the same seed, scale and rules.
 
 // Релиз на Windows — без чёрного окна консоли: игру запускают двойным щелчком.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]

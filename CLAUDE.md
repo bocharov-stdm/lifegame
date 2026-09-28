@@ -35,8 +35,9 @@ behavioural spec the game was ported from), predators (`predators-final`; old na
   «Стаи». The code still runs every tick (`social::prepare_in`, `flock::update`, battles,
   territories); it is to be removed under a tag `flocks-final`. Never measure balance with flocks.
   **The social layer is not inert for loners** (kept on purpose, user's call 2026-09-27, until the
-  layer goes): `social::adjust` lets a creature over 95% full rest in its layer 60–120 ticks at
-  `slow_upkeep` (then 180 ticks off), holds a wander course 30 ticks, turns at most 1.2 rad a tick,
+  layer goes): `social::adjust` lets a creature fuller than its `rest` gene (base 95%) rest in its
+  layer 60–120 ticks paying `still_upkeep` (then 180 ticks off; a rest is never torpor), holds a
+  wander course 30 ticks, turns at most 1.2 rad a tick,
   and `standard::personal_plant` keeps the plant it chose while it stays visible; a child of another
   mode gets `kin_grace` 600 ticks with its parent's label (`world.rs`, `protect`). Removing the
   layer therefore shifts every seed: `flocks-final` needs the balance validation, and golden proves
@@ -104,7 +105,8 @@ goes for it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{
   moves by points (`Mutation::Shift`, ±10), since a factor never leaves zero.
 - **Layer reach**: the `layer_reach` gene (% of depth, base 100 = anywhere, as before) — how far past
   its layer a creature goes for food it sees; checked inside the plant, corpse and prey choices
-  (`Phenotype::within_reach`), so it takes the best food within reach. A behaviour, not a wall.
+  (`Phenotype::within_reach`; the prey check came 2026-09-28, it was missing), so it takes the best
+  food within reach. A behaviour, not a wall.
 - **Paying for the step taken**: upkeep = the body and eyes (`still_upkeep`) + the speed term for
   the step actually taken (`Phenotype::step_cost`); standing, eating or resting costs no speed.
   `upkeep` is the full-speed figure, for showing and weighing.
@@ -116,7 +118,8 @@ goes for it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{
   extra speed's term, `BURST_UPKEEP_SHARE`), so a slow body with a big burst is no free speed
   gene. `torpor` (%, base 0 = never, `Mutation::Shift` ±5) — below it, only wandering (no food,
   prey or threat in sight), it stands torpid paying 30% of its standing upkeep, and wakes when food
-  comes into sight (`Creature::torpid`, «в оцепенении» on the card).
+  comes into sight or a threat within its flight distance (then it flees as usual); a rest is never
+  torpor (`Creature::torpid`, «в оцепенении» on the card).
 - **Life**: `maturation` (%, base 50) — the share of digested food that goes into growth until
   grown, the rest into the tank. `lifespan` (base 3000, 500–10 000 ticks) — death of old age; from
   70% of it speed, vision, strike and max health fall linearly to 70% at 90% (`phenotype::vigour`,
@@ -157,12 +160,15 @@ goes for it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{
   parent paying for the child's body (halved populations, no meat diets); birth at ¼ size; a nose
   paid like sight (killed the niche); `melee_size_power` 1.75 (carnivores boomed and starved) or 1.0
   (they died out).
-- Golden digests are re-recorded for `/12` (2026-09-27). Both references
+- Golden digests are re-recorded for `/12` (2026-09-27), but the review fixes of 2026-09-28 moved
+  them again (the prey choice now checks `layer_reach`, which mutates in the golden worlds): they
+  need one more re-record on Windows. Both references
   (`reference/fingerprint.json`, `calm-fingerprint.json`) are still the `/9` ones, so `--compare`
   refuses them (another model) and CI fails there by design: re-take them with `--save-reference`
   once the user accepts the balance (8 seeds × 20 000 each).
-- `AGENTS.md`, `BEHAVIOR.md`, `README.md` still describe the pre-food-web model; this file is
-  current. When a mechanic changes, update all four.
+- `README.md` and `AGENTS.md` describe the `/12` model in short; `BEHAVIOR.md` is the history of
+  the models, its first section the food web to the ocean reform. This file is the exact model.
+  When a mechanic changes, update all four.
 
 **Baseline conditions** — the user's own game; judge balance here, not on ×1 defaults:
 
@@ -322,7 +328,8 @@ A creature killed in combat gets no prey and does not reproduce.
   vertical ecology is in % of depth. Tall worlds are harsher (newborns start far from the rich top).
 - Food (`flora.rs`): x and y drawn independently by width and depth profiles (uniform, linear, exp,
   log, waves, «игровое» — flat to 20% of depth, then an exp fall; «океаническое» — 60% at the
-  surface rising to a peak at 15%, then an exp fall; default «игровое» down, uniform across). Capacity is `PLANT_MAX` slots, one plant each, so growth is logistic. Default 24 patches
+  surface rising to a peak at 15%, then an exp fall; default «океаническое» down, uniform across).
+  Capacity is `PLANT_MAX` slots, one plant each, so growth is logistic. Default 24 patches
   per base world holding `plant_patch_share` 60% of the slots, fewer, smaller and poorer with depth;
   patch centres come from their own keyed stream, never the world's. Occupied slots are an
   incremental bitset (`world::Occupancy`), rebuilt when the plant count stops matching — keep

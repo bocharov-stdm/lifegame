@@ -90,20 +90,13 @@ impl CorpseClock {
     }
 }
 
-/// What a corpse is to an eater: each stage is its own food, a column of `DIET_DIGESTION` (after
-/// plants).
+/// What a corpse is to an eater: each stage is its own food, with its own column of
+/// `DIET_DIGESTION` and `DIET_OWN` (after plants), read in `Phenotype::corpse_efficiency`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
-    Fresh = 1,
-    Rot = 2,
-    Bones = 3,
-}
-
-impl Stage {
-    /// Its column in `DIET_DIGESTION` and `DIET_OWN`.
-    pub fn column(self) -> usize {
-        self as usize
-    }
+    Fresh,
+    Rot,
+    Bones,
 }
 
 /// What is left of a corpse once its flesh is eaten or rotted away: bones that sink to the deep.
@@ -178,7 +171,7 @@ impl Corpse {
 
     /// Decay and sinking up to tick `now`. The flesh decays evenly by its first worth, even if some
     /// was eaten, down to the bones by `decay`; the tick it is gone the bones are left, and they
-    /// decay by their own store and time. Возвращает `false`, когда труп нужно убрать.
+    /// decay by their own store and time. Returns `false` when the corpse is to be removed.
     pub fn decay(&mut self, now: u64) -> bool {
         if self.skeleton.is_none() && now > self.last_decay {
             let bones = self.bones();
@@ -235,9 +228,8 @@ impl Corpse {
         if self.remaining > bones { size.min(self.remaining - bones) } else { size.min(self.remaining) }
     }
 
-    /// Одна порция. Даже если этот метод вызван до отдельной фазы разложения,
-    /// срок жизни и расход учитываются ровно один раз. A corpse eaten down to its bones by this
-    /// bite leaves them.
+    /// One portion. Even when called before the decay phase, the corpse's time and what it lost
+    /// are counted exactly once. A corpse eaten down to its bones by this bite leaves them.
     pub fn bite(&mut self, now: u64, plant_energy: f64) -> Option<Bite> {
         if now <= self.born || !self.decay(now) {
             return None;
@@ -542,7 +534,7 @@ mod tests {
     /// One left alone comes to rest with its flesh and rots down to its bones where it lies. One
     /// that died deep does not rise as bones.
     #[test]
-    fn нетронутый_труп_сгнивает_до_костей() {
+    fn an_untouched_corpse_rots_down_to_its_bones() {
         let mut c = Corpse::from_creature(&body(), 0);
         let at_rest = CORPSE_FRESH_TICKS + ((c.bottom - c.y0) / CORPSE_SINK_SPEED).ceil() as u64;
         assert!(c.decay(at_rest - 1) && !c.settled);

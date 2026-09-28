@@ -221,11 +221,12 @@ impl Phenotype {
         let cruise = genome[Gene::Cruise].clamp(MIN_CRUISE, 100.0) / 100.0;
         let slow_speed = speed * cruise * if strategy == Strategy::Lurker { SLOW_PACE } else { 1.0 };
         let burst = genome[Gene::Burst].clamp(1.0, BURST_MAX);
+        // the size and sight terms once, the speed term at each speed needed below
+        let parts = rules.upkeep_parts(size, vision, diet_upkeep);
+        let at_speed = parts.at(speed);
         // the muscles for a burst cost standing: a share of the speed term the extra speed adds
-        let muscles = BURST_UPKEEP_SHARE
-            * (rules.upkeep_diet(size, speed * burst, vision, diet_upkeep)
-                - rules.upkeep_diet(size, speed, vision, diet_upkeep));
-        let still_upkeep = rules.upkeep_diet(size, 0.0, vision, diet_upkeep) + muscles;
+        let muscles = BURST_UPKEEP_SHARE * (parts.at(speed * burst) - at_speed);
+        let still_upkeep = parts.at(0.0) + muscles;
         Phenotype {
             size,
             speed,
@@ -285,10 +286,10 @@ impl Phenotype {
             y_lo,
             y_hi,
             max_energy: size * ENERGY_PER_SIZE,
-            upkeep: rules.upkeep_diet(size, speed, vision, diet_upkeep) + muscles,
+            upkeep: at_speed + muscles,
             still_upkeep,
             // the speed term at a step of 1: `speed ** power` is 1 there
-            speed_price: rules.upkeep_diet(size, 1.0, vision, diet_upkeep) - (still_upkeep - muscles),
+            speed_price: parts.at(1.0) - (still_upkeep - muscles),
             speed_power: rules.speed_power,
             slow_speed,
             rest: genome[Gene::Rest].clamp(0.0, 100.0) / 100.0,

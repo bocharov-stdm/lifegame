@@ -1,6 +1,6 @@
-//! «Затаившийся»: решает как стандартный, но пока не видит еды, бродит втрое медленнее своего
-//! крейсерского хода (`SLOW_PACE` × `cruise`, `Phenotype::slow_speed`). К еде — на полной
-//! скорости. Экономит там, где еды мало, зато и находит её медленнее.
+//! The lurker («затаившийся»): decides like the standard strategy, but while it sees no food it
+//! wanders at a third of its cruise pace (`SLOW_PACE` × `cruise`, `Phenotype::slow_speed`). To food
+//! it goes at full speed. It saves where food is scarce, and finds it slower.
 
 use super::standard;
 use super::strategy::{Intent, Me, Mind};

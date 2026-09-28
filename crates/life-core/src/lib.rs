@@ -1,8 +1,8 @@
-//! Движок lifegame: эволюционная песочница — растения и существа с геномом
-//! (таблица генов, `genome/`). Отбор возникает сам, он не прописан.
+//! The lifegame engine: an evolutionary sandbox of plants and creatures with a genome (a gene
+//! table, `genome/`). Selection emerges; nothing scripts it.
 //!
-//! Этот crate ничего не знает об экране и не зависит ни от чего графического:
-//! на нём держатся тесты и подбор баланса без окна. Рисует `life-app`.
+//! This crate knows nothing of the screen and depends on nothing graphical: the tests and the
+//! balance runs stand on it without a window. `life-app` draws.
 
 pub mod battle;
 pub mod config;
