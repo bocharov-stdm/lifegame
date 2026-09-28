@@ -310,7 +310,8 @@ impl Default for Rules {
             speed_power: SPEED_ENERGY_POWER,
             sight_power: SIGHT_ENERGY_POWER,
             plant_depth: FoodAxis {
-                profile: Profile::Game.index(),
+                // the ocean reform (2026-09-27): richest a little below the surface
+                profile: Profile::Ocean.index(),
                 steepness: PLANT_DEPTH_DECAY,
                 ..FOOD_AXIS
             },
@@ -672,7 +673,7 @@ mod tests {
     #[test]
     fn профиль_еды_по_умолчанию_как_в_конфиге() {
         let r = Rules::default();
-        assert_eq!(r.plant_depth.kind(), Profile::Game);
+        assert_eq!(r.plant_depth.kind(), Profile::Ocean);
         assert_eq!(r.plant_depth.steepness, PLANT_DEPTH_DECAY);
         assert_eq!(r.plant_width.kind(), Profile::Uniform);
         assert_eq!((r.plant_patches, r.plant_patch_size), (PLANT_PATCHES, PLANT_PATCH_SIZE));

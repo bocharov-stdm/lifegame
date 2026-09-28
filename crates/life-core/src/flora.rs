@@ -799,12 +799,14 @@ mod tests {
         }
     }
 
-    /// Preview: full at the rich edge, right up to the surface.
+    /// Preview: «игровое» is full at the rich edge, right up to the surface; the default ocean is
+    /// full at its peak.
     #[test]
     fn плотность_для_предпросмотра_от_нуля_до_единицы() {
-        let r = Rules::default();
+        let r = rules(&[("plant_depth_profile", Profile::Game.index())]);
         assert_eq!(density(&r, 0.5, 0.0), 1.0);
         assert_eq!(density(&r, 0.5, 0.05), 1.0);
+        assert_eq!(density(&Rules::default(), 0.5, OCEAN_PEAK), 1.0);
         let exp = rules(&[("plant_depth_profile", Profile::Exp.index())]);
         assert!((density(&exp, 0.5, 0.05) - (-8.0 * 0.05_f64).exp()).abs() < 1e-12);
         for r in every_profile() {
@@ -819,7 +821,7 @@ mod tests {
     fn профиль_словами() {
         assert_eq!(
             describe(&Rules::default()),
-            "по глубине — игровое, ровно до 20%, дальше крутизна 8; по ширине — равномерно; заросли — 24 на участок 6000×4000, радиус ~200, в них 60% растений"
+            "по глубине — океаническое, больше всего на 15%, дальше крутизна 8; по ширине — равномерно; заросли — 24 на участок 6000×4000, радиус ~200, в них 60% растений"
         );
         assert_eq!(
             describe(&scattered(&rules(&[("plant_depth_profile", Profile::Exp.index())]))),
@@ -880,7 +882,7 @@ mod tests {
 
     #[test]
     fn игровой_профиль_сытый_верх_и_мёртвое_дно() {
-        let game = Rules::default().plant_depth;
+        let game = rules(&[("plant_depth_profile", Profile::Game.index())]).plant_depth;
         assert_eq!(game.kind(), Profile::Game);
         for t in [0.0, 0.1, GAME_PLATEAU] {
             assert_eq!(game.density(t), 1.0, "flat to {GAME_PLATEAU}: {t}");
@@ -903,7 +905,8 @@ mod tests {
     /// plants grown follow it.
     #[test]
     fn the_ocean_profile_peaks_under_the_surface() {
-        let r = rules(&[("plant_depth_profile", Profile::Ocean.index())]);
+        let r = Rules::default();
+        assert_eq!(r.plant_depth.kind(), Profile::Ocean, "the default since the ocean reform");
         let ocean = r.plant_depth;
         assert_eq!(ocean.density(0.0), OCEAN_SURFACE);
         assert_eq!(ocean.density(OCEAN_PEAK), 1.0);

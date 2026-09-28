@@ -287,10 +287,11 @@ pub fn adjust(
     let in_layer = me.y >= me.pheno.body_lo && me.y <= me.pheno.body_hi;
     // Home is the flock's circle for a member, the layer for anyone else.
     let at_home = me.circle.map_or(in_layer, |c| c.holds(me.x, me.y, 0.0));
-    if full < 0.85 || !at_home {
+    // it rests from its `rest` fullness and gives up 10 points below it
+    if full < me.pheno.rest - 0.1 || !at_home {
         m.rest_until = 0;
     }
-    if m.rest_until <= m.tick && m.tick >= m.rest_ready && full > 0.95 && at_home {
+    if m.rest_until <= m.tick && m.tick >= m.rest_ready && full > me.pheno.rest && at_home {
         m.rest_count += 1;
         m.rest_until = m.tick + 60 + mix(me.kinship.id ^ mix(m.rest_count)) % 61;
         m.rest_ready = m.rest_until + 180;

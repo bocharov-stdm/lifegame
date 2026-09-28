@@ -4,7 +4,7 @@ use super::{GeneKind, GeneSpec, Genome, Mutation, Variant, bases};
 use crate::config::{
     CHOICE_SWITCH_CHANCE, COLD_BLOOD_STEP, DIET_JUMP_CHANCE, DIET_MEAT_STEP_CHANCE, DIET_STEP_CHANCE, FLOCKS,
     HERBIVORE_LEAP_CARNIVORE, HERBIVORE_LEAP_SCAVENGER, LIFESPAN_BASE, LIFESPAN_MAX, LIFESPAN_MIN,
-    STRATEGY_SWITCH_CHANCE,
+    REST_FULLNESS, STRATEGY_SWITCH_CHANCE, TORPOR_STEP,
 };
 use crate::creature::strategy::VARIANTS as STRATEGIES;
 use crate::rng::Rng;
@@ -43,6 +43,10 @@ pub enum Gene {
     Lifespan,
     ColdBlood,
     LayerReach,
+    Cruise,
+    Rest,
+    Burst,
+    Torpor,
 }
 
 impl Gene {
@@ -77,10 +81,14 @@ impl Gene {
         Gene::Lifespan,
         Gene::ColdBlood,
         Gene::LayerReach,
+        Gene::Cruise,
+        Gene::Rest,
+        Gene::Burst,
+        Gene::Torpor,
     ];
 }
 
-pub const N: usize = 30;
+pub const N: usize = 34;
 
 pub const PACK_VARIANTS: [Variant; 2] = [
     Variant {
@@ -448,6 +456,45 @@ pub const GENES: [GeneSpec; N] = [
         kind: GeneKind::Percent,
         base: 100.0,
         mutation: SCALE,
+    },
+    GeneSpec {
+        key: "cruise",
+        label: "крейсерский_ход",
+        about: "С какой долей своей скорости бродит, пока не видит еды (10–100%). Шаг оплачивается \
+                по его длине: медленный поиск дешевле, но еду находит позже. Затаившийся бродит ещё \
+                втрое медленнее, %.",
+        kind: GeneKind::Percent,
+        base: 100.0,
+        mutation: SCALE,
+    },
+    GeneSpec {
+        key: "rest",
+        label: "сытость_для_отдыха",
+        about: "С какой сытости встаёт отдохнуть в своём слое, не тратясь на ход; бросает отдых, когда \
+                сытость упадёт на 10 п.п. ниже. Стоящего легче поймать, %.",
+        kind: GeneKind::Percent,
+        base: REST_FULLNESS,
+        mutation: SCALE,
+    },
+    GeneSpec {
+        key: "burst",
+        label: "рывок",
+        about: "Во сколько раз быстрее своей скорости бросается в погоне и в бегстве (1–2): не дольше \
+                20 тиков подряд, потом 60 тиков отдышки. Мышцы стоят и в покое — четверть цены \
+                прибавки к скорости.",
+        kind: GeneKind::Absolute,
+        base: 1.0,
+        mutation: SCALE,
+    },
+    GeneSpec {
+        key: "torpor",
+        label: "оцепенение",
+        about: "Ниже этой доли запаса, не видя и не чуя еды, замирает: тратит 30% расхода стоя, пока \
+                еда не покажется. В оцепенении не ищет и не убегает, %.",
+        kind: GeneKind::Percent,
+        // never, as before the gene; it moves off zero by points
+        base: 0.0,
+        mutation: Mutation::Shift { points: TORPOR_STEP },
     },
 ];
 

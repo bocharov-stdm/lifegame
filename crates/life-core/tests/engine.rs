@@ -557,16 +557,28 @@ fn move_once(v: &mut Creature, senses: &impl life_core::senses::Senses) -> (f64,
     ((v.x - x).hypot(v.y - y), e - v.energy)
 }
 
+/// The speed term is paid for the step taken: standing costs only the body and eyes, a full step
+/// the whole upkeep, a lurker's slow step a ninth of the speed term.
 #[test]
 fn медленный_ход_дешевле() {
-    let v = creature(1000.0, 1000.0, BASE);
+    let v = creature(1000.0, 1000.0, LURKER);
     assert!((v.pheno.slow_speed - v.pheno.speed * SLOW_PACE).abs() < 1e-12);
-    assert!(v.pheno.slow_upkeep < v.pheno.upkeep);
     let costs = [DIET_SIZE_COST[0], DIET_SPEED_COST[0]];
-    assert_eq!(
-        v.pheno.slow_upkeep,
-        Rules::default().upkeep_diet(40.0, v.pheno.slow_speed, v.pheno.vision, costs)
-    );
+    let r = Rules::default();
+    assert_eq!(v.pheno.still_upkeep, r.upkeep_diet(40.0, 0.0, v.pheno.vision, costs));
+    for step in [0.0, v.pheno.slow_speed, v.pheno.speed] {
+        let expected = r.upkeep_diet(40.0, step, v.pheno.vision, costs);
+        assert!(close(v.pheno.step_cost(step), expected), "a step of {step}");
+    }
+    assert!(close(v.pheno.step_cost(v.pheno.speed), v.pheno.upkeep));
+    assert!(v.pheno.step_cost(v.pheno.slow_speed) < v.pheno.upkeep);
+    // a standard one wanders at its cruise pace: the base is its full speed
+    let standard = creature(1000.0, 1000.0, BASE);
+    assert_eq!(standard.pheno.slow_speed, standard.pheno.speed);
+    let half = creature(1000.0, 1000.0, BASE.with(Gene::Cruise, 50.0));
+    assert_eq!(half.pheno.slow_speed, half.pheno.speed * 0.5);
+    let floor = creature(1000.0, 1000.0, BASE.with(Gene::Cruise, 1.0));
+    assert_eq!(floor.pheno.slow_speed, floor.pheno.speed * 0.1, "held at MIN_CRUISE");
 }
 
 /// Затаившийся без еды бродит медленно и дёшево; стандартный — на полной.
@@ -574,13 +586,17 @@ fn медленный_ход_дешевле() {
 fn затаившийся_без_еды_бродит_медленно() {
     let mut lurker = creature(1000.0, 1000.0, LURKER);
     let mut standard = creature(1000.0, 1000.0, BASE);
+    let mut cruiser = creature(1000.0, 1000.0, BASE.with(Gene::Cruise, 50.0));
     for _ in 0..20 {
         let (d, cost) = move_once(&mut lurker, &Blind);
         assert!((d - lurker.pheno.slow_speed).abs() < 1e-9, "затаившийся прошёл {d}");
-        assert!(close(cost, lurker.pheno.slow_upkeep), "затаившийся потратил {cost}");
+        assert!(close(cost, lurker.pheno.step_cost(d)), "затаившийся потратил {cost}");
         let (d, cost) = move_once(&mut standard, &Blind);
         assert!((d - standard.pheno.speed).abs() < 1e-9, "стандартный прошёл {d}");
         assert!(close(cost, standard.pheno.upkeep), "стандартный потратил {cost}");
+        let (d, cost) = move_once(&mut cruiser, &Blind);
+        assert!((d - cruiser.pheno.speed * 0.5).abs() < 1e-9, "крейсер прошёл {d}");
+        assert!(close(cost, cruiser.pheno.step_cost(d)) && cost < standard.pheno.upkeep);
     }
 }
 
@@ -1026,4 +1042,54 @@ fn совпавшая_угроза_не_обездвиживает() {
     v.step(&senses);
     assert!((v.x - before.0).hypot(v.y - before.1) > 0.0);
     assert!(v.x.is_finite() && v.y.is_finite());
+}
+
+/// A burst: in flight a creature goes `burst` times its speed for `BURST_TICKS` ticks in a row,
+/// then is winded for `BURST_REST`; it pays for the steps as taken and for its muscles standing.
+#[test]
+fn a_burst_is_short_and_its_muscles_cost() {
+    let mut v = creature(3000.0, 2000.0, BASE.with(Gene::Burst, 2.0));
+    let plain = creature(3000.0, 2000.0, BASE);
+    assert!(v.pheno.still_upkeep > plain.pheno.still_upkeep, "the muscles cost standing");
+    assert_eq!(v.pheno.speed, plain.pheno.speed);
+    // three times its size, close: it flees
+    let threat = Threat { id: 99, x: 2900.0, y: 2000.0, gap: 40.0, half: 60.0 };
+    let senses = senses_from(|_, _, _| None).with_threat(threat);
+    let speed = v.pheno.speed;
+    for tick in 0..BURST_TICKS + 5 {
+        let (d, cost) = move_once(&mut v, &senses);
+        let expected = if tick < BURST_TICKS { 2.0 * speed } else { speed };
+        assert!((d - expected).abs() < 1e-9, "tick {tick}: went {d}, not {expected}");
+        assert!(close(cost, v.pheno.step_cost(d)), "tick {tick}: paid {cost} for {d}");
+    }
+    assert_eq!(v.winded, BURST_REST - 5, "winded");
+    // no burst without the gene, nor when wandering
+    let mut p = plain.clone();
+    let (d, _) = move_once(&mut p, &senses);
+    assert!((d - speed).abs() < 1e-9);
+    let mut w = creature(3000.0, 2000.0, BASE.with(Gene::Burst, 2.0));
+    let (d, _) = move_once(&mut w, &Blind);
+    assert!(d <= speed + 1e-9, "wandering: {d}");
+}
+
+/// Torpor: below its `torpor` share of the store with no food in sight a creature stands and pays
+/// `TORPOR_UPKEEP` of its standing upkeep; it wakes the tick food comes into sight. The base never
+/// sleeps.
+#[test]
+fn torpor_saves_the_hungry_and_ends_at_food() {
+    let mut v = creature(3000.0, 1000.0, BASE.with(Gene::Torpor, 50.0));
+    v.energy = v.pheno.max_energy * 0.2;
+    let (d, cost) = move_once(&mut v, &Blind);
+    assert!(v.torpid && d == 0.0, "asleep: went {d}");
+    assert!(close(cost, v.pheno.still_upkeep * TORPOR_UPKEEP), "paid {cost}");
+    let (d, _) = move_once(&mut v, &senses_from(|_, _, _| Some((3300.0, 1000.0))));
+    assert!(!v.torpid && (d - v.pheno.speed).abs() < 1e-9, "woke for food: went {d}");
+    // above its share it wanders as usual, and the base never sleeps
+    let mut fed = creature(3000.0, 1000.0, BASE.with(Gene::Torpor, 50.0));
+    fed.energy = fed.pheno.max_energy * 0.6;
+    move_once(&mut fed, &Blind);
+    let mut base = creature(3000.0, 1000.0, BASE);
+    base.energy = base.pheno.max_energy * 0.01;
+    move_once(&mut base, &Blind);
+    assert!(!fed.torpid && !base.torpid);
 }

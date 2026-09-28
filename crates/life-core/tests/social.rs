@@ -14,7 +14,8 @@ fn отдых_стоит_энергии_и_кончается_при_голод�
     let mut w = world();
     w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(100.0));
     w.creatures[0].reproduction_wait = 1000;
-    let upkeep = w.creatures[0].pheno.slow_upkeep;
+    // standing, it pays only for its body and eyes
+    let upkeep = w.creatures[0].pheno.still_upkeep;
     w.step();
     let v = &w.creatures[0];
     assert_eq!(v.mind.social.activity, Activity::Resting);
@@ -24,6 +25,34 @@ fn отдых_стоит_энергии_и_кончается_при_голод�
     w.creatures[0].energy = 60.0;
     w.step();
     assert_ne!(w.creatures[0].mind.social.activity, Activity::Resting);
+}
+
+/// The `rest` gene is the fullness it rests from: at 60% a creature three quarters full rests, at
+/// the base 95% it does not; either gives up 10 points below.
+#[test]
+fn the_rest_gene_sets_the_fullness_to_rest_from() {
+    for (rest, rests) in [(60.0, true), (life_core::config::REST_FULLNESS, false)] {
+        let mut w = world();
+        w.spawn(
+            CreatureGenome::BASE.with(life_core::genome::creature::Gene::Rest, rest),
+            1000.0,
+            1000.0,
+            None,
+        );
+        let v = &mut w.creatures[0];
+        v.reproduction_wait = 1000;
+        v.energy = v.pheno.max_energy * 0.75;
+        w.step();
+        assert_eq!(w.creatures[0].mind.social.activity == Activity::Resting, rests, "rest from {rest}%");
+    }
+    let mut w = world();
+    w.spawn(CreatureGenome::BASE.with(life_core::genome::creature::Gene::Rest, 60.0), 1000.0, 1000.0, None);
+    w.creatures[0].reproduction_wait = 1000;
+    w.creatures[0].energy = w.creatures[0].pheno.max_energy * 0.75;
+    w.step();
+    w.creatures[0].energy = w.creatures[0].pheno.max_energy * 0.49;
+    w.step();
+    assert_ne!(w.creatures[0].mind.social.activity, Activity::Resting, "gives up below 50%");
 }
 
 #[test]
@@ -36,7 +65,7 @@ fn участник_в_своём_круге_отдыхает_на_тех_же_�
     for v in &mut w.creatures {
         v.reproduction_wait = 1000;
     }
-    let upkeep = w.creatures[0].pheno.slow_upkeep;
+    let upkeep = w.creatures[0].pheno.still_upkeep;
     w.step();
     assert_eq!(w.creatures[0].mind.social.activity, Activity::Resting);
     assert!((w.creatures[0].energy - (100.0 - upkeep)).abs() < 1e-9);

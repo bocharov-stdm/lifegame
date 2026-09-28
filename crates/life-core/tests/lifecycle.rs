@@ -184,7 +184,7 @@ fn раны_лечатся_за_энергию_после_паузы() {
     v.step(&life_core::senses::Blind);
     assert_eq!(v.health, 20.0);
     v.peaceful_ticks = 59;
-    let e = v.energy;
+    let (e, x, y) = (v.energy, v.x, v.y);
     // warm-blooded, it pays the same at any depth
     let cheaper = v.pheno.temper(v.y).1;
     assert_eq!(cheaper, 1.0);
@@ -193,11 +193,8 @@ fn раны_лечатся_за_энергию_после_паузы() {
     assert!((heal - 0.12).abs() < 1e-12);
     v.step(&life_core::senses::Blind);
     assert!((v.health - 20.0 - heal).abs() < 1e-9);
-    let upkeep = if v.mind.social.activity == life_core::social::Activity::Resting {
-        v.pheno.slow_upkeep
-    } else {
-        v.pheno.upkeep
-    };
+    // it pays for the step it took
+    let upkeep = v.pheno.step_cost((v.x - x).hypot(v.y - y));
     assert!((e - v.energy - upkeep * cheaper - heal).abs() < 1e-9);
 }
 
@@ -402,7 +399,7 @@ fn a_cold_blooded_body_is_slower_and_cheaper_in_the_cold() {
             && (cheaper - (1.0 - COLD_SAVING / 2.0)).abs() < 1e-12
     );
     assert!((cold.pheno.coldness((top + bottom) / 2.0) - 0.5).abs() < 1e-12, "a smooth step");
-    // a step on the bottom: the cold-blooded one goes shorter and pays half
+    // a step on the bottom: the cold-blooded one goes shorter, pays for that step, and half of it
     let step = |mut v: life_core::creature::Creature| {
         (v.x, v.y, v.energy) = (3000.0, space.height - 100.0, 50.0);
         v.step(&life_core::senses::Blind);
@@ -411,7 +408,7 @@ fn a_cold_blooded_body_is_slower_and_cheaper_in_the_cold() {
     let (warm_moved, warm_paid, pheno) = step(warm.clone());
     let (cold_moved, cold_paid, _) = step(cold.clone());
     assert!((warm_paid - pheno.upkeep).abs() < 1e-9, "{warm_paid}");
-    assert!((cold_paid - pheno.upkeep * (1.0 - COLD_SAVING)).abs() < 1e-9, "{cold_paid}");
+    assert!((cold_paid - pheno.step_cost(cold_moved) * (1.0 - COLD_SAVING)).abs() < 1e-9, "{cold_paid}");
     assert!(warm_moved > 0.0 && (cold_moved - warm_moved * (1.0 - COLD_SLOWING)).abs() < 1e-9);
 }
 

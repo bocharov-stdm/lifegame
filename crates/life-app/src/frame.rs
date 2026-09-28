@@ -167,6 +167,8 @@ impl Selected {
             flock: world.flocks.get(&v.flock).filter(|f| f.members >= 2).map(|_| v.flock),
             state: if v.fleeing() {
                 "убегает"
+            } else if v.torpid {
+                "в оцепенении"
             } else if v.mind.attack.is_some() {
                 "охотится / защищается"
             } else if !v.adult() {

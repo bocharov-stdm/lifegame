@@ -189,6 +189,27 @@ pub const SHOT_RANGE_SIZES: f64 = 4.0;
 /// базового существа падает примерно до 70%: заметная экономия, но ищет
 /// такое существо втрое медленнее.
 pub const SLOW_PACE: f64 = 1.0 / 3.0;
+/// The `rest` gene's base: a creature at home stands resting from this fullness, %, and stops
+/// 10 points below it (the social layer's fixed 95% and 85% before the gene). A rest lasts 60–120
+/// ticks and the next one comes 180 ticks later.
+pub const REST_FULLNESS: f64 = 95.0;
+/// The `cruise` gene is held at least this, %: slower, a creature wandering for food would stand.
+pub const MIN_CRUISE: f64 = 10.0;
+/// A burst (the `burst` gene, ×1 to `BURST_MAX` its speed) in a chase or in flight, when the goal
+/// is farther than a normal step: at most `BURST_TICKS` ticks in a row, then `BURST_REST` ticks
+/// winded; a tick without one gives back a tick of it. The step is paid as taken (the square
+/// law), and the muscles cost standing too: `BURST_UPKEEP_SHARE` of the speed term the extra speed
+/// would add. Without that price a slow body with a big burst was a free speed gene.
+pub const BURST_MAX: f64 = 2.0;
+pub const BURST_TICKS: u32 = 20;
+pub const BURST_REST: u32 = 60;
+pub const BURST_UPKEEP_SHARE: f64 = 0.25;
+/// Torpor (the `torpor` gene, % of the store, base 0 = never): below it, with no food in sight,
+/// a creature stops and pays this share of its standing upkeep (times the cold's saving). It wakes
+/// the tick food comes into sight or smell; asleep it neither searches nor runs. It only saves:
+/// never below nothing, so it never makes energy. The gene moves by points (`Mutation::Shift`).
+pub const TORPOR_UPKEEP: f64 = 0.3;
+pub const TORPOR_STEP: f64 = 5.0;
 
 // Combat and hunting are always on: the peaceful world (the old `cannibalism` rule) is gone.
 // There is no world size ratio either: whom one attacks first is its own `prey_ratio` gene.

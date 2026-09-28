@@ -57,7 +57,7 @@ impl Reference {
     pub fn load(path: &Path) -> Result<Reference, String> {
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         let data: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-        if data["model"].as_str() != Some("life-behavior/11") {
+        if data["model"].as_str() != Some("life-behavior/12") {
             return Err("Эталон другой модели поведения. Пересоздайте его через --save-reference после проверки баланса.".into());
         }
         let field = |v: &Value, k: &str| v.get(k).cloned().ok_or(format!("нет поля {k}"));
@@ -219,7 +219,7 @@ pub fn save_reference(
                         "tick": s.tick,
                         "plants": s.plants,
                         "creatures": s.creatures,
-                        "genom": s.avg_genom,
+                        "genom": s.avg_genom.as_ref().map(|g| g.as_slice()),
                     })
                 })
                 .collect();
@@ -234,7 +234,7 @@ pub fn save_reference(
         .collect();
     let data = json!({
         "source": "rust",
-        "model": "life-behavior/11",
+        "model": "life-behavior/12",
         "sample_every": sample_every,
         "ticks": ticks,
         "genes": GENES.iter().map(|g| g.key).collect::<Vec<_>>(),
@@ -358,7 +358,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("life-rules-reference-{}.json", std::process::id()));
         let reference = |rules: &str| {
             format!(
-                r#"{{"model":"life-behavior/11","ticks":1,"sample_every":1,"shape":"3:2","runs":[],"rules":{{{rules}}}}}"#
+                r#"{{"model":"life-behavior/12","ticks":1,"sample_every":1,"shape":"3:2","runs":[],"rules":{{{rules}}}}}"#
             )
         };
         std::fs::write(&path, reference(r#""cost_scale":3"#)).unwrap();

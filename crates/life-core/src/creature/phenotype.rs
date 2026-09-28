@@ -8,8 +8,8 @@
 
 use super::Strategy;
 use crate::config::{
-    COLD_SAVING, COLD_SLOWING, DIET_OWN, ENERGY_PER_SIZE, FLEE_SIGHT_SHARE, LIFESPAN_MAX, LIFESPAN_MIN,
-    OLD_AGE_FROM, OLD_AGE_FULL, OLD_AGE_VIGOUR, SLOW_PACE,
+    BURST_MAX, BURST_UPKEEP_SHARE, COLD_SAVING, COLD_SLOWING, DIET_OWN, ENERGY_PER_SIZE, FLEE_SIGHT_SHARE,
+    LIFESPAN_MAX, LIFESPAN_MIN, MIN_CRUISE, OLD_AGE_FROM, OLD_AGE_FULL, OLD_AGE_VIGOUR, SLOW_PACE,
 };
 use crate::corpse::Stage;
 use crate::flock::{FlockKind, Territoriality};
@@ -140,11 +140,21 @@ pub struct Phenotype {
 
     // ── энергия и предвычисленное ───────────────────────────────────────────
     pub max_energy: f64,
-    /// Расход за тик.
+    /// Upkeep a tick at full speed (for showing and for weighing), and its parts: the body and eyes
+    /// paid standing (`still_upkeep`), and the price of a step of length `s`, `speed_price ×
+    /// s ** speed_power` — paid for the step actually taken (`step_cost`).
     pub upkeep: f64,
-    /// Медленный ход (`SLOW_PACE`): шаг и расход за тик на нём.
+    pub still_upkeep: f64,
+    pub speed_price: f64,
+    pub speed_power: f64,
+    /// The wandering pace's step: speed × `cruise`, and a third of that for a lurker (`SLOW_PACE`).
     pub slow_speed: f64,
-    pub slow_upkeep: f64,
+    /// It stands resting from this fullness and stops 10 points below it (the `rest` gene, 0‒1).
+    pub rest: f64,
+    /// A burst's speed factor in a chase or in flight (the `burst` gene, 1 to `BURST_MAX`).
+    pub burst: f64,
+    /// Below this share of its store, with no food in sight, it falls torpid (the `torpor` gene).
+    pub torpor: f64,
     pub vision2: f64,
     pub size2: f64,
     /// Body radius: contact is the sum of two radii.
@@ -207,7 +217,15 @@ impl Phenotype {
         let [plants, fresh, rot, bones] = edges.digestion;
         let diet_upkeep = [edges.size_upkeep, edges.speed_upkeep];
         let [_, own_meat, own_rot, own_bones] = diet.own();
-        let slow_speed = speed * SLOW_PACE;
+        let strategy = Strategy::from_gene(genome[Gene::Strategy]);
+        let cruise = genome[Gene::Cruise].clamp(MIN_CRUISE, 100.0) / 100.0;
+        let slow_speed = speed * cruise * if strategy == Strategy::Lurker { SLOW_PACE } else { 1.0 };
+        let burst = genome[Gene::Burst].clamp(1.0, BURST_MAX);
+        // the muscles for a burst cost standing: a share of the speed term the extra speed adds
+        let muscles = BURST_UPKEEP_SHARE
+            * (rules.upkeep_diet(size, speed * burst, vision, diet_upkeep)
+                - rules.upkeep_diet(size, speed, vision, diet_upkeep));
+        let still_upkeep = rules.upkeep_diet(size, 0.0, vision, diet_upkeep) + muscles;
         Phenotype {
             size,
             speed,
@@ -267,14 +285,20 @@ impl Phenotype {
             y_lo,
             y_hi,
             max_energy: size * ENERGY_PER_SIZE,
-            upkeep: rules.upkeep_diet(size, speed, vision, diet_upkeep),
+            upkeep: rules.upkeep_diet(size, speed, vision, diet_upkeep) + muscles,
+            still_upkeep,
+            // the speed term at a step of 1: `speed ** power` is 1 there
+            speed_price: rules.upkeep_diet(size, 1.0, vision, diet_upkeep) - (still_upkeep - muscles),
+            speed_power: rules.speed_power,
             slow_speed,
-            slow_upkeep: rules.upkeep_diet(size, slow_speed, vision, diet_upkeep),
+            rest: genome[Gene::Rest].clamp(0.0, 100.0) / 100.0,
+            burst,
+            torpor: genome[Gene::Torpor].clamp(0.0, 100.0) / 100.0,
             vision2: vision * vision,
             size2: size * size,
             half: size / 2.0,
             flee: vision * FLEE_SIGHT_SHARE,
-            strategy: Strategy::from_gene(genome[Gene::Strategy]),
+            strategy,
         }
     }
 }
@@ -333,6 +357,14 @@ impl Phenotype {
         }
         let c = self.cold_blood * self.coldness(y);
         (1.0 - COLD_SLOWING * c, 1.0 - COLD_SAVING * c)
+    }
+
+    /// Upkeep a tick for a step of length `step`: the body and eyes, and the speed term for the
+    /// step actually taken — standing costs no speed.
+    #[inline]
+    pub fn step_cost(&self, step: f64) -> f64 {
+        let term = if self.speed_power == 2.0 { step * step } else { step.powf(self.speed_power) };
+        self.still_upkeep + self.speed_price * term
     }
 
     /// Food at depth `y` is within its reach: in its layer or no farther than `layer_reach` from it.

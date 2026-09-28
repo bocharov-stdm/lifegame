@@ -111,6 +111,11 @@ pub struct Creature {
     pub rng: Rng,
     /// The last bite (`Meal`); only the window reads it.
     pub meal: Option<Meal>,
+    /// Ticks of burst used in a row, and ticks left winded after `BURST_TICKS` of it.
+    pub dash: u32,
+    pub winded: u32,
+    /// Torpid this tick: hungry with no food in sight, it stands paying `TORPOR_UPKEEP`.
+    pub torpid: bool,
 }
 
 impl Creature {
@@ -156,6 +161,9 @@ impl Creature {
             mind: Mind::default(),
             rng,
             meal: None,
+            dash: 0,
+            winded: 0,
+            torpid: false,
         }
     }
 
@@ -225,25 +233,44 @@ impl Creature {
     }
 
     /// Шаг ровно на speed к точке намерения (и дальше неё), зажим в свою полосу,
-    /// расход энергии, смерть от голода. Медленный ход — меньше шаг и расход.
+    /// расход энергии за сделанный шаг, смерть от голода. Бродит — медленным ходом (`slow_speed`).
     #[inline(always)]
     fn act(&mut self, intent: Intent) {
-        let (speed, upkeep) = if intent.slow {
-            (self.pheno.slow_speed, self.pheno.slow_upkeep)
-        } else {
-            (self.pheno.speed, self.pheno.upkeep)
-        };
+        let speed = if intent.slow { self.pheno.slow_speed } else { self.pheno.speed };
         let (x, y) = (self.x, self.y);
         // a cold-blooded body in cold water is slower and cheaper (`Phenotype::temper`)
         let (slower, cheaper) = self.pheno.temper(y);
-        let speed = speed * slower;
-        let (dx, dy) = (intent.tx - x, intent.ty - y);
-        let d = dx.hypot(dy);
+        // torpor: hungry, only wandering (no food, prey or threat in sight), it stands and sleeps
+        self.torpid = self.energy < self.pheno.max_energy * self.pheno.torpor
+            && intent.slow
+            && intent.attack.is_none()
+            && !self.fleeing();
+        if self.torpid {
+            self.energy -= self.pheno.still_upkeep * TORPOR_UPKEEP * cheaper;
+            if self.energy <= 0.0 {
+                self.alive = false;
+                self.death = Some(Death::Starved);
+            }
+            return;
+        }
+        let (mut tx, mut ty) = (intent.tx, intent.ty);
+        let (mut dx, mut dy) = (tx - x, ty - y);
+        let mut d = dx.hypot(dy);
+        // a burst in a chase to a goal beyond a normal step, or in flight
+        let fleeing = self.fleeing() && d > 0.0;
+        let chasing = intent.attack.is_some() && d > speed * slower;
+        let burst = self.burst(!intent.slow && (chasing || fleeing));
+        let speed = speed * slower * burst;
+        if fleeing && burst > 1.0 && d < speed {
+            // a flight's goal is one normal step away: the burst goes the whole step that way
+            (dx, dy, d) = (dx / d * speed, dy / d * speed, speed);
+            (tx, ty) = (x + dx, y + dy);
+        }
         // Точка ближе шага — встаём ровно на неё. Проскочить её нельзя: при мягком
         // слое существо, возвращаясь на слой тоньше шага, качалось бы через него
         // туда-сюда вечно.
         let (nx, ny) = if d <= speed {
-            (intent.tx, intent.ty)
+            (tx, ty)
         } else {
             let k = speed / d;
             (x + dx * k, y + dy * k)
@@ -253,15 +280,36 @@ impl Creature {
         self.x = nx.clamp(self.pheno.x_lo, self.pheno.x_hi);
         self.y = ny.clamp(self.pheno.y_lo, self.pheno.y_hi);
         let moved = (self.x - x, self.y - y);
-        if moved.0.hypot(moved.1) > 1e-9 {
+        let step = moved.0.hypot(moved.1);
+        if step > 1e-9 {
             self.mind.social.heading = Some(moved);
         }
 
-        self.energy -= upkeep * cheaper;
+        // the speed term is paid for the step actually taken: standing, resting or eating costs
+        // only the body and the eyes
+        self.energy -= self.pheno.step_cost(step) * cheaper;
         if self.energy <= 0.0 {
             self.alive = false;
             self.death = Some(Death::Starved);
         }
+    }
+
+    /// The speed factor of a burst this tick (`BURST_*`): `wanted` in a chase or in flight with the
+    /// goal beyond a normal step. Winded after `BURST_TICKS` in a row; a tick without gives one back.
+    fn burst(&mut self, wanted: bool) -> f64 {
+        if self.winded > 0 {
+            self.winded -= 1;
+            return 1.0;
+        }
+        if !wanted || self.pheno.burst <= 1.0 {
+            self.dash = self.dash.saturating_sub(1);
+            return 1.0;
+        }
+        self.dash += 1;
+        if self.dash >= BURST_TICKS {
+            (self.dash, self.winded) = (0, BURST_REST);
+        }
+        self.pheno.burst
     }
 
     /// Новые правила пересчитывают фенотип по прежнему фактическому телу.

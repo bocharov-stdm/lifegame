@@ -162,6 +162,13 @@ const NUMBER: Field = Field {
     visible: |_| true,
 };
 
+/// The version of the defaults a settings file was saved with. A file saves every value, so a
+/// changed default would never reach a player who saved before it: a file older than this loads
+/// `CHANGED_DEFAULTS` as the new defaults and the rest as saved. 1 — the ocean reform (2026-09-27):
+/// the «океаническое» profile, the corpse stages' times.
+const DEFAULTS_VERSION: u64 = 1;
+const CHANGED_DEFAULTS: [Key; 3] = [Key::PlantDepthProfile, Key::CorpseFresh, Key::CorpseDecay];
+
 /// Подписи профилей еды — по порядку `Profile::ALL` (сверено тестом).
 const PROFILES: [&str; 7] =
     ["равномерно", "линейно", "экспонента", "логарифм", "волны", "игровое", "океаническое"];
@@ -1296,6 +1303,7 @@ impl Settings {
 
     fn to_json(&self) -> Value {
         let mut m = Map::new();
+        m.insert("defaults".into(), DEFAULTS_VERSION.into());
         m.insert("seed".into(), self.seed.into());
         m.insert("random_seed".into(), self.random_seed.into());
         m.insert("scale".into(), self.scale.into());
@@ -1314,6 +1322,8 @@ impl Settings {
     fn from_json(data: &Value) -> Settings {
         let mut s = Settings::default();
         let Some(m) = data.as_object() else { return s };
+        // a file saved before defaults changed keeps the player's other values, not those
+        let version = m.get("defaults").and_then(Value::as_u64).unwrap_or(0);
         let num = |k: &str| m.get(k).and_then(Value::as_f64).filter(|v| v.is_finite());
         let flag = |k: &str| m.get(k).and_then(Value::as_bool);
         if let Some(v) = num("seed") {
@@ -1331,6 +1341,9 @@ impl Settings {
         for (i, f) in FIELDS.iter().enumerate() {
             // до переименования в «существ» ключ был другим
             let old = (f.key == Key::Creatures).then_some("n_vegetarians");
+            if version < DEFAULTS_VERSION && CHANGED_DEFAULTS.contains(&f.key) {
+                continue;
+            }
             if let Some(v) = num(json_key(f.key)).or_else(|| old.and_then(num)) {
                 s.values[i] = f.snap(v);
             }
@@ -1595,6 +1608,30 @@ mod tests {
         assert_eq!(old.get(Key::PlantEnergy), 80.0);
         assert_eq!(old.get(Key::Creatures), 50.0, "старый ключ численности читается");
         assert_eq!(old.rules(), Settings::default().rules().with("plant_energy", 80.0).unwrap());
+    }
+
+    /// A file saved before the ocean reform keeps the player's values but takes the new defaults
+    /// that changed then; one saved after keeps everything, and a saved file says its version.
+    #[test]
+    fn a_file_from_before_changed_defaults_takes_them() {
+        use life_core::flora::Profile;
+        let saved = serde_json::json!({
+            "plant_energy": 80, "plant_depth_profile": Profile::Game.index(), "corpse_fresh": 150,
+            "corpse_decay": 1800
+        });
+        let old = Settings::from_json(&saved);
+        assert_eq!(old.get(Key::PlantEnergy), 80.0, "the player's value stays");
+        let new = Settings::default();
+        for key in CHANGED_DEFAULTS {
+            assert_eq!(old.get(key), new.get(key), "{key:?} takes the new default");
+        }
+        assert_eq!(new.get(Key::PlantDepthProfile), Profile::Ocean.index());
+        let mut current = saved.clone();
+        current["defaults"] = DEFAULTS_VERSION.into();
+        let kept = Settings::from_json(&current);
+        assert_eq!(kept.get(Key::PlantDepthProfile), Profile::Game.index(), "chosen after the change");
+        assert_eq!(kept.get(Key::CorpseFresh), 150.0);
+        assert_eq!(new.to_json()["defaults"], DEFAULTS_VERSION);
     }
 
     #[test]

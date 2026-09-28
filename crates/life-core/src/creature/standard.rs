@@ -52,7 +52,18 @@ fn feeding_circle(me: &Me, mind: &Mind) -> Option<Circle> {
 
 #[inline(always)]
 pub(crate) fn decide(me: &Me, mind: &mut Mind, rng: &mut Rng, senses: &impl Senses) -> Intent {
-    plan(me, mind, rng, senses, me.pheno.speed).0
+    let planned = plan(me, mind, rng, senses, me.pheno.slow_speed);
+    wander_slow(mind, planned)
+}
+
+/// Wandering (not alarmed) it goes at its cruise pace (`Phenotype::slow_speed`); to food, in a
+/// chase or in flight at full speed.
+#[inline(always)]
+pub(super) fn wander_slow(mind: &Mind, (intent, mode): (Intent, Mode)) -> Intent {
+    Intent {
+        slow: intent.slow || (mode == Mode::Wander && mind.social.activity != crate::social::Activity::Alarm),
+        ..intent
+    }
 }
 
 /// Куда идти и почему. `step` — длина шага, если существо будет бродить: по

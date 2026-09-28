@@ -51,7 +51,7 @@ behavioural spec the game was ported from), predators (`predators-final`; old na
 - The user keeps a short PDF of genes, strategies and diet edges (a throwaway fpdf2 script, Arial
   for Cyrillic); regenerate and send it after diet or gene changes.
 
-## The model (`life-behavior/11`)
+## The model (`life-behavior/12`, the ocean reform)
 
 A creature eats plants and corpses in portions, grows from food up to its size gene, divides when
 grown and fed, and dies of hunger, in a fight or of old age. Combat is always on: a creature strikes
@@ -105,25 +105,44 @@ goes for it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{
 - **Layer reach**: the `layer_reach` gene (% of depth, base 100 = anywhere, as before) — how far past
   its layer a creature goes for food it sees; checked inside the plant, corpse and prey choices
   (`Phenotype::within_reach`), so it takes the best food within reach. A behaviour, not a wall.
+- **Paying for the step taken**: upkeep = the body and eyes (`still_upkeep`) + the speed term for
+  the step actually taken (`Phenotype::step_cost`); standing, eating or resting costs no speed.
+  `upkeep` is the full-speed figure, for showing and weighing.
+- **Movement genes** (all free, behaviour): `cruise` (%, base 100, at least `MIN_CRUISE` 10) —
+  wandering pace; the lurker wanders at a third of it (`slow_speed`). `rest` (%, base 95) — the
+  fullness it rests from at home, giving up 10 points below (the social layer's old fixed 95/85).
+  `burst` (×1–2, base 1) — in a chase to a goal beyond a step or in flight it goes that much faster
+  for ≤ 20 ticks, then 60 winded (`Creature::dash`, `winded`); the muscles cost standing (¼ of the
+  extra speed's term, `BURST_UPKEEP_SHARE`), so a slow body with a big burst is no free speed
+  gene. `torpor` (%, base 0 = never, `Mutation::Shift` ±5) — below it, only wandering (no food,
+  prey or threat in sight), it stands torpid paying 30% of its standing upkeep, and wakes when food
+  comes into sight (`Creature::torpid`, «в оцепенении» on the card).
 - **Life**: `maturation` (%, base 50) — the share of digested food that goes into growth until
   grown, the rest into the tank. `lifespan` (base 3000, 500–10 000 ticks) — death of old age; from
   70% of it speed, vision, strike and max health fall linearly to 70% at 90% (`phenotype::vigour`,
   `Creature::grow_old` at the start of the tick). Both free genes.
-- Plants grow in patches over the depth profile «игровое» (see "Where food grows"); «океаническое»
-  (a peak at 15% of depth) is to become the default with the cold, on the user's word.
+- Plants grow in patches over the depth profile «океаническое» (the default since the reform; see
+  "Where food grows"). A settings file saved before the reform takes the new defaults of the
+  profile and the corpse times and keeps the player's other values (`DEFAULTS_VERSION`).
 
 ## Where the work stands
 
-- **Ocean reform** (plan `~/.claude/plans/snug-puzzling-pixel.md`, stages A–G; A–C done, 2026-09-27):
-  A ocean profile + real units (bit for bit), B corpse stages, C cold deep and genes; next D paying
-  for the step taken with `cruise` and `rest` genes (the existing rest at 95% fullness becomes the
-  gene's base), E burst, F torpor, G defaults and records. Baseline conditions, 24 seeds × 20 000:
+- **Ocean reform** (plan `~/.claude/plans/snug-puzzling-pixel.md`, 2026-09-27, all stages in):
+  A ocean profile + real units (bit for bit), B corpse stages, C cold deep and genes, D paying for
+  the step taken with `cruise` and `rest`, E burst, F torpor, G the ocean profile as the default,
+  golden digests re-recorded, model `/12`. The user stopped the measurements after D ("не тестируй
+  а делай изменения"): E, F and the ocean default are **unmeasured**. Baseline conditions, 24 seeds
+  × 20 000:
   - before B: carnivores hold in 80%, scavengers 20% (35 seeds), late population 1320;
   - B (bones 5000): carnivores 71%, scavengers 46%, 1424; the corpse count rose from ~1000 to
     6000–21 000 at bones 20 000;
   - C: carnivores 88% (21/24), scavengers 38%, carnivores 3.4% late, 1413; `cold_blood` evolves to a
     mean of 14–18%, `layer_reach` falls to a median of 69%. ×1 (8 seeds): all survive, carnivores
     22–33% late (47% base before B), populations 57 / 185.
+  - D (speed price ×1): carnivores 67% (16/24), scavengers 38%, 1.7% late, 1613. Paying for the
+    step helps grazers most; carnivores chase at full speed. `cruise` evolves to ~55%, `rest` to
+    ~78%, the speed gene up from 15.5 to 19. A dearer speed (×1.5, ×2) only hurt carnivores more
+    (12 and 14 of 24). The burst (E) is the hunter's answer, not yet measured.
   - «океаническое» vs «игровое» before B (8 seeds): carnivores held alike (7) but at 2.8% late
     against 7.8%, population 1384 against 1228.
 - Balance after the life reform (sweep 2026-09-27, 8 seeds × 20 000): all 24 worlds survive.
@@ -138,12 +157,10 @@ goes for it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{
   parent paying for the child's body (halved populations, no meat diets); birth at ¼ size; a nose
   paid like sight (killed the niche); `melee_size_power` 1.75 (carnivores boomed and starved) or 1.0
   (they died out).
-- Golden digests and both references (`reference/fingerprint.json`, `calm-fingerprint.json`) are
-  still the `/9` ones: re-record them in one separate commit once the user accepts the balance
-  (golden case H can become "all four diets"). Until then CI fails on the golden test and
-  `--compare` by design. The cleanup of 2026-09-27 also moved the digest inputs (the dead counter
-  `cannibalized` is gone, the base `pack_instinct` is 0, a shot weakens with `vigour` like the
-  strike), so that re-record covers it.
+- Golden digests are re-recorded for `/12` (2026-09-27). Both references
+  (`reference/fingerprint.json`, `calm-fingerprint.json`) are still the `/9` ones, so `--compare`
+  refuses them (another model) and CI fails there by design: re-take them with `--save-reference`
+  once the user accepts the balance (8 seeds × 20 000 each).
 - `AGENTS.md`, `BEHAVIOR.md`, `README.md` still describe the pre-food-web model; this file is
   current. When a mechanic changes, update all four.
 
@@ -335,7 +352,7 @@ nothing. Start mixes (strategies, diets) are dealt without draws (`variant_for`,
 
 A strategy **decides** (`strategy::decide(&Me, &mut Mind, &mut Rng, &senses) -> Intent`), the
 creature **acts** (`act`); a strategy cannot move, feed or divide the creature. `standard` — nearest
-visible food, else wander in its layer; `lurker` — the same, but wanders at slow pace (`SLOW_PACE`
+visible food, else wander in its layer at its `cruise` pace; `lurker` — the same, but wanders at a third of that (`SLOW_PACE`
 ⅓, paying for the step taken).
 
 Adding a gene: a variant at the end of `enum Gene` and a row at the end of `GENES`; its effect only
