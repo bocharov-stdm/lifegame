@@ -104,14 +104,15 @@ pub fn gene_stats<'a, G: Genome, const N: usize>(
     }))
 }
 
-/// Genes the per-diet summary follows: the body, the senses and the fighting temper.
+/// Genes the per-diet summary follows: the body, the senses, the cold and the life span (the
+/// fighting temper lives in the behaviour programs now).
 pub const DIET_GENES: [creature::Gene; 6] = [
     creature::Gene::Size,
     creature::Gene::Speed,
     creature::Gene::Vision,
-    creature::Gene::PreyRatio,
-    creature::Gene::Picky,
-    creature::Gene::Rivalry,
+    creature::Gene::ColdBlood,
+    creature::Gene::Burst,
+    creature::Gene::Lifespan,
 ];
 
 /// A summary of one diet's creatures (or of all of them).

@@ -248,7 +248,7 @@ pub(crate) fn mutability_of(gene: f64, floor: f64) -> f64 {
 }
 
 /// How children inherit, from the world's rules: the mutation sigma, the share of exact copies,
-/// the floor of mutability and the diet's chances.
+/// the floor of mutability, the diet's chances and the behaviour program's.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Heredity {
     pub sigma: f64,
@@ -260,6 +260,11 @@ pub struct Heredity {
     /// The herbivore's own leaps to the carnivore and to the scavenger (`DIET_LEAPS`).
     pub diet_leap_carnivore: f64,
     pub diet_leap_scavenger: f64,
+    /// Share of the mutating children whose program mutates, times mutability (`Program::mutate`).
+    pub program_mutation: f64,
+    /// How far a mutating child's program numbers drift, a share of their nudge, times mutability
+    /// (`Program::drift`).
+    pub program_drift: f64,
 }
 
 impl Heredity {
@@ -273,6 +278,8 @@ impl Heredity {
             diet_jump: rules.diet_jump,
             diet_leap_carnivore: rules.diet_leap_carnivore,
             diet_leap_scavenger: rules.diet_leap_scavenger,
+            program_mutation: rules.program_mutation,
+            program_drift: rules.program_drift,
         }
     }
 
@@ -287,6 +294,8 @@ impl Heredity {
             diet_jump: crate::config::DIET_JUMP_CHANCE,
             diet_leap_carnivore: crate::config::HERBIVORE_LEAP_CARNIVORE,
             diet_leap_scavenger: crate::config::HERBIVORE_LEAP_SCAVENGER,
+            program_mutation: crate::config::PROGRAM_MUTATION_CHANCE,
+            program_drift: crate::config::PROGRAM_DRIFT,
         }
     }
 }

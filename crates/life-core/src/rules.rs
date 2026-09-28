@@ -82,8 +82,8 @@ pub const DIET_RULE_KEYS: [[&str; 10]; 4] = [
 
 /// Имена настраиваемых правил — для отчёта (`--rule имя=число`) и настроек.
 /// Профили еды — по шесть на ось, по порядку `flora::AXIS_PARAMS`; the diet edges come last.
-pub const RULE_KEYS: [&str; 88] = {
-    let mut all = [""; 88];
+pub const RULE_KEYS: [&str; 90] = {
+    let mut all = [""; 90];
     let mut i = 0;
     while i < WORLD_RULE_KEYS.len() {
         all[i] = WORLD_RULE_KEYS[i];
@@ -103,7 +103,7 @@ pub const RULE_KEYS: [&str; 88] = {
 };
 
 /// The rules that are not a diet's edges.
-const WORLD_RULE_KEYS: [&str; 48] = [
+const WORLD_RULE_KEYS: [&str; 50] = [
     "plant_rate",
     "plant_energy",
     "mutation_sigma",
@@ -152,6 +152,8 @@ const WORLD_RULE_KEYS: [&str; 48] = [
     "diet_meat_step",
     "diet_leap_carnivore",
     "diet_leap_scavenger",
+    "program_mutation",
+    "program_drift",
 ];
 
 /// Patches per base world — no more than this: at 1500 slots that is five places a patch, and
@@ -279,6 +281,12 @@ pub struct Rules {
     /// replace its `diet_jump` (`config::HERBIVORE_LEAP_*`).
     pub diet_leap_carnivore: f64,
     pub diet_leap_scavenger: f64,
+    /// Share of the mutating children whose behaviour program mutates, times the parent's
+    /// mutability (`config::PROGRAM_MUTATION_CHANCE`, `Program::mutate`).
+    pub program_mutation: f64,
+    /// How far a mutating child's program numbers drift, a share of a mutation's nudge, times
+    /// the parent's mutability (`config::PROGRAM_DRIFT`, `Program::drift`).
+    pub program_drift: f64,
     /// A corpse's clock, ticks from death: fresh until; how far it sinks a tick; rotted down to the
     /// bones at; and the lowest share of the depth, %, where it comes to rest (`corpse.rs`).
     pub corpse_fresh: f64,
@@ -337,6 +345,8 @@ impl Default for Rules {
             diet_meat_step: DIET_MEAT_STEP_CHANCE,
             diet_leap_carnivore: HERBIVORE_LEAP_CARNIVORE,
             diet_leap_scavenger: HERBIVORE_LEAP_SCAVENGER,
+            program_mutation: PROGRAM_MUTATION_CHANCE,
+            program_drift: PROGRAM_DRIFT,
             corpse_fresh: CORPSE_FRESH_TICKS as f64,
             corpse_sink: CORPSE_SINK_SPEED,
             corpse_decay: CORPSE_DECAY_TICKS as f64,
@@ -420,6 +430,8 @@ impl Rules {
             "diet_meat_step" => r.diet_meat_step = value,
             "diet_leap_carnivore" => r.diet_leap_carnivore = value,
             "diet_leap_scavenger" => r.diet_leap_scavenger = value,
+            "program_mutation" => r.program_mutation = value,
+            "program_drift" => r.program_drift = value,
             "corpse_fresh" => r.corpse_fresh = value,
             "corpse_bones" => r.corpse_bones = value,
             "corpse_bones_sink" => r.corpse_bones_sink = value,
@@ -446,7 +458,8 @@ impl Rules {
             | "diet_jump"
             | "diet_meat_step"
             | "diet_leap_carnivore"
-            | "diet_leap_scavenger" => (0.0..=1.0).contains(&value),
+            | "diet_leap_scavenger"
+            | "program_mutation" => (0.0..=1.0).contains(&value),
             "min_mutability" => (0.0..=MAX_MUTABILITY).contains(&value),
             "corpse_fresh" | "corpse_bones" | "corpse_decay" => value >= 1.0 && value.fract() == 0.0,
             "corpse_sink" | "corpse_bones_sink" => value > 0.0,
@@ -464,7 +477,8 @@ impl Rules {
                 | "diet_jump"
                 | "diet_meat_step"
                 | "diet_leap_carnivore"
-                | "diet_leap_scavenger" => "доля от 0 до 1",
+                | "diet_leap_scavenger"
+                | "program_mutation" => "доля от 0 до 1",
                 "min_mutability" => "число от 0 до 10",
                 "corpse_fresh" | "corpse_bones" | "corpse_decay" => "целое число тиков не меньше 1",
                 "corpse_sink" | "corpse_bones_sink" => "число больше 0",
@@ -533,6 +547,8 @@ impl Rules {
             "diet_meat_step" => self.diet_meat_step,
             "diet_leap_carnivore" => self.diet_leap_carnivore,
             "diet_leap_scavenger" => self.diet_leap_scavenger,
+            "program_mutation" => self.program_mutation,
+            "program_drift" => self.program_drift,
             "corpse_fresh" => self.corpse_fresh,
             "corpse_bones" => self.corpse_bones,
             "corpse_bones_sink" => self.corpse_bones_sink,

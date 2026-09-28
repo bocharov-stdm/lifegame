@@ -5,7 +5,72 @@ and how it was checked. The exact current model is in `CLAUDE.md`; everything be
 section describes earlier models and is kept as a record (flocks, cannibalism as a rule and the
 `--rule cannibalism` commands no longer exist or are switched off).
 
-## The food web, the life reform and the ocean reform (`life-behavior/10`–`/12`, this stage)
+## Behaviour programs (`life-behavior/13`, this stage)
+
+Model `life-behavior/13`, format `life-report/11` (gene keys by name; nine of them are gone).
+
+Behaviour itself evolves (the user's request, 2026-09-28). The hand-written strategies
+(`standard.rs`, `lurker.rs`) became a **program**: an ordered list of ≤ 24 blocks «if two tests →
+an action with its parameters». Each tick the first block whose tests hold and whose action can be
+done decides; an action that cannot be done (no prey, no corpse, a hopeless chase) falls through.
+**Settings** — eat the other niche's food, drive off rivals X times smaller at the same food, go no
+farther than X% of depth past the layer — apply for the tick and let the program go on. Every
+number of behaviour moved into the blocks: test thresholds, and each action's parameters (flight
+memory, burst, hunt ratio, caution, patience, «only if better», pace, rest length and pause). The
+behaviour genes `bravery`, `prey_ratio`, `caution`, `picky`, `rivalry`, `layer_reach`, `cruise`,
+`rest`, `torpor` were deleted from the table; `burst` stays as the muscles. A creature has **two
+programs**, the juvenile one while it grows and the adult one after. On division, after the clone
+draw and the genes, each program mutates with `program_mutation` (5%) × mutability: a number moves,
+a test or the action is replaced, a test negated, blocks swapped, copied, deleted or inserted.
+The `strategy` gene is only the founders' template now and never switches.
+
+How it was built and checked, with no world runs (the user's word):
+- Stage 1 — the interpreter (`scene.rs` perception with lazily memoised queries, `actions.rs`, the
+  rule list in `strategy::plan`) replaced the strategies with templates encoding them exactly:
+  golden stayed **bit for bit** identical against a worktree of the previous build.
+- Stage 2 — mutating programs, the new tests and actions (ambush, to the top or bottom of the
+  layer, fullness, health, depth), the rule, the strategy frozen: golden re-recorded.
+- Stage 3 — the game's window «Поведение» (flowcharts, this tick's path lit), the report's most
+  common programs.
+- Round 2 — two tracks, all behaviour in blocks, the genes deleted, the combat phase striking only
+  what the program chose (no automatic retaliation), others' fear read from the hunter's program:
+  golden re-recorded again. Tests cover each block, settings, both tracks, 2000 random programs
+  among food, prey and threats (no panic, the creature stays in the world, no energy made), a
+  world at `program_mutation=1` that diversifies and stays deterministic, and the brute-force
+  checks of the threat and prey queries with per-creature hunt terms.
+- Review fixes — a review of the logic found, and the user had fixed:
+  - the numbers were all but frozen: a given number moved only through the rare mutation, in about
+    one child of 1700, where the genes it replaced moved in every mutating child. Now every number
+    **drifts** in every mutating child (`program_drift`, gauss of its nudge × mutability);
+  - round 2 renewed a flight on any threat in sight, so a scared creature ran while any possible
+    eater was visible — longer than the old strategy. Now only a threat nearer than the flight's
+    «again» share (33%, the old flight distance) renews it, a farther one only steers it;
+  - torpor had lost the old gene's guards (hungry, no food in sight), and a torpid creature still
+    ate what touched it — a sleeping filter feeder at 30% of the standing upkeep. Now a torpid one
+    eats nothing;
+  - a hunter priced strikes back the templates' prey never gives (they fight back only an enemy at
+    most 1.5 times bigger, and the fleeing never strike). Now it reads the prey's fight-back block;
+  - a swap could hide a setting behind a deciding block. Settings now apply first, wherever they
+    stand;
+  - the flock blocks (reported food, back to the circle) never act with flocks off, yet sat in the
+    templates and came with mutations. They are gone from both while flocks are off;
+  - the last behaviour constants moved into blocks: how long a given-up prey is left alone, how far
+    a wander target lies, the «struck» window. Caution reads 100% at the old base;
+  - the window marked a block whose test held but whose action failed with «нет»; it now reads
+    «не вышло», the settings have their own section, the mutation count counts only mutations that
+    changed something;
+  - programs are shared between relatives (an `Arc` instead of a kilobyte inside every creature)
+    and keep a summary of what the world reads every tick; the report groups programs by shape with
+    median numbers and prints `METRIC` lines for sweeps; a dead shot at the enemy that struck it
+    (no longer a target) went.
+
+  Golden re-recorded once more; all tests pass.
+
+**Not measured**: balance and tick rate. The templates carry the old genes' bases, but the old
+genes had spread and evolved in a population while the founders' blocks start uniform, so the
+balance of `/12` is not expected to hold as is.
+
+## The food web, the life reform and the ocean reform (`life-behavior/10`–`/12`)
 
 Model `life-behavior/12`, format `life-report/11`.
 

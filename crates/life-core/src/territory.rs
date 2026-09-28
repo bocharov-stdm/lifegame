@@ -206,7 +206,7 @@ impl State {
                 guard = Some(Guard { enemy: u.id, x: u.x, y: u.y, half: u.pheno.half });
             } else if v.adult()
                 && v.energy > v.pheno.max_energy * 0.5
-                && v.health / v.max_health() > v.pheno.retreat + 0.1
+                && v.stands_firm()
                 && let Some(enemies) = warned.get(&v.flock)
             {
                 let best = enemies
@@ -379,10 +379,7 @@ fn battle_enemy(
 ) -> Option<usize> {
     let v = &creatures[i];
     let battle = flocks.get(&v.flock).filter(|f| f.territoriality != Territoriality::None)?.battle?;
-    if !v.adult()
-        || v.energy <= v.pheno.max_energy * crate::battle::FIGHTER_FULLNESS
-        || v.health / v.max_health() <= v.pheno.retreat + 0.1
-    {
+    if !v.adult() || v.energy <= v.pheno.max_energy * crate::battle::FIGHTER_FULLNESS || !v.stands_firm() {
         return None;
     }
     let mut best: Option<(f64, u64, usize)> = None;
@@ -487,7 +484,7 @@ pub fn steer(v: &mut Creature, mut intent: Intent) -> Intent {
         };
         intent.tx = if d <= ready { v.x } else { guard.x };
         intent.ty = if d <= ready { v.y } else { guard.y };
-        intent.slow = false;
+        intent.pace = 1.0;
         intent.attack = Some(guard.enemy);
         return intent;
     }
@@ -553,7 +550,7 @@ pub fn steer(v: &mut Creature, mut intent: Intent) -> Intent {
             }
         }
         intent.attack = None;
-        intent.slow = false;
+        intent.pace = 1.0;
     } else {
         let (tx, ty) = (intent.tx - v.x, intent.ty - v.y);
         if (intent.tx - area.x).hypot(intent.ty - area.y) < r {
@@ -611,7 +608,7 @@ pub fn steer(v: &mut Creature, mut intent: Intent) -> Intent {
             intent.tx = target.0;
             intent.ty = target.1;
             intent.attack = None;
-            intent.slow = false;
+            intent.pace = 1.0;
             v.mind.social.personal_food = None;
             v.mind.target = None;
             return intent;
@@ -666,7 +663,7 @@ pub fn steer(v: &mut Creature, mut intent: Intent) -> Intent {
                     follow_exit(v, &mut intent, exit);
                 }
                 intent.attack = None;
-                intent.slow = false;
+                intent.pace = 1.0;
             } else if !blocked {
                 v.mind.social.territory_side = None;
             }

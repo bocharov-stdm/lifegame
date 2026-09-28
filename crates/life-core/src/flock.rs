@@ -23,8 +23,9 @@ pub const MAX_RADIUS: f64 = 600.0;
 /// least as wide as they see, so a new family forages almost like loners. From this size on
 /// the circle is an object that moves by the flock kind.
 pub const FAMILY_SIZE: usize = 4;
-/// Speed of a circle, as a share of its members' mean speed: members keep up while feeding.
-pub const CIRCLE_PACE: f64 = crate::config::SLOW_PACE;
+/// Speed of a circle, as a share of its members' mean speed: members keep up while feeding (a
+/// lurker's wandering pace).
+pub const CIRCLE_PACE: f64 = 1.0 / 3.0;
 /// The circle waits while fewer than this share of members are inside it.
 const WAIT_INSIDE_SHARE: f64 = 0.6;
 /// A settled flock moves when its mean fullness stays below this for `HUNGRY_TICKS`...

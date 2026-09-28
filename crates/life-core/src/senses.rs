@@ -23,6 +23,28 @@ use crate::kin_grace::Grace;
 use crate::plant::Plant;
 use crate::space::Space;
 
+/// What a creature takes for food this tick, as its program's settings set it (`Stance`): the
+/// other niche's food too, and how far past its layer (y; infinite: anywhere).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Taste {
+    pub foreign: bool,
+    pub reach: f64,
+}
+
+impl Taste {
+    /// Only its own food, anywhere: what it reports to its neighbours.
+    pub const OWN: Taste = Taste { foreign: false, reach: f64::INFINITY };
+}
+
+/// The terms of a hunt block (`Action::Hunt`): prey this many times smaller, the weight of the
+/// strikes it expects (1: the old base caution), and what it takes for food.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hunting {
+    pub ratio: f64,
+    pub caution: f64,
+    pub taste: Taste,
+}
+
 /// Чувства существа.
 pub trait Senses {
     fn visible_enemy(&self, _me: &Me, _id: u64) -> Option<Threat> {
@@ -49,17 +71,25 @@ pub trait Senses {
         crate::plant::PORTIONS
     }
 
-    /// Лучшая лично видимая падаль с учётом дороги и времени питания.
-    fn best_corpse(&self, _me: &Me) -> Option<CorpseFood> {
+    /// The best corpse it smells and eats at `taste`, weighing the way and the meal.
+    fn best_corpse(&self, _me: &Me, _taste: Taste) -> Option<CorpseFood> {
         None
     }
 
     /// Ближайший чужак (не родня), который может меня съесть и до края тела
     /// которого меньше `within`, — по снимку стада на начало фазы.
     fn nearest_threat(&self, me: &Me, within: f64) -> Option<Threat>;
-    /// Личная видимая добыча; прежняя цель имеет приоритет, пока допустима. `avoid`: a prey the
-    /// hunter gave up chasing (`CHASE_PATIENCE`), not a candidate.
-    fn prey(&self, _me: &Me, _previous: Option<u64>, _avoid: Option<u64>) -> Option<Prey> {
+
+    /// The nearest threat and the nearest one hunting somebody now, closer than `within`. The
+    /// default takes every threat for a hunter, enough for test senses.
+    fn threats_near(&self, me: &Me, within: f64) -> (Option<Threat>, Option<Threat>) {
+        let t = self.nearest_threat(me, within);
+        (t, t)
+    }
+
+    /// The prey worth most at the hunt's terms, in sight; the previous target first while it is
+    /// allowed. `avoid`: a prey the hunter gave up chasing, not a candidate.
+    fn prey(&self, _me: &Me, _previous: Option<u64>, _avoid: Option<u64>, _hunt: Hunting) -> Option<Prey> {
         None
     }
 }
@@ -87,19 +117,22 @@ pub struct CorpseFood {
 
 impl Prey {
     /// Energy per tick the hunt is worth to `me`: the meat it can still take in (its tank is
-    /// not bottomless), less the share `me.pheno.caution` gives up for the strikes it expects.
-    /// The prey strikes back while it is being killed; its visible allies (`allies`: the sum of
-    /// their strikes) join in until the hunter has eaten. A careless hunter (caution 0) ignores
-    /// the risk; a hunt that looks deadly for a careful one is worth nothing.
-    fn of(s: &Seen, me: &Me, allies: f64) -> Self {
+    /// not bottomless), less the share `caution` gives up for the strikes it expects.
+    /// The prey strikes back while it is being killed as its program does: only a hunter within
+    /// its fight-back block's size, and only while its health holds above that block's threshold;
+    /// its visible allies (`allies`: the sum of their strikes) join in until the hunter has eaten.
+    /// A careless hunter (caution 0) ignores the risk; a hunt that looks deadly for a careful one
+    /// is worth nothing.
+    fn of(s: &Seen, me: &Me, allies: f64, caution: f64) -> Self {
         let travel =
             ((s.x - me.x).hypot(s.y - me.y) - s.half - me.pheno.half).max(0.0) / me.pheno.speed.max(0.01);
         let hits = (s.health / me.pheno.strike_on(s.half * 2.0).max(0.001)).ceil();
         let portion = (me.pheno.plant_energy / f64::from(crate::plant::PORTIONS)).max(s.nutrition / 12.0);
         let feeding = (s.nutrition / portion.max(0.001)).ceil();
         let gain = (s.nutrition * me.pheno.meat_efficiency).min(me.pheno.max_energy - me.energy).max(0.0);
-        let expected = s.strike_on(me) * hits + allies * (hits + feeding);
-        let risk = me.pheno.caution * expected / me.health.max(0.001);
+        let back = if me.pheno.half < s.fights_below { (hits * s.fights_share).ceil() } else { 0.0 };
+        let expected = s.strike_on(me) * back + allies * (hits + feeding);
+        let risk = caution * expected / me.health.max(0.001);
         Self {
             id: s.kinship.id,
             x: s.x,
@@ -148,20 +181,19 @@ pub(crate) struct GridSenses<'a> {
 
 impl Senses for GridSenses<'_> {
     #[inline(always)]
-    fn best_corpse(&self, me: &Me) -> Option<CorpseFood> {
+    fn best_corpse(&self, me: &Me, taste: Taste) -> Option<CorpseFood> {
         let mut best: Option<CorpseFood> = None;
-        let hungry = me.pheno.hungry(me.energy);
         // what it can still take in: a corpse bigger than the empty part of its tank is worth no more
         let room = (me.pheno.max_energy - me.energy).max(0.0);
         self.corpse_grid?.for_each_near(me.x, me.y, me.pheno.smell, |i, cx, cy| {
             let c = &self.corpses[i];
             let distance = (cx - me.x).hypot(cy - me.y);
-            let efficiency = me.pheno.corpse_efficiency(c.stage(self.now), hungry);
+            let efficiency = me.pheno.corpse_efficiency(c.stage(self.now), taste.foreign);
             if c.born >= self.now
                 || c.remaining <= 0.0
                 || distance >= me.pheno.smell
                 || efficiency <= 0.0
-                || !me.pheno.within_reach(cy)
+                || !me.pheno.within_reach(cy, taste.reach)
             {
                 return;
             }
@@ -191,12 +223,12 @@ impl Senses for GridSenses<'_> {
         }
         Some(Threat { id, x: s.x, y: s.y, gap: distance - s.half, half: s.half })
     }
-    fn prey(&self, me: &Me, previous: Option<u64>, avoid: Option<u64>) -> Option<Prey> {
-        if !me.pheno.hunts_now(me.energy) {
-            return None; // fresh meat is worth nothing to it, or it is sated and meat is not its own
+    fn prey(&self, me: &Me, previous: Option<u64>, avoid: Option<u64>, hunt: Hunting) -> Option<Prey> {
+        if !me.pheno.hunts_now(hunt.taste.foreign) {
+            return None; // fresh meat is worth nothing to it, or meat is not its own this tick
         }
         let herd = self.herd?;
-        let max_size = me.pheno.size / me.pheno.prey_ratio;
+        let max_size = me.pheno.size / hunt.ratio;
         // One look around: the strikes of every visible flock but one's own, and the candidates.
         // Loners have a label each and cover nobody, so only members of real flocks are summed.
         let mut flocks = [(0_u64, 0.0_f64); SEEN_FLOCKS];
@@ -225,8 +257,8 @@ impl Senses for GridSenses<'_> {
                 || me.kinship.kin(s.kinship)
                 || herd.grace.contains(me.flock, s.flock, herd.tick)
                 || Some(s.kinship.id) == avoid
-                // past its layer's reach, as plants and corpses (`layer_reach`)
-                || !me.pheno.within_reach(s.y)
+                // past its layer's reach, as plants and corpses (`Action::Reach`)
+                || !me.pheno.within_reach(s.y, hunt.taste.reach)
             {
                 return;
             }
@@ -266,7 +298,7 @@ impl Senses for GridSenses<'_> {
                     allies += p.strike_on(me);
                 }
             }
-            let p = Prey::of(s, me, allies.max(0.0));
+            let p = Prey::of(s, me, allies.max(0.0), hunt.caution);
             let kept = |b: &Prey| Some(b.id) == previous && b.score > 0.0;
             if best.is_none_or(|b| {
                 !kept(&b) && (kept(&p) || p.score > b.score || (p.score == b.score && p.id < b.id))
@@ -305,7 +337,15 @@ impl Senses for GridSenses<'_> {
 
     #[inline(always)]
     fn nearest_threat(&self, me: &Me, within: f64) -> Option<Threat> {
-        nearest_threat(self.herd?, me.kinship, me.flock, me.x, me.y, me.pheno.size, within, me.pheno.bravery)
+        self.threats_near(me, within).0
+    }
+
+    #[inline(always)]
+    fn threats_near(&self, me: &Me, within: f64) -> (Option<Threat>, Option<Threat>) {
+        match self.herd {
+            Some(herd) => nearest_threats(herd, me.kinship, me.flock, me.x, me.y, me.pheno.size, within),
+            None => (None, None),
+        }
     }
 }
 
@@ -372,6 +412,12 @@ pub(crate) struct Seen {
     nutrition: f64,
     /// Its melee strike: what a hunter expects back from it or from it as an ally.
     strike: f64,
+    /// Its program's defence (`Program::defence`): it strikes back an enemy with a smaller radius
+    /// than this (0: nobody), for this share of the strikes that kill it (down to its block's
+    /// health threshold). A hunter weighs what the prey will do, as the prey fears the hunter's
+    /// hunt block.
+    fights_below: f64,
+    fights_share: f64,
     kinship: Kinship,
     flock: u64,
     /// In a flock of two or more (it has a circle): its flockmates may cover it.
@@ -417,8 +463,8 @@ impl Herd {
 
     /// A snapshot of the creatures as they stand now. At the start of the phase all are alive:
     /// the dead are swept at the end of the previous one. The ones looking into the snapshot are
-    /// the ones in it: children are born after the moves. Whom one may attack first is its own
-    /// `prey_ratio` (how many times smaller the prey is).
+    /// the ones in it: children are born after the moves. Whom one may eat is the most permissive
+    /// hunt of the program it lives by now (`Program::hunt_ratio`).
     #[cfg(test)]
     pub fn rebuild(&mut self, space: &Space, creatures: &[Creature]) {
         self.rebuild_with_grace(space, creatures, &Grace::default(), 0);
@@ -429,18 +475,28 @@ impl Herd {
         self.grace.clone_from(grace);
         self.tick = tick;
         self.seen.clear();
-        self.seen.extend(creatures.iter().map(|v| Seen {
-            x: v.x,
-            y: v.y,
-            half: v.pheno.half,
-            eats_up_to: if v.pheno.hunts() { v.pheno.size / v.pheno.prey_ratio } else { 0.0 },
-            health: v.health,
-            nutrition: crate::corpse::meat(v),
-            strike: v.pheno.strike(),
-            kinship: v.kinship(),
-            flock: v.flock,
-            grouped: v.circle.is_some(),
-            hunting: v.mind.attack.is_some(),
+        self.seen.extend(creatures.iter().map(|v| {
+            let program = v.program();
+            let (fights_below, fights_share) =
+                program.defence().map_or((0.0, 0.0), |(ratio, health)| (v.pheno.half * ratio, 1.0 - health));
+            Seen {
+                x: v.x,
+                y: v.y,
+                half: v.pheno.half,
+                eats_up_to: match program.hunt_ratio() {
+                    Some(ratio) if v.pheno.hunts() => v.pheno.size / ratio,
+                    _ => 0.0,
+                },
+                health: v.health,
+                nutrition: crate::corpse::meat(v),
+                strike: v.pheno.strike(),
+                fights_below,
+                fights_share,
+                kinship: v.kinship(),
+                flock: v.flock,
+                grouped: v.circle.is_some(),
+                hunting: v.mind.attack.is_some(),
+            }
         }));
         self.grid.rebuild(space, self.seen.iter().map(|s| (s.x, s.y)));
         let (mut max_eats, mut max_half) = (0.0_f64, 0.0_f64);
@@ -457,13 +513,12 @@ impl Herd {
 // ошибка в радиусе запроса не роняет ничего, а тихо меняет баланс — существа
 // перестают замечать соседей под носом.
 
-/// The nearest stranger (not family of `who`) from the snapshot, measured to the edge of its
-/// body, that could eat a body of `size` and is closer than `within` — or, when it hunts nobody
-/// (it chose no target on its last move), closer than `within × (1 − bravery)`. A brave creature
-/// lets a passer-by come near; a timid one flees from anyone who could eat it.
-#[allow(clippy::too_many_arguments)]
+/// The nearest strangers (not family of `who`) from the snapshot, measured to the edge of their
+/// bodies, that could eat a body of `size` and are closer than `within`: the nearest of all, and
+/// the nearest hunting somebody (it chose a target on its last move). How near a calm one may come
+/// is the program's choice (`Cond::ThreatNear`, `Cond::HunterNear`).
 #[inline(always)]
-pub(crate) fn nearest_threat(
+pub(crate) fn nearest_threats(
     herd: &Herd,
     who: Kinship,
     flock: u64,
@@ -471,12 +526,11 @@ pub(crate) fn nearest_threat(
     y: f64,
     size: f64,
     within: f64,
-    bravery: f64,
-) -> Option<Threat> {
+) -> (Option<Threat>, Option<Threat>) {
     if size > herd.max_eats {
-        return None; // такое тело не может съесть никто в мире
+        return (None, None); // nobody in the world can eat such a body
     }
-    let mut best: Option<Threat> = None;
+    let (mut best, mut hunter): (Option<Threat>, Option<Threat>) = (None, None);
     herd.grid.for_each_near(x, y, within + herd.max_half, |j, sx, sy| {
         let s = &herd.seen[j];
         if size > s.eats_up_to
@@ -488,16 +542,20 @@ pub(crate) fn nearest_threat(
         }
         let (dx, dy) = (sx - x, sy - y);
         let d2 = dx * dx + dy * dy;
-        let reach = if s.hunting { within } else { within * (1.0 - bravery) } + s.half;
+        let reach = within + s.half;
         if d2 >= reach * reach {
             return;
         }
         let gap = d2.sqrt() - s.half;
+        let t = Threat { id: s.kinship.id, x: sx, y: sy, gap, half: s.half };
         if best.is_none_or(|b| gap < b.gap) {
-            best = Some(Threat { id: s.kinship.id, x: sx, y: sy, gap, half: s.half });
+            best = Some(t);
+        }
+        if s.hunting && hunter.is_none_or(|b| gap < b.gap) {
+            hunter = Some(t);
         }
     });
-    best
+    (best, hunter)
 }
 
 /// Ближайшее живое растение строго ближе √r2.
@@ -591,6 +649,12 @@ mod tests {
         v.fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.min(x))))
     }
 
+    /// A hunt block's terms with the template's ratio, a caution gene of old (50 = weight 1) and
+    /// foreign food allowed: the hunter is hungry.
+    fn careful(caution: f64) -> Hunting {
+        Hunting { ratio: 1.5, caution: caution / 50.0, taste: Taste { foreign: true, reach: f64::INFINITY } }
+    }
+
     #[test]
     fn один_укус_берёт_ближайшее_растение_и_разрешает_равенство_по_порядку() {
         let mut plants = vec![Plant::at(1010.0, 1000.0), Plant::at(990.0, 1000.0)];
@@ -679,13 +743,13 @@ mod tests {
             now: 1,
             herd: None,
         };
-        assert!(view.best_corpse(&me).is_none());
+        assert!(view.best_corpse(&me, Taste::OWN).is_none());
         view.now = 2;
-        assert_eq!(view.best_corpse(&me).unwrap().owner, 3);
+        assert_eq!(view.best_corpse(&me, Taste::OWN).unwrap().owner, 3);
     }
 
     /// Of a fresh and a rotten corpse at equal distance a carnivore picks the fresh one, a
-    /// scavenger the rot, and a herbivore sees neither.
+    /// scavenger the rot (each on its own food), and a herbivore sees neither.
     #[test]
     fn падальщик_выбирает_гниль_мясоед_свежее() {
         use crate::genome::creature::Gene;
@@ -725,17 +789,17 @@ mod tests {
                 now,
                 herd: None,
             };
-            assert_eq!(view.best_corpse(&me).map(|c| c.owner), want, "diet {diet}");
+            assert_eq!(view.best_corpse(&me, Taste::OWN).map(|c| c.owner), want, "diet {diet}");
         }
     }
 
-    /// Whether a creature of `diet` with `energy` finds, through the corpse grid at tick 1000, a
-    /// corpse that died at `born` lying `far` of its vision away on its level.
-    fn finds_corpse(diet: f64, energy: f64, born: u64, far: f64) -> bool {
+    /// Whether a creature of `diet`, taking foreign food or not, finds through the corpse grid at
+    /// tick 1000 a corpse that died at `born` lying `far` of its vision away on its level.
+    fn finds_corpse(diet: f64, foreign: bool, born: u64, far: f64) -> bool {
         use crate::genome::creature::Gene;
         let now = 1000;
         let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
-        w.spawn(crate::CreatureGenome::BASE.with(Gene::Diet, diet), 1000.0, 1000.0, Some(energy));
+        w.spawn(crate::CreatureGenome::BASE.with(Gene::Diet, diet), 1000.0, 1000.0, Some(10.0));
         let v = &w.creatures[0];
         let me = Me {
             x: v.x,
@@ -762,24 +826,25 @@ mod tests {
             now,
             herd: None,
         };
-        view.best_corpse(&me).is_some()
+        view.best_corpse(&me, Taste { foreign, reach: f64::INFINITY }).is_some()
     }
 
-    /// The scavenger smells corpses from afar; the omnivore finds them by sight. Sated, it leaves a
-    /// fresh corpse to the hunters; hungry, it goes for it too.
+    /// The scavenger smells corpses from afar; the omnivore finds them by sight. On its own food it
+    /// leaves a fresh corpse to the hunters; with its program's «foreign food» setting it goes for
+    /// it too.
     #[test]
     fn падальщик_чует_издалека_и_сытым_не_берёт_свежее() {
         let now = 1000;
-        for (diet, energy, born, far, want) in [
-            (SCAVENGER, 40.0, now - 700, 1.8, true),
-            (1.0, 40.0, now - 700, 1.8, false),
-            (SCAVENGER, 40.0, now - 10, 0.5, false),
-            (SCAVENGER, 10.0, now - 10, 0.5, true),
+        for (diet, foreign, born, far, want) in [
+            (SCAVENGER, false, now - 700, 1.8, true),
+            (1.0, false, now - 700, 1.8, false),
+            (SCAVENGER, false, now - 10, 0.5, false),
+            (SCAVENGER, true, now - 10, 0.5, true),
         ] {
             assert_eq!(
-                finds_corpse(diet, energy, born, far),
+                finds_corpse(diet, foreign, born, far),
                 want,
-                "diet {diet}, energy {energy}, born {born}"
+                "diet {diet}, foreign {foreign}, born {born}"
             );
         }
     }
@@ -792,14 +857,14 @@ mod tests {
         use crate::config::DIET_SMELL;
         for diet in [1.0, SCAVENGER, CARNIVORE] {
             let smell = DIET_SMELL[diet as usize];
-            assert!(finds_corpse(diet, 10.0, 990, smell - 0.05), "diet {diet} smells at {smell}× vision");
+            assert!(finds_corpse(diet, true, 990, smell - 0.05), "diet {diet} smells at {smell}× vision");
             assert!(
-                !finds_corpse(diet, 10.0, 990, smell + 0.05),
+                !finds_corpse(diet, true, 990, smell + 0.05),
                 "diet {diet} smells no farther than {smell}×"
             );
         }
         assert_eq!(DIET_SMELL, [1.0, 1.0, 3.0, 1.5], "the ranges the niches were measured with");
-        assert!(!finds_corpse(0.0, 10.0, 990, 0.5), "a herbivore does not go for meat");
+        assert!(!finds_corpse(0.0, true, 990, 0.5), "a herbivore does not go for meat");
     }
 
     #[test]
@@ -857,7 +922,7 @@ mod tests {
                 now: tick,
                 herd: Some(&herd),
             };
-            assert_eq!(view.prey(&hunter, None, None).is_none(), safe);
+            assert_eq!(view.prey(&hunter, None, None, careful(50.0)).is_none(), safe);
             assert_eq!(view.nearest_threat(&hunted, hunted.pheno.vision).is_none(), safe);
             assert_eq!(view.visible_enemy(&hunter, prey.id).is_none(), safe);
         }
@@ -879,7 +944,7 @@ mod tests {
             let mut w = World::new(&WorldConfig { seed, rules, diets, ..Default::default() });
             let mut food = Grid::new(GRID_CELL);
             let mut snapshot = Herd::new();
-            let (mut checked, mut threats, mut spared) = (0, 0, 0);
+            let (mut checked, mut threats, mut spared, mut hunters) = (0, 0, 0, 0);
             let (mut hunts, mut guarded, mut crowded) = (0, 0, 0);
             for tick in 0..1500 {
                 w.step();
@@ -936,37 +1001,29 @@ mod tests {
                     checked += 1;
                 }
                 // threats, from a snapshot of the live world as at the start of the phase; each
-                // attacker's own `prey_ratio` decides whom it can threaten
+                // attacker's own program (its hunt blocks) decides whom it can threaten
                 snapshot.rebuild(&w.space, &w.creatures);
-                let lookers = w.creatures.iter().flat_map(|v| [(v, v.pheno.vision), (v, v.pheno.flee)]);
+                let share = crate::config::FLEE_SIGHT_SHARE;
+                let lookers =
+                    w.creatures.iter().flat_map(|v| [(v, v.pheno.vision), (v, v.pheno.vision * share)]);
                 for (v, within) in lookers {
                     let size = v.pheno.size;
-                    let got = nearest_threat(
-                        &snapshot,
-                        v.kinship(),
-                        v.flock,
-                        v.x,
-                        v.y,
-                        size,
-                        within,
-                        v.pheno.bravery,
-                    );
+                    let got = nearest_threats(&snapshot, v.kinship(), v.flock, v.x, v.y, size, within);
                     let can_eat_me = |u: &&Creature| {
-                        let reach =
-                            if u.mind.attack.is_some() { within } else { within * (1.0 - v.pheno.bravery) };
                         u.pheno.hunts()
-                            && size <= u.pheno.size / u.pheno.prey_ratio
-                            && dist2(u.x, u.y, v.x, v.y) < (reach + u.pheno.half).powi(2)
+                            && u.program().hunt_ratio().is_some_and(|ratio| size <= u.pheno.size / ratio)
+                            && dist2(u.x, u.y, v.x, v.y) < (within + u.pheno.half).powi(2)
                     };
                     let gap = |u: &Creature| dist2(u.x, u.y, v.x, v.y).sqrt() - u.pheno.half;
-                    let want = min(w
-                        .creatures
-                        .iter()
-                        .filter(can_eat_me)
-                        .filter(|u| !v.kinship().kin(u.kinship()) && v.flock != u.flock)
-                        .map(gap));
-                    assert_eq!(got.map(|t| t.gap), want, "сид {seed}, тик {tick}: угроза");
-                    threats += got.is_some() as usize;
+                    let stranger = |u: &&Creature| !v.kinship().kin(u.kinship()) && v.flock != u.flock;
+                    let want = min(w.creatures.iter().filter(can_eat_me).filter(stranger).map(gap));
+                    assert_eq!(got.0.map(|t| t.gap), want, "сид {seed}, тик {tick}: угроза");
+                    let hunting = |u: &&Creature| u.mind.attack.is_some();
+                    let want =
+                        min(w.creatures.iter().filter(can_eat_me).filter(stranger).filter(hunting).map(gap));
+                    assert_eq!(got.1.map(|t| t.gap), want, "seed {seed}, tick {tick}: a hunter");
+                    threats += got.0.is_some() as usize;
+                    hunters += got.1.is_some() as usize;
                     // kin that would otherwise be a threat: without it the kinship check is empty
                     spared += w
                         .creatures
@@ -996,17 +1053,24 @@ mod tests {
                         health_share: v.health / v.max_health(),
                         health: v.health,
                     };
+                    // terms that differ from creature to creature: ratio, foreign food and reach
+                    let reach = if v.id % 4 == 1 { w.space.height * 0.1 } else { f64::INFINITY };
+                    let hunt = Hunting {
+                        ratio: 1.2 + (v.id % 3) as f64 * 0.3,
+                        caution: 1.0,
+                        taste: Taste { foreign: v.id % 2 == 0, reach },
+                    };
                     let sees = |u: &Creature| (u.x - v.x).hypot(u.y - v.y) <= v.pheno.vision && u.id != v.id;
                     let strike = |u: &Creature| u.pheno.strike_on(v.pheno.size);
                     let mut candidates: Vec<usize> = (0..w.creatures.len())
                         .filter(|&j| {
                             let u = &w.creatures[j];
-                            v.pheno.hunts_now(v.energy)
+                            v.pheno.hunts_now(hunt.taste.foreign)
                                 && sees(u)
                                 && !(v.flock != 0 && v.flock == u.flock)
-                                && u.pheno.size <= v.pheno.size / v.pheno.prey_ratio
+                                && u.pheno.size <= v.pheno.size / hunt.ratio
                                 && !v.kinship().kin(u.kinship())
-                                && v.pheno.within_reach(u.y)
+                                && v.pheno.within_reach(u.y, hunt.taste.reach)
                         })
                         .collect();
                     let flocks: std::collections::BTreeSet<u64> = w
@@ -1050,7 +1114,7 @@ mod tests {
                                 allies += strike(p);
                             }
                             guarded += (allies > 0.0) as usize;
-                            Prey::of(&snapshot.seen[j], &me, allies)
+                            Prey::of(&snapshot.seen[j], &me, allies, hunt.caution)
                         })
                         .fold(None, |b: Option<Prey>, p| {
                             if b.is_none_or(|b| p.score > b.score || (p.score == b.score && p.id < b.id)) {
@@ -1059,7 +1123,7 @@ mod tests {
                                 b
                             }
                         });
-                    let got = view.prey(&me, None, None);
+                    let got = view.prey(&me, None, None, hunt);
                     // Sums in another order may differ in the last bits: compare scores, not ties.
                     let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1e-12);
                     match (got, want) {
@@ -1081,6 +1145,7 @@ mod tests {
             assert!(checked > 1000, "сид {seed}: проверено всего {checked} запросов — мир вымер?");
             assert!(threats > 100, "сид {seed}: угроз нашлось всего {threats}");
             assert!(spared > 10, "сид {seed}: родни среди угроз всего {spared}");
+            assert!(hunters > 10, "seed {seed}: only {hunters} threats were hunting");
             assert!(hunts > 100, "seed {seed}: only {hunts} worthwhile hunts");
             assert!(guarded > 100, "seed {seed}: only {guarded} guarded candidates");
             assert!(
@@ -1097,15 +1162,12 @@ mod tests {
         }
     }
 
-    /// A world with a hungry hunter (size 80) at (1000, 1000); `setup` adds the rest. Returns the
-    /// hunter's best prey by the hunter's own valuation.
-    fn best_prey(caution: f64, energy_share: f64, setup: impl Fn(&mut World)) -> Option<Prey> {
+    /// A world with a hunter (size 80) at (1000, 1000) holding `energy_share` of its store; `setup`
+    /// adds the rest. Returns the hunter's best prey by its valuation on the terms of `hunt`.
+    fn best_prey(hunt: Hunting, energy_share: f64, setup: impl Fn(&mut World)) -> Option<Prey> {
         use crate::genome::creature::Gene;
         let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
-        let hunter = crate::CreatureGenome::BASE
-            .with(Gene::Size, 80.0)
-            .with(Gene::Caution, caution)
-            .with(Gene::Diet, CARNIVORE);
+        let hunter = crate::CreatureGenome::BASE.with(Gene::Size, 80.0).with(Gene::Diet, CARNIVORE);
         w.spawn(hunter, 1000.0, 1000.0, None);
         w.creatures[0].energy = w.creatures[0].pheno.max_energy * energy_share;
         setup(&mut w);
@@ -1132,11 +1194,11 @@ mod tests {
             health_share: 1.0,
             health: v.health,
         };
-        view.prey(&me, None, None)
+        view.prey(&me, None, None, hunt)
     }
 
-    /// `layer_reach` holds the hunt too: a hunter keeping to the upper tenth of the depth with a
-    /// reach of 5% leaves prey far below alone, and takes it when it is within reach.
+    /// The reach setting holds the hunt too: a hunter keeping to the upper tenth of the depth with
+    /// a reach of 5% leaves prey far below alone, and takes it when it is within reach.
     #[test]
     fn a_hunter_leaves_prey_past_its_layers_reach() {
         use crate::genome::creature::Gene;
@@ -1146,8 +1208,7 @@ mod tests {
                 .with(Gene::Size, 80.0)
                 .with(Gene::Diet, CARNIVORE)
                 .with(Gene::MinY, 0.0)
-                .with(Gene::MaxY, 10.0)
-                .with(Gene::LayerReach, 5.0);
+                .with(Gene::MaxY, 10.0);
             w.spawn(hunter, 1000.0, 300.0, None);
             w.creatures[0].energy = w.creatures[0].pheno.max_energy * 0.3;
             w.spawn(crate::CreatureGenome::BASE.with(Gene::Size, 20.0), 1000.0, prey_y, None);
@@ -1175,7 +1236,9 @@ mod tests {
                 health_share: 1.0,
                 health: v.health,
             };
-            view.prey(&me, None, None).map(|p| p.id)
+            let reach = w.space.height * 0.05;
+            view.prey(&me, None, None, Hunting { taste: Taste { foreign: true, reach }, ..careful(50.0) })
+                .map(|p| p.id)
         };
         // the layer ends at 400, the reach at 600; the hunter sees 400 around it
         assert!(hunt(550.0).is_some(), "within reach");
@@ -1205,8 +1268,8 @@ mod tests {
             }
             small(w, 925.0, None); // a loner a little farther away
         };
-        let careless = best_prey(0.0, 0.3, setup).unwrap();
-        let careful = best_prey(50.0, 0.3, setup).unwrap();
+        let careless = best_prey(careful(0.0), 0.3, setup).unwrap();
+        let careful = best_prey(careful(50.0), 0.3, setup).unwrap();
         assert_eq!(careless.id, 2, "a careless hunter takes the nearest");
         assert_eq!(careful.id, 6, "a careful hunter took the guarded one");
         assert!(careful.score > 0.0);
@@ -1217,8 +1280,8 @@ mod tests {
         let setup = |w: &mut World| {
             small(w, 1060.0, None);
         };
-        assert_eq!(best_prey(50.0, 1.0, setup).unwrap().score, 0.0);
-        assert!(best_prey(50.0, 0.3, setup).unwrap().score > 0.0);
+        assert_eq!(best_prey(careful(50.0), 1.0, setup).unwrap().score, 0.0);
+        assert!(best_prey(careful(50.0), 0.3, setup).unwrap().score > 0.0);
     }
 
     #[test]
@@ -1232,10 +1295,10 @@ mod tests {
                 v.flock = 500;
                 v.circle = Some(Circle { x: 1080.0, y: 1000.0, radius: 150.0 });
             }
-            w.creatures[0].pheno.prey_ratio = 1.0;
         };
-        assert_eq!(best_prey(50.0, 0.3, setup).unwrap().score, 0.0);
-        assert!(best_prey(0.0, 0.3, setup).unwrap().score > 0.0);
+        // a hunt block that takes prey as big as the hunter
+        assert_eq!(best_prey(Hunting { ratio: 1.0, ..careful(50.0) }, 0.3, setup).unwrap().score, 0.0);
+        assert!(best_prey(Hunting { ratio: 1.0, ..careful(0.0) }, 0.3, setup).unwrap().score > 0.0);
     }
 
     #[test]
@@ -1255,12 +1318,12 @@ mod tests {
                 child.genome = child.genome.with(Gene::Size, 40.0); // half grown
             }
         };
-        let alone = best_prey(50.0, 0.3, |w: &mut World| {
+        let alone = best_prey(careful(50.0), 0.3, |w: &mut World| {
             small(w, 1060.0, None);
         })
         .unwrap();
-        let covered = best_prey(50.0, 0.3, with_parent(50.0)).unwrap();
-        let forgotten = best_prey(50.0, 0.3, with_parent(10.0)).unwrap();
+        let covered = best_prey(careful(50.0), 0.3, with_parent(50.0)).unwrap();
+        let forgotten = best_prey(careful(50.0), 0.3, with_parent(10.0)).unwrap();
         assert!(covered.score < alone.score, "a parent in sight did not count");
         assert_eq!(forgotten.score, alone.score, "a parent that forgot its child still covers it");
     }
@@ -1270,7 +1333,7 @@ mod tests {
     #[test]
     fn a_crowd_higher_up_does_not_hide_the_nearest_prey() {
         let near = std::cell::Cell::new(0);
-        let best = best_prey(50.0, 0.3, |w: &mut World| {
+        let best = best_prey(careful(50.0), 0.3, |w: &mut World| {
             // a row of small loners in the grid row above the hunter's, 300..360 away
             let small_genome = crate::CreatureGenome::BASE.with(crate::genome::creature::Gene::Size, 20.0);
             for i in 0..SEEN_PREY {
@@ -1282,39 +1345,43 @@ mod tests {
         assert_eq!(best.id, near.get(), "the nearest prey was never looked at");
     }
 
+    /// Whom a stranger fears: anyone whose program hunts bodies of its size (the threat), and of
+    /// them the ones hunting somebody now (the hunter). A herbivore eats no one, and a carnivore
+    /// whose program has no hunt block threatens no one either.
     #[test]
-    fn a_brave_creature_lets_a_passer_by_come_near_but_not_a_hunter() {
+    fn a_threat_is_whoever_could_hunt_it_a_hunter_whoever_does() {
+        use crate::creature::{Action, Block, Program};
         use crate::genome::creature::Gene;
-        for (diet, bravery, hunting, feared) in [
-            (2.0, 0.0, false, true),
-            (2.0, 50.0, false, false),
-            (CARNIVORE, 50.0, true, true),
-            (0.0, 0.0, true, false),
+        for (diet, hunts, hunting, threat, hunter) in [
+            (SCAVENGER, true, false, true, false),
+            (CARNIVORE, true, true, true, true),
+            (CARNIVORE, false, true, false, false),
+            (0.0, true, true, false, false),
         ] {
             let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
-            // a herbivore eats no one: nobody fears it, whatever it does
             w.spawn(
                 crate::CreatureGenome::BASE.with(Gene::Size, 80.0).with(Gene::Diet, diet),
                 1000.0,
                 1000.0,
                 None,
             );
-            // 60 from the edge of the big body: inside a flight distance of 100, outside half of it
-            w.spawn(
-                crate::CreatureGenome::BASE.with(Gene::Size, 15.0).with(Gene::Bravery, bravery),
-                1100.0,
-                1000.0,
-                None,
-            );
+            if !hunts {
+                w.creatures[0].programs = [Program::of(&[Block::does(Action::Wander)]); 2].into();
+            }
+            // 60 from the edge of the big body
+            w.spawn(crate::CreatureGenome::BASE.with(Gene::Size, 15.0), 1100.0, 1000.0, None);
             if hunting {
                 w.creatures[0].mind.attack = Some(999);
             }
             let mut herd = Herd::new();
             herd.rebuild(&w.space, &w.creatures);
             let v = &w.creatures[1];
-            let got =
-                nearest_threat(&herd, v.kinship(), v.flock, v.x, v.y, v.pheno.size, 100.0, v.pheno.bravery);
-            assert_eq!(got.is_some(), feared, "diet {diet}, bravery {bravery}, hunting {hunting}");
+            let (any, hunts_now) =
+                nearest_threats(&herd, v.kinship(), v.flock, v.x, v.y, v.pheno.size, 100.0);
+            let case = format!("diet {diet}, hunt block {hunts}, hunting {hunting}");
+            assert_eq!((any.is_some(), hunts_now.is_some()), (threat, hunter), "{case}");
+            let (none, _) = nearest_threats(&herd, v.kinship(), v.flock, v.x, v.y, v.pheno.size, 50.0);
+            assert!(none.is_none(), "{case}: farther than asked");
         }
     }
 }

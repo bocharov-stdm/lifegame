@@ -109,6 +109,8 @@ pub enum Key {
     ThermoTop,
     ThermoBottom,
     MeatFounders,
+    ProgramMutation,
+    ProgramDrift,
     /// A diet's edge: (diet H/O/S/C, edge in `rules::DIET_EDGES` order).
     Diet(u8, u8),
 }
@@ -202,8 +204,8 @@ fn percent(v: f64) -> String {
 
 /// Every field: the world's and the rules' (`BASE_FIELDS`), then the diet edges, diet by diet
 /// (`diet_field`).
-pub const FIELDS: [Field; 95] = {
-    let mut all = [NUMBER; 95];
+pub const FIELDS: [Field; 97] = {
+    let mut all = [NUMBER; 97];
     let mut i = 0;
     while i < BASE_FIELDS.len() {
         all[i] = BASE_FIELDS[i];
@@ -350,7 +352,7 @@ const fn diet_field(d: usize, e: usize) -> Field {
     }
 }
 
-const BASE_FIELDS: [Field; 55] = [
+const BASE_FIELDS: [Field; 57] = [
     // ── Мир: с чего начинается партия ───────────────────────────────────────────
     Field {
         key: Key::Creatures,
@@ -1071,6 +1073,38 @@ const BASE_FIELDS: [Field; 55] = [
         decimals: 2,
         tab: Tab::Evolution,
         rule: Some("min_mutability"),
+        ..NUMBER
+    },
+    Field {
+        key: Key::ProgramMutation,
+        label: "Мутации поведения",
+        hint: "Какая доля мутирующих детей получает изменённую программу поведения: сдвиг числа, \
+               другое условие или действие, перестановку, копию, удаление или новый блок. Умножается \
+               на мутагенность родителя. Сломанную программу отсеивает судьба её носителя.",
+        lo: 0.0,
+        hi: 1.0,
+        step: 0.001,
+        format: |v| format!("{:.1}%", v * 100.0),
+        shown: 100.0,
+        unit: " %",
+        decimals: 1,
+        tab: Tab::Evolution,
+        rule: Some("program_mutation"),
+        ..NUMBER
+    },
+    Field {
+        key: Key::ProgramDrift,
+        label: "Дрейф чисел поведения",
+        hint: "У каждого мутирующего ребёнка все числа программы поведения немного сдвигаются, как \
+               гены: при 1 порог — примерно на 10 пунктов, отношение — на 0,2, время — на четверть \
+               базы. Умножается на мутагенность. 0 — числа меняют только редкие мутации.",
+        lo: 0.0,
+        hi: 5.0,
+        step: 0.05,
+        format: |v| format!("{v:.2}"),
+        decimals: 2,
+        tab: Tab::Evolution,
+        rule: Some("program_drift"),
         ..NUMBER
     },
     Field {

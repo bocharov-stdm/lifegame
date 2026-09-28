@@ -156,6 +156,14 @@ pub struct Selected {
     pub layer: (f64, f64),
     /// What it bit on the frame's tick or the one before, if anything.
     pub eating: Option<life_core::creature::Morsel>,
+    /// Its behaviour programs, the juvenile and the adult one, and the one it lives by now.
+    pub programs: [life_core::creature::Program; 2],
+    pub stage: usize,
+    /// In the program it lives by: the block that decided this tick (None: none did, it stands),
+    /// the settings that applied, and the deciding blocks whose tests held (bit i: block i).
+    pub fired: Option<u8>,
+    pub applied: u32,
+    pub tried: u32,
 }
 
 impl Selected {
@@ -169,6 +177,10 @@ impl Selected {
                 "убегает"
             } else if v.torpid {
                 "в оцепенении"
+            } else if v.mind.fired.and_then(|i| v.program().blocks().get(usize::from(i))).map(|b| b.action)
+                == Some(life_core::creature::Action::Ambush)
+            {
+                "в засаде"
             } else if v.mind.attack.is_some() {
                 "охотится / защищается"
             } else if !v.adult() {
@@ -188,6 +200,11 @@ impl Selected {
             genome: v.genome.to_values(),
             layer: (v.pheno.layer_lo, v.pheno.layer_hi),
             eating: v.meal.filter(|m| m.tick + 1 >= world.tick).map(|m| m.food),
+            programs: *v.programs,
+            stage: v.stage(),
+            fired: v.mind.fired,
+            applied: v.mind.applied,
+            tried: v.mind.tried,
         })
     }
 }

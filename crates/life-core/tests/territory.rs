@@ -139,7 +139,7 @@ fn пришелец_выходит_из_зоны_и_не_застревает_у
     w.spawn(CreatureGenome::BASE, 5950.0, 2000.0, Some(100.0));
     let v = &mut w.creatures[0];
     v.mind.social.territory_avoid = Some(Area { flock: 99, x: 5800.0, y: 2000.0, radius: 320.0 });
-    let intent = Intent { tx: 5800.0, ty: 2000.0, slow: false, attack: None };
+    let intent = Intent::to(5800.0, 2000.0);
     let moved = steer(v, intent);
     assert!((moved.tx - 5800.0).hypot(moved.ty - 2000.0) > 150.0);
     assert!(moved.tx <= v.pheno.x_hi && moved.ty <= v.pheno.y_hi);
@@ -174,7 +174,7 @@ fn обычный_взрослый_защищает_территорию_вбл�
     territory.prepare(&mut w.flocks, &mut w.creatures, &w.space, 0);
     let targets = territory.prepare(&mut w.flocks, &mut w.creatures, &w.space, 30);
     assert_eq!(targets[0], Some(w.creatures[2].id));
-    let defended = steer(&mut w.creatures[0], Intent { tx: 900.0, ty: 1000.0, slow: true, attack: None });
+    let defended = steer(&mut w.creatures[0], Intent { pace: 0.5, ..Intent::to(900.0, 1000.0) });
     assert_eq!(defended.attack, Some(w.creatures[2].id));
     assert_eq!((defended.tx, defended.ty), (1080.0, 1000.0));
 }
@@ -196,7 +196,7 @@ fn стрелок_без_резерва_сближается_для_ближне
     let mut territory = State::default();
     territory.prepare(&mut w.flocks, &mut w.creatures, &w.space, 0);
     territory.prepare(&mut w.flocks, &mut w.creatures, &w.space, 30);
-    let defended = steer(&mut w.creatures[0], Intent { tx: 900.0, ty: 1000.0, slow: false, attack: None });
+    let defended = steer(&mut w.creatures[0], Intent::to(900.0, 1000.0));
     assert_eq!(defended.attack, Some(w.creatures[2].id));
     assert_eq!((defended.tx, defended.ty), (1080.0, 1000.0));
 }
@@ -210,7 +210,7 @@ fn из_угла_мира_пришелец_выходит_без_двухточ�
     let safe = area.radius + v.pheno.half + 4.0;
     for _ in 0..40 {
         v.mind.social.territory_avoid = Some(area);
-        let next = steer(v, Intent { tx: area.x, ty: area.y, slow: false, attack: None });
+        let next = steer(v, Intent::to(area.x, area.y));
         let dx = next.tx - v.x;
         let dy = next.ty - v.y;
         let d = dx.hypot(dy);
@@ -233,10 +233,10 @@ fn сторона_обхода_не_меняется_из_за_смены_лич
     let v = &mut w.creatures[0];
     let area = Area { flock: 99, x: 1100.0, y: 1000.0, radius: 120.0 };
     v.mind.social.territory_avoid = Some(area);
-    let first = steer(v, Intent { tx: 1300.0, ty: 1010.0, slow: false, attack: None });
+    let first = steer(v, Intent::to(1300.0, 1010.0));
     let side = v.mind.social.territory_side;
     assert!(side.is_some());
-    let next = steer(v, Intent { tx: 1300.0, ty: 990.0, slow: false, attack: None });
+    let next = steer(v, Intent::to(1300.0, 990.0));
     assert_eq!(v.mind.social.territory_side, side);
     assert_eq!((first.tx, first.ty), (next.tx, next.ty));
 }
@@ -273,7 +273,7 @@ fn overlapping_areas_at_the_edge_keep_one_course_out() {
         if safe {
             return;
         }
-        let next = steer(v, Intent { tx: 175.0, ty: 40.0, slow: false, attack: None });
+        let next = steer(v, Intent::to(175.0, 40.0));
         let (dx, dy) = (next.tx - v.x, next.ty - v.y);
         let distance = dx.hypot(dy);
         assert!(distance > 0.0, "tick {tick}: stuck at the wall");
@@ -298,7 +298,7 @@ fn касательная_на_границе_мира_меняет_сторон
     assert_eq!(life_core::rng::mix(v.id ^ area.flock) & 1, 0);
     v.mind.social.territory_avoid = Some(area);
     for _ in 0..15 {
-        let next = steer(v, Intent { tx: 450.0, ty: v.pheno.y_lo, slow: false, attack: None });
+        let next = steer(v, Intent::to(450.0, v.pheno.y_lo));
         let (dx, dy) = (next.tx - v.x, next.ty - v.y);
         let distance = dx.hypot(dy);
         assert!(distance > 1e-9, "касательная в край мира обнулила шаг");
@@ -385,7 +385,7 @@ fn a_starving_creature_crosses_a_border() {
     w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(100.0));
     let v = &mut w.creatures[0];
     let area = Area { flock: 99, x: 1300.0, y: 1000.0, radius: 200.0 };
-    let into = Intent { tx: 1300.0, ty: 1000.0, slow: false, attack: None };
+    let into = Intent::to(1300.0, 1000.0);
     v.mind.social.territory_avoid = Some(area);
     let fed = steer(v, into);
     assert!((fed.tx - into.tx).hypot(fed.ty - into.ty) > 1.0, "a fed creature walks around");
@@ -660,7 +660,7 @@ fn a_circle_pressed_against_the_wall_is_walked_around_without_zigzags() {
         territory.prepare(&mut w.flocks, &mut w.creatures, &w.space, tick);
         let v = &mut w.creatures[traveler];
         // it wants to get along the wall past the circle
-        let next = steer(v, Intent { tx: 400.0, ty: top, slow: false, attack: None });
+        let next = steer(v, Intent::to(400.0, top));
         let (dx, dy) = (next.tx - v.x, next.ty - v.y);
         let distance = dx.hypot(dy);
         if distance <= 1e-9 {

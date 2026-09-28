@@ -113,8 +113,8 @@ pub struct Memory {
     pub outside_since: Option<u64>,
     /// A hungry flock member forages outside its circle until it is fed again.
     pub foraging: bool,
+    /// The rest it is in, until what tick, and when the next may start (`Action::Rest`).
     pub rest_until: u64,
-    pub rest_count: u64,
     pub course: Option<(f64, f64)>,
     pub course_target: Option<(f64, f64)>,
     pub course_until: u64,
@@ -221,7 +221,7 @@ pub fn follows_reports(me: &Me, mind: &Mind) -> bool {
     ((mix(me.kinship.id ^ (mind.social.tick / 180)) % 10000) as f64) < me.pheno.sociability * 10000.0
 }
 
-/// Social corrections of the chosen intent: flight together, aid, rest, gathering, separation
+/// Social corrections of the chosen intent: flight together, aid, gathering, separation
 /// and a smooth turn. `returning`: the creature walks back into its flock's circle.
 pub fn adjust(
     me: &Me,
@@ -245,7 +245,7 @@ pub fn adjust(
         m.activity = Activity::Alarm;
         m.rest_until = 0;
         m.course = None;
-        return Intent { tx: aid.x, ty: aid.y, slow: false, attack: Some(aid.enemy) };
+        return Intent { attack: Some(aid.enemy), ..Intent::to(aid.x, aid.y) };
     }
     let full = me.energy / me.pheno.max_energy;
     if me.pheno.sociability >= 0.25
@@ -268,11 +268,10 @@ pub fn adjust(
         m.shared_flee = true;
         m.rest_until = 0;
         m.course = None;
+        // a flight together bursts as a flight of one's own did before the programs
         return Intent {
-            tx: me.x + away.0 * me.pheno.speed,
-            ty: me.y + away.1 * me.pheno.speed,
-            slow: false,
-            attack: None,
+            burst: true,
+            ..Intent::to(me.x + away.0 * me.pheno.speed, me.y + away.1 * me.pheno.speed)
         };
     }
     if intent.attack.is_some() {
@@ -283,23 +282,6 @@ pub fn adjust(
     }
     if was_alarm {
         m.heading = None;
-    }
-    let in_layer = me.y >= me.pheno.body_lo && me.y <= me.pheno.body_hi;
-    // Home is the flock's circle for a member, the layer for anyone else.
-    let at_home = me.circle.map_or(in_layer, |c| c.holds(me.x, me.y, 0.0));
-    // it rests from its `rest` fullness and gives up 10 points below it
-    if full < me.pheno.rest - 0.1 || !at_home {
-        m.rest_until = 0;
-    }
-    if m.rest_until <= m.tick && m.tick >= m.rest_ready && full > me.pheno.rest && at_home {
-        m.rest_count += 1;
-        m.rest_until = m.tick + 60 + mix(me.kinship.id ^ mix(m.rest_count)) % 61;
-        m.rest_ready = m.rest_until + 180;
-    }
-    if m.rest_until > m.tick {
-        m.activity = Activity::Resting;
-        m.course = None;
-        return Intent { tx: me.x, ty: me.y, slow: true, attack: None };
     }
     m.activity = if feeding { Activity::Feeding } else { Activity::Travelling };
     if !feeding && m.gathering {
@@ -338,6 +320,7 @@ pub fn adjust(
     // Плавный поворот спокойного хода; угроза и бой возвращаются выше.
     let (dx, dy) = (intent.tx - me.x, intent.ty - me.y);
     let distance = dx.hypot(dy);
+    let in_layer = me.y >= me.pheno.body_lo && me.y <= me.pheno.body_hi;
     if let Some((hx, hy)) = m.heading
         && distance > 0.0
         && !feeding
@@ -411,7 +394,7 @@ pub fn prepare_aid_with_grace(creatures: &mut [Creature], tick: u64, grace: &Gra
                 || !v.adult()
                 || (!parent && !flockmate)
                 || v.energy <= v.pheno.max_energy * 0.5
-                || v.health / v.max_health() <= v.pheno.retreat + 0.1
+                || !v.stands_firm()
                 || v.kinship().kin(enemy.kinship())
                 || v.flock == enemy.flock
                 || grace.contains(v.flock, enemy.flock, tick)

@@ -1025,3 +1025,95 @@ fn режимы_рендера_и_размер_трупа_без_окна() {
         assert_eq!(f.corpses.len(), 1);
     }
 }
+
+/// The selected creature's behaviour window: its template and a full mutated program of
+/// `MAX_BLOCKS` blocks fit the window (the chart scrolls) and overlap no widget, on either tab
+/// (the juvenile and the adult track); Esc closes it and B opens it again.
+#[test]
+fn поведение_выбранного_помещается_в_окно() {
+    use life_core::creature::program::MAX_BLOCKS;
+    use life_core::creature::{ADULT, JUVENILE, Program};
+    let _gpu = gpu();
+    each_size(|h, size, tag| {
+        let mut w = life_core::World::new(&WorldConfig { seed: 7, ..Default::default() });
+        let mut rng = life_core::rng::Rng::new(5);
+        let mut full = Program::STANDARD;
+        for _ in 0..10_000 {
+            if full.blocks().len() == MAX_BLOCKS {
+                break;
+            }
+            full.drift(1.0, &mut rng);
+            full.mutate(1.0, &mut rng);
+        }
+        assert_eq!(full.blocks().len(), MAX_BLOCKS);
+        // a founder is grown: it lives by the adult track, the mutated one
+        w.creatures[0].programs = [Program::LURKER, full].into();
+        let cases = [(w.creatures[1].id, "шаблон"), (w.creatures[0].id, "мутант")];
+        let generation = h.state().view.frame.as_ref().unwrap().world_gen;
+        h.state_mut().sim.send(Command::TestWorld(Box::new(w)));
+        // one tick, so a block has decided
+        h.state_mut().sim.send(Command::Step);
+        for _ in 0..100 {
+            h.step();
+            if h.state().view.frame.as_ref().is_some_and(|f| f.world_gen > generation && f.tick >= 1) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        h.state_mut().side_open = true;
+        h.state_mut().side_tab = SideTab::Creature;
+        for (id, name) in cases {
+            h.state_mut().sim.send(Command::Select(Some(id)));
+            for _ in 0..100 {
+                h.step();
+                if h.state().view.frame.as_ref().is_some_and(|f| f.selected.is_some_and(|s| s.id == id)) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let s = h.state().view.frame.as_ref().and_then(|f| f.selected).expect("существо выбрано");
+            assert_eq!(s.id, id);
+            assert_eq!(s.stage, ADULT, "{name}: a founder is grown");
+            let blocks = if name == "мутант" { MAX_BLOCKS } else { Program::STANDARD.blocks().len() };
+            assert_eq!(s.programs[s.stage].blocks().len(), blocks);
+            h.get_by_label("Поведение (B)").click();
+            settle(h);
+            assert!(h.state().behaviour_open, "{name}, {tag}: the card's button opens it");
+            let window = Rect::from_min_size(Pos2::ZERO, size).expand(0.5);
+            let top = h.get_by_label("Графики").rect();
+            let bottom = h.get_by_label("Выбор").rect().top();
+            let panel =
+                Rect::from_min_max(Pos2::new(top.left() - 12.0, top.top()), Pos2::new(size.x, bottom));
+            // the adult tab, the one it lives by, opens first; then the juvenile one
+            for (stage, track) in [(ADULT, "взрослая ●"), (JUVENILE, "детская")] {
+                if stage == JUVENILE {
+                    h.get_by_label(track).click();
+                    settle(h);
+                }
+                for text in ["Поведение №", "Шаблон:", "Мутаций от шаблона", "Каждый тик", track]
+                {
+                    let r = h.get_by_label_contains(text).rect();
+                    assert!(window.contains_rect(r), "{name}, {tag}: «{text}» out of the window: {r:?}");
+                }
+                check_layout(h, size, &format!("поведение, {name}, {track}, {tag}"), Some(panel));
+                shot(
+                    h,
+                    &format!(
+                        "поведение-{name}-{}-{tag}",
+                        if stage == ADULT { "взрослая" } else { "детская" }
+                    ),
+                );
+            }
+            h.get_by_label("Поведение (B)").click();
+            settle(h);
+            assert!(!h.state().behaviour_open, "{name}, {tag}: the button closes it");
+        }
+        h.key_press(eframe::egui::Key::B);
+        settle(h);
+        assert!(h.state().behaviour_open, "{tag}: B opens it");
+        h.key_press(eframe::egui::Key::Escape);
+        settle(h);
+        assert!(!h.state().behaviour_open, "{tag}: Esc closes it before the menu");
+        assert_eq!(h.state().screen, Screen::Game);
+    });
+}

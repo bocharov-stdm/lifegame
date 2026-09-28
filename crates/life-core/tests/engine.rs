@@ -155,7 +155,7 @@ fn a_hunter_strikes_the_small_one_beside_it() {
 #[test]
 fn a_hunter_leaves_the_big_and_the_distant_alone() {
     for (small, dx, why) in [
-        (70.0, 10.0, "only 1.4 times smaller: not prey for the base prey_ratio 1.5"),
+        (70.0, 10.0, "only 1.4 times smaller: not prey for the template's hunt block (1.5)"),
         (30.0, 400.0, "far away: a strike needs contact"),
     ] {
         let mut w = hunter_world(small, dx);
@@ -226,8 +226,8 @@ fn a_careless_parent_knows_only_its_tiny_children() {
 }
 
 /// A world with a big creature of size `big`, hunting, and a small one (30) `dx` to the right;
-/// `kin` sets their kinship by hand. The big one is on the hunt: a passer-by that hunts nobody
-/// is feared only closer (`bravery`).
+/// `kin` sets their kinship by hand. The big one is on the hunt: the template flees a hunter from
+/// farther than a passer-by that hunts nobody (`Cond::HunterNear` 33% of sight, `ThreatNear` 16%).
 fn threat_world(big: f64, dx: f64, kin: impl Fn(&mut World)) -> World {
     let mut w = hunter_world(30.0, dx);
     let small = w.creatures[1].id;
@@ -321,18 +321,19 @@ fn бежит_ещё_после_пропажи_угрозы() {
     }
     // угроза в виду, но дальше порога — к еде
     let mut v = creature(1000.0, 1000.0, BASE);
-    let far = Threat { gap: v.pheno.flee + 1.0, ..threat };
+    // the template flees from a hunter within a third of its sight
+    let far = Threat { gap: v.pheno.vision * FLEE_SIGHT_SHARE + 1.0, ..threat };
     move_once(&mut v, &senses_from(food).with_threat(far));
     assert!(v.x < 1000.0 && !v.fleeing(), "испугался далёкого");
 }
 
-/// A healthy creature in contact with a threat strikes back — unless the threat is `prey_ratio`
-/// times bigger than it: then it runs.
+/// A healthy creature in contact with a threat strikes back — unless the threat is its fight-back
+/// block's ratio (1.5 in the template) times bigger than it: then it runs.
 #[test]
 fn strikes_back_an_equal_but_runs_from_one_out_of_its_league() {
     for (half, fights) in [(20.0, true), (29.0, true), (30.0, false), (120.0, false)] {
         let mut v = creature(1000.0, 1000.0, BASE);
-        assert_eq!((v.pheno.half, v.pheno.prey_ratio), (20.0, 1.5));
+        assert_eq!(v.pheno.half, 20.0);
         let threat = Threat { id: 999, x: 1000.0 + 20.0 + half - 1.0, y: 1000.0, gap: 19.0, half };
         let before = v.x;
         v.step(&senses_from(|_, _, _| None).with_threat(threat));
@@ -558,38 +559,34 @@ fn move_once(v: &mut Creature, senses: &impl life_core::senses::Senses) -> (f64,
 }
 
 /// The speed term is paid for the step taken: standing costs only the body and eyes, a full step
-/// the whole upkeep, a lurker's slow step a ninth of the speed term.
+/// the whole upkeep, a lurker's slow step (a third of its speed) about a ninth of the speed term.
 #[test]
-fn медленный_ход_дешевле() {
+fn a_slow_step_costs_less() {
     let v = creature(1000.0, 1000.0, LURKER);
-    assert!((v.pheno.slow_speed - v.pheno.speed * SLOW_PACE).abs() < 1e-12);
+    let slow = v.pheno.speed * 0.33;
     let costs = [DIET_SIZE_COST[0], DIET_SPEED_COST[0]];
     let r = Rules::default();
     assert_eq!(v.pheno.still_upkeep, r.upkeep_diet(40.0, 0.0, v.pheno.vision, costs));
-    for step in [0.0, v.pheno.slow_speed, v.pheno.speed] {
+    for step in [0.0, slow, v.pheno.speed] {
         let expected = r.upkeep_diet(40.0, step, v.pheno.vision, costs);
         assert!(close(v.pheno.step_cost(step), expected), "a step of {step}");
     }
     assert!(close(v.pheno.step_cost(v.pheno.speed), v.pheno.upkeep));
-    assert!(v.pheno.step_cost(v.pheno.slow_speed) < v.pheno.upkeep);
-    // a standard one wanders at its cruise pace: the base is its full speed
-    let standard = creature(1000.0, 1000.0, BASE);
-    assert_eq!(standard.pheno.slow_speed, standard.pheno.speed);
-    let half = creature(1000.0, 1000.0, BASE.with(Gene::Cruise, 50.0));
-    assert_eq!(half.pheno.slow_speed, half.pheno.speed * 0.5);
-    let floor = creature(1000.0, 1000.0, BASE.with(Gene::Cruise, 1.0));
-    assert_eq!(floor.pheno.slow_speed, floor.pheno.speed * 0.1, "held at MIN_CRUISE");
+    assert!(v.pheno.step_cost(slow) < v.pheno.upkeep);
 }
 
-/// Затаившийся без еды бродит медленно и дёшево; стандартный — на полной.
+/// With no food in sight the lurker wanders at its template's third of its speed and cheaper, the
+/// standard one at full speed, a program wandering at half at half.
 #[test]
-fn затаившийся_без_еды_бродит_медленно() {
+fn a_lurker_without_food_wanders_slowly() {
+    use life_core::creature::{Action, Program};
     let mut lurker = creature(1000.0, 1000.0, LURKER);
     let mut standard = creature(1000.0, 1000.0, BASE);
-    let mut cruiser = creature(1000.0, 1000.0, BASE.with(Gene::Cruise, 50.0));
+    let mut cruiser = creature(1000.0, 1000.0, BASE);
+    cruiser.programs = [Program::STANDARD.tuned(Action::Wander, |b| b.args[0] = 50); 2].into();
     for _ in 0..20 {
         let (d, cost) = move_once(&mut lurker, &Blind);
-        assert!((d - lurker.pheno.slow_speed).abs() < 1e-9, "затаившийся прошёл {d}");
+        assert!((d - lurker.pheno.speed * 0.33).abs() < 1e-9, "затаившийся прошёл {d}");
         assert!(close(cost, lurker.pheno.step_cost(d)), "затаившийся потратил {cost}");
         let (d, cost) = move_once(&mut standard, &Blind);
         assert!((d - standard.pheno.speed).abs() < 1e-9, "стандартный прошёл {d}");
@@ -608,22 +605,45 @@ fn затаившийся_к_еде_на_полной() {
     assert!((d - v.pheno.speed).abs() < 1e-9 && close(cost, v.pheno.upkeep), "к еде: {d}, {cost}");
 }
 
-/// Стратегия наследуется и изредка мутирует в другую.
+/// The strategy — the template of the founders' programs — never switches; both programs, the
+/// juvenile and the adult, are inherited: a copy's exactly, a mutating child's with every number
+/// drifted, and each mutates apart in the rule's share of the mutating children.
 #[test]
-fn стратегия_мутирует_изредка() {
-    let (s, r) = (Space::default(), Rules::default());
-    let g = BASE.with(Gene::ReproThreshold, 30.0);
+fn a_child_inherits_its_parents_program_and_it_mutates_now_and_then() {
+    use life_core::creature::{ADULT, JUVENILE, Program};
+    let s = Space::default();
+    let r = Rules::default().with("program_mutation", 0.2).unwrap();
+    let g = BASE.with(Gene::ReproThreshold, 30.0).with(Gene::Strategy, 1.0);
     let mut parent = Creature::new(&s, &r, g, Some(3000.0), Some(1000.0), None, Rng::new(7));
-    let n = 2000;
-    let mut switched = 0;
+    assert_eq!(parent.programs, [Program::LURKER; 2], "a creature starts from its strategy's template");
+    let n = 4000;
+    let (mut mutated, mut drifted) = ([0; 2], [0; 2]);
     for _ in 0..n {
         parent.reproduction_wait = 0;
         parent.energy = parent.pheno.max_energy;
         let c = parent.maybe_divide(&s, &r).expect("сытый родитель не поделился");
-        switched += (c.genome[Gene::Strategy] != 0.0) as u32;
+        assert_eq!(c.genome[Gene::Strategy], 1.0, "the strategy never switches");
+        let copy = c.genome == parent.genome;
+        for stage in [JUVENILE, ADULT] {
+            let p = c.programs[stage];
+            if copy {
+                assert_eq!(p, Program::LURKER, "a copy's program is the parent's");
+            } else if p.changes == 0 {
+                assert_eq!(p.shape(), Program::LURKER.shape(), "unmutated, only its numbers drifted");
+            }
+            mutated[stage] += (p.changes > 0) as u32;
+            drifted[stage] += (!copy && p.changes == 0 && !p.same_blocks(&Program::LURKER)) as u32;
+        }
     }
-    let rate = switched as f64 / n as f64;
-    assert!((rate - STRATEGY_SWITCH_CHANCE).abs() < 0.01, "стратегию сменили {rate:.3} детей");
+    assert_eq!(STRATEGY_SWITCH_CHANCE, 0.0);
+    // half the children are copies; of the rest a fifth of each program mutates, at the base
+    // mutability of 1, and nearly every other one drifted
+    for stage in [JUVENILE, ADULT] {
+        let rate = mutated[stage] as f64 / n as f64;
+        assert!((rate - 0.1).abs() < 0.02, "program {stage} mutated in {rate:.3} of the children");
+        let rate = drifted[stage] as f64 / n as f64;
+        assert!((rate - 0.4).abs() < 0.03, "program {stage} drifted in {rate:.3} of the children");
+    }
 }
 
 /// Смешанный мир: стартовая смесь раздаётся без жребия, и тот же сид — тот же мир.
@@ -641,6 +661,37 @@ fn смешанный_мир_детерминирован() {
         w.stats()
     };
     assert_eq!(run(), run());
+}
+
+/// Behaviour evolving fast (every mutating child's program mutates): the world runs, programs
+/// spread into many different ones, lineages gather mutations, and the same seed is the same
+/// world, programs included.
+#[test]
+fn a_world_of_mutating_programs_runs_and_stays_deterministic() {
+    let rules = Rules::default().with("program_mutation", 1.0).unwrap();
+    let cfg = WorldConfig { seed: 11, strategies: vec![1.0, 1.0], rules, ..Default::default() };
+    let run = || {
+        let mut w = World::new(&cfg);
+        for _ in 0..2000 {
+            w.step();
+        }
+        w
+    };
+    let (a, b) = (run(), run());
+    assert!(!a.creatures.is_empty() && a.counters.born > 0, "life goes on");
+    let state =
+        |w: &World| w.creatures.iter().map(|v| (v.id, v.programs.clone(), v.x.to_bits())).collect::<Vec<_>>();
+    assert!(state(&a) == state(&b), "the same seed, the same world and programs");
+    let mut distinct: Vec<Vec<[u64; 2]>> = a
+        .creatures
+        .iter()
+        .flat_map(|v| (*v.programs).map(|p| p.blocks().iter().map(|b| b.code()).collect()))
+        .collect();
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert!(distinct.len() > 5, "programs diversify: {} distinct", distinct.len());
+    let changes = |stage: usize| a.creatures.iter().map(|v| v.programs[stage].changes).max().unwrap_or(0);
+    assert!(changes(0) >= 2 && changes(1) >= 2, "lineages gather mutations in both tracks");
 }
 
 // ── сетка соседей ───────────────────────────────────────────────────────────
@@ -1072,20 +1123,33 @@ fn a_burst_is_short_and_its_muscles_cost() {
     assert!(d <= speed + 1e-9, "wandering: {d}");
 }
 
-/// Torpor: below its `torpor` share of the store with no food in sight a creature stands and pays
-/// `TORPOR_UPKEEP` of its standing upkeep; it wakes the tick food comes into sight. The base never
-/// sleeps.
+/// The standard template with `blocks` put in just before its wandering.
+fn standard_with(blocks: &[life_core::creature::Block]) -> life_core::creature::Program {
+    use life_core::creature::{Action, Program};
+    let mut all = Program::STANDARD.blocks().to_vec();
+    let at = all.iter().position(|b| b.action == Action::Wander).unwrap();
+    all.splice(at..at, blocks.iter().copied());
+    Program::of(&all)
+}
+
+/// Torpor: a torpor block below 50% of the store, before wandering, so it sleeps only when nothing
+/// else is to be done. Torpid it stands and pays `TORPOR_UPKEEP` of its standing upkeep; it wakes
+/// the tick food comes into sight. The template never sleeps.
 #[test]
 fn torpor_saves_the_hungry_and_ends_at_food() {
-    let mut v = creature(3000.0, 1000.0, BASE.with(Gene::Torpor, 50.0));
+    use life_core::creature::{Action, Block, Cond, Test};
+    let torpor = standard_with(&[Block::when(Test::at(Cond::Fullness, 50).not(), Action::Torpor)]);
+    let mut v = creature(3000.0, 1000.0, BASE);
+    v.programs = [torpor; 2].into();
     v.energy = v.pheno.max_energy * 0.2;
     let (d, cost) = move_once(&mut v, &Blind);
     assert!(v.torpid && d == 0.0, "asleep: went {d}");
     assert!(close(cost, v.pheno.still_upkeep * TORPOR_UPKEEP), "paid {cost}");
     let (d, _) = move_once(&mut v, &senses_from(|_, _, _| Some((3300.0, 1000.0))));
     assert!(!v.torpid && (d - v.pheno.speed).abs() < 1e-9, "woke for food: went {d}");
-    // above its share it wanders as usual, and the base never sleeps
-    let mut fed = creature(3000.0, 1000.0, BASE.with(Gene::Torpor, 50.0));
+    // above its share it wanders as usual, and the template never sleeps
+    let mut fed = creature(3000.0, 1000.0, BASE);
+    fed.programs = [torpor; 2].into();
     fed.energy = fed.pheno.max_energy * 0.6;
     move_once(&mut fed, &Blind);
     let mut base = creature(3000.0, 1000.0, BASE);
@@ -1094,14 +1158,41 @@ fn torpor_saves_the_hungry_and_ends_at_food() {
     assert!(!fed.torpid && !base.torpid);
 }
 
-/// A rest is no torpor: with the `rest` gene below the `torpor` one a creature between them rests
-/// at its standing upkeep, not asleep at the torpor's share.
+/// A rest is no torpor: of a rest block from 50% and a torpor block below 60%, the first in the
+/// program decides. Resting it stands at its standing upkeep, awake.
 #[test]
 fn a_rest_is_no_torpor() {
-    let mut v = creature(3000.0, 1000.0, BASE.with(Gene::Rest, 50.0).with(Gene::Torpor, 60.0));
+    use life_core::creature::{Action, Block, Cond, Test};
+    let rest = Block::when(Test::at(Cond::Fullness, 50), Action::Rest);
+    let torpor = Block::when(Test::at(Cond::Fullness, 60).not(), Action::Torpor);
+    let mut v = creature(3000.0, 1000.0, BASE);
+    v.programs = [standard_with(&[rest, torpor]); 2].into();
     v.energy = v.pheno.max_energy * 0.55;
     let (d, cost) = move_once(&mut v, &Blind);
     assert_eq!(v.mind.social.activity, life_core::social::Activity::Resting);
     assert!(!v.torpid && d == 0.0, "resting in place, awake");
     assert!(close(cost, v.pheno.still_upkeep), "paid {cost}");
+    let mut w = creature(3000.0, 1000.0, BASE);
+    w.programs = [standard_with(&[torpor, rest]); 2].into();
+    w.energy = w.pheno.max_energy * 0.55;
+    let (d, cost) = move_once(&mut w, &Blind);
+    assert!(w.torpid && d == 0.0, "the torpor block first: asleep");
+    assert!(close(cost, w.pheno.still_upkeep * TORPOR_UPKEEP), "paid {cost}");
+}
+
+/// A torpid creature eats nothing, not even the plant it lies on — no sleeping filter feeder at a
+/// third of the upkeep; one standing awake in ambush eats it.
+#[test]
+fn a_torpid_one_eats_nothing() {
+    use life_core::creature::{Action, Block, Program, Programs};
+    for (action, eats) in [(Action::Ambush, true), (Action::Torpor, false)] {
+        let rules = Rules::default().with("plant_rate", 0.0).unwrap();
+        let mut w = World::new(&WorldConfig { seed: 3, n_creatures: Some(0), rules, ..Default::default() });
+        w.spawn(BASE, 1000.0, 1000.0, Some(20.0));
+        w.creatures[0].programs = Programs::both(Program::of(&[Block::does(action)]));
+        w.plants.push(life_core::plant::Plant::at(1000.0, 1000.0));
+        w.step();
+        assert_eq!(w.creatures[0].torpid, action == Action::Torpor);
+        assert_eq!(w.counters.plant_bites > 0, eats, "{action:?}");
+    }
 }

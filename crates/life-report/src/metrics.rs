@@ -57,7 +57,7 @@ impl Reference {
     pub fn load(path: &Path) -> Result<Reference, String> {
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         let data: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-        if data["model"].as_str() != Some("life-behavior/12") {
+        if data["model"].as_str() != Some("life-behavior/13") {
             return Err("Эталон другой модели поведения. Пересоздайте его через --save-reference после проверки баланса.".into());
         }
         let field = |v: &Value, k: &str| v.get(k).cloned().ok_or(format!("нет поля {k}"));
@@ -234,7 +234,7 @@ pub fn save_reference(
         .collect();
     let data = json!({
         "source": "rust",
-        "model": "life-behavior/12",
+        "model": "life-behavior/13",
         "sample_every": sample_every,
         "ticks": ticks,
         "genes": GENES.iter().map(|g| g.key).collect::<Vec<_>>(),
@@ -344,7 +344,12 @@ mod tests {
     #[test]
     fn a_reference_of_another_model_is_refused() {
         let path = std::env::temp_dir().join(format!("life-old-reference-{}.json", std::process::id()));
-        for value in ["{}", r#"{"model":"life-behavior/1"}"#, r#"{"model":"life-behavior/10"}"#] {
+        for value in [
+            "{}",
+            r#"{"model":"life-behavior/1"}"#,
+            r#"{"model":"life-behavior/10"}"#,
+            r#"{"model":"life-behavior/12"}"#,
+        ] {
             std::fs::write(&path, value).unwrap();
             assert!(Reference::load(&path).err().unwrap().contains("другой модели поведения"));
         }
@@ -358,7 +363,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("life-rules-reference-{}.json", std::process::id()));
         let reference = |rules: &str| {
             format!(
-                r#"{{"model":"life-behavior/12","ticks":1,"sample_every":1,"shape":"3:2","runs":[],"rules":{{{rules}}}}}"#
+                r#"{{"model":"life-behavior/13","ticks":1,"sample_every":1,"shape":"3:2","runs":[],"rules":{{{rules}}}}}"#
             )
         };
         std::fs::write(&path, reference(r#""cost_scale":3"#)).unwrap();

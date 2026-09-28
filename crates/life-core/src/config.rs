@@ -163,9 +163,24 @@ pub const CLONE_CHANCE: f64 = 0.5;
 pub const GRID_CELL: f64 = 256.0;
 
 // ── Стратегии ───────────────────────────────────────────────────────────────
-/// Chance that a child gets another behaviour strategy (a choice gene, `Mutation::Switch`; with a
-/// single variant the gene would be inert and draw nothing).
-pub const STRATEGY_SWITCH_CHANCE: f64 = 0.001;
+/// Chance that a child gets another strategy — the template its founders' program started from.
+/// None: behaviour is inherited and mutates as the program (`Program::mutate`); the gene keeps its
+/// draw (`Mutation::Switch` still draws with two variants), so a child keeps its lineage's name.
+pub const STRATEGY_SWITCH_CHANCE: f64 = 0.0;
+/// Share of the children that are not exact copies whose behaviour program mutates once
+/// (`Program::mutate`), times the parent's mutability; the rule `program_mutation`. A generation
+/// is a few hundred ticks, so a lineage gathers some changes in a game while most programs stay
+/// recognisable; a mutation that breaks one is weeded out by its bearer's fate.
+pub const PROGRAM_MUTATION_CHANCE: f64 = 0.05;
+/// A program threshold's mutation moves it by gauss(0, this) points (thresholds are 0‒100%).
+pub const PROGRAM_NUDGE_POINTS: f64 = 10.0;
+/// Every child that is not an exact copy moves every number of its programs by gauss(0, its
+/// nudge × this × the parent's mutability) — a threshold by 10 points, a ratio by 0.2, a time by
+/// a quarter of its base; the rule `program_drift`. The numbers evolve like the genes they
+/// replaced (the genes drift by `MUTATION_SIGMA` 30% a child): through the rare mutation alone a
+/// given number moved in about one child of 1700, and the old genes' adaptations (the pace to
+/// ~55%, the rest to ~78%, the layer reach to 69% within 20 000 ticks) could not happen.
+pub const PROGRAM_DRIFT: f64 = 1.0;
 /// The same rare switch for the other choice genes: shooting, territoriality, flock kind, layer.
 pub const CHOICE_SWITCH_CHANCE: f64 = 0.001;
 /// Ближний удар: доля диаметра, одновременно базовый урон и цена энергии.
@@ -183,18 +198,11 @@ pub const SHOT_ENERGY_SHARE: f64 = 0.02;
 pub const SHOT_PERIOD: u64 = 5;
 pub const SHOT_RANGE_SIZES: f64 = 4.0;
 
-/// Медленный ход: стратегия может идти на эту долю своей скорости и платить за
-/// скорость по фактическому шагу — по тому же закону `speed ** SPEED_POWER`,
-/// что и ген. При квадрате треть скорости стоит девятую часть, и весь расход
-/// базового существа падает примерно до 70%: заметная экономия, но ищет
-/// такое существо втрое медленнее.
-pub const SLOW_PACE: f64 = 1.0 / 3.0;
-/// The `rest` gene's base: a creature at home stands resting from this fullness, %, and stops
-/// 10 points below it (the social layer's fixed 95% and 85% before the gene). A rest lasts 60–120
-/// ticks and the next one comes 180 ticks later.
-pub const REST_FULLNESS: f64 = 95.0;
-/// The `cruise` gene is held at least this, %: slower, a creature wandering for food would stand.
-pub const MIN_CRUISE: f64 = 10.0;
+/// The slowest pace a program's block goes at, a share of speed: slower, a creature wandering for
+/// food would stand. A slow step is paid as taken, by the same law `speed ** SPEED_POWER` as the
+/// gene: at the square a third of the speed costs a ninth, and the base creature's whole upkeep
+/// falls to about 70% (the lurker's template wanders at 33%).
+pub const MIN_PACE: f64 = 0.1;
 /// A burst (the `burst` gene, ×1 to `BURST_MAX` its speed) in a chase or in flight, when the goal
 /// is farther than a normal step: at most `BURST_TICKS` ticks in a row, then `BURST_REST` ticks
 /// winded; a tick without one gives back a tick of it. The step is paid as taken (the square
@@ -204,17 +212,14 @@ pub const BURST_MAX: f64 = 2.0;
 pub const BURST_TICKS: u32 = 20;
 pub const BURST_REST: u32 = 60;
 pub const BURST_UPKEEP_SHARE: f64 = 0.25;
-/// Torpor (the `torpor` gene, % of the store, base 0 = never): below it, with no food in sight,
-/// a creature stops and pays this share of its standing upkeep (times the cold's saving). It wakes
-/// the tick food comes into sight or smell, or a threat comes within its flight distance (then it
-/// flees as usual); asleep it does not search. A rest (`social::adjust`) is never torpor. It only
-/// saves: never below nothing, so it never makes energy. The gene moves by points
-/// (`Mutation::Shift`).
+/// Torpor (`Action::Torpor`, when its program chooses it): a creature stands and pays this share of
+/// its standing upkeep (times the cold's saving); it wakes when its program chooses otherwise. It
+/// only saves: never below nothing, so it never makes energy.
 pub const TORPOR_UPKEEP: f64 = 0.3;
-pub const TORPOR_STEP: f64 = 5.0;
 
 // Combat and hunting are always on: the peaceful world (the old `cannibalism` rule) is gone.
-// There is no world size ratio either: whom one attacks first is its own `prey_ratio` gene.
+// There is no world size ratio either: whom one attacks is up to the blocks of its program (the
+// ratios of `Action::Hunt`, `Action::FightBack` and `Action::Rival`).
 
 // ── Питание ─────────────────────────────────────────────────────────────────
 /// Chance that a mutating child's diet steps to a neighbour (`genome::creature::DIET_NEIGHBOURS`),
@@ -279,9 +284,10 @@ pub const COLD_SLOWING: f64 = 0.4;
 pub const COLD_BLOOD_STEP: f64 = 10.0;
 /// Scavenger founders (in a start mix) start this cold-blooded, in the deep with the rot.
 pub const SCAVENGER_START_COLD: f64 = 100.0;
-/// Which food is a diet's own (plants, fresh meat, rot, bones): a sated creature eats and goes
-/// for only its own, and takes another niche's food only when hungry (the inherited `picky`). The
-/// omnivore has no foreign food: it is the generalist (bones it cannot digest at all).
+/// Which food is a diet's own (plants, fresh meat, rot, bones): a creature eats and goes for only
+/// its own, and takes another niche's food only when its program says so this tick
+/// (`Action::EatForeign`; the template, below 30% of its store). The omnivore has no foreign food:
+/// it is the generalist (bones it cannot digest at all).
 pub const DIET_OWN: [[bool; 4]; 4] = [
     [true, false, false, false], // травоядный
     [true, true, true, false],   // всеядный
@@ -292,7 +298,7 @@ pub const DIET_OWN: [[bool; 4]; 4] = [
 /// genes): in the deep, where rot will settle. A start condition, not a rule — the genes mutate.
 pub const SCAVENGER_START_LAYER: (f64, f64) = (50.0, 100.0);
 /// Founders dealt a meat diet (scavenger, carnivore) start this many times bigger. Equal to the
-/// others they had no prey (a hunter takes prey `prey_ratio` times smaller, 2.5 then, and newborns
+/// others they had no prey (a hunter took prey `prey_ratio` times smaller, 2.5 then, and newborns
 /// are half grown) and starved by tick ~400 without a single strike. A start condition: the gene
 /// mutates.
 pub const MEAT_FOUNDER_SIZE: f64 = 2.0;

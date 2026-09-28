@@ -27,29 +27,35 @@ fn отдых_стоит_энергии_и_кончается_при_голод�
     assert_ne!(w.creatures[0].mind.social.activity, Activity::Resting);
 }
 
-/// The `rest` gene is the fullness it rests from: at 60% a creature three quarters full rests, at
-/// the base 95% it does not; either gives up 10 points below.
+/// The fullness it rests from is its rest block's test: from 60% a creature three quarters full
+/// rests, with the template's 95% it does not; a second block keeps the rest down to 50%.
 #[test]
-fn the_rest_gene_sets_the_fullness_to_rest_from() {
-    for (rest, rests) in [(60.0, true), (life_core::config::REST_FULLNESS, false)] {
+fn the_rest_block_sets_the_fullness_to_rest_from() {
+    use life_core::creature::{Action, Block, Cond, Program, Test};
+    let early = Program::of(&[
+        Block::when(Test::at(Cond::Fullness, 60), Action::Rest),
+        Block::when2(Test::is(Cond::Resting), Test::at(Cond::Fullness, 50), Action::Rest),
+        Block::does(Action::Wander),
+    ]);
+    for (program, rests) in [(early, true), (Program::STANDARD, false)] {
         let mut w = world();
-        w.spawn(
-            CreatureGenome::BASE.with(life_core::genome::creature::Gene::Rest, rest),
-            1000.0,
-            1000.0,
-            None,
-        );
+        w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, None);
         let v = &mut w.creatures[0];
+        v.programs = [program; 2].into();
         v.reproduction_wait = 1000;
         v.energy = v.pheno.max_energy * 0.75;
         w.step();
-        assert_eq!(w.creatures[0].mind.social.activity == Activity::Resting, rests, "rest from {rest}%");
+        assert_eq!(w.creatures[0].mind.social.activity == Activity::Resting, rests, "{rests}");
     }
     let mut w = world();
-    w.spawn(CreatureGenome::BASE.with(life_core::genome::creature::Gene::Rest, 60.0), 1000.0, 1000.0, None);
+    w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, None);
+    w.creatures[0].programs = [early; 2].into();
     w.creatures[0].reproduction_wait = 1000;
     w.creatures[0].energy = w.creatures[0].pheno.max_energy * 0.75;
     w.step();
+    w.creatures[0].energy = w.creatures[0].pheno.max_energy * 0.55;
+    w.step();
+    assert_eq!(w.creatures[0].mind.social.activity, Activity::Resting, "rests on above 50%");
     w.creatures[0].energy = w.creatures[0].pheno.max_energy * 0.49;
     w.step();
     assert_ne!(w.creatures[0].mind.social.activity, Activity::Resting, "gives up below 50%");
@@ -97,6 +103,8 @@ fn участник_вдали_от_круга_возвращается_а_в_к
         for v in &mut w.creatures {
             v.flock = tag;
             v.reproduction_wait = 1000;
+            // flocks are off, and so are the templates' flock blocks: members get them back
+            v.programs = life_core::creature::Programs::both(life_core::creature::Program::IN_FLOCKS);
         }
         w.plants.push(life_core::plant::Plant::at(1000.0, 1150.0));
         w.step();
@@ -370,11 +378,14 @@ fn новый_отдых_не_начинается_сразу_после_ста�
     let mut w = world();
     w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(100.0));
     w.creatures[0].reproduction_wait = 1000;
+    let mut rested = 0;
     for _ in 0..170 {
         w.creatures[0].energy = 100.0;
         w.step();
+        rested += (w.creatures[0].mind.social.activity == Activity::Resting) as u32;
     }
-    assert_eq!(w.creatures[0].mind.social.rest_count, 1);
+    // the template rests 90 ticks, then pauses 180
+    assert_eq!(rested, 90, "one rest");
     assert_ne!(w.creatures[0].mind.social.activity, Activity::Resting);
 }
 

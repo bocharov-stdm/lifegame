@@ -100,6 +100,7 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     }
     print_intervals(snaps, rows);
     print_genome(first, last);
+    print_programs(&res.world);
     print_depth(last);
     // по ширине смотреть есть на что, только если еда по ней неравномерна
     if res.world.rules.plant_width.kind() != Profile::Uniform {
@@ -192,6 +193,63 @@ fn print_genome(first: &Snapshot, last: &Snapshot) {
         (Some(a), Some(b)) => print_genes(&creature::GENES, &a, &b),
         (Some(_), None) => println!("  к концу существ не осталось"),
         _ => println!("  существ не было"),
+    }
+}
+
+/// The behaviour programs alive at the end, the juvenile track and the adult one apart. The numbers
+/// of every mutating child drift, so programs are grouped by their shape (`Program::shape`: tests,
+/// actions and flags, no numbers): how many shapes, how many keep the founders' one, and the three
+/// most common, each with the medians of its numbers. `METRIC` lines give a sweep the same: shapes,
+/// the template's share, and the medians of the hunt's ratio and of how far the threat tests look.
+fn print_programs(world: &life_core::World) {
+    use life_core::creature::{ADULT, JUVENILE, Program};
+    let total = world.creatures.len();
+    if total == 0 {
+        return;
+    }
+    let median = |mut xs: Vec<f64>| {
+        xs.sort_by(f64::total_cmp);
+        xs.get(xs.len() / 2).copied().unwrap_or(f64::NAN)
+    };
+    // both templates have one shape: the lurker differs only in a number
+    let template = Program::STANDARD.shape();
+    for (stage, track, key) in [(JUVENILE, "детская", "juvenile"), (ADULT, "взрослая", "adult")]
+    {
+        let mut groups: std::collections::BTreeMap<Vec<u64>, Vec<Program>> = Default::default();
+        for v in &world.creatures {
+            let p = v.programs[stage];
+            groups.entry(p.shape()).or_default().push(p);
+        }
+        let on_template = groups.get(&template).map_or(0, Vec::len);
+        let changed = world.creatures.iter().filter(|v| v.programs[stage].changes > 0).count();
+        println!(
+            "\nПрограммы поведения к концу, {track} дорожка: {} форм у {total} существ; форма шаблона у {}, \
+             мутировавших {}",
+            groups.len(),
+            percent(on_template as u64, total as u64),
+            percent(changed as u64, total as u64)
+        );
+        let mut top: Vec<(&Vec<u64>, &Vec<Program>)> = groups.iter().collect();
+        top.sort_by_key(|g| std::cmp::Reverse(g.1.len()));
+        for (shape, group) in top.into_iter().take(3) {
+            let name = if *shape == template {
+                " — форма шаблонов основателей"
+            } else {
+                ""
+            };
+            println!("  {}{name}, числа — медианы:", percent(group.len() as u64, total as u64));
+            let middle = Program::median(group).expect("a group has one shape");
+            for line in middle.describe() {
+                println!("    {line}");
+            }
+        }
+        let programs = || world.creatures.iter().map(|v| v.programs[stage]);
+        let hunt = median(programs().filter_map(|p| p.hunt_ratio()).collect());
+        let threat = median(programs().map(|p| p.threat_range()).collect());
+        println!("METRIC {key}_shapes {}", groups.len());
+        println!("METRIC {key}_template_share {:.4}", on_template as f64 / total as f64);
+        println!("METRIC {key}_hunt_ratio {hunt:.3}");
+        println!("METRIC {key}_threat_range {threat:.3}");
     }
 }
 

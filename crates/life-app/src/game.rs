@@ -28,21 +28,17 @@ fn speed_label(index: usize) -> String {
     }
 }
 
-/// What the world eats and how it hunts in the last snapshot: diet shares in %, the median prey
-/// size ratio and the share of shooters in %.
-pub(crate) fn hunting_summary(history: &History) -> Option<([f64; 4], f64, f64)> {
+/// What the world eats and how it shoots in the last snapshot: diet shares in % and the share of
+/// shooters in %. (How much smaller prey must be lives in each creature's program now.)
+pub(crate) fn hunting_summary(history: &History) -> Option<([f64; 4], f64)> {
     let genes = history.snapshots.last()?.genes.as_ref()?;
     let shares = |gene: creature::Gene| match genes[gene as usize] {
         GeneStat::Shares(shares) => Some(shares),
         _ => None,
     };
-    let ratio = match genes[creature::Gene::PreyRatio as usize] {
-        GeneStat::Number(spread) => spread.p50,
-        _ => return None,
-    };
     let diets = shares(creature::Gene::Diet)?;
     let diets = [0, 1, 2, 3].map(|k| diets[k] * 100.0);
-    Some((diets, ratio, shares(creature::Gene::Shooter)?[1] * 100.0))
+    Some((diets, shares(creature::Gene::Shooter)?[1] * 100.0))
 }
 
 /// Команда `life-report`, которая повторяет партию без окна.
@@ -149,6 +145,12 @@ impl LifeApp {
         if self.lab_open {
             self.lab_window(&ctx);
         }
+        if self.behaviour_open {
+            match self.view.frame.as_ref().and_then(|f| f.selected) {
+                Some(s) => crate::behaviour::behaviour_window(&ctx, &mut self.behaviour_open, &s),
+                None => self.behaviour_open = false,
+            }
+        }
         if self.stats_open {
             self.stats_window(&ctx);
         }
@@ -174,12 +176,13 @@ impl LifeApp {
                     p(Key::L),
                     p(Key::I),
                     p(Key::Escape),
+                    p(Key::B),
                 ],
                 [i.key_down(Key::W), i.key_down(Key::S), i.key_down(Key::A), i.key_down(Key::D)],
                 i.stable_dt.min(0.1) as f64,
             )
         });
-        let [space, step, faster, slower, home, follow, tab, lab, stats, escape] = keys;
+        let [space, step, faster, slower, home, follow, tab, lab, stats, escape, behaviour] = keys;
         if space {
             self.sim.send(Command::TogglePause);
         }
@@ -204,6 +207,9 @@ impl LifeApp {
         if stats {
             self.stats_open = !self.stats_open;
         }
+        if behaviour && self.view.frame.as_ref().is_some_and(|f| f.selected.is_some()) {
+            self.behaviour_open = !self.behaviour_open;
+        }
         if escape {
             if self.view.area.is_some() {
                 self.clear_region();
@@ -212,6 +218,8 @@ impl LifeApp {
                 self.view.cancel_area_drag();
             } else if self.lab_open {
                 self.lab_open = false;
+            } else if self.behaviour_open {
+                self.behaviour_open = false;
             } else if self.stats_open {
                 self.stats_open = false;
             } else {
@@ -379,10 +387,7 @@ impl LifeApp {
     /// Hunting, shooting and flocks: minor facts, folded away.
     fn other_facts(&self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("Прочее").default_open(false).show(ui, |ui| {
-            if let Some((_, ratio, shooters)) = hunting_summary(&self.history) {
-                ui.label(format!("Охотятся на тех, кто мельче хотя бы в {ratio:.1} раза")).on_hover_text(
-                    "Медиана по всем: этот ген есть у каждого, но работает только у тех, кто ест свежее мясо.",
-                );
+            if let Some((_, shooters)) = hunting_summary(&self.history) {
                 ui.label(format!(
                     "Умеют стрелять {shooters:.1}% · выстрелов за 10 000 тиков {}",
                     spaced(self.history.shots_in_window())
@@ -539,13 +544,14 @@ impl LifeApp {
             return;
         };
         let avg = self.history.counts.last().and_then(|p| p.genom);
-        creature_card(ui, &s, avg, &rules);
+        creature_card(ui, &s, avg, &rules, &mut self.behaviour_open);
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             let following = self.view.following();
             if ui.selectable_label(following, "Следить (F)").clicked() {
                 self.view.toggle_follow();
             }
+
             if ui.button("Снять выбор").clicked() {
                 self.sim.send(Command::Select(None));
                 if let Some(cam) = &mut self.view.camera {
@@ -724,12 +730,28 @@ impl LifeApp {
 }
 
 /// Карточка выбранного существа: энергия, гены.
-fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; N]>, rules: &Rules) {
+/// `behaviour`: whether its behaviour window is open; the card's header toggles it.
+fn creature_card(
+    ui: &mut egui::Ui,
+    s: &Selected,
+    avg: Option<[f64; N]>,
+    rules: &Rules,
+    behaviour: &mut bool,
+) {
     let color = rgb(CREATURE_COLOR);
     ui.horizontal(|ui| {
         ui.label(RichText::new("●").color(color).size(18.0));
         ui.label(RichText::new("Существо").strong().size(17.0));
         ui.colored_label(MUTED, format!("№ {}", s.id));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .selectable_label(*behaviour, "Поведение (B)")
+                .on_hover_text("Блок-схема его программы поведения")
+                .clicked()
+            {
+                *behaviour = !*behaviour;
+            }
+        });
     });
     ui.label(format!(
         "Тело {:.1} / {:.1} · возраст {:.0}",
@@ -752,17 +774,34 @@ fn creature_card(ui: &mut egui::Ui, s: &Selected, avg: Option<[f64; N]>, rules: 
     );
     ui.label(format!("Здоровье {:.1} / {:.1} · {}", s.health, s.max_health, s.state));
     ui.label(s.flock.map_or("Одиночка".into(), |id| format!("Стая № {id}")));
-    let diet = &creature::DIET_VARIANTS[(s.genome[creature::Gene::Diet as usize] as usize).min(3)];
+    let diet_index = (s.genome[creature::Gene::Diet as usize] as usize).min(3);
+    let diet = &creature::DIET_VARIANTS[diet_index];
+    let program = &s.programs[s.stage];
+    // how much smaller its prey, by the program it lives by now; only who digests fresh meat hunts
+    let prey = match program.hunt_ratio() {
+        Some(ratio) if rules.diets[diet_index].digestion[1] > 0.0 => {
+            format!(" · добыча мельче в {} раза", format!("{ratio:.1}").replace('.', ","))
+        }
+        _ => String::new(),
+    };
+    ui.colored_label(color, format!("Питание: {}{prey}", diet.label)).on_hover_text(diet.about);
+    ui.colored_label(MUTED, diet_bonuses(s.genome[creature::Gene::Diet as usize], rules));
+    let template = life_core::creature::strategy::VARIANTS
+        .get(s.genome[creature::Gene::Strategy as usize] as usize)
+        .map_or("?", |v| v.label);
+    let track = if s.stage == life_core::creature::JUVENILE { "детская" } else { "взрослая" };
     ui.colored_label(
-        color,
+        MUTED,
         format!(
-            "Питание: {} · добыча до 1/{:.1} своего размера",
-            diet.label,
-            s.genome[creature::Gene::PreyRatio as usize],
+            "Поведение: {template}, дорожка {track}, мутаций {}, блоков {}",
+            program.changes,
+            program.blocks().len()
         ),
     )
-    .on_hover_text(diet.about);
-    ui.colored_label(MUTED, diet_bonuses(s.genome[creature::Gene::Diet as usize], rules));
+    .on_hover_text(
+        "Две программы поведения: детская — пока растёт, взрослая — когда вырос. \
+         Блок-схемы — по кнопке «Поведение (B)».",
+    );
     if let Some(food) = s.eating {
         use life_core::corpse::Stage;
         use life_core::creature::Morsel;

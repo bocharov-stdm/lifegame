@@ -463,16 +463,17 @@ impl World {
         ) -> &'a crate::corpse::Corpse {
             claimed.iter().find(|(k, _)| *k == j).map_or(&corpses[j], |(_, c)| c)
         }
-        // Hunger is judged once, before the meal: the same in both feeding phases.
-        let hungry: Vec<bool> = creatures.iter().map(|v| v.pheno.hungry(v.energy)).collect();
-        let rivals: Vec<bool> = creatures.iter().map(|v| v.pheno.rivals(v.energy)).collect();
+        // Whether it eats another niche's food was its program's setting for this tick
+        // (`Stance::foreign`), the same in both feeding phases.
+        let foreign: Vec<bool> = creatures.iter().map(|v| v.mind.stance.foreign).collect();
         // What each one eats this tick: rivals fight only over the same food.
         let mut feeding = vec![crate::combat::Feeding::Nothing; creatures.len()];
         let plant_bite = rules.plant_energy * rules.plant_bite_yield / f64::from(crate::plant::PORTIONS);
-        for (i, v) in creatures.iter_mut().enumerate().filter(|(_, v)| v.alive) {
+        // A torpid creature eats nothing, not even what touches it (`Creature::torpid`).
+        for (i, v) in creatures.iter_mut().enumerate().filter(|(_, v)| v.alive && !v.torpid) {
             // Only what the diet digests is eaten at all: a meat-eater does not take a plant from
             // a herbivore for nothing, a herbivore does not touch a corpse. Sated, only its own.
-            let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.stage(now), hungry[i]) > 0.0;
+            let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.stage(now), foreign[i]) > 0.0;
             let corpse = crate::corpse::contact_by(
                 corpse_grid,
                 |j| shadow(&claimed, lying, j),
@@ -484,7 +485,7 @@ impl World {
             );
             let prefer_corpse = corpse.is_some_and(|j| {
                 let c = shadow(&claimed, lying, j);
-                c.portion(rules.plant_energy) * v.pheno.corpse_efficiency(c.stage(now), hungry[i])
+                c.portion(rules.plant_energy) * v.pheno.corpse_efficiency(c.stage(now), foreign[i])
                     > plant_bite * v.pheno.plant_efficiency
             });
             let plant = if prefer_corpse || !v.pheno.eats_plants() {
@@ -523,7 +524,6 @@ impl World {
                 territorial_targets: &territorial_targets,
                 grace: &self.grace,
                 feeding: &feeding,
-                rivals: &rivals,
             },
         );
         counters.ranged_shots += result.shots.len() as u64;
@@ -534,10 +534,10 @@ impl World {
         }
         // Трупы прошлого тика делятся между выжившими по порядку ID.
         for (i, v) in creatures.iter_mut().enumerate() {
-            if !v.alive || fed[i] {
+            if !v.alive || fed[i] || v.torpid {
                 continue;
             }
-            let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.stage(now), hungry[i]) > 0.0;
+            let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.stage(now), foreign[i]) > 0.0;
             if let Some(bite) = crate::corpse::bite(
                 corpse_grid,
                 corpses,

@@ -4,8 +4,9 @@ use super::{GeneKind, GeneSpec, Genome, Mutation, Variant, bases};
 use crate::config::{
     CHOICE_SWITCH_CHANCE, COLD_BLOOD_STEP, DIET_JUMP_CHANCE, DIET_MEAT_STEP_CHANCE, DIET_STEP_CHANCE, FLOCKS,
     HERBIVORE_LEAP_CARNIVORE, HERBIVORE_LEAP_SCAVENGER, LIFESPAN_BASE, LIFESPAN_MAX, LIFESPAN_MIN,
-    REST_FULLNESS, STRATEGY_SWITCH_CHANCE, TORPOR_STEP,
+    STRATEGY_SWITCH_CHANCE,
 };
+use crate::creature::Programs;
 use crate::creature::strategy::VARIANTS as STRATEGIES;
 use crate::rng::Rng;
 
@@ -23,9 +24,7 @@ pub enum Gene {
     Strategy,
     Mutability,
     Maturation,
-    Bravery,
     Diet,
-    PreyRatio,
     Sociability,
     Shooter,
     FirePreference,
@@ -36,17 +35,10 @@ pub enum Gene {
     FlockKind,
     LayerBound,
     FlockSpacing,
-    Caution,
     Forage,
-    Picky,
-    Rivalry,
     Lifespan,
     ColdBlood,
-    LayerReach,
-    Cruise,
-    Rest,
     Burst,
-    Torpor,
 }
 
 impl Gene {
@@ -61,9 +53,7 @@ impl Gene {
         Gene::Strategy,
         Gene::Mutability,
         Gene::Maturation,
-        Gene::Bravery,
         Gene::Diet,
-        Gene::PreyRatio,
         Gene::Sociability,
         Gene::Shooter,
         Gene::FirePreference,
@@ -74,21 +64,14 @@ impl Gene {
         Gene::FlockKind,
         Gene::LayerBound,
         Gene::FlockSpacing,
-        Gene::Caution,
         Gene::Forage,
-        Gene::Picky,
-        Gene::Rivalry,
         Gene::Lifespan,
         Gene::ColdBlood,
-        Gene::LayerReach,
-        Gene::Cruise,
-        Gene::Rest,
         Gene::Burst,
-        Gene::Torpor,
     ];
 }
 
-pub const N: usize = 34;
+pub const N: usize = 25;
 
 pub const PACK_VARIANTS: [Variant; 2] = [
     Variant {
@@ -259,8 +242,8 @@ pub const GENES: [GeneSpec; N] = [
     },
     GeneSpec {
         key: "strategy",
-        label: "стратегия",
-        about: "Как себя ведёт; потомок изредка получает другую.",
+        label: "происхождение",
+        about: "С какой программы поведения начинал род основателей. Потомкам не меняется: наследуется и мутирует сама программа.",
         kind: GeneKind::Choice(&STRATEGIES),
         base: 0.0,
         mutation: Mutation::Switch { chance: STRATEGY_SWITCH_CHANCE },
@@ -283,14 +266,6 @@ pub const GENES: [GeneSpec; N] = [
         base: 50.0,
         mutation: SCALE,
     },
-    GeneSpec {
-        key: "bravery",
-        label: "храбрость",
-        about: "До какой потери здоровья защищается; чем храбрее, тем ближе подпускает чужака, который ни на кого не охотится, %.",
-        kind: GeneKind::Percent,
-        base: 50.0,
-        mutation: SCALE,
-    },
     // Replaced the numeric `carnivory` in place (see `genome/mod.rs`).
     GeneSpec {
         key: "diet",
@@ -306,14 +281,6 @@ pub const GENES: [GeneSpec; N] = [
             up: &DIET_TOWARDS_MEAT,
             leaps: &DIET_LEAPS,
         },
-    },
-    GeneSpec {
-        key: "prey_ratio",
-        label: "отношение_добычи",
-        about: "Во сколько раз добыча меньше охотника (1–5).",
-        kind: GeneKind::Absolute,
-        base: 1.5,
-        mutation: SCALE,
     },
     GeneSpec {
         key: "sociability",
@@ -398,35 +365,11 @@ pub const GENES: [GeneSpec; N] = [
         mutation: SCALE,
     },
     GeneSpec {
-        key: "caution",
-        label: "осторожность",
-        about: "Насколько охотник боится ответных ударов добычи и её видимых союзников, %.",
-        kind: GeneKind::Percent,
-        base: 50.0,
-        mutation: SCALE,
-    },
-    GeneSpec {
         key: "forage",
         label: "вылазки",
         about: "Ниже этой доли запаса член стаи кормится и вне своего круга, пока не наберёт в 1,75 раза больше, %.",
         kind: GeneKind::Percent,
         base: 40.0,
-        mutation: SCALE,
-    },
-    GeneSpec {
-        key: "picky",
-        label: "разборчивость",
-        about: "Ниже этой доли запаса ест и чужую пищу (падальщик — свежее мясо, мясоед — гниль), выше — только свою, %.",
-        kind: GeneKind::Percent,
-        base: 30.0,
-        mutation: SCALE,
-    },
-    GeneSpec {
-        key: "rivalry",
-        label: "задиристость",
-        about: "Ниже этой доли запаса бьёт у еды чужака не из своей стаи, если тот мельче в «отношение_добычи» раз; сытым ест рядом мирно, %.",
-        kind: GeneKind::Percent,
-        base: 30.0,
         mutation: SCALE,
     },
     GeneSpec {
@@ -449,34 +392,6 @@ pub const GENES: [GeneSpec; N] = [
         mutation: Mutation::Shift { points: COLD_BLOOD_STEP },
     },
     GeneSpec {
-        key: "layer_reach",
-        label: "выход_из_слоя",
-        about: "Насколько далеко за край своего слоя выходит за видимой едой, % глубины мира. 100% — \
-                куда угодно; 0 — ест только в своём слое.",
-        kind: GeneKind::Percent,
-        base: 100.0,
-        mutation: SCALE,
-    },
-    GeneSpec {
-        key: "cruise",
-        label: "крейсерский_ход",
-        about: "С какой долей своей скорости бродит, пока не видит еды (10–100%). Шаг оплачивается \
-                по его длине: медленный поиск дешевле, но еду находит позже. Затаившийся бродит ещё \
-                втрое медленнее, %.",
-        kind: GeneKind::Percent,
-        base: 100.0,
-        mutation: SCALE,
-    },
-    GeneSpec {
-        key: "rest",
-        label: "сытость_для_отдыха",
-        about: "С какой сытости встаёт отдохнуть в своём слое, не тратясь на ход; бросает отдых, когда \
-                сытость упадёт на 10 п.п. ниже. Стоящего легче поймать, %.",
-        kind: GeneKind::Percent,
-        base: REST_FULLNESS,
-        mutation: SCALE,
-    },
-    GeneSpec {
         key: "burst",
         label: "рывок",
         about: "Во сколько раз быстрее своей скорости бросается в погоне и в бегстве (1–2): не дольше \
@@ -485,16 +400,6 @@ pub const GENES: [GeneSpec; N] = [
         kind: GeneKind::Absolute,
         base: 1.0,
         mutation: SCALE,
-    },
-    GeneSpec {
-        key: "torpor",
-        label: "оцепенение",
-        about: "Ниже этой доли запаса, не видя и не чуя еды, замирает: тратит 30% расхода стоя, пока \
-                еда не покажется. В оцепенении не ищет еду; близкая угроза будит, и оно убегает, %.",
-        kind: GeneKind::Percent,
-        // never, as before the gene; it moves off zero by points
-        base: 0.0,
-        mutation: Mutation::Shift { points: TORPOR_STEP },
     },
 ];
 
@@ -526,10 +431,35 @@ impl CreatureGenome {
 
     /// The child's genome: an exact copy with `clone_share`, otherwise mutated (`mutate_values`).
     pub fn mutate_by(&self, h: &super::Heredity, rng: &mut Rng) -> Self {
-        let mut child = *self;
         if rng.random() < h.clone_share {
-            return child; // an exact copy: no gene mutates
+            return *self; // an exact copy: no gene mutates
         }
+        self.mutated(h, rng)
+    }
+
+    /// The child's genome and behaviour programs: with `clone_share` exact copies of all (the
+    /// programs shared, not copied); otherwise the genes mutate (`mutate_values`), then each
+    /// program — the juvenile one, then the adult one — drifts, every number a little
+    /// (`Program::drift`, the rule `program_drift`), and mutates with the rule `program_mutation`
+    /// (`Program::mutate`), both times the parent's mutability.
+    pub fn inherit(&self, programs: &Programs, h: &super::Heredity, rng: &mut Rng) -> (Self, Programs) {
+        if rng.random() < h.clone_share {
+            return (*self, programs.clone());
+        }
+        let child = self.mutated(h, rng);
+        let mutability = super::mutability_of(self[Gene::Mutability], h.min_mutability);
+        let mut next = **programs;
+        for p in &mut next {
+            p.drift(h.program_drift * mutability, rng);
+            p.mutate(h.program_mutation * mutability, rng);
+        }
+        let programs = if next == **programs { programs.clone() } else { Programs::new(next) };
+        (child, programs)
+    }
+
+    /// Every gene by its law, no clone draw.
+    fn mutated(&self, h: &super::Heredity, rng: &mut Rng) -> Self {
+        let mut child = *self;
         let mutability = super::mutability_of(self[Gene::Mutability], h.min_mutability);
         // `DIET_LEAPS` with the world's chances, in the same order
         let herbivore = [(3, h.diet_leap_carnivore), (2, h.diet_leap_scavenger)];
@@ -542,7 +472,6 @@ impl CreatureGenome {
         super::mutate_values(&mut child.0, &GENES, h.sigma, mutability, rng, Some(diet));
         child.0[Gene::Mutability as usize] = super::mutability_of(child[Gene::Mutability], h.min_mutability);
         child.0[Gene::Lifespan as usize] = child[Gene::Lifespan].clamp(LIFESPAN_MIN, LIFESPAN_MAX);
-        child.0[Gene::PreyRatio as usize] = child[Gene::PreyRatio].clamp(1.0, 5.0);
         child
     }
 }
@@ -686,8 +615,8 @@ mod tests {
         assert!((0..1000).all(|_| full.mutate(0.3, &mut rng)[Gene::ColdBlood] <= 100.0));
     }
 
-    /// Мутагенность родителя растягивает разброс всех генов, и свой тоже, и
-    /// чаще меняет стратегию; потолок `MAX_MUTABILITY` держит её конечной.
+    /// A parent's mutability stretches the spread of every gene, its own too, and mutates the
+    /// behaviour program more often; the ceiling `MAX_MUTABILITY` keeps it finite.
     #[test]
     fn мутагенность_растягивает_разброс_потомков() {
         let spread = |m: f64| {
@@ -704,13 +633,23 @@ mod tests {
         let (low, high) = (spread(0.2), spread(2.0));
         assert!(high.0 > low.0 * 5.0, "размер: {:.3} против {:.3}", high.0, low.0);
         assert!(high.1 > low.1 * 5.0, "сама мутагенность: {:.3} против {:.3}", high.1, low.1);
-        let switches = |m: f64| {
+        // the programs: how many mutate, and how far their numbers drift (the hunt's ratio)
+        let programs = |m: f64| {
             let parent = CreatureGenome::BASE.with(Gene::Mutability, m);
             let mut rng = Rng::new(317);
-            (0..50_000).filter(|_| parent.mutate(0.0, &mut rng)[Gene::Strategy] != 0.0).count()
+            let h = super::super::Heredity::with_sigma(0.0);
+            let both = Programs::both(crate::creature::Program::STANDARD);
+            let (mut mutated, mut drift) = (0, 0.0);
+            for _ in 0..50_000 {
+                let (_, child) = parent.inherit(&both, &h, &mut rng);
+                mutated += child.iter().any(|p| p.changes > 0) as usize;
+                drift += (child[crate::creature::ADULT].hunt_ratio().unwrap_or(1.5) - 1.5).abs();
+            }
+            (mutated, drift)
         };
-        let (rare, frequent) = (switches(0.2), switches(2.0));
-        assert!(frequent > rare * 3, "смена стратегии: {frequent} против {rare}");
+        let (rare, frequent) = (programs(0.2), programs(2.0));
+        assert!(frequent.0 > rare.0 * 5, "programs mutated: {} against {}", frequent.0, rare.0);
+        assert!(frequent.1 > rare.1 * 5.0, "numbers drifted: {:.0} against {:.0}", frequent.1, rare.1);
         let base = spread(1.0);
         let expected = 0.3 * 0.8 * (1.0 - crate::config::CLONE_CHANCE);
         assert!(

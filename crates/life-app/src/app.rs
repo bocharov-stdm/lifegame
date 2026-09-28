@@ -66,6 +66,8 @@ pub struct LifeApp {
     /// Показывать ли тела и окружение мира; история и карточка обновляются всегда.
     pub render_world: bool,
     pub lab_open: bool,
+    /// The selected creature's behaviour window (`behaviour.rs`).
+    pub behaviour_open: bool,
     /// Черновик правил лаборатории на ходу; применяется кнопкой.
     pub lab: Settings,
     /// Вкладка лаборатории: правила (`Tab::Lab`) или еда (`Tab::Food`).
@@ -128,6 +130,7 @@ impl LifeApp {
             diet_open: [false; 4],
             render_world: true,
             lab_open: false,
+            behaviour_open: false,
             lab_tab: Tab::Food,
             lab_reset_selected: HashSet::new(),
             stats_open: false,

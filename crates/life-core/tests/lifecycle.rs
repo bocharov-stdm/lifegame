@@ -1,6 +1,6 @@
 //! Регрессии жизненного цикла.
 use life_core::corpse::Stage;
-use life_core::creature::{Creature, Diet, Phenotype};
+use life_core::creature::{Action, Block, Creature, Diet, Phenotype, Program};
 use life_core::genome::creature::Gene;
 use life_core::rng::Rng;
 use life_core::{CreatureGenome, Rules, Space};
@@ -313,25 +313,23 @@ fn a_young_carnivore_grows_on_plants() {
     assert_eq!(plants(&lab.with("carnivore_young_plants", 0.0).unwrap(), Diet::Carnivore, 0.5), 0.9);
 }
 
-/// Sated, a creature eats and goes only for its own food: the scavenger leaves fresh corpses to
-/// the hunters and does not hunt, the carnivore leaves rot and bones to the scavengers. Below
-/// `picky` of its store it takes whatever it digests. The omnivore has no foreign food (and cannot
-/// digest bones at all).
+/// Without its program's «eat foreign food» setting (the template's, below 30% of the store) a
+/// creature eats and goes only for its own food: the scavenger leaves fresh corpses to the hunters
+/// and does not hunt, the carnivore leaves rot and bones to the scavengers. With it, anything it
+/// digests. The omnivore has no foreign food (and cannot digest bones at all).
 #[test]
-fn сытый_ест_только_свою_пищу() {
+fn only_its_own_food_without_the_foreign_setting() {
     let r = Rules::default();
-    for (diet, sated_fresh, sated_rot, bones) in [
+    for (diet, own_fresh, own_rot, bones) in [
         (Diet::Omnivore, true, true, false),
         (Diet::Scavenger, false, true, true),
         (Diet::Carnivore, true, false, false),
     ] {
         let mut v = parent();
-        v.genome = with_diet(v.genome, diet).with(Gene::Picky, 30.0);
+        v.genome = with_diet(v.genome, diet);
         v.apply_rules(&r, &Space::default());
-        let full = v.pheno.max_energy;
-        assert!(!v.pheno.hungry(full * 0.3) && v.pheno.hungry(full * 0.29), "{diet:?}: picky is 30%");
-        for (stage, sated) in [(Stage::Fresh, sated_fresh), (Stage::Rot, sated_rot), (Stage::Bones, bones)] {
-            assert_eq!(v.pheno.corpse_efficiency(stage, false) > 0.0, sated, "{diet:?} sated on {stage:?}");
+        for (stage, own) in [(Stage::Fresh, own_fresh), (Stage::Rot, own_rot), (Stage::Bones, bones)] {
+            assert_eq!(v.pheno.corpse_efficiency(stage, false) > 0.0, own, "{diet:?} on its own {stage:?}");
         }
         assert!(v.pheno.corpse_efficiency(Stage::Fresh, true) > 0.0, "{diet:?} hungry on fresh");
         assert!(v.pheno.corpse_efficiency(Stage::Rot, true) > 0.0, "{diet:?} hungry on rot");
@@ -340,8 +338,8 @@ fn сытый_ест_только_свою_пищу() {
             bones,
             "{diet:?}: only one digests bones"
         );
-        assert_eq!(v.pheno.hunts_now(full), sated_fresh, "{diet:?}: hunts sated");
-        assert!(v.pheno.hunts_now(0.0), "{diet:?}: hunts hungry");
+        assert_eq!(v.pheno.hunts_now(false), own_fresh, "{diet:?}: hunts on its own food");
+        assert!(v.pheno.hunts_now(true), "{diet:?}: hunts when foreign food is allowed");
         assert!(v.pheno.hunts(), "{diet:?}: feared either way");
     }
 }
@@ -412,25 +410,24 @@ fn a_cold_blooded_body_is_slower_and_cheaper_in_the_cold() {
     assert!(warm_moved > 0.0 && (cold_moved - warm_moved * (1.0 - COLD_SLOWING)).abs() < 1e-9);
 }
 
-/// `layer_reach`: how far beyond its layer a creature goes for food it sees. It takes the best
-/// food within its reach, not the nearest dropped.
+/// The reach setting (`Action::Reach`): how far beyond its layer a creature goes for food it sees.
+/// It takes the best food within its reach, not the nearest dropped.
 #[test]
-fn layer_reach_limits_where_it_goes_for_food() {
+fn the_reach_setting_limits_where_it_goes_for_food() {
     use life_core::{World, WorldConfig, plant::Plant};
     let space = Space::default();
-    let strict = CreatureGenome::BASE
-        .with(Gene::MinY, 10.0)
-        .with(Gene::MaxY, 30.0)
-        .with(Gene::LayerBound, 0.0)
-        .with(Gene::LayerReach, 5.0);
+    let strict =
+        CreatureGenome::BASE.with(Gene::MinY, 10.0).with(Gene::MaxY, 30.0).with(Gene::LayerBound, 0.0);
     let p = Phenotype::of(&strict, &Rules::default(), &space);
     let (lo, hi, reach) = (space.height * 0.1, space.height * 0.3, space.height * 0.05);
-    assert!(p.within_reach(lo - reach + 1.0) && p.within_reach(hi + reach - 1.0));
-    assert!(!p.within_reach(lo - reach - 1.0) && !p.within_reach(hi + reach + 1.0));
+    assert!(p.within_reach(lo - reach + 1.0, reach) && p.within_reach(hi + reach - 1.0, reach));
+    assert!(!p.within_reach(lo - reach - 1.0, reach) && !p.within_reach(hi + reach + 1.0, reach));
     let free = Phenotype::of(&strict.with(Gene::LayerBound, 1.0), &Rules::default(), &space);
-    assert!(free.within_reach(space.height) && free.within_reach(0.0), "a free one has no layer");
-    let base = Phenotype::of(&CreatureGenome::BASE, &Rules::default(), &space);
-    assert_eq!(base.layer_reach, f64::INFINITY, "100% is anywhere, as before the gene");
+    assert!(
+        free.within_reach(space.height, reach) && free.within_reach(0.0, reach),
+        "a free one has no layer"
+    );
+    assert!(p.within_reach(space.height, f64::INFINITY), "without the setting: anywhere");
 
     // on its layer's lower edge: the nearer plant is past its reach, the farther one inside it
     let mut w = World::new(&WorldConfig {
@@ -439,6 +436,12 @@ fn layer_reach_limits_where_it_goes_for_food() {
         ..Default::default()
     });
     w.spawn(strict.with(Gene::Sociability, 0.0), 1000.0, hi, Some(40.0));
+    let near = Program::of(&[
+        Block::does(Action::Reach).with(0, 5),
+        Block::does(Action::EatPlant),
+        Block::does(Action::Wander),
+    ]);
+    w.creatures[0].programs = [near; 2].into();
     w.plants.push(Plant::at(1000.0, hi + reach + 100.0));
     w.plants.push(Plant::at(1000.0, hi - 200.0));
     w.step();
@@ -497,8 +500,6 @@ fn границы_новых_генов_сохраняются_при_мутац
         g = g.mutate(0.8, &mut rng);
         assert!((0.0..=100.0).contains(&g[Gene::Maturation]));
         assert!((500.0..=10_000.0).contains(&g[Gene::Lifespan]));
-        assert!((1.0..=5.0).contains(&g[Gene::PreyRatio]));
-        assert!((0.0..=100.0).contains(&g[Gene::Bravery]));
         assert!((0..4).contains(&(g[Gene::Diet] as usize)) && g[Gene::Diet].fract() == 0.0);
     }
 }
@@ -506,7 +507,7 @@ fn границы_новых_генов_сохраняются_при_мутац
 #[test]
 fn охота_выбирает_добычу_но_сытый_не_начинает() {
     use life_core::{World, WorldConfig};
-    // the hunter's own `prey_ratio` alone decides: there is no world floor under it
+    // the ratio of the hunter's hunt block alone decides: there is no world floor under it
     for (energy, ratio, size, expect) in [
         (100.0, 2.5, 30.0, true),
         (250.0, 2.5, 30.0, false),
@@ -520,14 +521,13 @@ fn охота_выбирает_добычу_но_сытый_не_начинае�
             ..Default::default()
         });
         w.spawn(
-            with_diet(
-                CreatureGenome::BASE.with(Gene::Size, 100.0).with(Gene::PreyRatio, ratio),
-                Diet::Carnivore,
-            ),
+            with_diet(CreatureGenome::BASE.with(Gene::Size, 100.0), Diet::Carnivore),
             1000.0,
             1000.0,
             Some(energy),
         );
+        let hunt = Program::STANDARD.tuned(Action::Hunt, |b| b.args[0] = (ratio * 100.0) as u16);
+        w.creatures[0].programs = [hunt; 2].into();
         let prey = w.spawn(CreatureGenome::BASE.with(Gene::Size, size), 1200.0, 1000.0, Some(50.0));
         w.step();
         assert_eq!(w.creatures[0].mind.attack == Some(prey), expect);

@@ -8,8 +8,8 @@
 
 use super::Strategy;
 use crate::config::{
-    BURST_MAX, BURST_UPKEEP_SHARE, COLD_SAVING, COLD_SLOWING, DIET_OWN, ENERGY_PER_SIZE, FLEE_SIGHT_SHARE,
-    LIFESPAN_MAX, LIFESPAN_MIN, MIN_CRUISE, OLD_AGE_FROM, OLD_AGE_FULL, OLD_AGE_VIGOUR, SLOW_PACE,
+    BURST_MAX, BURST_UPKEEP_SHARE, COLD_SAVING, COLD_SLOWING, DIET_OWN, ENERGY_PER_SIZE, LIFESPAN_MAX,
+    LIFESPAN_MIN, OLD_AGE_FROM, OLD_AGE_FULL, OLD_AGE_VIGOUR,
 };
 use crate::corpse::Stage;
 use crate::flock::{FlockKind, Territoriality};
@@ -68,10 +68,6 @@ pub struct Phenotype {
     /// 1 until old age, down to `OLD_AGE_VIGOUR` (`vigour`): speed, vision, strike and health are
     /// times this.
     pub vigour: f64,
-    pub retreat: f64,
-    /// Bravery 0..1: a stranger that could eat it but hunts nobody is feared only within
-    /// `1 − bravery` of the usual flight distance; a hunting one within all of it.
-    pub bravery: f64,
     /// What it eats; the three efficiencies are its diet's digestion (`Rules::diets`). Zero: it
     /// neither eats that food nor goes for it.
     pub diet: Diet,
@@ -81,12 +77,11 @@ pub struct Phenotype {
     /// A rotting corpse, and its bones (`corpse::Stage`).
     pub rot_efficiency: f64,
     pub bones_efficiency: f64,
-    /// Fresh meat, rot and bones are its own food: sated, it eats and goes only for its own
-    /// (`DIET_OWN`); below `picky` of its store, for any it digests.
+    /// Fresh meat, rot and bones are its own food (`DIET_OWN`): it eats and goes for another
+    /// niche's only on a tick its program says so (`Action::EatForeign`).
     pub own_meat: bool,
     pub own_rot: bool,
     pub own_bones: bool,
-    pub picky: f64,
     /// Health per unit of size (`DietEdges::health`).
     pub health_bonus: f64,
     /// Strike damage times this (`DietEdges::strike`); the energy a strike costs does not change.
@@ -97,13 +92,8 @@ pub struct Phenotype {
     /// thermocline, y from and to (`Rules::thermo_*`).
     pub cold_blood: f64,
     pub thermo: (f64, f64),
-    /// How far beyond its layer it goes for food it sees (the `layer_reach` gene), y.
-    pub layer_reach: f64,
+    /// The world's depth: depths in programs are shares of it.
     pub height: f64,
-    pub prey_ratio: f64,
-    /// How much a hunter weighs the strikes it expects from its prey and the prey's visible
-    /// allies: 0 ignores them, 1 is the base, 2 is twice as careful.
-    pub caution: f64,
     /// Below this share of its store a flock member forages outside its circle, and it keeps
     /// foraging until it has `FORAGE_FED` times as much (at most a full store).
     pub forage: f64,
@@ -119,8 +109,6 @@ pub struct Phenotype {
     /// The shot's energy cost per unit of size (`Rules::shot_energy_share`), read where the rules
     /// are not at hand (`territory::steer`).
     pub shot_energy_share: f64,
-    /// Below this share of its store it strikes a smaller stranger eating beside it (`rivals`).
-    pub rivalry: f64,
     pub vision: f64,
 
     // ── слой обитания и границы ─────────────────────────────────────────────
@@ -147,23 +135,15 @@ pub struct Phenotype {
     pub still_upkeep: f64,
     pub speed_price: f64,
     pub speed_power: f64,
-    /// The wandering pace's step: speed × `cruise`, and a third of that for a lurker (`SLOW_PACE`).
-    pub slow_speed: f64,
-    /// It stands resting from this fullness and stops 10 points below it (the `rest` gene, 0‒1).
-    pub rest: f64,
-    /// A burst's speed factor in a chase or in flight (the `burst` gene, 1 to `BURST_MAX`).
+    /// A burst's speed factor, when its program chases or flees with one (the `burst` gene, 1 to
+    /// `BURST_MAX`).
     pub burst: f64,
-    /// Below this share of its store, with no food in sight, it falls torpid (the `torpor` gene).
-    pub torpor: f64,
     pub vision2: f64,
     pub size2: f64,
     /// Body radius: contact is the sum of two radii.
     pub half: f64,
-    /// С какого расстояния до края тела опасного чужака бежать
-    /// (`FLEE_SIGHT_SHARE` зрения).
-    pub flee: f64,
 
-    /// Стратегия поведения (`strategy.rs`).
+    /// The template its program started from (`strategy.rs`).
     pub strategy: Strategy,
 }
 
@@ -218,8 +198,6 @@ impl Phenotype {
         let diet_upkeep = [edges.size_upkeep, edges.speed_upkeep];
         let [_, own_meat, own_rot, own_bones] = diet.own();
         let strategy = Strategy::from_gene(genome[Gene::Strategy]);
-        let cruise = genome[Gene::Cruise].clamp(MIN_CRUISE, 100.0) / 100.0;
-        let slow_speed = speed * cruise * if strategy == Strategy::Lurker { SLOW_PACE } else { 1.0 };
         let burst = genome[Gene::Burst].clamp(1.0, BURST_MAX);
         // the size and sight terms once, the speed term at each speed needed below
         let parts = rules.upkeep_parts(size, vision, diet_upkeep);
@@ -250,20 +228,12 @@ impl Phenotype {
             own_meat,
             own_rot,
             own_bones,
-            picky: genome[Gene::Picky].clamp(0.0, 100.0) / 100.0,
             health_bonus: edges.health,
             strike_bonus: edges.strike,
             smell: vision * edges.smell,
             cold_blood: genome[Gene::ColdBlood].clamp(0.0, 100.0) / 100.0,
             thermo: (rules.thermo_top / 100.0 * space.height, rules.thermo_bottom / 100.0 * space.height),
-            layer_reach: if genome[Gene::LayerReach] >= 100.0 {
-                f64::INFINITY
-            } else {
-                genome[Gene::LayerReach].max(0.0) / 100.0 * space.height
-            },
             height: space.height,
-            prey_ratio: genome[Gene::PreyRatio].clamp(1.0, 5.0),
-            caution: genome[Gene::Caution].clamp(0.0, 100.0) / 50.0,
             forage: genome[Gene::Forage].clamp(0.0, 100.0) / 100.0,
             shooter: genome[Gene::Shooter] >= 0.5,
             fire_preference: genome[Gene::FirePreference].clamp(0.0, 100.0) / 100.0,
@@ -273,9 +243,6 @@ impl Phenotype {
             melee_damage_share: rules.melee_damage_share,
             melee_size_power: rules.melee_size_power,
             shot_energy_share: rules.shot_energy_share,
-            rivalry: genome[Gene::Rivalry].clamp(0.0, 100.0) / 100.0,
-            retreat: 0.8 - 0.6 * genome[Gene::Bravery].clamp(0.0, 100.0) / 100.0,
-            bravery: genome[Gene::Bravery].clamp(0.0, 100.0) / 100.0,
             vision,
             layer_lo,
             layer_hi,
@@ -291,14 +258,10 @@ impl Phenotype {
             // the speed term at a step of 1: `speed ** power` is 1 there
             speed_price: parts.at(1.0) - (still_upkeep - muscles),
             speed_power: rules.speed_power,
-            slow_speed,
-            rest: genome[Gene::Rest].clamp(0.0, 100.0) / 100.0,
             burst,
-            torpor: genome[Gene::Torpor].clamp(0.0, 100.0) / 100.0,
             vision2: vision * vision,
             size2: size * size,
             half: size / 2.0,
-            flee: vision * FLEE_SIGHT_SHARE,
             strategy,
         }
     }
@@ -320,23 +283,17 @@ pub fn melee_damage(strike: f64, size: f64, target: f64, power: f64) -> f64 {
 }
 
 impl Phenotype {
-    /// Efficiency on a corpse at `stage`. A sated creature (`hungry` false) does not touch another
-    /// niche's food (0): a sated scavenger leaves fresh corpses to the hunters, a sated carnivore
-    /// rot and bones to the scavengers.
+    /// Efficiency on a corpse at `stage`. Unless its program lets it eat foreign food this tick
+    /// (`foreign`, `Action::EatForeign`), another niche's food is worth nothing (0): a scavenger
+    /// leaves fresh corpses to the hunters, a carnivore rot and bones to the scavengers.
     #[inline]
-    pub fn corpse_efficiency(&self, stage: Stage, hungry: bool) -> f64 {
+    pub fn corpse_efficiency(&self, stage: Stage, foreign: bool) -> f64 {
         let (efficiency, own) = match stage {
             Stage::Fresh => (self.meat_efficiency, self.own_meat),
             Stage::Rot => (self.rot_efficiency, self.own_rot),
             Stage::Bones => (self.bones_efficiency, self.own_bones),
         };
-        if hungry || own { efficiency } else { 0.0 }
-    }
-
-    /// Below `picky` of its store it eats another niche's food too.
-    #[inline]
-    pub fn hungry(&self, energy: f64) -> bool {
-        energy < self.max_energy * self.picky
+        if foreign || own { efficiency } else { 0.0 }
     }
 
     /// How cold the water is at depth `y`: 0 above the thermocline, a smooth step to 1 below it.
@@ -368,10 +325,10 @@ impl Phenotype {
         self.still_upkeep + self.speed_price * term
     }
 
-    /// Food at depth `y` is within its reach: in its layer or no farther than `layer_reach` from it.
+    /// Food at depth `y` is within `reach` (y; infinite: anywhere) of its layer.
     #[inline]
-    pub fn within_reach(&self, y: f64) -> bool {
-        y >= self.layer_lo - self.layer_reach && y <= self.layer_hi + self.layer_reach
+    pub fn within_reach(&self, y: f64, reach: f64) -> bool {
+        y >= self.layer_lo - reach && y <= self.layer_hi + reach
     }
 
     /// Eats plants at all.
@@ -396,21 +353,15 @@ impl Phenotype {
         melee_damage(self.strike(), self.size, target, self.melee_size_power)
     }
 
-    /// Below `rivalry` of its store it strikes a smaller stranger eating beside it.
-    #[inline]
-    pub fn rivals(&self, energy: f64) -> bool {
-        energy < self.max_energy * self.rivalry
-    }
-
     /// Eats fresh meat, at least when hungry: others fear it.
     #[inline]
     pub fn hunts(&self) -> bool {
         self.meat_efficiency > 0.0
     }
 
-    /// Hunts now: fresh meat is its own food, or it is hungry.
+    /// Hunts now: fresh meat is its own food, or its program lets it eat foreign food this tick.
     #[inline]
-    pub fn hunts_now(&self, energy: f64) -> bool {
-        self.hunts() && (self.own_meat || self.hungry(energy))
+    pub fn hunts_now(&self, foreign: bool) -> bool {
+        self.hunts() && (self.own_meat || foreign)
     }
 }

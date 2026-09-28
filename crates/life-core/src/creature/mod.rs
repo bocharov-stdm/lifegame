@@ -5,13 +5,15 @@
 //! (`senses.rs`): «где ближайшее растение», «кто рядом опасен». Так оно не
 //! знает о сетке, а тесты подсовывают вместо неё обычные замыкания.
 
-mod lurker;
+mod actions;
 mod phenotype;
-mod standard;
+pub mod program;
+mod scene;
 pub mod strategy;
 
 pub use phenotype::{Diet, Phenotype, melee_damage, vigour};
-pub use strategy::{Chase, Intent, Me, Mind, Strategy};
+pub use program::{ADULT, Action, Block, Cond, JUVENILE, Program, Programs, Test};
+pub use strategy::{Chase, Intent, Me, Mind, Stance, Strategy};
 
 use crate::config::*;
 use crate::genome::CreatureGenome;
@@ -106,6 +108,10 @@ pub struct Creature {
     /// Всё, что выведено из генома и правил при рождении (`phenotype.rs`).
     pub pheno: Phenotype,
 
+    /// Its behaviour (`program.rs`) while it grows (`JUVENILE`) and once grown (`ADULT`):
+    /// inherited apart from the gene table, drifting and mutating on their own; shared with the
+    /// relatives that inherited them unchanged.
+    pub programs: Programs,
     /// Память между ходами: цель блуждания, бегство (`strategy.rs`).
     pub mind: Mind,
     pub rng: Rng,
@@ -114,7 +120,8 @@ pub struct Creature {
     /// Ticks of burst used in a row, and ticks left winded after `BURST_TICKS` of it.
     pub dash: u32,
     pub winded: u32,
-    /// Torpid this tick: hungry with no food in sight, it stands paying `TORPOR_UPKEEP`.
+    /// Torpid this tick (its program chose `Action::Torpor`): it stands paying `TORPOR_UPKEEP` and
+    /// eats nothing, not even what touches it — a sleeper is no free filter feeder.
     pub torpid: bool,
 }
 
@@ -157,6 +164,7 @@ impl Creature {
             reproduction_wait: DIVIDE_PERIOD,
             death: None,
             genome,
+            programs: Programs::both(Program::template(pheno.strategy)),
             pheno,
             mind: Mind::default(),
             rng,
@@ -221,7 +229,8 @@ impl Creature {
             health: self.health,
             pheno: &self.pheno,
         };
-        let intent = strategy::decide(&me, &mut self.mind, &mut self.rng, senses);
+        let program = &self.programs[self.stage()];
+        let intent = strategy::decide(&me, program, &mut self.mind, &mut self.rng, senses);
         let intent = crate::territory::steer(self, intent);
         if self.mind.social.territory_guard.is_some() && intent.attack.is_some() && !self.fleeing() {
             self.mind.social.activity = crate::social::Activity::Alarm;
@@ -232,23 +241,18 @@ impl Creature {
         self.act(intent);
     }
 
-    /// A step of exactly its speed towards the intent's point (never past it), clamped to the
-    /// world, the energy for the step actually taken, death from hunger. Wandering goes at the
-    /// slow pace (`slow_speed`); torpor, the cold and a burst change the step here.
+    /// A step of exactly its pace towards the intent's point (never past it), clamped to the
+    /// world, the energy for the step actually taken, death from hunger. The cold, torpor and a
+    /// burst change the step here.
     #[inline(always)]
     fn act(&mut self, intent: Intent) {
-        let speed = if intent.slow { self.pheno.slow_speed } else { self.pheno.speed };
+        let speed = self.pheno.speed * intent.pace.clamp(MIN_PACE, 1.0);
         let (x, y) = (self.x, self.y);
         // a cold-blooded body in cold water is slower and cheaper (`Phenotype::temper`)
         let (slower, cheaper) = self.pheno.temper(y);
-        // torpor: hungry, only wandering (no food, prey or threat in sight), it stands and sleeps.
-        // A rest is slow too, but it is a sated creature's choice with food maybe in sight: resting
-        // pays its standing upkeep, never the torpor's share.
-        self.torpid = self.energy < self.pheno.max_energy * self.pheno.torpor
-            && intent.slow
-            && intent.attack.is_none()
-            && !self.fleeing()
-            && self.mind.social.activity != crate::social::Activity::Resting;
+        // torpor: its program chose to stand and sleep (`Action::Torpor`); a rest or an ambush pays
+        // its standing upkeep
+        self.torpid = intent.torpor && !self.fleeing();
         if self.torpid {
             self.energy -= self.pheno.still_upkeep * TORPOR_UPKEEP * cheaper;
             if self.energy <= 0.0 {
@@ -263,7 +267,7 @@ impl Creature {
         // a burst in a chase to a goal beyond a normal step, or in flight
         let fleeing = self.fleeing() && d > 0.0;
         let chasing = intent.attack.is_some() && d > speed * slower;
-        let burst = self.burst(!intent.slow && (chasing || fleeing));
+        let burst = self.burst(intent.burst && (chasing || fleeing));
         let speed = speed * slower * burst;
         if fleeing && burst > 1.0 && d < speed {
             // a flight's goal is one normal step away: the burst goes the whole step that way
@@ -340,6 +344,7 @@ impl Creature {
                 * self.pheno.plant_efficiency,
             rules,
         );
+        let reach = self.program().wander_reach() * self.pheno.vision;
         let me = Me {
             x: self.x,
             y: self.y,
@@ -351,7 +356,7 @@ impl Creature {
             health: self.health,
             pheno: &self.pheno,
         };
-        strategy::after_eating(&me, &mut self.mind, &mut self.rng);
+        strategy::after_eating(&me, &mut self.mind, &mut self.rng, reach);
     }
 
     /// Растёт только на усвоенной пище: the `maturation` share of it until grown; the rest fills
@@ -398,6 +403,23 @@ impl Creature {
         self.pheno.size >= self.genome[Gene::Size]
     }
 
+    /// Its stage of life, the index of the program it lives by: `JUVENILE` while it grows, `ADULT`
+    /// once grown.
+    pub fn stage(&self) -> usize {
+        if self.adult() { ADULT } else { JUVENILE }
+    }
+
+    /// The program it lives by now.
+    pub fn program(&self) -> &Program {
+        &self.programs[self.stage()]
+    }
+
+    /// Whether it still stands up for itself or others now: its program fights back, and its health
+    /// is above that block's threshold by a margin. Aid for kin and flock guards read it.
+    pub fn stands_firm(&self) -> bool {
+        self.program().defends_to().is_some_and(|share| self.health / self.max_health() > share + 0.1)
+    }
+
     /// Бежит ли сейчас от кого-то (для окна игры и наблюдателя).
     pub fn fleeing(&self) -> bool {
         self.mind.flee_ticks > 0 || self.mind.social.shared_flee
@@ -418,7 +440,8 @@ impl Creature {
         // Пробуем наследование на копии генератора: неудачная попытка рождения
         // не тратит случайные числа, а вместимость ребёнка уже известна.
         let mut next_rng = self.rng.clone();
-        let genome = self.genome.mutate_by(&crate::genome::Heredity::of(rules), &mut next_rng);
+        let (genome, programs) =
+            self.genome.inherit(&self.programs, &crate::genome::Heredity::of(rules), &mut next_rng);
         let child_energy = (self.energy * (self.genome[Gene::ReproShare] / 100.0))
             .min(genome[Gene::Size] * 0.5 * ENERGY_PER_SIZE);
         let left = self.energy - child_energy - rules.repro_cost;
@@ -436,6 +459,7 @@ impl Creature {
         let baby_genome = genome.with(Gene::Size, genome[Gene::Size] * 0.5);
         let mut child = Creature::new(space, rules, baby_genome, Some(cx), Some(cy), Some(child_energy), rng);
         child.genome = genome;
+        child.programs = programs;
         child.parent = self.id;
         let same_mode = self.pheno.pack_instinct && child.pheno.pack_instinct && self.same_mode(&child);
         child.flock = if same_mode && self.rng.random() < 0.99 { self.flock } else { 0 };

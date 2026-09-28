@@ -137,6 +137,15 @@ fn digest(w: &World) -> u64 {
         for g in v.genome.to_values() {
             h.f64(g);
         }
+        // the behaviour programs, block by block, and how far each is from its template
+        for p in v.programs.iter() {
+            for b in p.blocks() {
+                for code in b.code() {
+                    h.u64(code);
+                }
+            }
+            h.u64(u64::from(p.changes));
+        }
         h.u64(v.rng.clone().next_u64());
     }
     h.u64(w.flocks.len() as u64);
