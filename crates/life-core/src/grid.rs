@@ -1,21 +1,18 @@
-//! Равномерная сетка для поиска соседей.
+//! A uniform grid for the neighbour search.
 //!
-//! Строится заново каждый тик сортировкой подсчётом: номер клетки для каждой
-//! точки → сколько точек в клетке → префиксные суммы → раскладка. Всё за O(n),
-//! а точки одной клетки лежат в памяти подряд вместе с копиями координат,
-//! поэтому перебор соседей идёт по плотному массиву.
+//! Rebuilt every tick by a counting sort: the cell number of each point → how many points are in
+//! a cell → prefix sums → the layout. All in O(n), and the points of one cell lie in memory in
+//! a row together with copies of the coordinates, so going through the neighbours runs over a
+//! dense array.
 //!
-//! Клетка фиксированного размера. Запрос берёт столько клеток, сколько
-//! покрывает его собственный радиус, — в отличие от Python-версии, где клетка
-//! равнялась самому большому радиусу в мире и одно дальнозоркое существо
-//! раздувало её всем. Запрос возвращает НАДмножество: расстояние проверяет
-//! вызывающий.
+//! The cell has a fixed size. A query takes as many cells as its own radius covers — unlike the
+//! Python version, where the cell equalled the biggest radius in the world and one far-sighted
+//! creature blew it up for everyone. A query returns a SUPERset: the caller checks the distance.
 //!
-//! Координаты — копия на момент постройки. Это безопасно, потому что в фазе,
-//! которая спрашивает сетку, её точки не двигаются: растения не ходят вовсе, а
-//! существа в фазе боя уже стоят.
-//! Живость (`alive`) вызывающий проверяет по самим сущностям — она меняется
-//! прямо в фазе.
+//! The coordinates are a copy as of the build. This is safe because in the phase that asks the
+//! grid its points do not move: plants do not walk at all, and creatures in the fight phase
+//! already stand.
+//! Aliveness (`alive`) the caller checks on the entities themselves — it changes right in the phase.
 
 use crate::space::Space;
 
@@ -24,12 +21,12 @@ pub struct Grid {
     inv: f64,
     cols: usize,
     rows: usize,
-    /// start[c]..start[c+1] — точки клетки c в idx/xs/ys.
+    /// start[c]..start[c+1] — the points of cell c in idx/xs/ys.
     start: Vec<u32>,
     idx: Vec<u32>,
     xs: Vec<f64>,
     ys: Vec<f64>,
-    // рабочие буферы постройки — живут между тиками, чтобы не выделять память
+    // the working buffers of the build — they live between ticks so as not to allocate memory
     cell_of: Vec<u32>,
     next: Vec<u32>,
     pts: Vec<(f64, f64)>,
@@ -51,7 +48,7 @@ impl Grid {
         ((y * self.inv).max(0.0) as usize).min(self.rows - 1)
     }
 
-    /// Разложить точки по клеткам. Буферы переиспользуются между тиками.
+    /// Lay the points out by cells. The buffers are reused between ticks.
     pub fn rebuild(&mut self, space: &Space, points: impl ExactSizeIterator<Item = (f64, f64)>) {
         self.cols = ((space.width * self.inv).ceil() as usize).max(1);
         self.rows = ((space.height * self.inv).ceil() as usize).max(1);
@@ -78,7 +75,7 @@ impl Grid {
         for c in 0..cells {
             self.start[c + 1] += self.start[c];
         }
-        // раскладка: next[c] — куда класть следующую точку клетки c
+        // the layout: next[c] — where to put the next point of cell c
         self.next.clear();
         self.next.extend_from_slice(&self.start);
         for (i, &c) in self.cell_of.iter().enumerate() {
@@ -89,8 +86,8 @@ impl Grid {
         }
     }
 
-    /// Все точки из клеток, накрывающих квадрат [x-r, x+r] x [y-r, y+r]:
-    /// f(индекс, x, y). Надмножество круга радиуса r.
+    /// All points from the cells covering the square [x-r, x+r] x [y-r, y+r]:
+    /// f(index, x, y). A superset of the circle of radius r.
     #[inline]
     pub fn for_each_near(&self, x: f64, y: f64, r: f64, mut f: impl FnMut(usize, f64, f64)) {
         if self.idx.is_empty() {
@@ -100,7 +97,7 @@ impl Grid {
         let (r0, r1) = (self.row(y - r), self.row(y + r));
         for row in r0..=r1 {
             let base = row * self.cols;
-            // клетки одной строки идут подряд — один непрерывный отрезок
+            // the cells of one row go in a row — one continuous stretch
             let from = self.start[base + c0] as usize;
             let to = self.start[base + c1 + 1] as usize;
             for k in from..to {

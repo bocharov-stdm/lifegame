@@ -1,19 +1,19 @@
-//! Все настройки симуляции в одном месте — перенесены из Python-версии
-//! (`python/life/config.py` на теге python-final) вместе с объяснениями, почему значения такие.
+//! All the simulation's settings in one place — carried over from the Python version
+//! (`python/life/config.py` at the tag python-final) together with the explanations of why the
+//! values are what they are.
 //!
-//! Значения подобраны перебором через headless-прогоны. Критерии: существа
-//! доживают до конца, численность держится в играбельном коридоре, геном
-//! приходит к оптимуму (а не убегает вверх). Predators as a species of their own are gone (tag
+//! The values were picked by iterating through headless runs. The criteria: creatures live to
+//! the end, the population stays in a playable corridor, the genome comes to an optimum (and
+//! does not run away upwards). Predators as a species of their own are gone (tag
 //! `predators-final`): the meat diets (`DIET_*` below) and corpses took their place.
 //!
-//! Крутить баланс удобно так:
+//! A convenient way to tweak the balance:
 //!     cargo run -p life-report --release -- --seeds 1 2 3 --ticks 3000
 
-// ── Мир ──────────────────────────────────────────────────────────────────────
-// Базовый мир 6000x4000 подбирался под окно 1200x800. В прежнем мире 60000x12000
-// на 720 млн px² существа почти не встречали друг друга. Больший мир теперь
-// получается масштабом (см. space.rs), при котором плотность всего живого
-// остаётся прежней.
+// ── World ────────────────────────────────────────────────────────────────────
+// The base world 6000x4000 was chosen for a 1200x800 window. In the former world of 60000x12000,
+// 720 million px², creatures hardly met one another. A bigger world is now obtained by the scale
+// (see space.rs), at which the density of everything alive stays the same.
 pub const WORLD_WIDTH: f64 = 6000.0;
 pub const WORLD_HEIGHT: f64 = 4000.0;
 
@@ -26,16 +26,16 @@ pub const CM_PER_PX: f64 = 0.5;
 pub const SECONDS_PER_TICK: f64 = 0.25;
 pub const TICKS_PER_YEAR: f64 = 1000.0;
 
-/// Раз во сколько тиков существа пробуют делиться.
+/// Once in how many ticks creatures try to divide.
 pub const DIVIDE_PERIOD: u64 = 30;
 
-// ── Растения ────────────────────────────────────────────────────────────────
+// ── Plants ──────────────────────────────────────────────────────────────────
 pub const PLANT_RADIUS: f64 = 10.0;
 pub const ENERGY_FROM_PLANT: f64 = 50.0;
-/// Доля сырой порции, реально усваиваемая при пятишаговом поедании.
+/// The share of a raw portion actually digested when eating in five steps.
 pub const PLANT_BITE_YIELD: f64 = 0.44;
 
-// Где растёт еда — профиль по глубине и по ширине (flora.rs), правила мира.
+// Where the food grows — the profile by depth and by width (flora.rs), the world's rules.
 // By default: the «игровое» profile down, uniform across, in patches.
 
 /// The «игровое» depth profile (`flora::Profile::Game`), a rough real sea: nutritious upper
@@ -52,24 +52,24 @@ pub const GAME_PLATEAU: f64 = 0.2;
 pub const OCEAN_PEAK: f64 = 0.15;
 pub const OCEAN_SURFACE: f64 = 0.6;
 
-/// Крутизна экспоненты по глубине: чем больше, тем плотнее еда прижата к
-/// поверхности. При 8 у дна еды в e^8 ≈ 3000 раз меньше, чем наверху.
+/// The steepness of the exponent by depth: the bigger, the tighter the food is pressed to the
+/// surface. At 8 there is e^8 ≈ 3000 times less food at the bottom than at the top.
 pub const PLANT_DEPTH_DECAY: f64 = 8.0;
-/// Крутизна экспоненты по ширине, если её выбрать. Мягче, чем по глубине: при 8
-/// почти вся еда жалась бы к левому краю, и мир справа пустовал бы.
+/// The steepness of the exponent by width, if it is chosen. Softer than by depth: at 8 nearly
+/// all the food would huddle at the left edge, and the world to the right would be empty.
 pub const PLANT_WIDTH_DECAY: f64 = 3.0;
-/// Параметры остальных профилей, пока их не тронули: линейный — у дальнего
-/// края 10% еды ближнего; логарифм — изгиб 20 (на середине оси ещё 79% еды, к
-/// дальнему краю — обрыв до нуля); волны — 3 богатые полосы с размахом 80%
-/// (между полосами еды в 9 раз меньше, чем на пике).
+/// The parameters of the other profiles while they are untouched: linear — at the far edge 10%
+/// of the near edge's food; logarithm — a bend of 20 (in the middle of the axis 79% of the food
+/// is still there, towards the far edge a drop to zero); waves — 3 rich strips with an
+/// amplitude of 80% (between strips there is 9 times less food than at the peak).
 pub const PLANT_LINEAR_END: f64 = 10.0;
 pub const PLANT_LOG_BEND: f64 = 20.0;
 pub const PLANT_WAVES: f64 = 3.0;
 pub const PLANT_WAVE_AMPLITUDE: f64 = 80.0;
 
-/// Ожидаемое число новых растений за тик на пиксель площади (не вероятность!).
+/// The expected number of new plants per tick per pixel of area (not a probability!).
 pub const DENSITY_PER_PIXEL: f64 = 1.0417e-7;
-/// Для базового мира это 2.50008 растения за тик.
+/// For the base world this is 2.50008 plants a tick.
 pub const PLANT_SPAWN_CHANCE: f64 = DENSITY_PER_PIXEL * WORLD_WIDTH * WORLD_HEIGHT;
 
 /// Plant cap per base world, and the number of fertility cells it is split
@@ -99,52 +99,53 @@ pub const PLANT_PATCH_SHARE: f64 = 60.0;
 /// patches are small, and with fewer slots in their region's patches, poor.
 pub const PATCH_DARK_SIZE: f64 = 0.3;
 
-// ── Существа ──────────────────────────────────────────────────────────────
-// Базовый геном существа — в таблице генов (`genome/creature.rs`).
+// ── Creatures ─────────────────────────────────────────────────────────────
+// The creature's base genome is in the gene table (`genome/creature.rs`).
 pub const CREATURES_AT_START: usize = 20;
-/// Разброс мутаций.
+/// The spread of mutations.
 pub const MUTATION_SIGMA: f64 = 0.3;
 
-/// Запас энергии = размер * это.
+/// The energy store = size * this.
 pub const ENERGY_PER_SIZE: f64 = 2.5;
-/// Энергия, вложенная в единицу выросшего диаметра; запас энергии от неё не зависит.
+/// The energy put into a unit of grown diameter; the energy store does not depend on it.
 pub const GROWTH_ENERGY_PER_SIZE: f64 = 2.25;
-/// Минимум, что должно остаться у родителя после деления.
+/// The minimum that must remain with the parent after a division.
 pub const REPRO_RESERVE: f64 = 20.0;
-/// Фиксированный штраф за размножение.
+/// A fixed penalty for reproduction.
 pub const REPRO_COST: f64 = 10.0;
 /// A healing creature (`Action::Heal`) gains this share of its full health a tick, paid one for
 /// one from its tank: physiology, not a choice — whether and when it heals is its program's.
 pub const HEAL_SHARE: f64 = 0.002;
 
-// ── Стоимость содержания статов (энергии за тик) ────────────────────────────
-// расход = COEF * стат ** POWER, суммарно по трём статам.
+// ── The upkeep of the stats (energy per tick) ───────────────────────────────
+// upkeep = COEF * stat ** POWER, summed over the three stats.
 //
-// ПОКАЗАТЕЛИ ВАЖНЕЕ КОЭФФИЦИЕНТОВ: они решают, есть ли у эволюции компромисс.
-// Выгода от стата растёт так:
-//   размер   — радиус поедания равен размеру, значит охват ~ размер²
-//   зрение   — радиус поиска еды, значит охват ~ зрение²
-//   скорость — примерно линейно
-// Цена обязана расти КРУЧЕ выгоды, иначе стат убегает вверх без предела:
-// при показателях 1.5 для размера и 1.0 для зрения размер доходил до 450 при
-// базовых 40, а зрение — до 1000 при базовых 400.
+// THE EXPONENTS MATTER MORE THAN THE COEFFICIENTS: they decide whether evolution has a
+// trade-off. The benefit of a stat grows like this:
+//   size   — the eating radius equals the size, so the reach ~ size²
+//   sight  — the food search radius, so the reach ~ sight²
+//   speed  — roughly linearly
+// The price must grow STEEPER than the benefit, otherwise a stat runs away upwards without
+// limit: at exponents of 1.5 for size and 1.0 for sight, size reached 450 against the base 40,
+// and sight reached 1000 against the base 400.
 pub const SIZE_ENERGY_POWER: f64 = 2.5;
 pub const SPEED_ENERGY_POWER: f64 = 2.0;
 pub const SIGHT_ENERGY_POWER: f64 = 2.0;
 
-// Коэффициенты нормированы так, чтобы базовый геном тратил три РАВНЫЕ доли и
-// проживал на полном баке ~700 тиков без еды. Одно растение — полбака.
+// The coefficients are normalised so that the base genome spends three EQUAL shares and lives
+// on a full tank about 700 ticks without food. One plant is half a tank.
 pub const SIZE_ENERGY_COEF: f64 = 4.706e-6;
 pub const SPEED_ENERGY_COEF: f64 = 4.762e-4;
 pub const SIGHT_ENERGY_COEF: f64 = 2.976e-7;
 
-/// Двигать крупное тело дороже: цена скорости умножается на (размер / 40) ** это.
-/// Базовый геном (диаметр 40) платит ровно столько же, сколько без множителя. Без него при обилии растений выживали гиганты размером 150‒250.
+/// Moving a big body is dearer: the speed's price is multiplied by (size / 40) ** this.
+/// The base genome (diameter 40) pays exactly as much as without the multiplier. Without it, with plentiful
+/// plants, giants of size 150‒250 survived.
 pub const SPEED_MASS_POWER: f64 = 1.0;
 
-/// Потолок гена мутагенности (множитель на разброс мутаций и шанс смены
-/// стратегии). При 10 сигма существ 3.0: геном потомка почти случаен —
-/// дальше расти незачем, а без потолка множитель мог бы уйти в бесконечность.
+/// The ceiling of the mutability gene (a multiplier on the mutations' spread and the chance of
+/// a strategy change). At 10 the creatures' sigma is 3.0: a descendant's genome is almost
+/// random — no point growing further, and without a ceiling the multiplier could go to infinity.
 pub const MAX_MUTABILITY: f64 = 10.0;
 /// Floor of the mutability gene. Selection pulls it down (a less mutated child is fitter on
 /// average), and at 0 evolution froze: one diet, one strategy, forever.
@@ -153,15 +154,14 @@ pub const MIN_MUTABILITY: f64 = 0.1;
 /// proven genome through them, so selection has less reason to push mutability down.
 pub const CLONE_CHANCE: f64 = 0.5;
 
-// ── Поиск соседей ───────────────────────────────────────────────────────────
-/// Размер клетки сетки (grid.rs). В Python клетка равнялась самому большому
-/// радиусу запроса, и одно дальнозоркое существо раздувало её всем. Здесь
-/// клетка фиксирована, а запрос берёт столько клеток, сколько покрывает его
-/// собственный радиус. 256 — порядок половины зрения: запрос обычно смотрит
-/// 4x4‒5x5 клеток, а пустых клеток немного.
+// ── The neighbour search ────────────────────────────────────────────────────
+/// The grid cell's size (grid.rs). In Python the cell equalled the biggest query radius, and
+/// one far-sighted creature blew it up for everyone. Here the cell is fixed, and a query takes
+/// as many cells as its own radius covers. 256 is of the order of half a sight: a query usually
+/// looks at 4x4‒5x5 cells, and there are few empty cells.
 pub const GRID_CELL: f64 = 256.0;
 
-// ── Стратегии ───────────────────────────────────────────────────────────────
+// ── Strategies ──────────────────────────────────────────────────────────────
 /// Chance that a child gets another strategy — the template its founders' program started from.
 /// None: behaviour is inherited and mutates as the program (`Program::mutate`); the gene keeps its
 /// draw (`Mutation::Switch` still draws with two variants), so a child keeps its lineage's name.
@@ -186,7 +186,7 @@ pub const PROGRAM_DRIFT: f64 = 1.0;
 pub const PROGRAM_DRIFT_SHARE: f64 = 1.0 / 3.0;
 /// The same rare switch for the other choice genes: shooting, layer.
 pub const CHOICE_SWITCH_CHANCE: f64 = 0.001;
-/// Ближний удар: доля диаметра, одновременно базовый урон и цена энергии.
+/// A melee strike: a share of the diameter, at once the base damage and the energy price.
 pub const MELEE_DAMAGE_SHARE: f64 = 0.05;
 /// A bigger body strikes disproportionately harder: melee damage is times (attacker's size /
 /// target's size) ** this when the attacker is the bigger (never less than ×1). Equal bodies still
@@ -195,7 +195,7 @@ pub const MELEE_DAMAGE_SHARE: f64 = 0.05;
 /// share of the target's health any more; shots keep theirs. At 1.75 (3× = one blow) carnivores
 /// boomed, ate the herbivores out and starved; at 1.0 they died out everywhere (seeds 1–8).
 pub const MELEE_SIZE_POWER: f64 = 1.25;
-/// Выстрел слабее ближнего удара, но требует собственного запаса энергии.
+/// A shot is weaker than a melee strike, but needs an energy store of its own.
 pub const SHOT_DAMAGE_SHARE: f64 = 0.01;
 pub const SHOT_ENERGY_SHARE: f64 = 0.02;
 pub const SHOT_PERIOD: u64 = 5;
@@ -224,7 +224,7 @@ pub const TORPOR_UPKEEP: f64 = 0.3;
 // There is no world size ratio either: whom one attacks is up to the blocks of its program (the
 // ratios of `Action::Hunt`, `Action::FightBack` and `Action::Rival`).
 
-// ── Питание ─────────────────────────────────────────────────────────────────
+// ── Feeding ─────────────────────────────────────────────────────────────────
 /// Chance that a mutating child's diet steps to a neighbour (`genome::creature::DIET_NEIGHBOURS`),
 /// whatever its parent's mutability: at 0.1% × mutability meat-eating mutants hardly ever
 /// appeared, and the meat niches stayed empty.
@@ -292,10 +292,10 @@ pub const SCAVENGER_START_COLD: f64 = 100.0;
 /// (`Action::EatForeign`; the template, below 30% of its store). The omnivore has no foreign food:
 /// it is the generalist (bones it cannot digest at all).
 pub const DIET_OWN: [[bool; 4]; 4] = [
-    [true, false, false, false], // травоядный
-    [true, true, true, false],   // всеядный
-    [false, false, true, true],  // падальщик
-    [false, true, false, false], // мясоед
+    [true, false, false, false], // herbivore
+    [true, true, true, false],   // omnivore
+    [false, false, true, true],  // scavenger
+    [false, true, false, false], // carnivore
 ];
 /// Founders dealt the scavenger diet start with this layer, % of depth (their program's «слой»):
 /// in the deep, where rot will settle. A start condition, not a rule — the program drifts.
@@ -316,10 +316,10 @@ pub const MEAT_FOUNDER_SIZE: f64 = 2.0;
 /// Bones only the scavenger digests (the user's choice, 2026-09-27): the long-lying remains on the
 /// bottom are its own food, which nobody else can take.
 pub const DIET_DIGESTION: [[f64; 4]; 4] = [
-    [1.0, 0.0, 0.0, 0.0],  // травоядный
-    [0.7, 0.3, 0.05, 0.0], // всеядный
-    [0.15, 0.8, 0.9, 0.9], // падальщик
-    [0.2, 1.0, 0.1, 0.0],  // мясоед
+    [1.0, 0.0, 0.0, 0.0],  // herbivore
+    [0.7, 0.3, 0.05, 0.0], // omnivore
+    [0.15, 0.8, 0.9, 0.9], // scavenger
+    [0.2, 1.0, 0.1, 0.0],  // carnivore
 ];
 /// Plants while not grown to its own size (the size gene), by diet — a juvenile gut: a young
 /// carnivore digests plants like an omnivore, grows on them and hunts once grown. A carnivore
@@ -341,7 +341,7 @@ pub const DIET_START_MIX: [f64; 4] = [70.0, 30.0, 0.0, 0.0];
 /// the food lies beside the body, where the window draws the proboscis reaching it.
 pub const EAT_STOP_SHARE: f64 = 0.85;
 
-// ── Трупы ───────────────────────────────────────────────────────────────────
+// ── Corpses ─────────────────────────────────────────────────────────────────
 // Three stages (`corpse::Stage`), each longer than before (the user's choice, 2026-09-27: fresh
 // 150, a smooth rot to 600, gone by 1800; bones only from an eaten corpse, 1800 ticks, sinking 4).
 /// A corpse stays fresh this long and lies where the creature died; then it is rot at once.
@@ -370,17 +370,17 @@ pub const SKELETON_SINK_SPEED: f64 = 40.0;
 /// stages 80% and 20%). The user chose 5000.
 pub const SKELETON_TICKS: u64 = 5000;
 
-// ── Бегство ─────────────────────────────────────────────────────────────────
-/// Существо бежит от чужого (не родни), который может его съесть, когда до
-/// края его тела ближе этой доли своего зрения. Треть — как бежали от
-/// хищников (тег `predators-final`): с дальним порогом мелкие только бегали бы
-/// и не ели, а бежать надо успеть до того, как крупный дотянется.
+// ── Flight ──────────────────────────────────────────────────────────────────
+/// A creature runs from a stranger (not kin) that can eat it when the gap to the edge of its
+/// body is under this share of its own sight. A third — as they ran from predators (tag
+/// `predators-final`): with a far threshold the small would only run and not eat, and one has to
+/// manage to run before the big one reaches.
 pub const FLEE_SIGHT_SHARE: f64 = 1.0 / 3.0;
-/// Сколько тиков существо бежит после испуга (секунда при 60 тиках в секунду):
-/// угроза пропала из виду — ещё не значит, что она ушла.
+/// How many ticks a creature runs after a fright (a second at 60 ticks a second): a threat
+/// gone from sight does not mean it has gone.
 pub const FLEE_TICKS: u32 = 60;
 
-// ── Жизнь и старость ────────────────────────────────────────────────────────
+// ── Life and old age ────────────────────────────────────────────────────────
 /// The `lifespan` gene: every founder starts with this many ticks of life (user's call, 2026-09-27).
 /// The gene is free, like behaviour genes: a long life buys nothing but more time, and the old
 /// are weak (below). Before, the `life_pace` gene cut upkeep in proportion to a longer life, and
@@ -397,7 +397,7 @@ pub const OLD_AGE_FROM: f64 = 0.7;
 pub const OLD_AGE_FULL: f64 = 0.9;
 pub const OLD_AGE_VIGOUR: f64 = 0.7;
 
-// ── Погоня ──────────────────────────────────────────────────────────────────
+// ── The chase ───────────────────────────────────────────────────────────────
 /// A hunter that has not closed in on its prey by at least one of its own steps within this many
 /// ticks gives the chase up: a prey as fast as it, fleeing, is never caught in the open, and the
 /// hunter used to follow it as long as it saw it, starving on the way.

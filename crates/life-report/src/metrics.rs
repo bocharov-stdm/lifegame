@@ -1,12 +1,12 @@
-//! Эталонный отпечаток баланса: сверка (`--compare`) и запись нового (`--save-reference`).
+//! The balance's reference fingerprint: checking (`--compare`) and writing a new one (`--save-reference`).
 //!
-//! Сравнивается статистика, не биты: для каждой метрики берётся разброс по сидам у
-//! эталона и среднее у текущего прогона. Метрика «сходится», если среднее
-//! попадает в диапазон значений отдельных сидов эталона.
+//! Statistics are compared, not bits: for each metric the spread over the reference's seeds and
+//! the current run's mean are taken. A metric «converges» if the mean falls within the range of
+//! the values of the reference's separate seeds.
 //!
-//! После намеренной смены баланса эталон переснимается тем же форматом; в нём записаны
-//! условия мира, и сверка на других условиях отказывается работать — иначе «расхождение»
-//! мерило бы разницу условий. An older model's reference is refused outright.
+//! After a deliberate change of balance the reference is retaken in the same format; it records
+//! the world's conditions, and checking under other conditions refuses to work — otherwise a
+//! «divergence» would measure the difference of conditions. An older model's reference is refused outright.
 
 use std::path::Path;
 
@@ -17,10 +17,11 @@ use life_core::{Rules, Shape, Space, Stats, WorldConfig};
 use life_sim::{SimResult, StopReason};
 use serde_json::{Map, Value, json};
 
-/// Шаг рядов эталона: кратно периоду деления, чтобы пила деления не шумела.
+/// The step of the reference's series: a multiple of the division period, so that the division's sawtooth
+/// does not add noise.
 pub const REFERENCE_SAMPLE: u64 = 60;
 
-/// Ряд одного прогона: тик и численности плюс средний размер.
+/// The series of one run: the tick and the counts plus the mean size.
 #[derive(Clone, Debug)]
 struct Point {
     tick: u64,
@@ -39,15 +40,15 @@ pub struct Reference {
     pub ticks: u64,
     pub sample_every: u64,
     runs: Vec<Run>,
-    /// Условия мира.
+    /// The world's conditions.
     scale: f64,
-    /// Размеры мира. Сравниваются они, а не имя формы: при x1 полоса и 3:2 —
-    /// один и тот же мир 6000x4000.
+    /// The world's dimensions. They are compared, not the name of the shape: at x1 a strip and 3:2
+    /// are one and the same 6000x4000 world.
     space: Space,
     rules: Rules,
     start: usize,
     strategies: Vec<f64>,
-    /// Гены существ, на которых снят эталон.
+    /// The creatures' genes the reference was taken on.
     pub genes: Vec<String>,
     /// Founders' diets (`WorldConfig::diets`).
     pub diets: Vec<f64>,
@@ -63,8 +64,8 @@ impl Reference {
         let field = |v: &Value, k: &str| v.get(k).cloned().ok_or(format!("нет поля {k}"));
         let ticks = field(&data, "ticks")?.as_u64().ok_or("ticks — не число")?;
         let sample_every = field(&data, "sample_every")?.as_u64().ok_or("sample_every — не число")?;
-        // Средний геном в точках ряда — списком по порядку генов эталона. Размер
-        // ищем по имени: порядок генов эталона может отличаться от нашей таблицы.
+        // The mean genome at the series' points — a list in the order of the reference's genes. We look
+        // for the size by name: the reference's gene order may differ from our table.
         let size_at = match data.get("genes").and_then(Value::as_array) {
             Some(keys) => keys
                 .iter()
@@ -128,7 +129,7 @@ impl Reference {
         })
     }
 
-    /// Совпадают ли условия мира с теми, на которых снят эталон.
+    /// Whether the world's conditions match those the reference was taken on.
     pub fn check_same_world(&self, cfg: &WorldConfig) -> Result<(), String> {
         let mut diff = Vec::new();
         let space = cfg.space();
@@ -161,10 +162,10 @@ impl Reference {
         if diff.is_empty() { Ok(()) } else { Err(diff.join(", ")) }
     }
 
-    /// Предупреждение, если эталон снят на другом наборе генов: сравнивать
-    /// можно (метрики — численности и размер), но расхождение тогда ожидаемо, и
-    /// эталон пора переснять. Ген-выбор с одним вариантом инертен (не тянет
-    /// случайных чисел и ничего не различает) и в сравнении не участвует.
+    /// A warning if the reference was taken on another set of genes: comparing is possible (the
+    /// metrics are counts and size), but then a divergence is expected and the reference should be
+    /// retaken. A choice gene with one variant is inert (draws no random numbers and tells nothing
+    /// apart) and takes no part in the comparison.
     pub fn genes_note(&self) -> Option<String> {
         let inert =
             |key: &str| GENES.iter().any(|g| g.key == key && g.variants().is_some_and(|v| v.len() < 2));
@@ -190,7 +191,7 @@ fn mix(v: &Value) -> Result<Vec<f64>, String> {
     }
 }
 
-/// Записать эталон с текущих прогонов — в формате, который читает `Reference::load`.
+/// Write a reference from the current runs — in the format that `Reference::load` reads.
 pub fn save_reference(
     path: &Path,
     cfg: &WorldConfig,
@@ -282,7 +283,7 @@ const METRICS: [Metric; 4] = [
     ("средний размер, финал", |s| s.iter().rev().find_map(|p| p.size).unwrap_or(f64::NAN)),
 ];
 
-/// Печатает сверку; true — все метрики сошлись в обоих окнах.
+/// Prints the comparison; true — all metrics converged in both windows.
 pub fn print_comparison(reference: &Reference, results: &[(u64, SimResult)]) -> bool {
     let mut all_agree = true;
     let ours: Vec<Run> = results

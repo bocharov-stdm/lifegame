@@ -1,10 +1,9 @@
-//! Что игрок может настроить, в каких пределах и где это хранится. Порт
-//! `app/settings.py` (тег python-final).
+//! What the player can configure, within what limits and where it is stored. A port of
+//! `app/settings.py` (tag python-final).
 //!
-//! `FIELDS` — единственное место, где описан каждый ползунок: подпись,
-//! пояснение, пределы, шаг и формат. По нему строятся экран «Новый мир» и
-//! лаборатория на ходу, и по нему же зажимаются значения из файла настроек —
-//! поэтому они не могут разойтись.
+//! `FIELDS` is the only place where every slider is described: the label, the explanation, the
+//! limits, the step and the format. The «Новый мир» screen and the lab on the fly are built by
+//! it, and the values from the settings file are clamped by it too — so they cannot drift apart.
 
 use std::path::{Path, PathBuf};
 
@@ -30,12 +29,12 @@ const COST_SHOWN: f64 = 100.0 / GAME_COST_SCALE;
 /// a difference of a world or two, within the noise, the user's pick. Shown per 100 of it.
 pub const GAME_SPEED_COST: f64 = 0.5;
 const SPEED_COST_SHOWN: f64 = 100.0 / GAME_SPEED_COST;
-/// Масштаб интерфейса; 0 — как в системе.
+/// The interface scale; 0 — as in the system.
 pub const UI_SCALES: [f64; 6] = [0.0, 1.0, 1.25, 1.5, 1.75, 2.0];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
-    /// «Мир»: с чего начинается партия.
+    /// «Мир»: what a game begins with.
     World,
     /// The world's rules by topic; they can be changed mid-game in the lab too.
     /// «Еда»: how much food comes and where plants grow.
@@ -148,12 +147,12 @@ pub struct Field {
     /// Why the limits are where they are; empty — they are just where the rule stops making sense.
     pub limit: &'static str,
     pub tab: Tab,
-    /// Имя правила в `Rules` (None — стартовое условие, а не правило).
+    /// The rule's name in `Rules` (None — a starting condition, not a rule).
     pub rule: Option<&'static str>,
-    /// Непустой — выбор из вариантов (значение — номер варианта), а не ползунок.
+    /// Non-empty — a choice from variants (the value is the variant's number), not a slider.
     pub choices: &'static [&'static str],
-    /// Показывать ли поле сейчас: параметр профиля еды виден, только когда
-    /// выбран его профиль.
+    /// Whether to show the field now: a food profile's parameter is visible only when its profile
+    /// is chosen.
     pub visible: fn(&Settings) -> bool,
 }
 
@@ -191,7 +190,7 @@ const CHANGED_DEFAULTS: [(Key, u64); 5] = [
     (Key::SpeedCost, 3),
 ];
 
-/// Подписи профилей еды — по порядку `Profile::ALL` (сверено тестом).
+/// The food profiles' labels — in the order of `Profile::ALL` (checked by a test).
 const PROFILES: [&str; 7] =
     ["равномерно", "линейно", "экспонента", "логарифм", "волны", "игровое", "океаническое"];
 
@@ -200,15 +199,15 @@ fn profile_label(v: f64) -> String {
 }
 
 impl Field {
-    /// Значение в пределах и на сетке шага (так его ставит ползунок).
+    /// The value within the limits and on the step grid (that is how a slider sets it).
     pub fn snap(&self, value: f64) -> f64 {
         let v = value.clamp(self.lo, self.hi);
         let v = self.lo + ((v - self.lo) / self.step).round() * self.step;
-        // без хвостов вроде 0.30000000000000004
+        // without tails like 0.30000000000000004
         (v.min(self.hi) * 1e6).round() / 1e6
     }
 
-    /// Можно ли менять посреди партии: правила — да, стартовые условия — нет.
+    /// Whether it can be changed in the middle of a game: rules — yes, starting conditions — no.
     pub fn live(&self) -> bool {
         self.rule.is_some()
     }
@@ -381,7 +380,7 @@ const fn diet_field(d: usize, e: usize) -> Field {
 }
 
 const BASE_FIELDS: [Field; 57] = [
-    // ── Мир: с чего начинается партия ───────────────────────────────────────────
+    // ── World: what a game begins with ──────────────────────────────────────────
     Field {
         key: Key::Creatures,
         label: "Существ на старте",
@@ -395,8 +394,8 @@ const BASE_FIELDS: [Field; 57] = [
         rule: None,
         ..NUMBER
     },
-    // Доля второго варианта стратегии; остальные — стандартные. Дальше стратегии
-    // наследуются и мутируют сами, и при нуле затаившиеся всё равно появятся.
+    // The share of the strategy's second variant; the rest are standard. Later the strategies
+    // are inherited and mutate on their own, and at zero lurkers will appear anyway.
     Field {
         key: Key::Lurkers,
         label: "Затаившихся на старте",
@@ -477,9 +476,9 @@ const BASE_FIELDS: [Field; 57] = [
         rule: None,
         ..NUMBER
     },
-    // ── Еда: сколько её и где растёт ────────────────────────────────────────────
-    // Множитель, а не само число: в конфиге темп — 2.50008 в тик, и на сетку
-    // ползунка он не ложится. Множитель 1.0 даёт ровно конфиг, бит в бит.
+    // ── Food: how much of it and where it grows ─────────────────────────────────
+    // A multiplier, not the number itself: in the config the pace is 2.50008 a tick, and it does
+    // not fall on a slider's grid. A multiplier of 1.0 gives exactly the config, bit for bit.
     Field {
         key: Key::PlantGrowth,
         label: "Условная удельная плотность энергии",
@@ -526,8 +525,8 @@ const BASE_FIELDS: [Field; 57] = [
         rule: Some("plant_bite_yield"),
         ..NUMBER
     },
-    // Профиль по глубине и по ширине независимо; параметр профиля виден, только
-    // когда выбран его профиль. Гены слоя под еду не подстраиваются.
+    // The profile by depth and by width independently; a profile's parameter is visible only when
+    // its profile is chosen. The layer genes do not adjust to the food.
     Field {
         key: Key::PlantDepthProfile,
         label: "Еда по глубине",
@@ -735,7 +734,7 @@ const BASE_FIELDS: [Field; 57] = [
         visible: |s| s.get(Key::PlantPatches) > 0.0,
         ..NUMBER
     },
-    // ── Тело: цена содержания и рождения ────────────────────────────────────────
+    // ── Body: the price of upkeep and of birth ──────────────────────────────────
     Field {
         key: Key::CostScale,
         label: "Общая цена жизни",
@@ -862,7 +861,7 @@ const BASE_FIELDS: [Field; 57] = [
         rule: Some("repro_cost"),
         ..NUMBER
     },
-    // ── Бой ─────────────────────────────────────────────────────────────────────
+    // ── Fight ───────────────────────────────────────────────────────────────────
     Field {
         key: Key::MeleeDamage,
         label: "Сила ближнего удара",
@@ -938,7 +937,7 @@ const BASE_FIELDS: [Field; 57] = [
         rule: Some("shot_period"),
         ..NUMBER
     },
-    // ── Трупы ───────────────────────────────────────────────────────────────────
+    // ── Corpses ─────────────────────────────────────────────────────────────────
     Field {
         key: Key::CorpseFresh,
         label: "Свежий",
@@ -1056,7 +1055,7 @@ const BASE_FIELDS: [Field; 57] = [
         rule: Some("thermo_bottom"),
         ..NUMBER
     },
-    // ── Эволюция ────────────────────────────────────────────────────────────────
+    // ── Evolution ───────────────────────────────────────────────────────────────
     Field {
         key: Key::MutationSigma,
         label: "Сила мутаций",
@@ -1221,21 +1220,21 @@ pub fn field(key: Key) -> &'static Field {
     FIELDS.iter().find(|f| f.key == key).expect("поле есть в FIELDS")
 }
 
-/// Масштабы-пресеты экрана «Новый мир».
+/// The scale presets of the «Новый мир» screen.
 pub const PRESETS: [(&str, f64); 4] =
     [("Как раньше", 1.0), ("Остров", 10.0), ("Материк", 100.0), ("Планета", 1000.0)];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
-    // ── старт ──────────────────────────────────────────────────────────────
+    // ── start ──────────────────────────────────────────────────────────────
     pub seed: u64,
-    /// Новый сид на каждый «Начать».
+    /// A new seed for every «Начать».
     pub random_seed: bool,
     pub scale: f64,
     pub shape: Shape,
-    /// Значения ползунков, в порядке `FIELDS`.
+    /// The sliders' values, in the order of `FIELDS`.
     pub values: [f64; FIELDS.len()],
-    // ── экран ────────────────────────────────────────────────────────────────
+    // ── screen ───────────────────────────────────────────────────────────────
     pub fullscreen: bool,
     pub ui_scale: f64,
     pub show_fps: bool,
@@ -1285,7 +1284,7 @@ impl Settings {
         self.values[index(key)] = field(key).snap(value);
     }
 
-    /// Выбранный профиль еды по оси.
+    /// The chosen food profile along an axis.
     pub fn food(&self, along: Along) -> Profile {
         Profile::of(self.get(match along {
             Along::Depth => Key::PlantDepthProfile,
@@ -1293,19 +1292,19 @@ impl Settings {
         }))
     }
 
-    /// Правила мира из ползунков.
+    /// The world's rules from the sliders.
     pub fn rules(&self) -> Rules {
         let mut rules = Rules::default();
         for f in FIELDS.iter().filter(|f| f.live()) {
             let v = self.get(f.key);
             let v = if f.key == Key::PlantGrowth { Rules::default().plant_rate * v } else { v };
-            // пределы FIELDS лежат внутри допустимого для Rules — проверено тестом
+            // FIELDS' limits lie inside what `Rules` allows — checked by a test
             rules = rules.with(f.rule.expect("правило"), v).expect("значение ползунка допустимо");
         }
         rules
     }
 
-    /// Ползунки правил — из действующих правил мира (для лаборатории на ходу).
+    /// The rules' sliders from the world's current rules (for the lab on the fly).
     pub fn take_rules(&mut self, rules: &Rules) {
         for f in FIELDS.iter().filter(|f| f.live()) {
             let v = rules.get(f.rule.expect("правило")).expect("правило есть в Rules");
@@ -1314,13 +1313,12 @@ impl Settings {
         }
     }
 
-    /// Мир из настроек. Численности на старте заданы на базовый участок и
-    /// растут с площадью — плотность, а с ней и баланс, от масштаба не зависят.
+    /// The world from the settings. The counts at the start are given for the base area and grow
+    /// with the area — the density, and with it the balance, do not depend on the scale.
     pub fn world_config(&self, seed: u64) -> WorldConfig {
         let space = Space::new(self.scale, self.shape);
         let per_area = |key| (self.get(key) * space.area_ratio()).round() as usize;
-        // доли вариантов (стандартный, второй); ноль — пустая смесь, как у мира
-        // по умолчанию
+        // the shares of the variants (standard, the second); zero — an empty mix, as in the default world
         let mix = |key| {
             let p = self.get(key);
             if p > 0.0 { vec![100.0 - p, p] } else { Vec::new() }
@@ -1339,7 +1337,7 @@ impl Settings {
         }
     }
 
-    /// Вернуть значения по умолчанию на одной вкладке.
+    /// Return the defaults on one tab.
     pub fn reset(&mut self, tab: Tab) {
         let default = Settings::default();
         for (i, f) in FIELDS.iter().enumerate() {
@@ -1358,7 +1356,7 @@ impl Settings {
         self.get(key) == Settings::default().get(key)
     }
 
-    // ── файл ────────────────────────────────────────────────────────────────
+    // ── file ────────────────────────────────────────────────────────────────
 
     fn to_json(&self) -> Value {
         let mut m = Map::new();
@@ -1376,8 +1374,8 @@ impl Settings {
         Value::Object(m)
     }
 
-    /// Настройки из JSON. Мусор, чужие ключи и значения вне пределов не
-    /// роняют игру: негодное остаётся по умолчанию, остальное зажимается.
+    /// Settings from JSON. Garbage, foreign keys and values out of limits do not crash the game:
+    /// what is unfit stays at the default, the rest is clamped.
     fn from_json(data: &Value) -> Settings {
         let mut s = Settings::default();
         let Some(m) = data.as_object() else { return s };
@@ -1398,7 +1396,7 @@ impl Settings {
             s.shape = shape;
         }
         for (i, f) in FIELDS.iter().enumerate() {
-            // до переименования в «существ» ключ был другим
+            // before the rename to «существ» the key was different
             let old = (f.key == Key::Creatures).then_some("n_vegetarians");
             if CHANGED_DEFAULTS.iter().any(|&(key, changed)| key == f.key && version < changed) {
                 continue;
@@ -1420,7 +1418,7 @@ impl Settings {
         s
     }
 
-    /// Настройки из файла; нет файла или он битый — значения по умолчанию.
+    /// Settings from a file; no file or a broken one — the defaults.
     pub fn load(path: &Path) -> Settings {
         std::fs::read_to_string(path)
             .ok()
@@ -1429,9 +1427,9 @@ impl Settings {
             .unwrap_or_default()
     }
 
-    /// Пишет атомарно: сначала во временный файл рядом, потом подменяет.
-    /// Оборванная запись не оставит полфайла. Ошибка записи игру не роняет —
-    /// настройки просто не запомнятся.
+    /// Writes atomically: first into a temporary file next to it, then swaps it in. An interrupted
+    /// write will not leave half a file. A write error does not crash the game — the settings just
+    /// will not be remembered.
     pub fn save(&self, path: &Path) -> Result<(), String> {
         let dir = path.parent().ok_or("у файла настроек нет папки")?;
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -1460,18 +1458,18 @@ fn json_key(key: Key) -> &'static str {
         Key::Carnivores => "diet_carnivores",
         Key::Scavengers => "diet_scavengers",
         Key::MeatFounders => "meat_founder_size",
-        // у профилей еды ключ файла — имя правила
+        // for the food profiles the file's key is the rule's name
         _ => field(key).rule.expect("у поля есть правило"),
     }
 }
 
-/// Где лежит файл настроек: `%APPDATA%\TinyLife\settings.json` и аналоги.
-/// Новое имя, а не `user_settings.json` Python-версии: форматы разные.
+/// Where the settings file lies: `%APPDATA%\TinyLife\settings.json` and its analogues.
+/// A new name, not the Python version's `user_settings.json`: the formats differ.
 pub fn default_path() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "TinyLife").map(|d| d.config_dir().join("settings.json"))
 }
 
-/// Что поменялось в правилах — строка для хроники: «энергия растения 50 → 80».
+/// What has changed in the rules — a line for the chronicle: «энергия растения 50 → 80».
 pub fn describe_change(old: &Settings, new: &Settings) -> Option<String> {
     let parts: Vec<String> = FIELDS
         .iter()
@@ -1492,8 +1490,8 @@ pub fn describe_change(old: &Settings, new: &Settings) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// Подсказки называют числа из таблицы генов словами: поменяли базу —
-    /// подсказка не должна врать.
+    /// The hints name the numbers from the gene table in words: if the base changes, the hint must
+    /// not lie.
     #[test]
     fn подсказки_цитируют_базы_генов() {
         use life_core::config::ENERGY_PER_SIZE;
@@ -1531,7 +1529,7 @@ mod tests {
 
     #[test]
     fn пределы_ползунков_допустимы_для_правил() {
-        // оба края каждого ползунка собирают правила без ошибки
+        // both edges of every slider assemble the rules without an error
         for f in &FIELDS {
             for v in [f.lo, f.hi] {
                 let mut s = Settings::default();
@@ -1607,7 +1605,7 @@ mod tests {
         assert_eq!(s.world_config(1).creatures_at_start(), 20);
     }
 
-    /// Доля второй стратегии — смесь мира; ноль — пустая смесь.
+    /// The second strategy's share is the world's mix; zero — an empty mix.
     #[test]
     fn доли_стратегий_становятся_смесью_мира() {
         let mut s = Settings::default();
@@ -1617,8 +1615,8 @@ mod tests {
         assert_eq!(s.world_config(1).strategies, vec![70.0, 30.0]);
     }
 
-    /// Подписи вариантов — по порядку профилей движка, а у каждого правила
-    /// профиля еды есть поле.
+    /// The variants' labels are in the order of the engine's profiles, and every rule of a food
+    /// profile has a field.
     #[test]
     fn поля_еды_покрывают_профили() {
         assert_eq!(PROFILES, Profile::ALL.map(Profile::label));
@@ -1657,7 +1655,7 @@ mod tests {
         let old = Settings::default();
         let mut new = old.clone();
         new.set(Key::PlantEnergy, 80.0);
-        new.set(Key::Creatures, 50.0); // стартовое условие — не правило
+        new.set(Key::Creatures, 50.0); // a starting condition is not a rule
         assert_eq!(describe_change(&old, &new).as_deref(), Some("правила: энергия растения 50 → 80"));
         assert_eq!(describe_change(&old, &old), None);
     }

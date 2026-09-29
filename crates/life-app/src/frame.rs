@@ -1,11 +1,11 @@
-//! Кадр — всё, что окну нужно, чтобы нарисовать мир, собранное потоком
-//! симуляции. Окно никогда не читает `World` напрямую: оно рисует последний
-//! готовый кадр, поэтому медленный тик не может заморозить интерфейс.
+//! A frame is everything the window needs to draw the world, assembled by the simulation
+//! thread. The window never reads `World` directly: it draws the last ready frame, so a slow
+//! tick cannot freeze the interface.
 //!
-//! Размер кадра ограничен экраном, а не миром: в кадр попадают только видимые
-//! существа (отбор по телу, а не по центру — размер существа это ген, и
-//! крупное торчит в кадр, даже когда центр далеко). Если видимых слишком много,
-//! вместо кружков идёт карта плотности — одна картинка размером с экран.
+//! The frame's size is bounded by the screen, not by the world: only visible creatures get into
+//! a frame (selected by the body, not by the centre — a creature's size is a gene, and a big one
+//! sticks into the frame even when its centre is far away). If too many are visible, a density
+//! map is sent instead of circles — one picture the size of the screen.
 
 use std::sync::Arc;
 
@@ -16,34 +16,34 @@ use life_sim::observe::{EventKind, GeneStat, Snapshot, gene_stats};
 
 use crate::history::Sample;
 
-/// Больше кружков в кадре не шлём: дальше — карта плотности. 32 байта на
-/// существо — 8 МБ, это ещё легко заливается в видеокарту каждый кадр; а при
-/// таком числе кружки всё равно мельче пикселя.
+/// We send no more circles in a frame: beyond that, a density map. 32 bytes per creature is
+/// 8 MB, which is still easy to upload to the graphics card every frame; and at such a number
+/// the circles are smaller than a pixel anyway.
 pub const MAX_INSTANCES: usize = 250_000;
 
-/// Один кружок. Ровно 32 байта — так их и читает шейдер (`render.rs`).
-/// Координаты — относительно `Frame::origin`; вид, курс и флаги призрака —
-/// в `meta` (см. `motion.rs`).
+/// One circle. Exactly 32 bytes — that is how the shader reads them (`render.rs`).
+/// The coordinates are relative to `Frame::origin`; the view, the heading and the ghost's flags
+/// are in `meta` (see `motion.rs`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Instance {
-    /// Позиция на тике кадра.
+    /// The position at the frame's tick.
     pub x: f32,
     pub y: f32,
-    /// Позиция в прошлом кадре: окно рисует движение между ними.
+    /// The position in the previous frame: the window draws the motion between them.
     pub px: f32,
     pub py: f32,
-    /// Радиус тела в единицах мира.
+    /// The body's radius in world units.
     pub r: f32,
-    /// RGB и сытость (0‒255) в последнем байте.
+    /// RGB and fullness (0‒255) in the last byte.
     pub color: u32,
-    /// Секунды с рождения на момент сборки кадра, у призрака — со смерти.
+    /// Seconds since birth at the moment the frame is assembled, for a ghost — since death.
     pub age: f32,
-    /// Курс u16 | вид << 16 | призрак | умер с голоду.
+    /// Heading u16 | view << 16 | ghost | starved to death.
     pub meta: u32,
 }
 
-/// Картинка RGBA, натянутая на прямоугольник мира `rect` (x0, y0, x1, y1).
+/// An RGBA picture stretched over the world's rectangle `rect` (x0, y0, x1, y1).
 #[derive(Clone, Debug, Default)]
 pub struct Raster {
     pub w: usize,
@@ -52,7 +52,7 @@ pub struct Raster {
     pub rect: (f64, f64, f64, f64),
 }
 
-/// Какую часть мира окно сейчас показывает и сколько в ней пикселей.
+/// Which part of the world the window shows now and how many pixels it has.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewRequest {
     pub x0: f64,
@@ -64,56 +64,56 @@ pub struct ViewRequest {
 }
 
 impl ViewRequest {
-    /// Видимая область с запасом по половине с каждой стороны: пока новый кадр
-    /// не пришёл, камера успевает сдвинуться, и края не должны быть пустыми.
+    /// The visible area with a margin of half on each side: until a new frame has come, the camera
+    /// manages to shift, and the edges must not be empty.
     pub fn padded(&self) -> (f64, f64, f64, f64) {
         let (dx, dy) = ((self.x1 - self.x0) * 0.5, (self.y1 - self.y0) * 0.5);
         (self.x0 - dx, self.y0 - dy, self.x1 + dx, self.y1 + dy)
     }
 }
 
-/// Чем закончилась партия.
+/// How the game ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ending {
     Extinct,
     Explosion,
 }
 
-/// Темп и состояние партии — для верхней панели.
+/// The tempo and the game's state — for the top panel.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Status {
     pub paused: bool,
     pub speed_index: usize,
-    /// Сколько тиков в секунду получается на самом деле.
+    /// How many ticks a second actually come out.
     pub tps: f64,
-    /// Тик не успевает за выбранной скоростью.
+    /// The tick cannot keep up with the chosen speed.
     pub lagging: bool,
     pub ended: Option<Ending>,
 }
 
-/// Прямоугольник мира: x0, y0, x1, y1 (x0 < x1, y0 < y1).
+/// The world's rectangle: x0, y0, x1, y1 (x0 < x1, y0 < y1).
 pub type Area = (f64, f64, f64, f64);
 
-/// Сводка генов существ; None — никого нет.
+/// A summary of the creatures' genes; None — there is nobody.
 pub type GeneSummary = Option<[GeneStat; creature::N]>;
 
-/// Сводка по области мира (инструмент «Область»): кто внутри (по центру тела)
-/// и какой у них геном — рядом со сводкой по всему миру на том же тике.
+/// A summary for a region of the world (the «Область» tool): who is inside (by the body's
+/// centre) and what their genome is — next to the summary for the whole world at the same tick.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RegionStats {
     pub area: Area,
     pub tick: u64,
     pub plants: usize,
     pub creatures: usize,
-    /// Средняя заполненность бака существ внутри, 0..1.
+    /// The mean tank fullness of the creatures inside, 0..1.
     pub fullness: Option<f64>,
     pub inside: GeneSummary,
     pub world: GeneSummary,
 }
 
 impl RegionStats {
-    /// `world_genes` — сводка по всему миру, если она уже посчитана на этом
-    /// тике (срез); иначе считается здесь.
+    /// `world_genes` — the summary for the whole world, if it is already computed at this tick (a
+    /// sample); otherwise it is computed here.
     pub fn of(world: &World, area: Area, world_genes: Option<GeneSummary>) -> RegionStats {
         let inside = |x: f64, y: f64| x >= area.0 && x <= area.2 && y >= area.1 && y <= area.3;
         let herd = world.creatures.iter().filter(|v| inside(v.x, v.y));
@@ -132,7 +132,7 @@ impl RegionStats {
     }
 }
 
-/// Выбранное существо, как оно есть на тике кадра.
+/// The selected creature as it is at the frame's tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Selected {
     pub age: f64,
@@ -142,13 +142,13 @@ pub struct Selected {
     pub id: u64,
     pub x: f64,
     pub y: f64,
-    /// Радиус тела.
+    /// The body's radius.
     pub half: f64,
     pub vision: f64,
     pub speed: f64,
     pub energy: f64,
     pub max_energy: f64,
-    /// Расход энергии за тик.
+    /// The energy spent per tick.
     pub upkeep: f64,
     pub genome: [f64; creature::N],
     /// Its depth layer (y from and to), as its program set it this tick.
@@ -210,8 +210,8 @@ impl Selected {
     }
 }
 
-/// Запись хроники. `kind` — у событий наблюдателя (те же, что в отчёте);
-/// у событий самой игры (правила, подсадка) его нет.
+/// A chronicle entry. `kind` belongs to the observer's events (the same as in the report); the
+/// game's own events (rules, planting) have none.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LogEntry {
     pub tick: u64,
@@ -246,7 +246,7 @@ impl CorpseMark {
     }
 }
 
-/// Короткий след удара, уже собранный потоком симуляции.
+/// A short trace of a strike, already assembled by the simulation thread.
 #[derive(Clone, Copy, Debug)]
 pub struct ShotTrail {
     pub from: (f64, f64),
@@ -256,12 +256,12 @@ pub struct ShotTrail {
 
 #[derive(Debug, Default)]
 pub struct Frame {
-    /// Номер мира: растёт при «Заново» и новом мире. Окно по нему понимает,
-    /// что историю и хронику пора начать с чистого листа.
+    /// The world's number: grows at «Заново» and at a new world. By it the window understands that
+    /// the history and the chronicle should start from a clean sheet.
     pub world_gen: u64,
     pub seed: u64,
     pub scale: f64,
-    /// Правила, по которым мир идёт сейчас.
+    /// The rules the world runs by now.
     pub rules: Rules,
     pub tick: u64,
     pub plants: usize,
@@ -269,47 +269,46 @@ pub struct Frame {
     pub world_w: f64,
     pub world_h: f64,
     pub status: Status,
-    /// При выключенном рендере поток не собирает содержимое мира.
+    /// With the render off the thread does not collect the world's content.
     pub render_world: bool,
-    /// Дальний масштаб: неподвижные двухпиксельные квадраты без анимации.
+    /// A far scale: motionless two-pixel squares without animation.
     pub dots: bool,
-    /// Начало координат кружков в мире (f64): при ×10 000 мир шириной 6·10⁷,
-    /// и в f32 абсолютные координаты теряли бы единицы пикселей.
+    /// The origin of the circles in the world (f64): at ×10 000 the world is 6·10⁷ wide, and in f32
+    /// absolute coordinates would lose units of pixels.
     pub origin: (f64, f64),
-    /// Растения, потом существа — в таком порядке и рисуются.
+    /// Plants, then creatures — they are drawn in this order.
     pub instances: Vec<Instance>,
     /// The food patches, when they are new: in the first frame of a world and after a rules
     /// change (frames are never dropped, so the window keeps the last ones it got).
     pub patches: Option<Arc<[Patch]>>,
     pub corpses: Vec<CorpseMark>,
     pub shots: Vec<ShotTrail>,
-    /// Вместо кружков, когда видимых больше `MAX_INSTANCES`.
+    /// Instead of circles, when more than `MAX_INSTANCES` are visible.
     pub density: Option<Raster>,
-    /// Весь мир крупными клетками; приходит не в каждом кадре.
+    /// The whole world in big cells; comes not in every frame.
     pub minimap: Option<Raster>,
     pub selected: Option<Selected>,
-    /// Новое с прошлого кадра: точки графиков и записи хроники. Кадры не
-    /// теряются (поток кладёт новый, только когда окно забрало прошлый),
-    /// поэтому приращений достаточно.
+    /// What is new since the previous frame: the charts' points and the chronicle entries. Frames
+    /// are not lost (the thread puts a new one only when the window has taken the previous one), so
+    /// increments are enough.
     pub samples: Vec<Sample>,
-    /// Срезы мира — раз в `SNAPSHOT_EVERY` тиков (реже на огромном мире).
+    /// The world's samples — once in `SNAPSHOT_EVERY` ticks (less often on a huge world).
     pub snapshots: Vec<Snapshot>,
-    /// Сводка по заданной области — когда её пересчитали (при установке и на
-    /// каждом срезе).
+    /// A summary for the given region — when it was recomputed (at setting and at every sample).
     pub region: Option<RegionStats>,
     pub log: Vec<LogEntry>,
-    /// Когда кадр собран: от этого момента окно отсчитывает возраст кружков.
+    /// When the frame was assembled: from that moment the window counts the circles' age.
     pub built: Option<std::time::Instant>,
-    /// Сколько времени потока симуляции ушло на сборку кадра, мс.
+    /// How much of the simulation thread's time went into assembling the frame, ms.
     pub build_ms: f64,
-    /// Средняя цена тика, мс.
+    /// The mean price of a tick, ms.
     pub tick_ms: f64,
-    /// Цена последнего среза статистики, мс.
+    /// The price of the last statistics sample, ms.
     pub snapshot_ms: f64,
 }
 
-/// Лёгкие экземпляры для дальнего масштаба: нет сопоставления кадров,
-/// призраков, курсов и сортировки. Тела и растения сохраняют цвета.
+/// Light instances for a far scale: no matching of frames, ghosts, headings and sorting.
+/// Bodies and plants keep their colours.
 pub fn dots(world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) -> bool {
     use crate::motion::{DOT_BIT, KIND_CREATURE, KIND_PLANT, OLD};
 
@@ -348,7 +347,7 @@ pub fn dots(world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) 
     true
 }
 
-// ── цвета (палитра app/theme.py) ────────────────────────────────────────────
+// ── colours (the palette of app/theme.py) ───────────────────────────────────
 
 pub const WORLD_TOP: [u8; 3] = [31, 38, 47];
 pub const WORLD_BOTTOM: [u8; 3] = [15, 18, 23];
@@ -359,7 +358,7 @@ pub fn lerp(a: [u8; 3], b: [u8; 3], t: f64) -> [u8; 3] {
     std::array::from_fn(|i| (a[i] as f64 + (b[i] as f64 - a[i] as f64) * t).round() as u8)
 }
 
-/// Цвет и байт в последнем канале (у существ — сытость) одним u32.
+/// A colour and a byte in the last channel (for creatures — fullness) as one u32.
 pub fn rgba(c: [u8; 3], a: u8) -> u32 {
     u32::from_le_bytes([c[0], c[1], c[2], a])
 }
@@ -368,14 +367,14 @@ pub fn rgba(c: [u8; 3], a: u8) -> u32 {
 /// that move. Charts and counters keep the bright `PLANT_COLOR`.
 pub const SPROUT_COLOR: [u8; 3] = [64, 150, 84];
 
-/// Растения тусклее животных: их много, и они не должны спорить с теми, кто движется.
+/// Plants are dimmer than animals: there are many of them, and they must not compete with those that move.
 pub fn plant_color() -> [u8; 3] {
     lerp(WORLD_BOTTOM, SPROUT_COLOR, 0.75)
 }
 
-/// Карта плотности: сколько растений и существ в каждой клетке
-/// прямоугольника мира, в цвете. Считается за один проход по миру, поэтому
-/// её цена не зависит от того, сколько существ видно.
+/// The density map: how many plants and creatures are in each cell of the world's rectangle,
+/// in colour. Computed in one pass over the world, so its price does not depend on how many
+/// creatures are visible.
 pub fn density(world: &World, rect: (f64, f64, f64, f64), w: usize, h: usize, out: Raster) -> Raster {
     let (x0, y0, x1, y1) = rect;
     let (sx, sy) = (w as f64 / (x1 - x0), h as f64 / (y1 - y0));
@@ -401,9 +400,9 @@ pub fn density(world: &World, rect: (f64, f64, f64, f64), w: usize, h: usize, ou
     rgba.reserve(w * h * 4);
     for (c, hue) in counts.iter().zip(&hues) {
         let colors = [PLANT_COLOR, hue.map(|sum| (sum / c[1].max(1) as u64) as u8)];
-        // Яркость по логарифму: одинокое существо видно, а скопление не слепит.
+        // Brightness by the logarithm: a lone creature is visible, and a crowd does not blind.
         let k = c.map(|n| if n == 0 { 0.0 } else { (0.6 + (n as f64).log2() / 10.0).min(1.0) });
-        // Существа поверх растений.
+        // Creatures on top of plants.
         let mut px = [0.0f64; 3];
         let mut alpha = 0.0f64;
         for (kind, &a) in k.iter().enumerate() {
@@ -412,14 +411,14 @@ pub fn density(world: &World, rect: (f64, f64, f64, f64), w: usize, h: usize, ou
             }
             alpha = alpha * (1.0 - a) + a;
         }
-        // Премультиплицированный цвет: так его смешивает egui.
+        // A premultiplied colour: that is how egui blends it.
         rgba.extend([px[0] as u8, px[1] as u8, px[2] as u8, (alpha * 255.0) as u8]);
     }
     Raster { w, h, rgba, rect }
 }
 
-/// Размер миникарты в клетках: 480 по ширине, по высоте — по пропорциям мира,
-/// но не меньше 8 строк (при ×1000 мир в 1500 раз шире, чем выше).
+/// The minimap's size in cells: 480 across, in height by the world's proportions, but no fewer
+/// than 8 rows (at ×1000 the world is 1500 times wider than tall).
 pub fn minimap_size(world_w: f64, world_h: f64) -> (usize, usize) {
     let w = 480;
     let h = ((w as f64 * world_h / world_w).round() as usize).clamp(8, 320);
@@ -436,10 +435,10 @@ mod tests {
         assert_eq!(std::mem::size_of::<Instance>(), 32);
     }
 
-    /// Страж скорости кадра: 200 тыс. видимых существ собираются в кадр
-    /// быстро — вместе с сопоставлением с прошлым кадром (`motion.rs`), — а мир
-    /// ×400 целиком (600 тыс. растений) уходит в карту плотности, и кадр весит
-    /// не больше пары мегабайт, а не десятки.
+    /// A guard on the frame's speed: 200 thousand visible creatures are assembled into a frame
+    /// fast — together with matching against the previous frame (`motion.rs`) — and a whole ×400
+    /// world (600 thousand plants) goes into a density map, and the frame weighs no more than a
+    /// couple of megabytes, not tens.
     #[test]
     fn кадр_огромного_мира_быстрый_и_лёгкий() {
         use crate::motion::Motion;
@@ -452,13 +451,13 @@ mod tests {
             (0..world.space.per_area(life_core::config::PLANT_MAX)).map(|_| flora.plant(&mut rng)).collect();
         let (w, h) = (world.space.width, world.space.height);
 
-        // вид на часть мира: ~200 тыс. растений в кадре; все родились на одном
-        // тике — худший случай для сопоставления растений (одна большая группа)
+        // a view of a part of the world: ~200 thousand plants in the frame; all were born on one tick
+        // — the worst case for matching plants (one big group)
         let part = (0.0, 0.0, w / 3.0, h);
         let mut out = Vec::new();
         let mut motion = Motion::default();
         assert!(motion.collect(&world, part, &mut out));
-        world.plants.retain(|p| p.x.to_bits() % 7 != 0); // часть съели
+        world.plants.retain(|p| p.x.to_bits() % 7 != 0); // a part was eaten
         let start = std::time::Instant::now();
         assert!(motion.collect(&world, part, &mut out));
         let ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -466,7 +465,7 @@ mod tests {
         assert!(out.len() > 150_000);
         assert!(ms < 60.0, "сборка кадра {ms:.1} мс — окно получало бы кадры редко");
 
-        // весь мир: кружков больше потолка — карта плотности размером с экран
+        // the whole world: more circles than the ceiling — a density map the size of the screen
         assert!(!motion.collect(&world, (0.0, 0.0, w, h), &mut out));
         let start = std::time::Instant::now();
         let r = density(&world, (0.0, 0.0, w, h), 960, 300, Raster::default());

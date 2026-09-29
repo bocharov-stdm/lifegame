@@ -1,10 +1,10 @@
-//! Фенотип существа: всё, что выводится из генома и правил мира один раз
-//! при рождении и росте тела. Геном не меняется всю жизнь, поэтому ход (самый горячий код)
-//! читает готовые числа. Правила меняются на ходу (лаборатория) — тогда фенотип
-//! пересчитывается целиком (`Creature::apply_rules`).
+//! A creature's phenotype: everything derived from the genome and the world's rules once, at
+//! birth and as the body grows. The genome does not change all life long, so the move (the
+//! hottest code) reads ready numbers. The rules change on the fly (the lab) — then the phenotype
+//! is recomputed whole (`Creature::apply_rules`).
 //!
-//! Единственное место, где ген действует и платит: новый ген получает здесь
-//! своё действие, а его цена дописывается в конец суммы расхода.
+//! The only place where a gene acts and pays: a new gene gets its effect here, and its price is
+//! appended to the end of the upkeep sum.
 
 use super::Strategy;
 use crate::config::{
@@ -47,7 +47,7 @@ impl Diet {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Phenotype {
-    /// Диаметр тела.
+    /// The diameter of the body.
     pub size: f64,
     pub speed: f64,
     /// Share of digested food that goes into growth until grown (the `maturation` gene, 0..1).
@@ -90,15 +90,15 @@ pub struct Phenotype {
     pub melee_size_power: f64,
     pub vision: f64,
 
-    // ── границы ────────────────────────────────────────────────────────────
-    /// Границы тела в мире: дальше них центр не заходит никогда. Its layer is its program's
+    // ── bounds ─────────────────────────────────────────────────────────────
+    /// The body's bounds in the world: its centre never goes past them. Its layer is its program's
     /// setting (`Stance::layer`, `band`).
     pub x_lo: f64,
     pub x_hi: f64,
     pub y_lo: f64,
     pub y_hi: f64,
 
-    // ── энергия и предвычисленное ───────────────────────────────────────────
+    // ── energy and what is precomputed ─────────────────────────────────────
     pub max_energy: f64,
     /// Upkeep a tick at full speed (for showing and for weighing), and its parts: the body and eyes
     /// paid standing (`still_upkeep`), and the price of a step of length `s`, `speed_price ×
@@ -124,7 +124,7 @@ impl Phenotype {
         Self::at_size(genome, rules, space, genome[Gene::Size])
     }
 
-    /// Фенотип по фактическому телу: наследственный предел хранится в геноме.
+    /// The phenotype for the actual body: the hereditary limit is kept in the genome.
     pub fn at_size(genome: &CreatureGenome, rules: &Rules, space: &Space, size: f64) -> Self {
         Self::aged(genome, rules, space, size, 1.0)
     }
@@ -132,13 +132,13 @@ impl Phenotype {
     /// The phenotype of an actual body at `vigour` (`vigour`): an old one is slower, sees less,
     /// strikes weaker and has less health, and pays the upkeep of the speed and sight it has.
     pub fn aged(genome: &CreatureGenome, rules: &Rules, space: &Space, size: f64, vigour: f64) -> Self {
-        // Запас на тело — не больше половины мира. Размер — ген, и при дешёвом
-        // размере (лаборатория) тело бывает больше мира: с полным запасом
-        // границы переворачивались, и зажимы перекидывали существо от края к краю.
+        // The margin for the body is no more than half the world. Size is a gene, and at a cheap size
+        // (the lab) a body can be bigger than the world: with the full margin the bounds turned over,
+        // and the clamps threw a creature from edge to edge.
         let margin_x = size.min(space.width / 2.0);
         let margin_y = size.min(space.height / 2.0);
         let (x_lo, x_hi) = (margin_x, space.width - margin_x);
-        // Домашняя полоса (`band`) лежит внутри этих границ: слой — в пределах мира.
+        // The home band (`band`) lies inside these bounds: the layer is within the world.
         let (y_lo, y_hi) = (margin_y, space.height - margin_y);
 
         let speed = genome[Gene::Speed] * vigour;
@@ -277,8 +277,8 @@ impl Phenotype {
         if lo <= hi {
             return (lo, hi);
         }
-        // Слой уже собственного тела — схлопываем полосу в линию посередине,
-        // держа её в мире: у слоя на самом краю середина легла бы за границу.
+        // A layer narrower than the body itself — collapse the band into a line in the middle, keeping
+        // it in the world: for a layer right at the edge the middle would fall past the border.
         let mid = ((lo + hi) / 2.0).clamp(margin_y, self.height - margin_y);
         (mid, mid)
     }

@@ -1,10 +1,10 @@
-//! Поток симуляции. `World` живёт только здесь: окно шлёт команды и забирает
-//! готовые кадры, но никогда не ждёт тика. Преемник `app/session.py`.
+//! The simulation thread. `World` lives only here: the window sends commands and takes ready
+//! frames, but never waits for a tick. The successor of `app/session.py`.
 //!
-//! Кадры идут по принципу «последний побеждает»: поток кладёт кадр в слот,
-//! только когда окно забрало прошлый, — очереди нет, и медленное окно не
-//! копит кадры, а медленный тик не держит окно. Буферы кружков окно отдаёт
-//! обратно, чтобы не выделять память на каждый кадр.
+//! Frames follow the «last one wins» principle: the thread puts a frame in the slot only when
+//! the window has taken the previous one — there is no queue, and a slow window does not pile up
+//! frames, and a slow tick does not hold the window. The window hands the buffers of circles
+//! back, so as not to allocate memory for every frame.
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -23,7 +23,7 @@ use crate::frame::{
 use crate::history::Sample;
 use crate::motion::Motion;
 
-/// Скорости, тиков в секунду; None — «максимум», сколько успеет процессор.
+/// The speeds, ticks a second; None — «maximum», as many as the processor manages.
 pub const SPEEDS: [Option<f64>; 9] = [
     Some(10.0),
     Some(30.0),
@@ -35,30 +35,30 @@ pub const SPEEDS: [Option<f64>; 9] = [
     Some(1920.0),
     None,
 ];
-/// Спокойный старт: 30 т/с; ускорение доступно на верхней панели.
+/// A calm start: 30 t/s; a speed-up is available on the top panel.
 pub const DEFAULT_SPEED: usize = 1;
 
-/// Существ на базовую площадь, после которых партия останавливается
-/// («взрыв численности»). Как `EXPLOSION_LIMIT` в Python; растёт с площадью.
+/// Creatures per base area after which the game stops («a population explosion»). Like
+/// `EXPLOSION_LIMIT` in Python; grows with the area.
 pub const EXPLOSION_LIMIT: usize = 3000;
 
-/// Точка графика численностей — раз в столько тиков.
+/// A point of the population chart — once in this many ticks.
 pub const GRAPH_EVERY: u64 = 10;
-/// Срез для хроники и графика генома — не чаще, чем раз в столько тиков
-/// (кратно периоду деления, как в отчёте).
+/// A sample for the chronicle and the genome chart — no oftener than once in this many ticks
+/// (a multiple of the division period, as in the report).
 pub const SNAPSHOT_EVERY: u64 = 60;
-/// Срез считает перцентили генов (сортировка), и на огромном мире он дорог.
-/// Интервал растёт так, чтобы срезы съедали не больше этой доли времени тиков.
+/// A sample computes the genes' percentiles (a sort), and on a huge world it is dear. The
+/// interval grows so that the samples eat no more than this share of the ticks' time.
 const SNAPSHOT_SHARE: f64 = 0.05;
 
-/// Тики без передышки идут не дольше этого: потом поток смотрит команды и
-/// отдаёт кадр. Иначе на «максимуме» пауза нажималась бы с задержкой.
+/// Ticks without a breather go on no longer than this: then the thread looks at the commands
+/// and hands out a frame. Otherwise at «maximum» a pause would be pressed with a delay.
 const SLICE: Duration = Duration::from_millis(8);
-/// Кадры не чаще, чем нужно экрану.
+/// Frames no oftener than the screen needs.
 const MIN_FRAME_INTERVAL: Duration = Duration::from_micros(1_000_000 / 120);
-/// Миникарта обновляется пару раз в секунду: ей хватает.
+/// The minimap updates a couple of times a second: it is enough.
 const MINIMAP_INTERVAL: Duration = Duration::from_millis(400);
-/// Окно, по которому меряется фактический темп.
+/// The window over which the actual tempo is measured.
 const TPS_WINDOW: Duration = Duration::from_millis(500);
 
 pub enum Command {
@@ -66,42 +66,42 @@ pub enum Command {
     TestWorld(Box<World>),
     TogglePause,
     SetPaused(bool),
-    /// Один тик — только на паузе.
+    /// One tick — only on pause.
     Step,
     SetSpeed(usize),
-    /// Не строить графическое содержимое кадра, сохраняя статистику и управление.
+    /// Do not build the frame's graphical content, keeping the statistics and the control.
     RenderWorld(bool),
     View(ViewRequest),
-    /// Выбрать существо у точки мира (клик): ближайшее, до края тела которого
-    /// не дальше `radius`. Мимо — выбор снимается.
+    /// Pick a creature at a world point (a click): the nearest one, no farther than `radius` from
+    /// the edge of its body. A miss — the selection is dropped.
     Pick {
         x: f64,
         y: f64,
         radius: f64,
     },
-    /// Выбрать существо по номеру.
+    /// Select a creature by number.
     Select(Option<u64>),
-    /// Область для сводки генов (инструмент «Область»); None — снять.
+    /// A region for the genes' summary (the «Область» tool); None — clear.
     SetRegion(Option<Area>),
-    /// Новые правила посреди партии; `note` — что поменялось, для хроники.
+    /// New rules in the middle of a game; `note` — what has changed, for the chronicle.
     SetRules {
         rules: Rules,
         note: String,
     },
-    /// Подсадить базовое существо в точку мира.
+    /// Plant a base creature at a world point.
     Spawn {
         x: f64,
         y: f64,
     },
-    /// Та же партия с начала: тот же сид и те же стартовые правила.
+    /// The same game from the start: the same seed and the same starting rules.
     Restart,
-    /// «Взрыв численности» — продолжить всё равно; больше не останавливаемся.
+    /// «A population explosion» — go on anyway; we no longer stop.
     KeepGoing,
     NewWorld(WorldConfig),
     Quit,
 }
 
-/// Что поток симуляции делает с кадрами после публикации: будит окно.
+/// What the simulation thread does with frames after publishing: wakes the window.
 pub type Waker = Box<dyn Fn() + Send>;
 
 pub struct SimHandle {
@@ -125,16 +125,16 @@ impl SimHandle {
     }
 
     pub fn send(&self, cmd: Command) {
-        // поток мог упасть; окно от этого падать не должно
+        // the thread may have crashed; the window must not crash because of it
         let _ = self.tx.send(cmd);
     }
 
-    /// Последний готовый кадр, если пришёл новый.
+    /// The last ready frame, if a new one has come.
     pub fn take_frame(&self) -> Option<Frame> {
         self.slot.lock().ok()?.take()
     }
 
-    /// Вернуть буфер кружков из отрисованного кадра.
+    /// Return the circle buffer from a drawn frame.
     pub fn recycle(&self, buf: Vec<Instance>) {
         let _ = self.recycle.send(buf);
     }
@@ -153,7 +153,7 @@ impl Drop for SimHandle {
     }
 }
 
-/// Всё, что копится между кадрами и уходит в кадр приращением.
+/// Everything that piles up between frames and goes into a frame as an increment.
 #[derive(Default)]
 struct Pending {
     samples: Vec<Sample>,
@@ -181,7 +181,7 @@ struct Sim {
     render_world: bool,
     dots: bool,
 
-    // ── наблюдение ──────────────────────────────────────────────────────────
+    // ── observation ─────────────────────────────────────────────────────────
     /// Plants, creatures and creatures by diet over the last `DIVIDE_PERIOD` ticks: a smoothed point.
     window: VecDeque<[usize; 6]>,
     tracker: EventTracker,
@@ -189,28 +189,28 @@ struct Sim {
     next_snapshot: u64,
     pending: Pending,
 
-    // ── темп ────────────────────────────────────────────────────────────────
-    /// Сколько тиков «задолжали» выбранной скорости.
+    // ── tempo ───────────────────────────────────────────────────────────────
+    /// How many ticks are «owed» to the chosen speed.
     due: f64,
     last_time: Instant,
     tps: f64,
     tps_ticks: u64,
     tps_since: Instant,
     lagging: bool,
-    /// Средняя цена тика, мс (скользящее среднее).
+    /// The mean price of a tick, ms (a moving average).
     tick_ms: f64,
-    /// Цена последнего снимка наблюдателя, мс.
+    /// The price of the last observer snapshot, ms.
     snapshot_ms: f64,
 
-    // ── кадры ───────────────────────────────────────────────────────────────
-    /// Мир изменился с прошлого кадра.
+    // ── frames ──────────────────────────────────────────────────────────────
+    /// The world has changed since the previous frame.
     dirty: bool,
     last_frame: Instant,
     frame_interval: Duration,
-    /// Окно не забрало прошлый кадр (например, свёрнуто): не крутимся вхолостую.
+    /// The window has not taken the previous frame (for example, it is minimised): we do not spin idle.
     blocked: bool,
     last_minimap: Option<Instant>,
-    /// Память прошлого кадра: движение, рождения, призраки.
+    /// The memory of the previous frame: motion, births, ghosts.
     motion: Motion,
     recent_shots: VecDeque<(ShotTrail, Instant)>,
     /// Tick of the last built frame: sinking corpses are drawn from where they lay then.
@@ -282,7 +282,7 @@ impl Sim {
 
     fn run(mut self) {
         loop {
-            // ── команды: ждём их, только если делать больше нечего ──────────
+            // ── commands: we wait for them only if there is nothing else to do ───
             let wait = self.idle_wait();
             let first = if wait.is_zero() {
                 self.rx.try_recv().ok()
@@ -309,7 +309,7 @@ impl Sim {
         }
     }
 
-    /// Сколько можно спать до следующего дела: тика по расписанию или кадра.
+    /// How long we may sleep until the next job: a scheduled tick or a frame.
     fn idle_wait(&self) -> Duration {
         let frame_wait = if self.dirty && self.blocked {
             Duration::from_millis(5)
@@ -328,7 +328,7 @@ impl Sim {
         }
     }
 
-    /// false — пора выходить.
+    /// false — time to exit.
     fn apply(&mut self, cmd: Command) -> bool {
         match cmd {
             #[cfg(test)]
@@ -389,7 +389,7 @@ impl Sim {
             }
             Command::SetRegion(area) => {
                 self.region = area;
-                // сразу, а не на следующем срезе: на паузе срезов нет
+                // at once, not at the next sample: there are no samples on pause
                 self.pending.region = area.map(|a| RegionStats::of(&self.world, a, None));
                 self.dirty = true;
             }
@@ -401,7 +401,7 @@ impl Sim {
             Command::Spawn { x, y } => {
                 self.world.spawn(CreatureGenome::BASE, x, y, None);
                 self.log(None, "подсажено существо".into());
-                // Подсадка в вымерший мир его оживляет.
+                // Planting into an extinct world revives it.
                 if self.ended == Some(Ending::Extinct) {
                     self.ended = None;
                 }
@@ -440,7 +440,7 @@ impl Sim {
     }
 
     fn restart(&mut self, cfg: WorldConfig) {
-        // Большой мир строится заметное время — но в этом потоке, окно живёт.
+        // A big world takes a noticeable time to build — but in this thread, the window lives.
         self.world = World::new(&cfg);
         self.patches_due = true;
         self.cfg = cfg;
@@ -462,7 +462,7 @@ impl Sim {
         self.dirty = true;
     }
 
-    /// Начало наблюдения за новым миром: первая точка графика и первый срез.
+    /// The start of observing a new world: the first chart point and the first sample.
     fn observe_start(&mut self) {
         self.window.clear();
         self.tracker = EventTracker::new();
@@ -508,7 +508,7 @@ impl Sim {
         }
     }
 
-    /// Каждый тик — численности в окно сглаживания; раз в `GRAPH_EVERY` — точка графика.
+    /// Every tick — the counts into the smoothing window; once in `GRAPH_EVERY` — a chart point.
     fn record(&mut self) {
         let w = &self.world;
         if self.window.len() == DIVIDE_PERIOD as usize {
@@ -535,8 +535,8 @@ impl Sim {
         });
     }
 
-    /// Срез мира: хроника и график генома. На большом мире срез дорог, и
-    /// интервал растёт, чтобы наблюдение не отнимало время у тиков.
+    /// A sample of the world: the chronicle and the genome chart. On a big world a sample is dear,
+    /// and the interval grows so that observing does not take time from the ticks.
     fn snapshot(&mut self) {
         let start = Instant::now();
         let snap = Snapshot::of(&self.world);
@@ -559,15 +559,16 @@ impl Sim {
         self.pending.snapshots.push(snap);
     }
 
-    /// Тики по расписанию: не больше, чем задолжали скорости, и не дольше `SLICE`.
+    /// Ticks on schedule: no more than the speed is owed, and no longer than `SLICE`.
     fn advance(&mut self) {
         let now = Instant::now();
         let dt = now.duration_since(self.last_time).as_secs_f64();
         self.last_time = now;
         if self.running() {
             if let Some(tps) = self.target_tps() {
-                // Отставание не копится: догонять секунды тиков рывком — это тот
-                // же фриз, только в симуляции. Долг не больше десятой доли секунды.
+                // The lag does not pile up: catching up seconds of ticks in a jerk is the same freeze, only
+                // in
+                // the simulation. The debt is no more than a tenth of a second.
                 self.due = (self.due + dt * tps).min(tps * 0.1 + 1.0);
             }
             let start = Instant::now();
@@ -590,13 +591,13 @@ impl Sim {
         }
     }
 
-    /// Отдать кадр, если окно забрало прошлый и пора.
+    /// Hand out a frame if the window has taken the previous one and it is time.
     fn publish(&mut self) {
         if !self.dirty || self.last_frame.elapsed() < self.frame_interval {
             return;
         }
         let Ok(slot) = self.slot.lock() else { return };
-        self.blocked = slot.is_some(); // окно ещё не забрало прошлый кадр
+        self.blocked = slot.is_some(); // the window has not yet taken the previous frame
         if self.blocked {
             return;
         }
@@ -605,8 +606,8 @@ impl Sim {
         let start = Instant::now();
         let frame = self.build_frame();
         let build = start.elapsed();
-        // Сборка кадра не должна съедать больше трети времени потока: на
-        // огромном мире кадры просто идут реже, а тики — с прежней скоростью.
+        // Building a frame must not eat more than a third of the thread's time: on a huge world frames
+        // just come less often, and ticks at the former speed.
         self.frame_interval = MIN_FRAME_INTERVAL.max(build * 2);
 
         if let Ok(mut s) = self.slot.lock() {
@@ -647,7 +648,7 @@ impl Sim {
             };
             if !collected {
                 instances.clear();
-                // Карта плотности ровно по видимой области, клетка — пара пикселей.
+                // The density map is exactly over the visible area, a cell is a couple of pixels.
                 let (dw, dh) =
                     ((view.px_w as usize / 2).clamp(1, 1024), (view.px_h as usize / 2).clamp(1, 1024));
                 density =
@@ -751,8 +752,8 @@ impl Sim {
 mod tests {
     use super::*;
 
-    /// Диагностика разделяет цену среза и построения графического кадра.
-    /// Запускается вручную: цифры зависят от машины и не являются порогом теста.
+    /// A diagnostic separating the price of a sample from the building of a graphical frame.
+    /// Run by hand: the numbers depend on the machine and are no threshold of the test.
     #[test]
     #[ignore]
     fn замер_среза_и_режимов_сборки_кадра_4000_4000() {
@@ -799,7 +800,7 @@ mod tests {
         );
     }
 
-    /// Кадры до первого подходящего; ожидание ограничено: 500 попыток по 10 мс.
+    /// The frames up to the first suitable one; the wait is limited: 500 attempts of 10 ms.
     fn frames_until(h: &SimHandle, until: impl Fn(&Frame) -> bool) -> Vec<Frame> {
         let mut seen = Vec::new();
         for _ in 0..500 {
@@ -826,7 +827,7 @@ mod tests {
     fn paused(cfg: WorldConfig) -> SimHandle {
         let h = SimHandle::spawn(cfg, Box::new(|| {}));
         h.send(Command::SetPaused(true));
-        h.send(Command::Restart); // с тика 0: до паузы мир мог успеть шагнуть
+        h.send(Command::Restart); // from tick 0: before the pause the world might have managed a step
         h
     }
 
@@ -845,14 +846,14 @@ mod tests {
         let h = paused(cfg());
         let mut runs = Vec::new();
         for world_gen in 2..=3 {
-            // команды применяются по порядку: шаги идут уже в новом мире
+            // the commands apply in order: the steps already go in the new world
             h.send(Command::Restart);
             (0..50).for_each(|_| h.send(Command::Step));
             runs.push(wait_frame(&h, |f| f.world_gen == world_gen && f.tick == 50));
         }
         let (a, b) = (&runs[0], &runs[1]);
         assert_eq!((a.plants, a.creatures), (b.plants, b.creatures));
-        // и с тем же движком без окна
+        // and with the same engine without a window
         let mut w = World::new(&cfg());
         (0..50).for_each(|_| w.step());
         assert_eq!((w.plants.len(), w.creatures.len()), (a.plants, a.creatures));
@@ -889,7 +890,7 @@ mod tests {
         assert_eq!(genes.first(), Some(&0));
         assert!(genes.windows(2).all(|w| w[1] > w[0] && (w[1] - w[0]).is_multiple_of(SNAPSHOT_EVERY)));
 
-        // хроника та же, что у отчёта на тех же срезах
+        // the chronicle is the report's on the same samples
         let log: Vec<String> = fresh
             .iter()
             .flat_map(|f| f.log.iter().filter(|e| e.kind.is_some()).map(|e| e.text.clone()))
@@ -898,7 +899,8 @@ mod tests {
         let mut snaps = vec![Snapshot::of(&w)];
         for _ in 0..ticks {
             w.step();
-            // срезы игры — на тех же тиках, что точки генома (существа в этом сиде живы)
+            // the game's samples are at the same ticks as the genome points (the creatures in this seed are
+            // alive)
             if genes.contains(&w.tick) {
                 snaps.push(Snapshot::of(&w));
             }
@@ -911,15 +913,15 @@ mod tests {
     fn выбранное_существо_видно_в_кадре_и_погибает_с_записью() {
         let h = paused(cfg());
         wait_frame(&h, |f| f.world_gen == 1);
-        // первое существо мира — id 1; его координаты узнаем из кадра выбора
+        // the world's first creature is id 1; we learn its coordinates from the selection frame
         h.send(Command::Select(Some(1)));
         let f = wait_frame(&h, |f| f.selected.is_some());
         let s = f.selected.unwrap();
         assert_eq!(s.id, 1);
-        // клик в пустоту снимает выбор
+        // a click into the void drops the selection
         h.send(Command::Pick { x: -1e6, y: -1e6, radius: 1.0 });
         wait_frame(&h, |f| f.selected.is_none());
-        // клик точно в центр — выбирает
+        // a click exactly in the centre selects
         h.send(Command::Pick { x: s.x, y: s.y, radius: 1.0 });
         let f = wait_frame(&h, |f| f.selected.is_some());
         assert_eq!(f.selected.unwrap().id, 1);

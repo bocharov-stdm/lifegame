@@ -1,18 +1,17 @@
-//! Чувства: что существо может узнать о мире.
+//! The senses: what a creature can learn about the world.
 //!
-//! Существа не видят сетку соседей: они спрашивают «где ближайшее растение»,
-//! «кто рядом может меня съесть» — через трейт. Мир отвечает по сеткам
-//! (`GridSenses` ниже, строится на каждое существо), тесты — обычными
-//! замыканиями (`senses_from`) или слепотой (`Blind`).
+//! Creatures do not see the neighbour grid: they ask «where is the nearest plant», «who nearby
+//! can eat me» — through a trait. The world answers by the grids (`GridSenses` below, built for
+//! each creature), the tests by plain closures (`senses_from`) or by blindness (`Blind`).
 //!
-//! Новое чувство — метод трейта, функция-запрос внизу и её сверка с перебором
-//! в тесте этого модуля.
+//! A new sense is a trait method, a query function below and its check against a brute-force
+//! search in this module's test.
 //!
-//! Свой вид существа видят только по снимку на начало фазы (`Herd`). В своей
-//! фазе они двигаются: копии координат в сетке устарели бы, а чтение живых
-//! позиций сделало бы исход зависимым от порядка обхода. По снимку все видят
-//! соседей там, где те стояли в начале тика (отставание — не больше шага), и
-//! параллельный тик сможет решать за всех одновременно (CLAUDE.md,
+//! Creatures see their own kind only by the snapshot at the start of the phase (`Herd`). In
+//! their phase they move: the grid's copies of coordinates would go stale, and reading live
+//! positions would make the outcome depend on the order of traversal. By the snapshot everyone
+//! sees the neighbours where they stood at the start of the tick (a lag of no more than a
+//! step), and the parallel tick will be able to decide for all at once (CLAUDE.md,
 //! «Neighbour search»).
 
 use crate::config::GRID_CELL;
@@ -67,12 +66,12 @@ pub(crate) fn plant_worth(me: &Me, px: f64, py: f64, portions: u8) -> f64 {
             .max(1.0)
 }
 
-/// Чувства существа.
+/// A creature's senses.
 pub trait Senses {
     fn visible_enemy(&self, _me: &Me, _id: u64) -> Option<Threat> {
         None
     }
-    /// Ближайшее живое растение строго ближе √r2.
+    /// The nearest live plant strictly closer than √r2.
     fn nearest_plant(&self, x: f64, y: f64, r2: f64) -> Option<(f64, f64)>;
 
     /// The nearest live plant strictly closer than √r2 whose position `keep` accepts. The default
@@ -98,8 +97,8 @@ pub trait Senses {
         None
     }
 
-    /// Ближайший чужак (не родня), который может меня съесть и до края тела
-    /// которого меньше `within`, — по снимку стада на начало фазы.
+    /// The nearest stranger (not kin) that can eat me and whose body's edge is closer than
+    /// `within` — by the herd's snapshot at the start of the phase.
     fn nearest_threat(&self, me: &Me, within: f64) -> Option<Threat>;
 
     /// The nearest threat and the nearest one hunting somebody now, closer than `within`. The
@@ -144,7 +143,7 @@ pub trait Senses {
     }
 }
 
-/// Оценка добычи только по лично видимому существу.
+/// An estimate of prey only by a personally seen creature.
 #[derive(Clone, Copy, Debug)]
 pub struct Prey {
     pub id: u64,
@@ -198,24 +197,24 @@ impl Prey {
 /// weighs does not depend on the grid's scan order.
 const SEEN_PREY: usize = 64;
 
-/// Опасный чужак, каким его видит существо.
+/// A dangerous stranger as a creature sees it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Threat {
     pub id: u64,
-    /// Центр его тела.
+    /// The centre of its body.
     pub x: f64,
     pub y: f64,
-    /// Расстояние до края его тела; внутри тела — меньше нуля.
+    /// The distance to the edge of its body; inside the body — less than zero.
     pub gap: f64,
-    /// Радиус его тела: заведомо сильнейшему в ответ не бьют, от него бегут.
+    /// The radius of its body: the strongest is knowingly not struck back at, one runs from it.
     pub half: f64,
 }
 
-/// Мир глазами существа: растения по сетке тика, сородичи по снимку стада.
+/// The world through a creature's eyes: plants by the tick's grid, relatives by the herd's snapshot.
 ///
-/// Запросы и методы чувств помечены `#[inline(always)]`: без этого компилятор
-/// не встраивал поиск растения в ход существа, и мир ×100 шёл на 8%
-/// медленнее, чем с прежними замыканиями (замер против версии до чувств).
+/// The queries and the senses' methods are marked `#[inline(always)]`: without it the compiler
+/// did not inline the plant search into the creature's move, and a ×100 world ran 8% slower
+/// than with the former closures (measured against the version before the senses).
 pub(crate) struct GridSenses<'a> {
     pub food: &'a Grid,
     pub plants: &'a [Plant],
@@ -391,14 +390,14 @@ impl Senses for GridSenses<'_> {
     }
 }
 
-/// Чувства для тестов: растение из замыкания `senses_from(|x, y, r2| ..)`,
-/// угроза — заданная (`with_threat`; видна, если ближе запрошенного) или никакой.
+/// Senses for tests: a plant from the closure `senses_from(|x, y, r2| ..)`, a threat — a given
+/// one (`with_threat`; visible if closer than asked) or none.
 pub struct FnSenses<F> {
     plant: F,
     threat: Option<Threat>,
 }
 
-/// Существу: ближайшее растение; угроз нет.
+/// For a creature: the nearest plant; no threats.
 pub fn senses_from<F>(plant: F) -> FnSenses<F>
 where
     F: Fn(f64, f64, f64) -> Option<(f64, f64)>,
@@ -407,7 +406,7 @@ where
 }
 
 impl<F> FnSenses<F> {
-    /// Те же чувства, но рядом опасный чужак.
+    /// The same senses, but a dangerous stranger nearby.
     pub fn with_threat(self, threat: Threat) -> Self {
         FnSenses { threat: Some(threat), ..self }
     }
@@ -426,7 +425,7 @@ where
     }
 }
 
-/// Ничего не видит.
+/// Sees nothing.
 pub struct Blind;
 
 impl Senses for Blind {
@@ -439,16 +438,16 @@ impl Senses for Blind {
     }
 }
 
-// ── снимок стада ────────────────────────────────────────────────────────────
+// ── the herd's snapshot ─────────────────────────────────────────────────────
 
-/// Существо в снимке стада: что о нём видно другим.
+/// A creature in the herd's snapshot: what of it is visible to the others.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Seen {
     x: f64,
     y: f64,
-    /// Радиус тела: до чужака меряют расстояние до края тела, а не до центра.
+    /// The body's radius: to a stranger the distance to the body's edge is measured, not to the centre.
     half: f64,
-    /// Самое крупное тело, какое он может съесть; 0 — он не ест свежего мяса и никому не угроза.
+    /// The biggest body it can eat; 0 — it eats no fresh meat and is a threat to no one.
     eats_up_to: f64,
     health: f64,
     nutrition: f64,
@@ -480,16 +479,16 @@ impl Seen {
     }
 }
 
-/// Снимок всех существ на начало фазы: мелкие нужны как добыча, крупные — как угрозы.
-/// Запросы используют сетку; буферы живут между тиками.
+/// A snapshot of all creatures at the start of the phase: the small are needed as prey, the big as threats.
+/// The queries use the grid; the buffers live between ticks.
 #[derive(Clone, Debug)]
 pub(crate) struct Herd {
     grid: Grid,
     seen: Vec<Seen>,
-    /// Самое крупное тело, какое может съесть хоть кто-то. Кто крупнее, тому
-    /// бояться некого, и в сетку он не смотрит.
+    /// The biggest body anyone can eat. One bigger has nothing to fear, and does not look
+    /// into the grid.
     max_eats: f64,
-    /// Самый большой радиус тела в снимке: на него шире запрос.
+    /// The biggest body radius in the snapshot: the query is wider by it.
     max_half: f64,
 }
 
@@ -539,10 +538,10 @@ impl Herd {
     }
 }
 
-// ── запросы к сеткам ────────────────────────────────────────────────────────
-// Вынесены из тика, чтобы тест мог сверить их с честным перебором в живом мире:
-// ошибка в радиусе запроса не роняет ничего, а тихо меняет баланс — существа
-// перестают замечать соседей под носом.
+// ── queries to the grids ────────────────────────────────────────────────────
+// Taken out of the tick so that a test can check them against an honest brute-force search in
+// a live world: an error in a query's radius crashes nothing, but quietly changes the balance
+// — creatures stop noticing neighbours under their noses.
 
 /// The nearest strangers (not family of `who`) from the snapshot, measured to the edge of their
 /// bodies, that could eat a body of `size` and are closer than `within`: the nearest of all, and
@@ -668,13 +667,13 @@ pub(crate) fn best_plant(grid: &Grid, plants: &[Plant], me: &Me, taste: Taste) -
     best.map(|(px, py, ..)| (px, py))
 }
 
-/// Ближайшее живое растение строго ближе √r2.
+/// The nearest live plant strictly closer than √r2.
 #[inline(always)]
 pub(crate) fn nearest_plant(grid: &Grid, plants: &[Plant], x: f64, y: f64, r2: f64) -> Option<(f64, f64)> {
     let mut best: Option<(f64, f64, f64)> = None;
     grid.for_each_near(x, y, r2.sqrt(), |j, px, py| {
         if !plants[j].alive() {
-            return; // съедено раньше в этом же тике
+            return; // eaten earlier in this same tick
         }
         let (dx, dy) = (px - x, py - y);
         let d2 = dx * dx + dy * dy;
@@ -709,8 +708,8 @@ pub(crate) fn nearest_plant_where(
     best.map(|(px, py, _)| (px, py))
 }
 
-/// Взять одну порцию ближайшего растения в радиусе питания.
-/// Возвращает, последняя ли это порция (пятая), и где растение.
+/// Take one portion of the nearest plant within the feeding radius.
+/// Returns whether it was the last portion (the fifth), and where the plant is.
 pub(crate) fn bite_plant(
     grid: &Grid,
     plants: &mut [Plant],
@@ -981,11 +980,10 @@ mod tests {
         assert!(!finds_corpse(0.0, true, 990, 0.5), "a herbivore does not go for meat");
     }
 
-    /// Каждый запрос тика сверяется с перебором всех существ — на настоящих
-    /// позициях, размерах и родстве живого мира, а не на выдуманных точках.
-    /// Ловит неверный радиус запроса, забытую половину тела, пропущенную родню
-    /// и сломанную сетку. Второй мир — с дешёвым размером: там вырастают
-    /// гиганты, и радиус запроса растёт с ними.
+    /// Every query of the tick is checked against a brute-force search of all creatures — on the
+    /// real positions, sizes and kinship of a live world, not on invented points. It catches a
+    /// wrong query radius, a forgotten half of a body, missed kin and a broken grid. The second
+    /// world has a cheap size: giants grow there, and the query radius grows with them.
     #[test]
     fn запросы_к_сеткам_совпадают_с_перебором_в_живом_мире() {
         // Food rich enough for bodies past 100. At 120 the biggest reached ~86 once the carnivore

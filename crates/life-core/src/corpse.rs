@@ -1,4 +1,4 @@
-//! Трупы: конечный запас мясной пищи, доступный со следующего тика после смерти.
+//! Corpses: a finite stock of meat food, available from the tick after death.
 //!
 //! Three stages (`Stage`), each its own food (a column of `DIET_DIGESTION`). A corpse's clock
 //! (`CorpseClock`, the world's rules at its death; `CORPSE_*` in config by default):
@@ -33,12 +33,12 @@ pub struct Corpse {
     /// Where it comes to rest, its skeleton too; never above `y0`.
     pub bottom: f64,
     pub size: f64,
-    /// Питательность сразу после смерти.
+    /// Nutrition right after death.
     pub initial: f64,
-    /// Не съеденная и не разложившаяся питательность.
+    /// Nutrition neither eaten nor rotted away.
     pub remaining: f64,
     pub born: u64,
-    /// Последний тик учтённого разложения.
+    /// The last tick whose decay has been accounted.
     pub last_decay: u64,
     /// It came to rest with meat left (for the counters).
     pub settled: bool,
@@ -218,7 +218,7 @@ impl Corpse {
         if self.skeleton.is_some() { 0.0 } else { self.initial * CORPSE_SKELETON_SHARE }
     }
 
-    /// Доступная сейчас порция до усвоения: a corpse is eaten down to its bones, then the
+    /// The portion available now before digestion: a corpse is eaten down to its bones, then the
     /// skeleton to nothing.
     pub fn portion(&self, plant_energy: f64) -> f64 {
         let size = (plant_energy / f64::from(PORTIONS)).max(self.initial / 12.0);
@@ -267,7 +267,7 @@ fn resting_place(space: &Space, id: u64, half: f64, pct: f64, salt: u64) -> f64 
     (space.height - half.min(space.height / 2.0) - spread * band).max(0.0)
 }
 
-/// Ближайший доступный труп, которого касается едок и который он может есть (`eats`).
+/// The nearest available corpse that the eater touches and may eat (`eats`).
 pub fn contact(
     grid: &Grid,
     corpses: &[Corpse],
@@ -307,8 +307,8 @@ pub fn contact_by<'a>(
     best.map(|(i, _)| i)
 }
 
-/// Один укус по ближайшему съедобному трупу в контакте. Едоков мир обходит по ID,
-/// поэтому конкуренция за остаток воспроизводима.
+/// One bite of the nearest edible corpse in contact. The world goes through the eaters by ID,
+/// so competition for the remainder is reproducible.
 #[allow(clippy::too_many_arguments)]
 pub fn bite(
     grid: &Grid,
@@ -373,7 +373,7 @@ mod tests {
         // the flesh decays, the bones do not
         let lost = (initial - bones) / CORPSE_DECAY_TICKS as f64;
         assert!((c.remaining - (initial - lost - bite.amount)).abs() < 1e-12);
-        assert!(c.decay(11)); // повторный учёт того же тика ничего не меняет
+        assert!(c.decay(11)); // accounting the same tick again changes nothing
         let mut untouched = Corpse::from_creature(&body(), 10);
         assert!(untouched.decay(10 + CORPSE_DECAY_TICKS - 1) && untouched.skeleton.is_none());
         assert!(untouched.decay(10 + CORPSE_DECAY_TICKS), "the bones are left");

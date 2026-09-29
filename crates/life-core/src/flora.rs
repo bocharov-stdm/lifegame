@@ -1,19 +1,19 @@
-//! Где растёт еда: профиль плотности по глубине и по ширине.
+//! Where the food grows: a density profile by depth and by width.
 //!
-//! Растение ставится по двум осям независимо: x — по профилю ширины, y — по
-//! профилю глубины (плотность — произведение двух профилей). Профиль — функция
-//! `f(t)` доли пути от ближнего края (поверхность, левый край) к дальнему: `t`
-//! от 0 до 1 на всю длину оси. Профили — правила мира (`Rules::plant_depth`,
-//! `plant_width`), их можно менять посреди партии; `Flora` — то, что из них
-//! выводится (как фенотип из генома), и пересчитывается вместе с правилами.
+//! A plant is placed along two axes independently: x by the width profile, y by the depth
+//! profile (the density is the product of the two profiles). A profile is a function `f(t)` of
+//! the share of the way from the near edge (the surface, the left edge) to the far one: `t`
+//! from 0 to 1 over the whole length of the axis. The profiles are the world's rules
+//! (`Rules::plant_depth`, `plant_width`), they can be changed in the middle of a game; `Flora`
+//! is what is derived from them (like a phenotype from a genome), and it is recomputed together
+//! with the rules.
 //!
-//! Распределение еды — свойство мира. Гены слоя под него не подстраиваются и
-//! остаются вертикальным предпочтением в процентах глубины.
+//! The distribution of food is a property of the world. The layer genes do not adjust to it and
+//! stay a vertical preference in percent of depth.
 //!
-//! На каждое растение тянется ровно два случайных числа при любом профиле:
-//! сначала x, потом y. Экспонента по глубине и равномерность по ширине
-//! считаются теми же выражениями, что и до профилей, — мир по умолчанию не
-//! сдвинулся ни на бит.
+//! Exactly two random numbers are drawn for each plant at any profile: first x, then y. The
+//! exponent by depth and the uniformity by width are computed by the same expressions as before
+//! the profiles — the default world has not shifted by a single bit.
 //!
 //! Capacity is `PLANT_MAX` (per area) places, *slots*, and a slot holds at most one plant
 //! (`World::spawn_plants`): a seed that lands in an occupied slot does not sprout. So a full
@@ -48,17 +48,17 @@ use crate::rng::Rng;
 use crate::rules::Rules;
 use crate::space::Space;
 
-/// Закон плотности вдоль оси.
+/// The law of density along an axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Profile {
     Uniform,
-    /// Прямая от ближнего края к дальнему: `1 − (1 − b)·t`.
+    /// A straight line from the near edge to the far one: `1 − (1 − b)·t`.
     Linear,
-    /// `e^(−k·t)`: быстро редеет, дальше длинный хвост.
+    /// `e^(−k·t)`: it thins out fast, then a long tail.
     Exp,
-    /// `ln(1 + k(1−t)) / ln(1 + k)`: долго держится, потом обрыв к дальнему краю.
+    /// `ln(1 + k(1−t)) / ln(1 + k)`: it holds for long, then a drop to the far edge.
     Log,
-    /// `1 − a·cos(2π·n·t)`: n богатых полос, пики — в серединах полос.
+    /// `1 − a·cos(2π·n·t)`: n rich strips, the peaks in the middles of the strips.
     Waves,
     /// A rough real sea: full food down to `GAME_PLATEAU` of the axis, then `e^(−k·s)` over the
     /// rest (`s` from 0 to 1 there, `k` the steepness): a nearly dead bottom.
@@ -80,7 +80,7 @@ impl Profile {
         Profile::Ocean,
     ];
 
-    /// Имя для флага: `--rule plant_width_profile=waves`.
+    /// The name for a flag: `--rule plant_width_profile=waves`.
     pub fn key(self) -> &'static str {
         match self {
             Profile::Uniform => "uniform",
@@ -105,12 +105,12 @@ impl Profile {
         }
     }
 
-    /// Номер профиля в правилах — значение правила `plant_*_profile`.
+    /// The profile's number in the rules — the value of the rule `plant_*_profile`.
     pub fn index(self) -> f64 {
         Profile::ALL.iter().position(|p| *p == self).expect("профиль есть в ALL") as f64
     }
 
-    /// Профиль по значению правила (`with` пускает только целые номера).
+    /// A profile by the rule's value (`with` lets only whole numbers through).
     pub fn of(value: f64) -> Profile {
         Profile::ALL[(value.max(0.0) as usize).min(Profile::ALL.len() - 1)]
     }
@@ -121,45 +121,45 @@ impl Profile {
     }
 }
 
-/// Крутизна экспоненты — не больше этого. Дальше вся еда лежит в доле процента
-/// оси, а `e^(−k)` на дальнем краю уходит под предел точности чисел.
+/// The exponent's steepness is no more than this. Beyond it all the food lies in a fraction of
+/// a percent of the axis, and `e^(−k)` at the far edge goes below the numbers' precision.
 pub const MAX_STEEPNESS: f64 = 100.0;
-/// Волн — не больше этого: таблица распределения делит ось на `TABLE_BINS`
-/// частей, и у более частых волн на каждую пришлось бы меньше 40 корзин.
+/// Waves — no more than this: the distribution table divides the axis into `TABLE_BINS` parts,
+/// and with more frequent waves each would get fewer than 40 bins.
 pub const MAX_WAVES: f64 = 100.0;
-/// Корзин в таблице распределения. При высоте мира 126 000 (3:2, x1000) это
-/// ~30 px на корзину — мельче растения.
+/// Bins in the distribution table. At a world height of 126 000 (3:2, x1000) this is about
+/// 30 px a bin — finer than a plant.
 const TABLE_BINS: usize = 4096;
 
-/// Профиль еды по одной оси — как он задан в правилах мира. Числа, как у
-/// остальных правил: профиль — номер в `Profile::ALL`, остальное — параметры
-/// профилей (каждый читает свои).
+/// A food profile along one axis — as it is set in the world's rules. The numbers are like the
+/// other rules': the profile is a number in `Profile::ALL`, the rest are the profiles'
+/// parameters (each reads its own).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FoodAxis {
     pub profile: f64,
-    /// Экспонента: крутизна k.
+    /// Exponent: the steepness k.
     pub steepness: f64,
-    /// Линейный: сколько еды у дальнего края, % от ближнего.
+    /// Linear: how much food at the far edge, % of the near one.
     pub end: f64,
-    /// Логарифм: изгиб k.
+    /// Logarithm: the bend k.
     pub bend: f64,
-    /// Волны: сколько богатых полос.
+    /// Waves: how many rich strips.
     pub waves: f64,
-    /// Волны: размах, % (100 — между полосами пусто).
+    /// Waves: the amplitude, % (100 — between the strips it is empty).
     pub amplitude: f64,
 }
 
-/// Параметры оси по порядку — хвосты имён правил `plant_depth_*`, `plant_width_*`.
+/// The axis parameters in order — the tails of the rules' names `plant_depth_*`, `plant_width_*`.
 pub const AXIS_PARAMS: [&str; 6] = ["profile", "steepness", "end", "bend", "waves", "amplitude"];
 
-/// Ось профиля.
+/// The profile's axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Along {
     Depth,
     Width,
 }
 
-/// Правило профиля еды: `plant_depth_waves` → (глубина, "waves").
+/// A food profile's rule: `plant_depth_waves` → (depth, "waves").
 pub fn split_key(key: &str) -> Option<(Along, &str)> {
     let (along, param) = if let Some(p) = key.strip_prefix("plant_depth_") {
         (Along::Depth, p)
@@ -194,7 +194,7 @@ impl FoodAxis {
         })
     }
 
-    /// Пределы, за которыми параметр теряет смысл; Err — что нужно.
+    /// The limits past which a parameter loses meaning; Err — what is needed.
     pub fn check(param: &str, v: f64) -> Result<(), String> {
         let whole = v.fract() == 0.0;
         let (ok, need) = match param {
@@ -218,8 +218,8 @@ impl FoodAxis {
         Profile::of(self.profile)
     }
 
-    /// Плотность в точке `t` (доля оси от ближнего края), от 0 до 1 — для
-    /// предпросмотра. Выборка идёт по тем же формулам.
+    /// The density at point `t` (a share of the axis from the near edge), from 0 to 1 — for the
+    /// preview. The sampling goes by the same formulas.
     pub fn density(&self, t: f64) -> f64 {
         let t = t.clamp(0.0, 1.0);
         match self.kind() {
@@ -227,7 +227,7 @@ impl FoodAxis {
             Profile::Linear => 1.0 - (1.0 - self.end / 100.0) * t,
             Profile::Exp => (-self.steepness * t).exp(),
             Profile::Log => {
-                // при k → 0 логарифм переходит в прямую до нуля
+                // as k → 0 the logarithm turns into a straight line to zero
                 if self.bend < 1e-9 { 1.0 - t } else { (self.bend * (1.0 - t)).ln_1p() / self.bend.ln_1p() }
             }
             Profile::Waves => {
@@ -240,7 +240,7 @@ impl FoodAxis {
         }
     }
 
-    /// Профиль словами: «экспонента, крутизна 8».
+    /// The profile in words: «экспонента, крутизна 8».
     pub fn describe(&self) -> String {
         let p = self.kind();
         match p {
@@ -265,19 +265,19 @@ impl FoodAxis {
     }
 }
 
-/// Как ставить координату вдоль оси.
+/// How to place a coordinate along an axis.
 #[derive(Clone, Debug, PartialEq)]
 enum Law {
     Uniform,
-    /// Обратная функция распределения экспоненты — та же формула, что до
-    /// профилей, поэтому мир по умолчанию совпадает бит в бит.
+    /// The exponent's inverse distribution function — the same formula as before the profiles, so
+    /// the default world matches bit for bit.
     Exp {
         lambda: f64,
         e_lo: f64,
         e_hi: f64,
     },
-    /// Табулированная функция распределения: `cdf[i]` — доля растений до
-    /// i-й границы корзин (от 0 до 1). Внутри корзины плотность постоянная.
+    /// A tabulated distribution function: `cdf[i]` is the share of plants up to the i-th bin
+    /// border (from 0 to 1). Inside a bin the density is constant.
     Table(Box<[f64]>),
 }
 
@@ -289,11 +289,12 @@ struct Axis {
 }
 
 impl Axis {
-    /// Ось длины `len`; растения ставятся в `[lo, hi]`, профиль — по доле всей длины.
+    /// An axis of length `len`; plants are placed in `[lo, hi]`, the profile by the share of the whole
+    /// length.
     fn new(spec: &FoodAxis, len: f64, lo: f64, hi: f64) -> Axis {
         let law = match spec.kind() {
             Profile::Uniform => Law::Uniform,
-            // крутизна почти ноль — равномерно (иначе 0/0 в формуле)
+            // the steepness is almost zero — uniform (otherwise 0/0 in the formula)
             Profile::Exp if spec.steepness < 1e-3 => Law::Uniform,
             Profile::Exp => {
                 let lambda = spec.steepness / len;
@@ -304,7 +305,7 @@ impl Axis {
         Axis { lo, hi, law }
     }
 
-    /// Одно случайное число — одна координата.
+    /// One random number — one coordinate.
     #[inline]
     fn sample(&self, rng: &mut Rng) -> f64 {
         self.at(rng.random())
@@ -318,9 +319,9 @@ impl Axis {
             Law::Uniform => self.lo + (self.hi - self.lo) * u,
             Law::Exp { lambda, e_lo, e_hi } => -(e_lo - u * (e_lo - e_hi)).ln() / lambda,
             Law::Table(cdf) => {
-                // первая граница, до которой больше u; корзина — перед ней.
-                // Пустые корзины (плотность ноль) не выпадают: у них ширина по
-                // cdf нулевая, и граница после них не больше u.
+                // the first border up to which there is more than u; the bin is before it.
+                // Empty bins (zero density) do not come up: their width by
+                // the cdf is zero, and the border after them is no more than u.
                 let i = cdf.partition_point(|c| *c <= u).clamp(1, cdf.len() - 1) - 1;
                 let within = (u - cdf[i]) / (cdf[i + 1] - cdf[i]);
                 let s = (i as f64 + within.clamp(0.0, 1.0)) / (cdf.len() - 1) as f64;
@@ -352,8 +353,8 @@ impl Axis {
     }
 }
 
-/// Функция распределения по корзинам (плотность — в серединах корзин). None,
-/// если плотность нигде не больше нуля или не число.
+/// The distribution function by bins (the density is at the bins' middles). None if the
+/// density is nowhere greater than zero or is not a number.
 fn table(spec: &FoodAxis, len: f64, lo: f64, hi: f64) -> Option<Box<[f64]>> {
     let mut cdf = Vec::with_capacity(TABLE_BINS + 1);
     let mut total = 0.0;
@@ -372,7 +373,7 @@ fn table(spec: &FoodAxis, len: f64, lo: f64, hi: f64) -> Option<Box<[f64]>> {
     Some(cdf.into_boxed_slice())
 }
 
-/// Где растёт еда в этом мире: оси с готовыми законами и места для растений.
+/// Where the food grows in this world: the axes with ready laws and the places for plants.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Flora {
     x: Axis,
@@ -463,8 +464,8 @@ impl Flora {
         self.x.slot(x, self.nx) + self.nx * self.y.slot(y, self.ny)
     }
 
-    /// Новое растение и его место. Без зарослей — два случайных числа, x и потом y; в зарослях —
-    /// три: место, затем разброс внутри места поперёк и вглубь.
+    /// A new plant and its place. Without patches — two random numbers, x and then y; in patches —
+    /// three: the place, then the scatter inside the place across and into the depth.
     #[inline]
     pub fn plant(&self, rng: &mut Rng) -> Plant {
         if self.patches.is_empty() && self.scatters.is_empty() {
@@ -609,8 +610,8 @@ fn layout(x: &Axis, y: &Axis, rules: &Rules, space: &Space, seed: u64, cap: usiz
     Layout { patches, scatters, rx, ry }
 }
 
-/// Плотность еды в точке (доли ширины и глубины) по правилам, от 0 до 1 — для
-/// предпросмотра: окну не нужно строить таблицы.
+/// The density of food at a point (shares of the width and depth) by the rules, from 0 to 1 —
+/// for the preview: the window has no need to build tables.
 pub fn density(rules: &Rules, tx: f64, ty: f64) -> f64 {
     rules.plant_width.density(tx) * rules.plant_depth.density(ty)
 }
@@ -647,7 +648,7 @@ mod tests {
         r.with("plant_patches", 0.0).unwrap()
     }
 
-    /// Все профили на крайних параметрах, по обеим осям.
+    /// All profiles at extreme parameters, along both axes.
     fn every_profile() -> Vec<Rules> {
         let mut out = Vec::new();
         for p in Profile::ALL {
@@ -678,7 +679,7 @@ mod tests {
         let flora = Flora::new(&exp, &space, 1);
         let (mut a, mut b) = (Rng::new(11), Rng::new(11));
         for _ in 0..10_000 {
-            // прежний Plant::random
+            // the former Plant::random
             let lambda = PLANT_DEPTH_DECAY / space.height;
             let e_top = (-lambda * PLANT_RADIUS).exp();
             let e_bottom = (-lambda * (space.height - PLANT_RADIUS)).exp();
@@ -691,8 +692,8 @@ mod tests {
         }
     }
 
-    /// Любой профиль тянет ровно два числа без зарослей и три в зарослях: смена
-    /// профиля на ходу не сдвигает поток мира сильнее, чем меняет сами растения.
+    /// Any profile draws exactly two numbers without patches and three in patches: changing the
+    /// profile on the fly does not shift the world's stream more than it changes the plants themselves.
     #[test]
     fn два_числа_на_растение_россыпью_и_три_в_зарослях() {
         let space = Space::new(10.0, Shape::Square);
@@ -736,7 +737,7 @@ mod tests {
         }
     }
 
-    /// Доля выборки по полосам совпадает с интегралом плотности.
+    /// The share of the sample by strips matches the density's integral.
     fn check_shape(axis: &str, r: &Rules) {
         let space = Space::new(1.0, Shape::R3x2);
         let flora = Flora::new(&scattered(r), &space, 1);
@@ -753,7 +754,7 @@ mod tests {
             let v = if axis == "depth" { p.y } else { p.x };
             got[(((v - lo) / (hi - lo) * BANDS as f64) as usize).min(BANDS - 1)] += 1;
         }
-        // интеграл плотности по полосе — мелкой суммой
+        // the density's integral over a strip — by a fine sum
         let fine = 200;
         let mass: Vec<f64> = (0..BANDS)
             .map(|b| {

@@ -1,8 +1,8 @@
-//! Графики боковой панели и окна «Статистика»: численности, сытость, геном,
-//! где живут. Рисуются прямо кистью egui — линии из пары сотен точек,
-//! отдельная библиотека графиков им не нужна. Логика — как в `app/render.py`
-//! (тег python-final): у каждой величины своя шкала, под курсором — значения в
-//! этой точке, справа — изменение от начала видимого окна.
+//! The charts of the side panel and of the «Статистика» window: counts, fullness, the genome,
+//! where they live. They are drawn straight with egui's brush — lines of a couple of hundred
+//! points, a separate charting library is not needed for them. The logic is as in `app/render.py`
+//! (tag python-final): every quantity has its own scale, under the cursor are the values at that
+//! point, on the right the change since the start of the visible window.
 
 use eframe::egui::text::{LayoutJob, TextWrapping};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
@@ -13,7 +13,7 @@ use crate::frame::{CREATURE_COLOR, PLANT_COLOR};
 use crate::history::{History, Sample};
 use crate::theme::{DIET_COLORS, DIET_NAMES, LINE, MUTED, TEXT, rgb, spaced};
 
-/// Индекс точки под курсором (по x), если курсор над графиком.
+/// The index of the point under the cursor (by x), if the cursor is over the chart.
 fn hover_index(ui: &egui::Ui, rect: Rect, n: usize) -> Option<usize> {
     let p = ui.input(|i| i.pointer.hover_pos())?;
     if !rect.contains(p) || n == 0 {
@@ -27,8 +27,8 @@ fn x_at(rect: Rect, i: usize, n: usize) -> f32 {
     if n <= 1 { rect.right() } else { rect.left() + rect.width() * i as f32 / (n - 1) as f32 }
 }
 
-/// Линия графика: подпись, цвет и значение в точке (None — величины нет,
-/// например сытости, когда существ нет: линия прерывается).
+/// A chart line: a label, a colour and the value at a point (None — there is no quantity,
+/// for example fullness when there are no creatures: the line breaks).
 pub struct Line<T> {
     pub label: &'static str,
     pub color: Color32,
@@ -38,18 +38,18 @@ pub struct Line<T> {
     pub shared: bool,
 }
 
-/// Шкала графика линиями.
+/// The chart's scale for lines.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Scale {
-    /// У каждой линии своя, от нуля до её максимума на участке: иначе десятки
-    /// существ лежали бы на нуле рядом с тысячами растений. Подписи — числами.
+    /// Each line has its own, from zero to its maximum on the stretch: otherwise tens of creatures
+    /// would lie on zero beside thousands of plants. The labels are numbers.
     Own,
-    /// Общая 0‒100%: доли сравнимы между собой. Подписи — процентами.
+    /// A common 0‒100%: the shares are comparable with one another. The labels are percentages.
     Share,
 }
 
-/// График линиями по точкам истории. Под графиком — тик и значения в точке
-/// под курсором (или в последней).
+/// A chart of lines by the history's points. Under the chart — the tick and the values at the
+/// point under the cursor (or at the last one).
 pub fn lines<T>(
     ui: &mut egui::Ui,
     points: &[&T],
@@ -74,7 +74,7 @@ pub fn lines<T>(
     let n = points.len();
     let inner = rect.shrink(4.0);
     if scale == Scale::Share {
-        // середина шкалы — ориентир для «больше или меньше половины»
+        // the middle of the scale is a landmark for «more or less than half»
         let y = inner.center().y;
         painter
             .line_segment([Pos2::new(inner.left(), y), Pos2::new(inner.right(), y)], Stroke::new(1.0, LINE));
@@ -87,7 +87,7 @@ pub fn lines<T>(
             Scale::Own => top(line),
             Scale::Share => 1.0,
         };
-        // Кусками: где величины нет, линия рвётся.
+        // In pieces: where there is no quantity, the line breaks.
         let mut run: Vec<Pos2> = Vec::new();
         for (i, p) in points.iter().enumerate() {
             match (line.value)(p) {
@@ -116,7 +116,7 @@ pub fn lines<T>(
                 (Some(v), Scale::Own) => spaced(v.round() as u64),
                 (Some(v), Scale::Share) => format!("{:.0}%", v * 100.0),
             };
-            // неразрывные пробелы: подпись не рвётся переносом посередине
+            // non-breaking spaces: the label does not break by a wrap in the middle
             let text = format!("{} {value}", line.label).replace(' ', "\u{a0}");
             ui.colored_label(line.color, text);
         }
@@ -154,8 +154,7 @@ pub fn populations(ui: &mut egui::Ui, history: &History, height: f32) {
 /// Plants on the population chart: a pale grey green, apart from the herbivores' green.
 const PLANT_LINE: [u8; 3] = [120, 150, 130];
 
-/// Сытость: средняя заполненность бака существ и насколько растения
-/// упёрлись в потолок.
+/// Fullness: the mean tank fullness of the creatures and how far the plants have run into the ceiling.
 pub fn energy(ui: &mut egui::Ui, snaps: &[&Snapshot], height: f32) {
     let all = [
         Line {
@@ -174,13 +173,13 @@ pub fn energy(ui: &mut egui::Ui, snaps: &[&Snapshot], height: f32) {
     lines(ui, snaps, |s| s.tick, &all, Scale::Share, height);
 }
 
-/// Точка графика генома: тик и сводка каждого гена вида.
+/// A genome chart's point: the tick and the summary of each of the species' genes.
 pub type GenePoint<'a> = (u64, &'a [GeneStat]);
 
-/// Геном: по мини-графику на ген, у каждого своя шкала. Линия — медиана,
-/// полоса — где живут 80% популяции (10‒90%): среднее прячет раскол на два
-/// вида, а полоса его показывает. У гена-выбора (стратегии) — доли вариантов
-/// слоями. Справа — изменение от первой точки видимого окна.
+/// The genome: a mini-chart per gene, each with its own scale. The line is the median, the
+/// band is where 80% of the population live (10‒90%): the mean hides a split into two kinds,
+/// and the band shows it. For a choice gene (a strategy) — the shares of the variants in
+/// layers. On the right — the change since the first point of the visible window.
 pub fn genome(ui: &mut egui::Ui, table: &[GeneSpec], points: &[GenePoint], color: Color32, row_h: f32) {
     let rows: Vec<usize> = (0..table.len()).filter(|&g| shown(&table[g])).collect();
     let n = points.len();
@@ -240,8 +239,8 @@ pub fn genome(ui: &mut egui::Ui, table: &[GeneSpec], points: &[GenePoint], color
             font.clone(),
             MUTED,
         );
-        // Значение не заходит на изменение справа: длинное (имя варианта)
-        // обрезается многоточием.
+        // The value does not run onto the change on the right: a long one (a variant's name) is cut
+        // with an ellipsis.
         let left = rect.right() - value_w + 8.0;
         let mut job = LayoutJob::simple_singleline(value, font.clone(), value_color);
         job.wrap = TextWrapping {
@@ -274,7 +273,7 @@ fn spread_at(p: &GenePoint, g: usize) -> Spread {
     p.1[g].spread().copied().expect("числовой ген")
 }
 
-/// Мини-график числового гена: полоса 10‒90% и линия медианы.
+/// A mini-chart of a numeric gene: the 10‒90% band and the median line.
 fn number_row(
     painter: &egui::Painter,
     spark: Rect,
@@ -296,7 +295,7 @@ fn number_row(
     let mut band: Vec<Pos2> =
         (0..n).map(|i| Pos2::new(x_at(spark, i, n), y(spread_at(&points[i], g).p90))).collect();
     band.extend((0..n).rev().map(|i| Pos2::new(x_at(spark, i, n), y(spread_at(&points[i], g).p10))));
-    // полоса — набором четырёхугольников: egui заливает только выпуклые фигуры
+    // the band as a set of quadrilaterals: egui fills only convex shapes
     for i in 0..n - 1 {
         let quad = vec![band[i], band[i + 1], band[2 * n - 2 - i], band[2 * n - 1 - i]];
         painter.add(Shape::convex_polygon(quad, color.gamma_multiply(0.18), Stroke::NONE));
@@ -318,7 +317,7 @@ fn number_text(now: f64, was: f64, percent: bool) -> (String, String) {
     (value, change)
 }
 
-/// Цвета вариантов гена-выбора — по порядку.
+/// The colours of a choice gene's variants — in order.
 pub const VARIANT_COLORS: [Color32; 5] = [
     Color32::from_rgb(205, 134, 255),
     Color32::from_rgb(245, 197, 66),
@@ -327,7 +326,7 @@ pub const VARIANT_COLORS: [Color32; 5] = [
     Color32::from_rgb(239, 99, 81),
 ];
 
-/// Мини-график гена-выбора: доли вариантов слоями снизу вверх.
+/// A mini-chart of a choice gene: the variants' shares in layers from bottom to top.
 fn shares_row(painter: &egui::Painter, spark: Rect, points: &[GenePoint], g: usize, variants: usize) {
     let n = points.len();
     if n < 2 {
@@ -354,7 +353,7 @@ fn shares_row(painter: &egui::Painter, spark: Rect, points: &[GenePoint], g: usi
     }
 }
 
-/// Самый частый вариант — именем его цвета (легенда к слоям графика) — и его доля.
+/// The most common variant — by the name of its colour (a legend to the chart's layers) — and its share.
 fn shares_text(spec: &GeneSpec, now: &[f64; MAX_VARIANTS]) -> (String, Color32, String) {
     let variants = spec.variants().unwrap_or_default();
     let Some((k, v)) = variants.iter().enumerate().max_by(|a, b| now[a.0].total_cmp(&now[b.0])) else {
@@ -363,15 +362,15 @@ fn shares_text(spec: &GeneSpec, now: &[f64; MAX_VARIANTS]) -> (String, Color32, 
     (v.label.to_string(), VARIANT_COLORS[k % VARIANT_COLORS.len()], format!("{:.0}%", now[k] * 100.0))
 }
 
-/// Цвет-подсказка для полос энергии: голодные — красным.
+/// A hint colour for the energy bands: the hungry in red.
 pub fn energy_color(frac: f64, base: Color32) -> Color32 {
     if frac < 0.25 { crate::theme::DANGER } else { base }
 }
 
-/// Где живут существа во времени: по x — срезы, по y — полосы глубины
-/// (верх — поверхность), яркость — доля существ в полосе. Поверх — медиана
-/// глубины и границы слоя, где живут 80% (10‒90%). Возвращает срез под
-/// курсором, чтобы гистограмма рядом показала именно его.
+/// Where the creatures live in time: along x — samples, along y — bands of depth (the top is
+/// the surface), the brightness is the share of creatures in a band. On top — the median depth
+/// and the borders of the layer where 80% live (10‒90%). Returns the sample under the cursor,
+/// so that the histogram beside it shows exactly that one.
 pub fn depth_map(ui: &mut egui::Ui, snaps: &[&Snapshot], height: f32) -> Option<usize> {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
     let painter = ui.painter_at(rect.expand(2.0));
@@ -401,7 +400,7 @@ pub fn depth_map(ui: &mut egui::Ui, snaps: &[&Snapshot], height: f32) -> Option<
             if count == 0 {
                 continue;
             }
-            // корень: и полоса с десятой долей стада должна быть видна
+            // the root: a band with a tenth of the herd must be visible too
             let share = (count as f32 / total as f32).sqrt();
             let top = inner.top() + band_h * b as f32;
             let cell = Rect::from_min_max(
@@ -440,10 +439,10 @@ fn draw_line(painter: &egui::Painter, run: &mut Vec<Pos2>, width: f32) {
     run.clear();
 }
 
-/// Растения и существа по полосам — глубины (сверху вниз) или ширины (слева
-/// направо, тоже строками сверху вниз). Слева от середины — доля растений,
-/// справа — доля существ, каждая от своего вида: видно, живут ли там, где
-/// еда. `edges` — подписи первой и последней полосы.
+/// Plants and creatures by bands — of depth (top to bottom) or of width (left to right, also
+/// in rows from top to bottom). Left of the middle — the share of plants, on the right — the
+/// share of creatures, each of its own kind: one sees whether they live where the food is.
+/// `edges` — the labels of the first and last band.
 pub fn bands(ui: &mut egui::Ui, plants: &[usize], creatures: &[usize], edges: (&str, &str)) {
     let row_h = 17.0;
     let n = plants.len();
@@ -457,7 +456,7 @@ pub fn bands(ui: &mut egui::Ui, plants: &[usize], creatures: &[usize], edges: (&
         xs.iter().map(|&x| if total > 0 { x as f32 / total as f32 } else { 0.0 }).collect::<Vec<f32>>()
     };
     let (ps, vs) = (share(plants), share(creatures));
-    // шкала — по самой густой полосе обоих видов, чтобы полосы были сравнимы
+    // the scale is by the densest band of both kinds, so that the bands are comparable
     let max = ps.iter().chain(&vs).fold(0.01f32, |m, &v| m.max(v));
     let font = FontId::proportional(11.5);
     for i in 0..n {

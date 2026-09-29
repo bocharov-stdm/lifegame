@@ -1,6 +1,6 @@
-//! Полный отчёт в JSON — для программ и ИИ: всё, что печатает рассказ, плюс
-//! каждый срез целиком. Ключи — машинные (английские, как в эталоне Python),
-//! тексты событий — по-русски.
+//! The full report as JSON — for programs and AIs: everything the story prints, plus every
+//! sample in full. The keys are machine ones (English, as in the Python reference), the texts
+//! of the events are in Russian.
 
 use life_core::genome::{GeneKind, GeneSpec, creature};
 use life_core::rules::{DIETS, RULE_KEYS};
@@ -12,8 +12,8 @@ use serde_json::{Map, Value, json};
 
 use crate::story;
 
-/// Три знака после запятой: больше точности отчёту не нужно, а лишние цифры
-/// раздувают JSON и мешают его читать.
+/// Three decimals: the report needs no more precision, and extra digits bloat the JSON and make
+/// it hard to read.
 fn r(x: f64) -> f64 {
     (x * 1000.0).round() / 1000.0
 }
@@ -59,8 +59,8 @@ fn counters(c: &Counters) -> Value {
     })
 }
 
-/// Сводка генов по таблице: у числового гена — разброс, у гена-выбора — доли
-/// вариантов по их ключам.
+/// A summary of the genes by the table: a spread for a numeric gene, the shares of the variants
+/// by their keys for a choice gene.
 fn gene_stats(genes: &[GeneSpec], stats: &[GeneStat]) -> Value {
     let map: Map<_, _> = genes
         .iter()
@@ -84,7 +84,7 @@ fn gene_stats(genes: &[GeneSpec], stats: &[GeneStat]) -> Value {
     Value::Object(map)
 }
 
-/// Таблица генов: чтобы JSON описывал сам себя.
+/// The gene table: so that the JSON describes itself.
 fn gene_table(genes: &[GeneSpec]) -> Value {
     genes
         .iter()
@@ -150,7 +150,7 @@ pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, r
         "sample_every": sample_every,
         "rules": rules,
         "start": {
-            // настоящие числа, даже если заданы «по умолчанию»: null читателю ничего не говорит
+            // real numbers even when they are «default»: null tells the reader nothing
             "creatures": cfg.creatures_at_start(),
             "strategies": cfg.strategies,
         },

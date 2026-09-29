@@ -1,6 +1,6 @@
-//! Мир на экране: фон полосами глубины, кружки (или карта плотности),
-//! выделенное существо, миникарта. Рисует последний кадр потока симуляции и
-//! никогда не ждёт нового.
+//! The world on the screen: a background in bands of depth, circles (or a density map), the
+//! selected creature, the minimap. Draws the last frame of the simulation thread and never
+//! waits for a new one.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -17,27 +17,27 @@ use crate::sim::{Command, SimHandle};
 use crate::theme::{ACCENT, BG, DANGER, LINE, MUTED, rgb};
 use life_core::flora::Patch;
 
-/// Полос глубины на фоне: у поверхности светлее, на глубине темнее.
+/// Bands of depth in the background: lighter near the surface, darker in the depths.
 const BANDS: usize = 32;
-/// Сколько после последнего кадра ещё идут анимации (рост, угасание
-/// призраков — `creatures.wgsl`): столько окно перерисовывается само.
+/// How long after the last frame the animations still go on (growth, the ghosts' fading —
+/// `creatures.wgsl`): for that long the window redraws itself.
 const ANIMATION: f32 = 0.7;
-/// Насколько можно промахнуться кликом по существу, точек экрана.
+/// By how much a click on a creature may miss, screen points.
 pub const PICK_RADIUS: f64 = 10.0;
-/// Меньше этого по стороне, точек экрана, — не область, а промах мышью.
+/// Less than this on a side, screen points — not a region, but a slip of the mouse.
 const MIN_AREA: f64 = 4.0;
 
-/// Что случилось в мире по мыши за кадр.
+/// What happened in the world by the mouse in a frame.
 pub enum Click {
-    /// Клик по миру: точка мира и радиус промаха в единицах мира.
+    /// A click on the world: the world's point and the miss radius in world units.
     World { x: f64, y: f64, radius: f64 },
-    /// Протянута область (инструмент «Область»), в координатах мира.
+    /// A region has been dragged (the «Область» tool), in world coordinates.
     Area(Area),
 }
 
 #[derive(Default)]
 pub struct WorldView {
-    /// Последний кадр без кружков: кружки лежат отдельно, в `instances`.
+    /// The last frame without circles: the circles lie apart, in `instances`.
     pub frame: Option<Frame>,
     instances: Arc<Vec<Instance>>,
     generation: u64,
@@ -45,23 +45,23 @@ pub struct WorldView {
     minimap: Option<TextureHandle>,
     pub camera: Option<Camera>,
     last_view: Option<ViewRequest>,
-    /// Когда пришёл последний кадр и сглаженный промежуток между кадрами, с:
-    /// по ним окно рисует движение между прошлым и новым кадром.
+    /// When the last frame came and the smoothed interval between frames, s: by them the window
+    /// draws the motion between the previous and the new frame.
     arrived: Option<Instant>,
     interval: f64,
-    /// Выделенное в прошлом кадре: кольцо едет вместе с кружком.
+    /// What was selected in the previous frame: the ring moves together with the circle.
     prev_selected: Option<(u64, f64, f64)>,
     /// The world's food patches, as the last frame that carried them had them.
     patches: Arc<[Patch]>,
-    /// Перетаскивание рисует область, а не двигает камеру (инструмент «Область»).
+    /// Dragging draws a region, not moves the camera (the «Область» tool).
     pub area_mode: bool,
-    /// Где началось перетаскивание области, в координатах мира.
+    /// Where the drag of a region began, in world coordinates.
     drag_from: Option<(f64, f64)>,
-    /// Последняя протянутая область (не меньше `MIN_AREA`).
+    /// The last dragged region (no smaller than `MIN_AREA`).
     dragged_area: Option<Area>,
-    /// Заданная область — рисуется рамкой, пока её не сняли.
+    /// The given region — drawn as a frame until it is cleared.
     pub area: Option<Area>,
-    /// Время построения команд отрисовки мира на CPU, мс.
+    /// The time of building the world's draw commands on the CPU, ms.
     pub draw_ms: f64,
     /// Diets highlighted in the world, a bit per diet in `Diet` order (0 — none).
     pub highlight: u32,
@@ -109,7 +109,7 @@ fn paint_patches(painter: &egui::Painter, cam: &Camera, rect: Rect, patches: &[P
     }
 }
 
-/// Область по двум углам в любом порядке, обрезанная краями мира.
+/// A region by two corners in any order, cut to the world's edges.
 fn clamp_area(a: (f64, f64), b: (f64, f64), w: f64, h: f64) -> Area {
     let x = |v: f64| v.clamp(0.0, w);
     let y = |v: f64| v.clamp(0.0, h);
@@ -126,11 +126,11 @@ impl WorldView {
         self.dragged_area = None;
     }
 
-    /// Принять новый кадр. Приращения (история, хроника) забирает вызывающий.
+    /// Accept a new frame. The increments (history, chronicle) are taken by the caller.
     pub fn accept(&mut self, ctx: &egui::Context, sim: &SimHandle, mut f: Frame) {
         let fresh = Arc::new(std::mem::take(&mut f.instances));
         let old = std::mem::replace(&mut self.instances, fresh);
-        // Прошлый буфер уже не нужен видеокарте — отдаём его обратно.
+        // The previous buffer is no longer needed by the graphics card — we hand it back.
         if let Ok(buf) = Arc::try_unwrap(old) {
             sim.recycle(buf);
         }
@@ -163,7 +163,7 @@ impl WorldView {
         if let Some(patches) = f.patches.take() {
             self.patches = patches;
         }
-        // новый мир — новая камера
+        // a new world — a new camera
         if self.frame.as_ref().is_some_and(|old| old.world_gen != f.world_gen) {
             self.camera = None;
             self.prev_selected = None;
@@ -171,8 +171,8 @@ impl WorldView {
         self.frame = Some(f);
     }
 
-    /// Нарисовать мир в прямоугольнике `rect`. `interactive` — можно ли
-    /// двигать камеру и кликать (в меню мир только фон).
+    /// Draw the world in the rectangle `rect`. `interactive` — whether the camera can be moved and
+    /// clicks made (in the menu the world is only a background).
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -219,7 +219,7 @@ impl WorldView {
         let cam = self.camera.get_or_insert_with(|| Camera::new(f.world_w, f.world_h, view));
         cam.set_view(view);
 
-        // ── мышь: перетаскивание, колесо, клик ──────────────────────────────
+        // ── mouse: dragging, wheel, click ───────────────────────────────────
         let mut click: Option<Click> = None;
         let mut drawing = None;
         if interactive {
@@ -235,8 +235,8 @@ impl WorldView {
                     let big = (area.2 - area.0).min(area.3 - area.1) * cam.zoom >= MIN_AREA;
                     self.dragged_area = big.then_some(area);
                 }
-                // на кадре отпускания указателя может уже не быть — берём
-                // последнюю протянутую область
+                // the pointer may already be gone in the release frame — we take
+                // the last dragged region
                 if response.drag_stopped() || ui.input(|i| i.pointer.any_released()) {
                     self.drag_from = None;
                     click = self.dragged_area.take().map(Click::Area);
@@ -306,7 +306,7 @@ impl WorldView {
             return click;
         }
 
-        // ── фон: мир полосами глубины ─────────────────────────────────────────
+        // ── background: the world in bands of depth ───────────────────────────
         let (left, top) = cam.to_screen(0.0, 0.0);
         let (right, bottom) = cam.to_screen(f.world_w, f.world_h);
         let world_rect = Rect::from_min_max(pos(left, top), pos(right, bottom));
@@ -359,7 +359,7 @@ impl WorldView {
             );
         }
 
-        // полоса слоя выбранного существа — где ему можно жить и есть
+        // the selected creature's layer band — where it may live and eat
         if let Some(s) = f.selected {
             let (lo, hi) = s.layer;
             let (_, y0) = cam.to_screen(0.0, lo);
@@ -371,7 +371,7 @@ impl WorldView {
             painter.hline(band.x_range(), y1 as f32, edge);
         }
 
-        // ── существа: кружки или карта плотности ─────────────────────────────
+        // ── creatures: circles or a density map ──────────────────────────────
         if let Some((tex, r)) = &self.density {
             let (x0, y0) = cam.to_screen(r.0, r.1);
             let (x1, y1) = cam.to_screen(r.2, r.3);
@@ -425,7 +425,7 @@ impl WorldView {
         }
         painter.rect_stroke(world_rect, 0.0, Stroke::new(1.0, LINE), StrokeKind::Outside);
 
-        // ── область: заданная — рамкой, протягиваемая — рамкой с заливкой ─────
+        // ── region: a given one as a frame, one being dragged as a filled frame ───
         let screen = |a: Area| {
             let (x0, y0) = cam.to_screen(a.0, a.1);
             let (x1, y1) = cam.to_screen(a.2, a.3);
@@ -439,7 +439,7 @@ impl WorldView {
             painter.rect_stroke(screen(a), 0.0, Stroke::new(1.0, ACCENT), StrokeKind::Outside);
         }
 
-        // ── выделенное: кольцо вокруг тела и круг зрения ─────────────────────
+        // ── selected: a ring round the body and the circle of sight ──────────
         if let Some(s) = f.selected {
             let (x, y) = between(self.prev_selected, &s, k);
             let (sx, sy) = cam.to_screen(x, y);
@@ -452,7 +452,7 @@ impl WorldView {
             painter.circle_stroke(pos(sx, sy), body + 5.0, Stroke::new(2.0, ACCENT));
         }
 
-        // ── видимая область — потоку симуляции ────────────────────────────────
+        // ── the visible area — to the simulation thread ───────────────────────
         let (x0, y0, x1, y1) = cam.visible_world();
         let ppp = ui.ctx().pixels_per_point();
         let req = ViewRequest {
@@ -474,16 +474,16 @@ impl WorldView {
         click
     }
 
-    /// Миникарта в левом нижнем углу: где мы в мире. Клик или перетаскивание
-    /// по ней переносит камеру. Когда виден весь мир, она не нужна.
+    /// The minimap in the bottom left corner: where we are in the world. A click or a drag on it
+    /// moves the camera. When the whole world is visible, it is not needed.
     fn minimap(&mut self, ui: &mut egui::Ui, rect: Rect) {
         let (Some(tex), Some(cam)) = (&self.minimap, &mut self.camera) else { return };
         if cam.is_fit() {
             return;
         }
         let aspect = (cam.world_h / cam.world_w) as f32;
-        // не больше 30% ширины и 90 точек высоты (130 — у мира, похожего на
-        // квадрат: иначе он сжимается в марку): карта не должна заслонять мир
+        // no more than 30% of the width and 90 points of height (130 for a world like a square:
+        // otherwise it shrinks into a stamp): the map must not cover the world
         let max_h = if aspect > 0.25 { 130.0 } else { 90.0 };
         let mut w = (rect.width() * 0.3).clamp(120.0, 320.0);
         let mut h = (w * aspect).max(14.0);
@@ -507,7 +507,7 @@ impl WorldView {
             to_map(x0.max(0.0), y0.max(0.0)),
             to_map(x1.min(cam.world_w), y1.min(cam.world_h)),
         );
-        // Совсем узкая рамка не видна — рисуем хотя бы в три точки.
+        // A very narrow frame is not visible — we draw at least three points.
         if seen.width() < 3.0 {
             seen = Rect::from_center_size(seen.center(), Vec2::new(3.0, seen.height()));
         }
@@ -521,8 +521,8 @@ impl WorldView {
         }
     }
 
-    /// Доля пути от прошлого кадра к новому: окно рисует существ между ними.
-    /// Без новых кадров (пауза) доходит до 1, и мир замирает.
+    /// The share of the way from the previous frame to the new one: the window draws creatures
+    /// between them. Without new frames (pause) it reaches 1, and the world freezes.
     fn progress(&self) -> f32 {
         match self.arrived {
             Some(a) if self.interval > 0.0 => (a.elapsed().as_secs_f64() / self.interval).min(1.0) as f32,
@@ -530,8 +530,8 @@ impl WorldView {
         }
     }
 
-    /// Слежение за выбранным: камера едет за ним, пока оно живо и выбрано —
-    /// за той же точкой, где его рисует шейдер, иначе дёргался бы весь экран.
+    /// Following the selected one: the camera goes after it while it lives and is selected — after
+    /// the same point where the shader draws it, otherwise the whole screen would jerk.
     pub fn follow_step(&mut self, dt: f64) {
         let k = self.progress();
         let (Some(cam), Some(f)) = (&mut self.camera, &self.frame) else { return };
@@ -559,7 +559,7 @@ impl WorldView {
     }
 }
 
-/// Где выделенное сейчас на экране: между прошлым кадром и новым.
+/// Where the selected creature is on the screen now: between the previous frame and the new one.
 fn between(prev: Option<(u64, f64, f64)>, s: &frame::Selected, k: f32) -> (f64, f64) {
     match prev {
         Some((id, px, py)) if id == s.id => (px + (s.x - px) * k as f64, py + (s.y - py) * k as f64),

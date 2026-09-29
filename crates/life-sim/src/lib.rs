@@ -1,9 +1,9 @@
-//! Прогон симуляции без окна под четырьмя независимыми лимитами.
+//! A simulation run without a window under four independent limits.
 //!
-//! Стоимость тика растёт вместе с популяцией, поэтому число тиков время прогона
-//! НЕ ограничивает. Кроме тиков есть потолок популяции (ловит взрыв численности),
-//! бюджет вычислений (гарантирует завершение, примерно одинаково на разных
-//! машинах) и дедлайн по часам (страховка на совсем медленной машине).
+//! A tick's cost grows with the population, so the number of ticks does NOT bound the run's
+//! time. Besides ticks there is a population ceiling (catches a population explosion), a
+//! computation budget (guarantees completion, about the same on different machines) and a
+//! wall-clock deadline (insurance on a very slow machine).
 
 pub mod observe;
 
@@ -23,7 +23,7 @@ pub enum StopReason {
 }
 
 impl StopReason {
-    /// Машинное имя — для JSON отчёта.
+    /// The machine name — for the report's JSON.
     pub fn key(self) -> &'static str {
         match self {
             StopReason::Done => "done",
@@ -51,10 +51,10 @@ impl fmt::Display for StopReason {
 pub struct Limits {
     pub ticks: u64,
     pub sample_every: u64,
-    /// Потолок существ на базовый мир; в большом мире растёт с площадью.
+    /// The ceiling of creatures for the base world; in a big world it grows with the area.
     pub max_creatures: usize,
-    /// Бюджет «существа x растения», просуммированный по тикам, на базовый мир.
-    /// С сеткой соседей это сильно завышенная, но честная верхняя оценка работы.
+    /// The «creatures x plants» budget, summed over ticks, for the base world.
+    /// With the neighbour grid it is a heavily overestimated but honest upper bound of the work.
     pub max_total_work: f64,
     pub deadline: Duration,
 }
@@ -72,15 +72,15 @@ impl Default for Limits {
 }
 
 pub struct SimResult {
-    /// Снимки `world.stats()` раз в `sample_every` тиков плюс финальный.
+    /// The `world.stats()` snapshots every `sample_every` ticks plus the final one.
     pub history: Vec<Stats>,
-    /// Подробные срезы в те же моменты, что и `history`: разброс генов,
-    /// глубина, счётчики рождений и смертей (см. `observe`).
+    /// Detailed samples at the same moments as `history`: the genes' spread, the depth, the
+    /// counters of births and deaths (see `observe`).
     pub snapshots: Vec<Snapshot>,
     pub ticks_done: u64,
     pub stop: StopReason,
     pub elapsed: Duration,
-    /// Конечное состояние — для проверки инвариантов.
+    /// The final state — for checking invariants.
     pub world: World,
     pub total_work: f64,
 }
@@ -103,20 +103,20 @@ impl SimResult {
     }
 }
 
-/// Прогнать мир из `cfg` под лимитами. `on_tick` вызывается после каждого тика.
+/// Run the world from `cfg` under the limits. `on_tick` is called after every tick.
 pub fn simulate(cfg: &WorldConfig, limits: &Limits, mut on_tick: impl FnMut(&World)) -> SimResult {
     let world = World::new(cfg);
     run(world, limits, &mut on_tick)
 }
 
-/// То же для уже готового мира (тесты собирают его руками).
+/// The same for a ready-made world (the tests assemble it by hand).
 pub fn run(mut world: World, limits: &Limits, on_tick: &mut dyn FnMut(&World)) -> SimResult {
     let area = world.space.area_ratio();
     let max_creatures = (limits.max_creatures as f64 * area) as usize;
-    // работа ~ существа x растения, обе величины растут с площадью
+    // the work ~ creatures x plants, both quantities grow with the area
     let max_work = limits.max_total_work * area * area;
 
-    // шаг 0 — «снимать как можно чаще», а не деление на ноль
+    // a step of 0 means «sample as often as possible», not a division by zero
     let sample_every = limits.sample_every.max(1);
     let mut history = vec![world.stats()];
     let mut snapshots = vec![Snapshot::of(&world)];
@@ -156,7 +156,7 @@ pub fn run(mut world: World, limits: &Limits, on_tick: &mut dyn FnMut(&World)) -
     }
 
     if history.last().map(|h| h.tick) != Some(world.tick) {
-        history.push(world.stats()); // финальный снимок всегда в истории
+        history.push(world.stats()); // the final snapshot is always in the history
         snapshots.push(Snapshot::of(&world));
     }
     SimResult { history, snapshots, ticks_done: done, stop, elapsed: started.elapsed(), world, total_work }

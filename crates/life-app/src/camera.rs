@@ -1,16 +1,16 @@
-//! Камера: какая часть мира видна во вьюпорте и в каком масштабе. Порт
-//! `app/camera.py` (тег python-final).
+//! The camera: which part of the world is visible in the viewport and at what scale. A port of
+//! `app/camera.py` (tag python-final).
 //!
-//! Мир в большом масштабе очень вытянут: при ×1000 он в 1500 раз шире, чем
-//! выше. Поэтому координаты мира — f64 (ширина до 6·10⁷), а экрана — f32.
-//! Вьюпорт — прямоугольник в точках экрана (egui).
+//! The world at a big scale is very elongated: at ×1000 it is 1500 times wider than tall. So
+//! the world's coordinates are f64 (a width up to 6·10⁷), and the screen's are f32. The
+//! viewport is a rectangle in screen points (egui).
 
-/// 1 единица мира = 4 точки экрана: мельче существо рассматривать незачем.
+/// 1 world unit = 4 screen points: there is no point in looking at a creature any closer.
 pub const MAX_ZOOM: f64 = 4.0;
-/// Плавность слежения: чем больше, тем плотнее камера держится за целью.
+/// The smoothness of following: the bigger, the tighter the camera holds to its target.
 pub const FOLLOW_RATE: f64 = 8.0;
 
-/// Прямоугольник вьюпорта на экране: левый верхний угол и размер.
+/// The viewport's rectangle on the screen: the top left corner and the size.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Viewport {
     pub x: f64,
@@ -27,14 +27,14 @@ pub struct Camera {
     pub zoom: f64,
     pub cx: f64,
     pub cy: f64,
-    /// За кем следим (id существа) и где цель была в прошлом кадре.
+    /// Whom we follow (a creature's id) and where the target was in the previous frame.
     pub target: Option<u64>,
     last: Option<(f64, f64)>,
 }
 
 impl Camera {
-    /// Новая камера: весь мир по центру. Сильно вытянутый мир (большой
-    /// масштаб) — полосой во всю высоту, в которой существа ещё видны.
+    /// A new camera: the whole world in the centre. A very elongated world (a big scale) — as a
+    /// strip the full height, in which the creatures are still visible.
     pub fn new(world_w: f64, world_h: f64, view: Viewport) -> Self {
         let mut cam = Camera {
             world_w,
@@ -46,7 +46,7 @@ impl Camera {
             target: None,
             last: None,
         };
-        // Вписанный целиком вытянутый мир — нитка из точек; тогда по высоте.
+        // An elongated world fitted whole is a thread of dots; then by height.
         let by_height = view.h / world_h;
         let zoom = if world_w * by_height > 3.0 * view.w { by_height } else { cam.min_zoom() };
         cam.zoom = zoom.clamp(cam.min_zoom(), cam.max_zoom());
@@ -54,7 +54,7 @@ impl Camera {
         cam
     }
 
-    /// Мир целиком во вьюпорте — дальше отдалять незачем.
+    /// The whole world in the viewport — no point zooming out further.
     pub fn min_zoom(&self) -> f64 {
         (self.view.w / self.world_w).min(self.view.h / self.world_h).max(1e-9)
     }
@@ -67,7 +67,7 @@ impl Camera {
         self.zoom <= self.min_zoom() * 1.0001
     }
 
-    /// Показать весь мир.
+    /// Show the whole world.
     pub fn fit(&mut self) {
         self.zoom = self.min_zoom();
         self.cx = self.world_w / 2.0;
@@ -75,7 +75,7 @@ impl Camera {
         self.follow(None, None);
     }
 
-    /// Новый размер вьюпорта. Центр остаётся на месте, вписанный мир — вписанным.
+    /// A new viewport size. The centre stays in place, a fitted world stays fitted.
     pub fn set_view(&mut self, view: Viewport) {
         if view == self.view {
             return;
@@ -89,21 +89,21 @@ impl Camera {
         self.clamp();
     }
 
-    /// Изменить масштаб так, чтобы точка мира под (sx, sy) осталась под курсором.
+    /// Change the scale so that the world point under (sx, sy) stays under the cursor.
     pub fn zoom_at(&mut self, sx: f64, sy: f64, factor: f64) {
         let (wx, wy) = self.to_world(sx, sy);
         self.zoom = (self.zoom * factor).clamp(self.min_zoom(), self.max_zoom());
         self.cx = wx - (sx - self.view.x - self.view.w / 2.0) / self.zoom;
         self.cy = wy - (sy - self.view.y - self.view.h / 2.0) / self.zoom;
         if let (Some(_), Some((x, y))) = (self.target, self.last) {
-            // следим — значит, центр на цели
+            // we follow, so the centre is on the target
             self.cx = x;
             self.cy = y;
         }
         self.clamp();
     }
 
-    /// Сдвиг на (dx, dy) точек экрана: мир едет вслед за мышью.
+    /// A shift by (dx, dy) screen points: the world moves after the mouse.
     pub fn pan(&mut self, dx: f64, dy: f64) {
         self.cx -= dx / self.zoom;
         self.cy -= dy / self.zoom;
@@ -111,7 +111,7 @@ impl Camera {
         self.clamp();
     }
 
-    /// Навести камеру центром на точку мира (клик по миникарте).
+    /// Point the camera's centre at a world point (a click on the minimap).
     pub fn center_on(&mut self, x: f64, y: f64) {
         self.cx = x;
         self.cy = y;
@@ -119,19 +119,19 @@ impl Camera {
         self.clamp();
     }
 
-    /// Следить за существом `id`, которое сейчас в `at`; None — перестать.
+    /// Follow the creature `id`, which is now at `at`; None — stop.
     pub fn follow(&mut self, id: Option<u64>, at: Option<(f64, f64)>) {
         self.target = id;
         self.last = if id.is_some() { at } else { None };
     }
 
-    /// Слежение: камера едет вместе с целью и плавно подводит её к центру.
-    /// `at` — где цель сейчас; None — цель пропала (умерла), слежение снимается.
+    /// Following: the camera moves with the target and smoothly brings it to the centre.
+    /// `at` — where the target is now; None — the target is gone (died), following is dropped.
     ///
-    /// Одного плавного догоняния мало: на высокой скорости существо за кадр
-    /// уходит дальше, чем камера успевает подтянуться, и пропадает с экрана.
-    /// Поэтому сначала камера сдвигается на столько же, на сколько сдвинулась
-    /// цель, а плавность достаётся только остатку пути до центра.
+    /// Smooth catching up alone is not enough: at high speed a creature goes farther in a frame
+    /// than the camera can catch up, and disappears from the screen. So first the camera shifts by
+    /// as much as the target shifted, and the smoothness is left only for the rest of the way to
+    /// the centre.
     pub fn update(&mut self, dt: f64, at: Option<(f64, f64)>) {
         if self.target.is_none() {
             return;
@@ -150,7 +150,7 @@ impl Camera {
         self.clamp();
     }
 
-    /// Мир заполняет вьюпорт, насколько может; если он меньше — стоит по центру.
+    /// The world fills the viewport as far as it can; if it is smaller, it stands in the centre.
     fn clamp(&mut self) {
         let half_w = self.view.w / 2.0 / self.zoom;
         let half_h = self.view.h / 2.0 / self.zoom;
@@ -180,7 +180,7 @@ impl Camera {
         )
     }
 
-    /// Видимый прямоугольник мира (x0, y0, x1, y1).
+    /// The visible rectangle of the world (x0, y0, x1, y1).
     pub fn visible_world(&self) -> (f64, f64, f64, f64) {
         let (x0, y0) = self.to_world(self.view.x, self.view.y);
         let (x1, y1) = self.to_world(self.view.x + self.view.w, self.view.y + self.view.h);
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn вытянутый_мир_стартует_во_всю_высоту() {
-        // ×1000: мир 6 000 000 x 4000
+        // ×1000: a world of 6 000 000 x 4000
         let cam = Camera::new(6e6, 4000.0, VIEW);
         let (_, y0, _, y1) = cam.visible_world();
         assert!((y0 - 0.0).abs() < 1e-6 && (y1 - 4000.0).abs() < 1e-6);
@@ -231,7 +231,7 @@ mod tests {
         let mut cam = Camera::new(6000.0, 4000.0, VIEW);
         cam.zoom_at(400.0, 250.0, 8.0);
         cam.follow(Some(7), Some((3000.0, 2000.0)));
-        // цель прыгает на 300 единиц за кадр — на экране это далеко за краем
+        // the target jumps 300 units a frame — on the screen that is far past the edge
         for i in 1..=10 {
             let at = (3000.0 + 300.0 * i as f64, 2000.0);
             cam.update(1.0 / 60.0, Some(at));

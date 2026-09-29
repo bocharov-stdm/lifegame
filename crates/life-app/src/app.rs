@@ -1,5 +1,5 @@
-//! Приложение: экраны, переходы, настройки. Окно только рисует последний кадр
-//! и шлёт команды; всё тяжёлое — в потоке симуляции (`sim.rs`).
+//! The application: screens, transitions, settings. The window only draws the last frame and
+//! sends commands; everything heavy is in the simulation thread (`sim.rs`).
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -15,7 +15,7 @@ use crate::stats::StatsTab;
 use crate::theme;
 use crate::view::WorldView;
 
-/// Больше записей хроники не держим: старые уходят.
+/// We keep no more chronicle entries: the old ones go.
 const LOG_LIMIT: usize = 5000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,15 +36,15 @@ pub enum SideTab {
 pub enum Tool {
     Select,
     Spawn,
-    /// Протянуть область и посмотреть геном тех, кто внутри.
+    /// Drag a region and look at the genome of those inside.
     Area,
 }
 
-/// Идущая партия (не фоновый мир меню).
+/// A game under way (not the menu's background world).
 pub struct Game {
-    /// С чего партия началась: «Заново» повторяет именно его.
+    /// What the game began with: «Заново» repeats exactly that.
     pub start: WorldConfig,
-    /// Правила меняли на ходу: повтор без окна совпадёт только до изменения.
+    /// The rules were changed on the fly: a repeat without a window matches only up to the change.
     pub rules_changed: bool,
 }
 
@@ -58,32 +58,32 @@ pub struct LifeApp {
     pub history: History,
     pub log: Vec<LogEntry>,
 
-    // ── состояние интерфейса ────────────────────────────────────────────────
+    // ── interface state ─────────────────────────────────────────────────────
     pub side_open: bool,
     pub side_tab: SideTab,
     /// Which diets have their details open on the panel, in `Diet` order.
     pub diet_open: [bool; 4],
-    /// Показывать ли тела и окружение мира; история и карточка обновляются всегда.
+    /// Whether to show the bodies and the surroundings of the world; the history and the card update always.
     pub render_world: bool,
     pub lab_open: bool,
     /// The selected creature's behaviour window (`behaviour.rs`).
     pub behaviour_open: bool,
-    /// Черновик правил лаборатории на ходу; применяется кнопкой.
+    /// A draft of the lab's rules on the fly; applied with a button.
     pub lab: Settings,
-    /// Вкладка лаборатории: правила (`Tab::Lab`) или еда (`Tab::Food`).
+    /// The lab's tab: rules (`Tab::Lab`) or food (`Tab::Food`).
     pub lab_tab: Tab,
-    /// Отмеченные правила для совместного сброса в лаборатории.
+    /// The rules ticked for a joint reset in the lab.
     pub lab_reset_selected: HashSet<settings::Key>,
-    /// Окно «Статистика» и его вкладка.
+    /// The «Статистика» window and its tab.
     pub stats_open: bool,
     pub stats_tab: StatsTab,
-    /// Последняя сводка по протянутой области; None — области нет.
+    /// The last summary of the dragged region; None — there is no region.
     pub region: Option<RegionStats>,
     pub tool: Tool,
     pub setup_tab: Tab,
     pub prefs_open: bool,
     pub help_open: bool,
-    /// Была ли партия на паузе, когда открыли меню.
+    /// Whether the game was paused when the menu was opened.
     pub paused_before_menu: bool,
     pub toast: Option<(String, f64)>,
     fps: f64,
@@ -91,9 +91,9 @@ pub struct LifeApp {
 }
 
 impl LifeApp {
-    /// `start` — мир из командной строки: сразу в игру. Иначе — меню с живым
-    /// миром ×1 на фоне. `settings_path` — файл настроек; None — не читать и
-    /// не писать (тесты не должны трогать настройки игрока).
+    /// `start` — a world from the command line: straight into the game. Otherwise the menu with a
+    /// live ×1 world in the background. `settings_path` — the settings file; None — neither read
+    /// nor write (the tests must not touch the player's settings).
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         start: Option<WorldConfig>,
@@ -146,7 +146,7 @@ impl LifeApp {
         }
     }
 
-    /// Забрать новый кадр из потока симуляции, если он есть.
+    /// Take a new frame from the simulation thread, if there is one.
     fn receive(&mut self, ctx: &egui::Context) {
         let Some(mut f) = self.sim.take_frame() else { return };
         if self.view.frame.as_ref().is_none_or(|old| old.world_gen != f.world_gen) {
@@ -154,7 +154,7 @@ impl LifeApp {
             self.log.clear();
             self.lab.take_rules(&f.rules);
             self.lab_reset_selected.clear();
-            // область — от прошлого мира; поток её уже забыл
+            // the region is from the previous world; the thread has already forgotten it
             self.region = None;
             self.view.area = None;
         }
@@ -186,7 +186,7 @@ impl LifeApp {
         self.toast = Some((text, 3.0));
     }
 
-    /// Начать новую партию по настройкам экрана «Новый мир».
+    /// Start a new game by the settings of the «Новый мир» screen.
     pub fn start_game(&mut self) {
         if self.settings.random_seed {
             self.settings.seed = random_seed();
@@ -224,7 +224,7 @@ impl LifeApp {
         }
     }
 
-    /// Масштаб интерфейса и полноэкранный режим — когда поменялись.
+    /// The interface scale and full-screen mode — when they have changed.
     fn apply_display(&mut self, ctx: &egui::Context) {
         let want = (self.settings.fullscreen, self.settings.ui_scale);
         if want == self.applied {
@@ -233,7 +233,7 @@ impl LifeApp {
         if want.0 != self.applied.0 {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(want.0));
         }
-        // 0 — как в системе: множитель 1 к системному масштабу
+        // 0 — as in the system: a factor of 1 to the system scale
         ctx.set_zoom_factor(if want.1 > 0.0 { want.1 as f32 } else { 1.0 });
         self.applied = want;
     }
@@ -243,7 +243,7 @@ impl LifeApp {
     }
 }
 
-/// Случайный сид от часов: общий генератор движку не нужен.
+/// A random seed from the clock: the engine needs no shared generator.
 pub fn random_seed() -> u64 {
     let nanos =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
@@ -292,7 +292,7 @@ impl eframe::App for LifeApp {
         if self.screen != Screen::Game {
             return;
         }
-        // слежение — каждый кадр окна, а не только когда пришёл кадр мира
+        // following runs every window frame, not only when a world frame has come
         self.view.follow_step(dt);
         if self.view.following() {
             ctx.request_repaint();

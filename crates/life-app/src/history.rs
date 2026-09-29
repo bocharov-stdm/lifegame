@@ -1,14 +1,14 @@
-//! Ограниченная по возрасту история партии для графиков. Хроника хранится отдельно.
+//! A game's history for the charts, limited by age. The chronicle is kept apart.
 
 use std::collections::VecDeque;
 
 use life_core::genome::creature;
 use life_sim::observe::Snapshot;
 
-/// Видимое окно истории, измеряется тиками мира, а не числом срезов.
+/// The visible window of the history, measured in world ticks, not in the number of samples.
 pub const WINDOW_TICKS: u64 = 10_000;
 
-/// Сглаженные численности и накопленные выстрелы на данном тике.
+/// Smoothed counts and accumulated shots at a given tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sample {
     pub tick: u64,

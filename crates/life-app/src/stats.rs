@@ -1,6 +1,6 @@
-//! Окно «Статистика»: то, чего не видно на боковой панели. Сытость, где живут
-//! существа и где растёт еда, и сводка по области, протянутой по миру. Данные — срезы мира (`Snapshot`), которые поток
-//! симуляции и так снимает для хроники.
+//! The «Статистика» window: what the side panel does not show. Fullness, where the creatures live
+//! and where the food grows, and a summary of the region dragged over the world. The data are
+//! samples of the world (`Snapshot`), which the simulation thread takes anyway for the chronicle.
 
 use eframe::egui::{self, RichText, Vec2};
 use life_core::flora::Profile;
@@ -79,7 +79,7 @@ impl LifeApp {
         ui.label(RichText::new("Растения и существа по глубине").strong());
         ui.colored_label(MUTED, "слева — доля растений, справа — доля существ");
         charts::bands(ui, &at.plants_by_depth, &at.creatures_by_depth, ("поверхность", "дно"));
-        // по ширине смотреть есть на что, только если еда по ней неравномерна
+        // across the width there is something to look at only if the food is uneven along it
         let uneven = self.view.frame.as_ref().is_some_and(|f| f.rules.plant_width.kind() != Profile::Uniform);
         if uneven {
             ui.add_space(8.0);
@@ -128,7 +128,7 @@ impl LifeApp {
         ui.colored_label(MUTED, "Сводка обновляется на каждом срезе мира и сразу, когда область задана.");
     }
 
-    /// Снять область: и рамку в мире, и сводку.
+    /// Clear the region: both the frame in the world and the summary.
     pub fn clear_region(&mut self) {
         self.region = None;
         self.view.area = None;
@@ -137,7 +137,7 @@ impl LifeApp {
         self.sim.send(Command::SetRegion(None));
     }
 
-    /// Протянута новая область: сводку посчитает поток, окно откроется на ней.
+    /// A new region has been dragged: the thread will compute the summary, the window opens on it.
     pub fn set_region(&mut self, area: crate::frame::Area) {
         self.view.area = Some(area);
         self.region = None;
@@ -148,8 +148,8 @@ impl LifeApp {
     }
 }
 
-/// Таблица генов: среднее в области, среднее по миру и разница. У гена-выбора
-/// — доля самого частого в области варианта.
+/// The gene table: the mean in the region, the mean over the world and the difference. For a
+/// choice gene, the share of the variant most common in the region.
 fn compare<const N: usize>(
     ui: &mut egui::Ui,
     id: &str,
@@ -182,13 +182,13 @@ fn compare<const N: usize>(
     });
 }
 
-/// Разница со знаком, целыми: без «-0», когда разницы нет.
+/// The signed difference, in whole numbers: no «-0» when there is no difference.
 fn signed(v: f64, unit: &str) -> String {
     let v = v.round();
     if v == 0.0 { format!("0{unit}") } else { format!("{v:+.0}{unit}") }
 }
 
-/// Строка таблицы: (в области, по миру, разница).
+/// A table row: (in the region, over the world, the difference).
 fn row(spec: &GeneSpec, inside: &GeneStat, world: Option<&GeneStat>) -> (String, String, String) {
     let percent = spec.is_percent();
     let number = |v: f64| match (percent, v.abs() < 20.0) {
@@ -230,7 +230,7 @@ mod tests {
     use life_core::{World, WorldConfig};
     use life_sim::observe::Snapshot;
 
-    /// Сводка по области — ровно по тем, кто внутри, а по всему миру — по всем.
+    /// The region's summary counts exactly those inside, and the world's counts all.
     #[test]
     fn область_считает_только_тех_кто_внутри() {
         let mut w = World::new(&WorldConfig { seed: 2, ..Default::default() });
@@ -252,7 +252,7 @@ mod tests {
         }
         let all = w.creatures.iter().map(|v| v.genome[Gene::Size]).sum::<f64>() / w.creatures.len() as f64;
         assert!((size(&r.world).unwrap() - all).abs() < 1e-9);
-        // весь мир — та же сводка внутри и снаружи
+        // the whole world — the same summary inside and outside
         let whole = RegionStats::of(&w, (0.0, 0.0, w.space.width, w.space.height), None);
         assert_eq!(whole.inside, whole.world);
         assert_eq!(whole.creatures, w.creatures.len());
@@ -279,8 +279,8 @@ mod tests {
 
     #[test]
     fn снимок_без_существ_не_роняет_окно() {
-        // пустой мир — срез без генов; вкладки должны это пережить (проверяется
-        // в ui_tests), а сводка по области — пустая
+        // an empty world — a sample without genes; the tabs must survive it (checked in ui_tests),
+        // and the region's summary is empty
         let w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
         let r = RegionStats::of(&w, (0.0, 0.0, 100.0, 100.0), None);
         assert!(r.inside.is_none() && r.world.is_none() && r.fullness.is_none());

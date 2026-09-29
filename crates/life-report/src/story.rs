@@ -1,6 +1,6 @@
-//! Рассказ о прогоне текстом: итог, отчего менялась численность, промежутки,
-//! геном, глубина, хроника событий и карты. Написан так, чтобы по нему одному —
-//! без графиков и окна — можно было понять, что происходило в мире.
+//! A story of the run in text: the result, what changed the population, the intervals, the
+//! genome, the depth, the chronicle of events and the maps. Written so that from it alone —
+//! without charts or a window — one can understand what happened in the world.
 
 use life_core::flora::{self, Profile};
 use life_core::genome::creature::Gene;
@@ -8,7 +8,7 @@ use life_core::genome::{GeneSpec, creature};
 use life_sim::SimResult;
 use life_sim::observe::{Event, GeneStat, MAP_LEGEND, MAX_VARIANTS, Snapshot, Spread, describe_flows};
 
-/// Карта: тик и строки.
+/// A map: the tick and the lines.
 pub type Map = (u64, Vec<String>);
 
 fn opt(v: Option<f64>, digits: usize) -> String {
@@ -63,7 +63,7 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     print_genome(first, last);
     print_programs(&res.world);
     print_depth(last);
-    // по ширине смотреть есть на что, только если еда по ней неравномерна
+    // across the width there is something to look at only if the food is uneven along it
     if res.world.rules.plant_width.kind() != Profile::Uniform {
         print_width(last);
     }
@@ -90,7 +90,7 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     }
 }
 
-/// Таблица по промежуткам: состояние на конец промежутка и потоки за него.
+/// A table by intervals: the state at the end of an interval and the flows during it.
 /// Births and deaths of each diet, and who strikes and kills whom.
 fn print_diets(by: &life_core::DietCounters, last: &Snapshot) {
     let names = creature::DIET_VARIANTS.map(|v| v.key);
@@ -259,9 +259,9 @@ fn print_programs(world: &life_core::World) {
     }
 }
 
-/// Гены вида от начала к концу: у числовых — медиана и разброс, у генов-выборов
-/// — доли вариантов. Ген-выбор с одним вариантом не печатается: он ничего не
-/// различает.
+/// The genes from start to end: for numeric ones the median and the spread, for choice genes
+/// the shares of the variants. A choice gene with one variant is not printed: it tells nothing
+/// apart.
 fn print_genes<const N: usize>(genes: &[GeneSpec; N], a: &[GeneStat; N], b: &[GeneStat; N]) {
     for (g, spec) in genes.iter().enumerate() {
         let text = |stat: &GeneStat| match stat {
@@ -275,7 +275,7 @@ fn print_genes<const N: usize>(genes: &[GeneSpec; N], a: &[GeneStat; N], b: &[Ge
     }
 }
 
-/// «стандартный 70%, трусливый 30%» — варианты, которые есть в популяции.
+/// «стандартный 70%, трусливый 30%» — the variants present in the population.
 fn shares(spec: &GeneSpec, s: &[f64; MAX_VARIANTS]) -> String {
     let variants = spec.variants().unwrap_or_default();
     let parts: Vec<String> = variants
@@ -287,13 +287,13 @@ fn shares(spec: &GeneSpec, s: &[f64; MAX_VARIANTS]) -> String {
     parts.join(", ")
 }
 
-/// Кто где по глубине: доли существ и растений в каждой десятой части.
+/// Who is where by depth: the shares of creatures and plants in each tenth.
 fn print_depth(last: &Snapshot) {
     println!("\nГлубина в конце (0% — поверхность):");
     print_bands(last, "глубина", &last.creatures_by_depth, &last.plants_by_depth);
 }
 
-/// То же по ширине, слева направо.
+/// The same by width, from left to right.
 fn print_width(last: &Snapshot) {
     println!("\nШирина в конце (0% — левый край):");
     print_bands(last, "ширина", &last.creatures_by_width, &last.plants_by_width);

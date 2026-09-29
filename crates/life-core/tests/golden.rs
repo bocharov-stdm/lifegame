@@ -1,21 +1,21 @@
-//! Золотой тест: мир ведёт себя ровно так же, как в момент записи констант.
+//! The golden test: the world behaves exactly as it did when the constants were recorded.
 //!
-//! Нужен для реорганизаций без смены поведения (геном таблицей, чувства,
-//! стратегии): они не должны сдвинуть ни одного случайного числа и ни одной
-//! формулы. Отпечаток мира на контрольных тиках — FNV-1a по битам того, что
-//! переживает любой рефакторинг: координаты, энергия, номера, гены и проба
-//! генератора каждого существа (лишний или пропущенный розыгрыш меняет пробу
-//! сразу, а не через сотню тиков). В отпечаток также входит память поведения
-//! и временная защита пар «родитель — ребёнок другого образа жизни».
+//! Needed for reorganisations without a change of behaviour (the genome as a table, the senses,
+//! the strategies): they must not shift a single random number or a single formula. The world's
+//! fingerprint at the checkpoint ticks is FNV-1a over the bits of what survives any refactoring:
+//! coordinates, energy, numbers, genes and a probe of each creature's generator (an extra or a
+//! missing draw changes the probe at once, not a hundred ticks later). The fingerprint also
+//! includes the behaviour's memory and the temporary protection of «parent — child of another
+//! way of life» pairs.
 //!
-//! Намеренная смена поведения (новый ген, новая стратегия) ломает тест по
-//! определению: тогда константы переписываются отдельным коммитом, вместе с
-//! `--save-reference`. Тест печатает готовую таблицу для вставки. Новый случай
-//! без записанных отпечатков тоже роняет тест — чтобы не проходил молча.
+//! A deliberate change of behaviour (a new gene, a new strategy) breaks the test by definition:
+//! then the constants are rewritten in a commit of their own, together with `--save-reference`.
+//! The test prints a ready table to paste. A new case without recorded fingerprints also fails
+//! the test — so that it does not pass silently.
 //!
-//! Математика (`ln`, `cos`, `powf`) — из системной библиотеки, и на Linux
-//! последний бит может отличаться: константы записаны на Windows и
-//! проверяются только там; на других системах тест печатает отпечатки.
+//! The maths (`ln`, `cos`, `powf`) comes from the system library, and on Linux the last bit may
+//! differ: the constants were recorded on Windows and are checked only there; on other systems
+//! the test prints the fingerprints.
 
 use life_core::flora::Profile;
 use life_core::genome::CreatureGenome;
@@ -43,8 +43,8 @@ impl Fnv {
     }
 }
 
-/// Отпечаток мира. Только публичное и только то, что переживёт рефакторинг;
-/// меняются при нём разве что пути доступа к генам — такие правки ревьюятся.
+/// The world's fingerprint. Only what is public and only what survives a refactoring; the only
+/// things that change with it are the access paths to the genes — such edits are reviewed.
 fn digest(w: &World) -> u64 {
     let mut h = Fnv::new();
     h.u64(w.tick);
@@ -110,8 +110,8 @@ fn digest(w: &World) -> u64 {
         h.f64(v.y);
         h.f64(v.energy);
         h.u64(v.alive as u64);
-        // все гены: новый ген и так сдвигает розыгрыши мутации (кроме инертного
-        // гена-выбора с одним вариантом), а стратегия видна в отпечатке сразу
+        // all the genes: a new gene shifts the mutation's draws anyway (except an inert choice gene
+        // with one variant), and the strategy shows in the fingerprint at once
         for g in v.genome.to_values() {
             h.f64(g);
         }
@@ -126,7 +126,7 @@ fn digest(w: &World) -> u64 {
         }
         h.u64(v.rng.clone().next_u64());
     }
-    // поток мира и счётчик номеров: подсадка в копии мира
+    // the world's stream and the counter of numbers: probed on a copy of the world
     let mut probe = w.clone();
     let id = probe.spawn(CreatureGenome::BASE, 100.0, 100.0, None);
     h.u64(id);
@@ -138,11 +138,11 @@ fn rules(pairs: &[(&str, f64)]) -> Rules {
     pairs.iter().fold(Rules::default(), |r, &(k, v)| r.with(k, v).expect("правило"))
 }
 
-/// Что проверяется в конфигурации: без этого отпечаток мог бы не задеть ветку.
+/// What is checked in the configuration: without it the fingerprint might miss a branch.
 #[derive(Default)]
 struct Seen {
     giant: f64,
-    /// Тиков, на которых жили оба варианта стратегии существ.
+    /// Ticks on which both variants of the creatures' strategy lived.
     both_strategies: u64,
 }
 
@@ -150,7 +150,7 @@ struct Case {
     name: &'static str,
     cfg: WorldConfig,
     ticks: u64,
-    /// Вмешательство перед тиком: правила на ходу, подсадка.
+    /// An intervention before a tick: rules on the fly, a probe.
     before: fn(&mut World),
 }
 
@@ -182,7 +182,7 @@ fn cases() -> Vec<Case> {
             ticks: 3000,
             before: |_| {},
         },
-        // Полоса — явно: записан до форм, а по умолчанию теперь 3:2.
+        // The strip explicitly: it was recorded before the shapes, and the default is now 3:2.
         Case {
             name: "D: сид 2, масштаб 10",
             cfg: WorldConfig { seed: 2, scale: 10.0, shape: Shape::Strip, ..Default::default() },
@@ -208,7 +208,7 @@ fn cases() -> Vec<Case> {
             ticks: 2000,
             before: |_| {},
         },
-        // Форма и табличные профили еды: другой путь выборки растений.
+        // The shape and the tabular food profiles: another path of plant sampling.
         Case {
             name: "G: сид 6, квадрат x10, еда линейно и волнами",
             cfg: WorldConfig {
@@ -258,21 +258,21 @@ fn run(case: &Case) -> (Vec<(u64, u64)>, World, Seen) {
 #[cfg(windows)]
 #[rustfmt::skip]
 const GOLDEN: &[&[(u64, u64)]] = &[
-    // A: сид 1, по умолчанию
+    // A: seed 1, default
     &[(1, 0x5e19ba4f3dfc3315), (2, 0x1a59056a3304b2d0), (10, 0x9314b5d49241748c), (31, 0x90a18df8c1e9ca51), (100, 0x8a607b31a03557ef), (250, 0x22153b0e2e609be4), (500, 0xd875e3e42e3e64a8), (1000, 0x8cf627f4abee340c), (2000, 0x4adc2e4ce65913db), (3000, 0x95f5f71144761c40), ],
-    // B: сид 3, гиганты
+    // B: seed 3, giants
     &[(1, 0x6411f5c331fa53e4), (2, 0xc2b333c94b0c4dad), (10, 0x0d18286e8bd4bf39), (31, 0x653c57bf6864d1c1), (100, 0x01a13d5ccc896a9b), (250, 0x1c3f5cefccf7f4c9), (500, 0x52deebf3198e17ae), (1000, 0x69f6ed334dd1f305), (2000, 0xcd44020c9e1413c3), ],
-    // C: сид 7, лаборатория
+    // C: seed 7, lab
     &[(1, 0xd34b6099dcaec19a), (2, 0xb509ce0e769adf3b), (10, 0x7ad1f2e501739cd2), (31, 0x699fa3d6cc4b5777), (100, 0xe1fed2f794cba630), (250, 0x2a48b33649697f37), (500, 0x5b4b7e884df4af10), (1000, 0x53671ba9d7bc7e89), (2000, 0x3ab9865e82a0cae6), (3000, 0x8bf6a27c1d367a7e), ],
-    // D: сид 2, масштаб 10
+    // D: seed 2, scale 10
     &[(1, 0x060fcc7182def373), (2, 0x2f694834705d912a), (10, 0x39e9d92e15bfbb64), (31, 0x16c2e3d8977a91e0), (100, 0xfd8c705862ed6b39), (250, 0xb9eaf24c810ec12e), (500, 0x7684fe81fc6ed1cb), ],
-    // E: сид 3, правила на ходу и подсадка
+    // E: seed 3, rules on the fly and a probe
     &[(1, 0x3296835985831824), (2, 0x4551e9badfdef199), (10, 0x404e48936cfbdb82), (31, 0xbb88766a73890091), (100, 0x0194f8582c1ed67d), (250, 0x64d8a18ad0af7a44), (500, 0xace1b0af644afb77), (1000, 0x1c6102cda5b03618), ],
-    // F: сид 5, смесь стратегий
+    // F: seed 5, a mix of strategies
     &[(1, 0x5f930a716b3d0745), (2, 0xff3a3a5a5d2cc4d9), (10, 0xf912cfa932f7bc23), (31, 0x05caf8e72aeb9e2a), (100, 0x4845e8b0039084ab), (250, 0x2d4fda62dfa6942a), (500, 0xc11480137b1b1012), (1000, 0x688d582f4133e4ff), (2000, 0x80e405312385cda4), ],
-    // G: сид 6, квадрат x10, еда линейно и волнами
+    // G: seed 6, a x10 square, food linear and in waves
     &[(1, 0x316a0050afabb123), (2, 0x0f129ee645c9d467), (10, 0xf4a2e8105bafc532), (31, 0xd0446a37e08f9540), (100, 0x71bbe321a2a07776), (250, 0xe541871ec174e7b7), (500, 0xf92d4fb9b3d20329), (1000, 0xe703957a1704c94f), ],
-    // H: сид 8, бои
+    // H: seed 8, fights
     &[(1, 0x2b4fc30cc50b28c0), (2, 0x3222278f776584ea), (10, 0xf0d011b1cfd9b4d7), (31, 0x5042718eae962a97), (100, 0x4003f3d635ba9389), (250, 0x0cee5e8b28caa804), (500, 0x81dd0bbc5f6b7d9b), (1000, 0xceb536b27130ae94), (2000, 0xbb6ffb0026c8b299), ],
 ];
 
@@ -283,13 +283,13 @@ const GOLDEN: &[&[(u64, u64)]] = &[];
 fn мир_ведёт_себя_как_при_записи() {
     let mut table = String::new();
     let cases = cases();
-    // новый случай без записанных отпечатков не должен проходить молча
+    // a new case without recorded fingerprints must not pass silently
     let mut first_mismatch = (!GOLDEN.is_empty() && GOLDEN.len() != cases.len())
         .then(|| format!("отпечатков записано для {} случаев из {}", GOLDEN.len(), cases.len()));
     for (i, case) in cases.iter().enumerate() {
         let (got, w, seen) = run(case);
 
-        // Конфигурация должна задевать то, ради чего она есть.
+        // The configuration must touch what it exists for.
         let c = w.counters;
         match i {
             1 => assert!(seen.giant > 100.0, "{}: гиганты выросли ({:.0})", case.name, seen.giant),
@@ -337,9 +337,9 @@ fn мир_ведёт_себя_как_при_записи() {
     }
 }
 
-/// Широкая проверка: отпечаток в конце прогона по 50 сидам двух миров.
-/// Запускается руками до и после рефакторинга, вывод сравнивается:
-/// `cargo test -p life-core --release --test golden -- --ignored --nocapture > до.txt`
+/// A wide check: the fingerprint at the end of a run over 50 seeds of two worlds.
+/// Run by hand before and after a refactoring, the outputs are compared:
+/// `cargo test -p life-core --release --test golden -- --ignored --nocapture > before.txt`
 #[test]
 #[ignore]
 fn отпечатки_по_сидам() {

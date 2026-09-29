@@ -1,6 +1,6 @@
 #!/bin/sh
-# Запуск игры lifegame на Linux и macOS: собрать, если нужно, и открыть окно.
-#   sh play.sh                     # меню
+# Launch lifegame on Linux and macOS: build if needed and open the window.
+#   sh play.sh                     # menu
 #   sh play.sh --scale 100 --seed 7
 set -e
 cd "$(dirname "$0")"

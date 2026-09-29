@@ -1,10 +1,10 @@
-//! Одновременные ближние удары и слабые выстрелы. Трупы создаёт мир после боя.
+//! Simultaneous melee strikes and weak shots. The world makes corpses after the fight.
 use crate::config::SHOT_RANGE_SIZES;
 use crate::creature::{Creature, Death};
 use crate::grid::Grid;
 use crate::{Counters, Rules, Space};
 
-/// Короткий след фактически совершённого выстрела для окна и хроники.
+/// A short trace of a shot actually fired, for the window and the chronicle.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Shot {
     pub from: (f64, f64),
@@ -122,7 +122,7 @@ pub(crate) fn resolve_with(
                     cost,
                     ranged: false,
                 });
-                continue; // при контакте ближний удар имеет приоритет
+                continue; // in contact the melee strike takes priority
             }
         }
         // it shoots only when its program says so this tick (`Action::Shoot`)

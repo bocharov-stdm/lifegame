@@ -1,9 +1,9 @@
-//! Существо: ищет растения в своём слое глубины, бежит от чужих, которые могут
-//! его съесть, делится.
+//! A creature: looks for plants in its layer of depth, runs from strangers that can eat it,
+//! divides.
 //!
-//! Поиск соседей — забота мира. Существо получает его в виде чувств
-//! (`senses.rs`): «где ближайшее растение», «кто рядом опасен». Так оно не
-//! знает о сетке, а тесты подсовывают вместо неё обычные замыкания.
+//! The neighbour search is the world's concern. The creature gets it in the form of senses
+//! (`senses.rs`): «where is the nearest plant», «who nearby is dangerous». So it knows nothing
+//! of the grid, and the tests slip in plain closures instead of it.
 
 mod actions;
 mod phenotype;
@@ -73,7 +73,7 @@ pub enum Morsel {
     },
 }
 
-/// Причина смерти задаётся ровно один раз.
+/// The cause of death is set exactly once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Death {
     Starved,
@@ -83,15 +83,15 @@ pub enum Death {
 
 #[derive(Clone, Debug)]
 pub struct Creature {
-    /// Постоянный номер: по нему игра выбирает и следит за существом.
+    /// A permanent number: the game selects and follows a creature by it.
     pub id: u64,
-    /// Номер родителя; 0 — стартовое или подсаженное. Родителя может уже не
-    /// быть в живых: братья и сёстры узнают друг друга и без него.
+    /// The parent's number; 0 — a starting or a planted one. The parent may no longer be alive:
+    /// brothers and sisters know one another even without it.
     pub parent: u64,
     pub x: f64,
     pub y: f64,
     pub energy: f64,
-    /// Диаметр при рождении: вложенная в рост энергия доступна добытчику.
+    /// The diameter at birth: the energy put into growth is available to the forager.
     pub birth_size: f64,
     /// The world it lives in: its bounds, and where its corpse comes to rest.
     space: Space,
@@ -103,14 +103,14 @@ pub struct Creature {
     pub death: Option<Death>,
 
     pub genome: CreatureGenome,
-    /// Всё, что выведено из генома и правил при рождении (`phenotype.rs`).
+    /// Everything derived from the genome and the rules at birth (`phenotype.rs`).
     pub pheno: Phenotype,
 
     /// Its behaviour (`program.rs`) while it grows (`JUVENILE`) and once grown (`ADULT`):
     /// inherited apart from the gene table, drifting and mutating on their own; shared with the
     /// relatives that inherited them unchanged.
     pub programs: Programs,
-    /// Память между ходами: цель блуждания, бегство (`strategy.rs`).
+    /// The memory between moves: the wander target, the flight (`strategy.rs`).
     pub mind: Mind,
     pub rng: Rng,
     /// The last bite (`Meal`); only the window reads it.
@@ -124,10 +124,10 @@ pub struct Creature {
 }
 
 impl Creature {
-    /// Новое существо с программами шаблона своей стратегии. Координата None — случайная в
-    /// своей домашней полосе; заданная зажимается только в мир: ребёнок рождается у родителя, а
-    /// слой у него свой, мутировавший, — домой он дойдёт сам, телепорт был бы прыжком.
-    /// energy None — полбака; заданная не больше бака.
+    /// A new creature with the programs of its strategy's template. A coordinate None is random in
+    /// its home band; a given one is clamped only to the world: the child is born next to its
+    /// parent, and its layer is its own, mutated — it will walk home by itself, a teleport would be
+    /// a jump. energy None — half a tank; a given one no more than the tank.
     pub fn new(
         space: &Space,
         rules: &Rules,
@@ -213,9 +213,9 @@ impl Creature {
         }
     }
 
-    /// Один ход: стратегия решает, куда идти, существо делает шаг.
+    /// One move: the strategy decides where to go, the creature takes a step.
     ///
-    /// Что вокруг — стратегия спрашивает у `senses`.
+    /// What is around — the strategy asks `senses`.
     pub fn step(&mut self, senses: &impl Senses) {
         if !self.alive {
             return;
@@ -294,17 +294,17 @@ impl Creature {
             (dx, dy, d) = (dx / d * speed, dy / d * speed, speed);
             (tx, ty) = (x + dx, y + dy);
         }
-        // Точка ближе шага — встаём ровно на неё. Проскочить её нельзя: при мягком
-        // слое существо, возвращаясь на слой тоньше шага, качалось бы через него
-        // туда-сюда вечно.
+        // A point closer than a step — stop exactly on it. It cannot be overshot: with a soft layer a
+        // creature returning to a layer thinner than a step would swing across it back and forth
+        // for ever.
         let (nx, ny) = if d <= speed {
             (tx, ty)
         } else {
             let k = speed / d;
             (x + dx * k, y + dy * k)
         };
-        // Существо уже стоит внутри своих границ, так что зажим только укорачивает
-        // шаг: за ход оно сдвигается не дальше speed.
+        // The creature already stands inside its bounds, so the clamp only shortens the step: in a
+        // move it shifts no farther than speed.
         self.x = nx.clamp(self.pheno.x_lo, self.pheno.x_hi);
         self.y = ny.clamp(self.pheno.y_lo, self.pheno.y_hi);
         let moved = (self.x - x, self.y - y);
@@ -340,7 +340,7 @@ impl Creature {
         self.pheno.burst
     }
 
-    /// Новые правила пересчитывают фенотип по прежнему фактическому телу.
+    /// The new rules recompute the phenotype for the same actual body.
     pub fn apply_rules(&mut self, rules: &Rules, space: &Space) {
         self.pheno = Phenotype::aged(&self.genome, rules, space, self.pheno.size, self.pheno.vigour);
         self.space = *space;
@@ -394,7 +394,7 @@ impl Creature {
         }
     }
 
-    /// Растёт только на усвоенной пище: the `maturation` share of it until grown; the rest fills
+    /// It grows only on digested food: the `maturation` share of it until grown; the rest fills
     /// the tank. Only the gene limits growth, not where it stands: next to the surface, where the
     /// food is, a body used to stop growing until it walked a diameter away. A body grown against an
     /// edge is pushed inside its new bounds by the growth, a fraction of a unit a bite.
@@ -413,13 +413,13 @@ impl Creature {
         self.energy = self.pheno.max_energy.min(self.energy + gain - growth * GROWTH_ENERGY_PER_SIZE);
     }
 
-    /// Здоровье — размер тела, times the diet's bonus (`DIET_HEALTH`) and its vigour (old age,
+    /// Health is the body's size, times the diet's bonus (`DIET_HEALTH`) and its vigour (old age,
     /// `phenotype::vigour`).
     pub fn max_health(&self) -> f64 {
         self.pheno.size * self.pheno.health_bonus * self.pheno.vigour
     }
 
-    /// Достигнут наследственный размер.
+    /// The hereditary size has been reached.
     pub fn adult(&self) -> bool {
         self.pheno.size >= self.genome[Gene::Size]
     }
@@ -448,8 +448,8 @@ impl Creature {
         if self.mind.stance.moved { self.mind.stance.menace } else { Menace::of(self.program()) }
     }
 
-    /// Ребёнок, если его программа делится в этот тик (`Action::Divide`) и после деления у
-    /// родителя остаётся резерв. Номер ребёнку выдаёт мир.
+    /// A child, if its program divides this tick (`Action::Divide`) and the parent keeps a reserve
+    /// after the division. The world gives the child its number.
     pub fn maybe_divide(&mut self, space: &Space, rules: &Rules) -> Option<Creature> {
         let divide = self.mind.stance.divide?;
         if !self.alive || !self.adult() || self.reproduction_wait > 0 {
@@ -459,10 +459,10 @@ impl Creature {
         if self.energy < threshold + REPRO_RESERVE {
             return None;
         }
-        // Резерв проверяется и ПОСЛЕ дележа: доля ребёнка считается от всей
-        // энергии, и без этого родитель отдавал всё до нуля и умирал.
-        // Пробуем наследование на копии генератора: неудачная попытка рождения
-        // не тратит случайные числа, а вместимость ребёнка уже известна.
+        // The reserve is checked AFTER the split too: the child's share is counted from all the
+        // energy, and without this the parent gave everything down to zero and died.
+        // We try the inheritance on a copy of the generator: a failed attempt at birth
+        // spends no random numbers, and the child's capacity is already known.
         let mut next_rng = self.rng.clone();
         let (genome, programs) =
             self.genome.inherit(&self.programs, &crate::genome::Heredity::of(rules), &mut next_rng);
@@ -474,7 +474,7 @@ impl Creature {
         self.rng = next_rng;
         self.reproduction_wait = DIVIDE_PERIOD;
 
-        // Смещения по осям независимые: с одним общим дети ложились на диагональ.
+        // The offsets along the axes are independent: with one shared one the children lay on a diagonal.
         let span = self.pheno.size * 2.0;
         let cx = self.x + self.rng.uniform(-span, span);
         let cy = self.y + self.rng.uniform(-span, span);

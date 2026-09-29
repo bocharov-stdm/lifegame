@@ -1,4 +1,4 @@
-//! Меню, «Новый мир», настройки экрана и справка.
+//! The menu, «Новый мир», the screen's settings and the help.
 
 use eframe::egui::{self, Align2, RichText, Vec2};
 use std::sync::Arc;
@@ -13,10 +13,10 @@ use crate::frame::PLANT_COLOR;
 use crate::settings::{DIET_ROWS, FIELDS, Field, Key, PRESETS, SEED_MAX, Settings, Tab, UI_SCALES, field};
 use crate::theme::{self, ACCENT, BG, DANGER, GOOD, MUTED, VEIL, spaced};
 
-/// Оценка большого мира: сколько существ на старте и как быстро пойдёт тик.
-/// Цена тика берётся из замера мира, который идёт сейчас (фон меню или
-/// партия), пересчитанного на площадь: тик растёт с числом существ, а оно —
-/// с площадью. Это замер на этой машине, а не выдуманная формула.
+/// An estimate of a big world: how many creatures at the start and how fast a tick will go.
+/// A tick's cost is taken from the measurement of the world running now (the menu's background
+/// or a game), rescaled to the area: a tick grows with the number of creatures, and that with
+/// the area. It is a measurement on this machine, not an invented formula.
 pub fn estimate(settings: &Settings, measured: Option<(f64, f64)>) -> (String, egui::Color32) {
     let cfg = settings.world_config(0);
     let start = format!("на старте {} существ", spaced(cfg.creatures_at_start() as u64));
@@ -82,8 +82,8 @@ impl LifeApp {
 
     pub fn setup_screen(&mut self, ui: &mut egui::Ui) {
         let measured = self.view.frame.as_ref().map(|f| (f.tick_ms, f.scale));
-        // Кнопки — внизу, вне прокрутки: вкладки разной высоты, а «Начать»
-        // должна быть видна всегда.
+        // The buttons are at the bottom, outside the scroll: the tabs differ in height, and «Начать»
+        // («Start») must always be visible.
         egui::Panel::bottom("кнопки нового мира").show(ui, |ui| {
             ui.add_space(6.0);
             ui.vertical_centered(|ui| {
@@ -274,7 +274,7 @@ impl LifeApp {
                         ui.label(spec.label);
                         ui.label(spec.about);
                         ui.end_row();
-                        // у гена-выбора — что значит каждый вариант
+                        // for a choice gene — what each variant means
                         for v in spec.variants().unwrap_or_default() {
                             ui.colored_label(MUTED, format!("  {}", v.label));
                             ui.label(v.about);
@@ -330,8 +330,8 @@ fn ui_scale_label(v: f64) -> String {
     if v == 0.0 { "как в системе".into() } else { format!("{:.0}%", v * 100.0) }
 }
 
-/// Поле из `FIELDS`: ползунок или, если у поля есть варианты, выпадающий
-/// список. true — значение изменилось.
+/// A field from `FIELDS`: a slider or, if the field has variants, a drop-down list. true — the
+/// value has changed.
 pub fn field_input(ui: &mut egui::Ui, f: &Field, value: &mut f64) -> bool {
     if f.choices.is_empty() {
         // typed or dragged, the value stays inside the field's hard limits
@@ -395,12 +395,12 @@ fn preview_patches(ui: &egui::Ui, rules: &Rules, space: Space, seed: u64) -> Arc
     })
 }
 
-/// Предпросмотр еды: мир в своих пропорциях, закрашенный плотностью растений
-/// по правилам — ярче там, где гуще, — и заросли сида `seed`. Верх — поверхность.
+/// The food preview: the world in its own proportions, painted by the plants' density by the
+/// rules — brighter where thicker — and the thickets of seed `seed`. The top is the surface.
 pub fn food_preview(ui: &mut egui::Ui, rules: &Rules, space: Space, seed: u64) {
     let aspect = (space.width / space.height) as f32;
     let (max_w, max_h) = (ui.available_width().clamp(120.0, 280.0), 170.0);
-    // очень длинная полоса всё равно видна хотя бы полоской в 14 точек
+    // a very long strip is still visible at least as a 14-point strip
     let size = if max_w / aspect <= max_h {
         Vec2::new(max_w, (max_w / aspect).max(14.0))
     } else {
@@ -418,7 +418,7 @@ pub fn food_preview(ui: &mut egui::Ui, rules: &Rules, space: Space, seed: u64) {
             for i in 0..nx {
                 let d = flora::density(rules, (i as f64 + 0.5) / nx as f64, (j as f64 + 0.5) / ny as f64);
                 let min = rect.min + Vec2::new(i as f32 * cell.x, j as f32 * cell.y);
-                // клетки с запасом в полточки: иначе между ними видны швы
+                // the cells with a half-point margin: otherwise seams are visible between them
                 let r = egui::Rect::from_min_size(min, cell + Vec2::splat(0.5)).intersect(rect);
                 let shade = if patches { 0.35 } else { 1.0 };
                 painter.rect_filled(r, 0.0, BG.lerp_to_gamma(plant, shade * d.sqrt() as f32));
@@ -464,7 +464,7 @@ pub fn food_preview(ui: &mut egui::Ui, rules: &Rules, space: Space, seed: u64) {
     });
 }
 
-/// Поля одной вкладки по таблице `FIELDS` — те, что сейчас видны.
+/// The fields of one tab by the `FIELDS` table — those visible now.
 fn fields(ui: &mut egui::Ui, s: &mut Settings, tab: Tab) {
     let default = Settings::default();
     egui::Grid::new(("поля", tab as u8)).num_columns(4).spacing([12.0, 8.0]).show(ui, |ui| {

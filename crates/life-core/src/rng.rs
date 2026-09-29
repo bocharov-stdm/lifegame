@@ -1,18 +1,18 @@
-//! Генератор случайных чисел: у каждого существа свой поток.
+//! A random number generator: every creature has a stream of its own.
 //!
-//! В Python был один общий `random` на весь процесс, и сессия игры подменяла его
-//! состояние вокруг своих тиков, чтобы «Заново» повторяло мир. Здесь общего
-//! генератора нет: поток существа выводится из сида ребёнку при рождении, и
-//! существо тянет числа только из своего потока. Поэтому результат не зависит
-//! ни от порядка обхода, ни от числа потоков процессора, а два мира в одном
-//! процессе друг другу не мешают.
+//! The Python version had one shared `random` for the whole process, and a game session swapped
+//! its state around its ticks so that «Заново» («Restart») would repeat the world. Here there is no shared
+//! generator: a creature's stream is derived from the seed for the child at birth, and the
+//! creature draws numbers only from its own stream. So the result depends neither on the order
+//! of traversal nor on the number of processor threads, and two worlds in one process do not
+//! disturb each other.
 //!
-//! Внутри — SplitMix64: быстрый, 8 байт состояния, хорошее перемешивание.
-//! Криптостойкость здесь не нужна.
+//! Inside is SplitMix64: fast, 8 bytes of state, good mixing. Cryptographic strength is not
+//! needed here.
 
 const GOLDEN: u64 = 0x9E37_79B9_7F4A_7C15;
 
-/// Перемешивание SplitMix64: из любого u64 — «случайный» u64.
+/// The SplitMix64 mixing: from any u64 a «random» u64.
 #[inline]
 pub fn mix(mut z: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -30,12 +30,12 @@ impl Rng {
         Rng { state: mix(seed) }
     }
 
-    /// Поток, заданный несколькими ключами: сид мира и назначение потока.
+    /// A stream given by several keys: the world's seed and the stream's purpose.
     pub fn keyed(seed: u64, key: u64) -> Self {
         Rng { state: mix(mix(seed) ^ key.wrapping_mul(GOLDEN)) }
     }
 
-    /// Независимый поток для потомка: берёт одно число из родительского.
+    /// An independent stream for a descendant: takes one number from the parent's.
     pub fn fork(&mut self) -> Self {
         Rng::new(self.next_u64())
     }
@@ -46,29 +46,29 @@ impl Rng {
         mix(self.state)
     }
 
-    /// Равномерно в [0, 1).
+    /// Uniform in [0, 1).
     #[inline]
     pub fn random(&mut self) -> f64 {
         (self.next_u64() >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
     }
 
-    /// Равномерно в [a, b].
+    /// Uniform in [a, b].
     #[inline]
     pub fn uniform(&mut self, a: f64, b: f64) -> f64 {
         a + (b - a) * self.random()
     }
 
-    /// Целое равномерно в [a, b] включительно.
+    /// An integer uniform in [a, b] inclusive.
     #[inline]
     pub fn randint(&mut self, a: i64, b: i64) -> i64 {
         let span = (b - a + 1) as u64;
         a + (self.next_u64() % span) as i64
     }
 
-    /// Нормальное распределение (Бокс — Мюллер). Второе значение пары
-    /// выбрасывается: так состояние остаётся одним u64.
+    /// The normal distribution (Box–Muller). The second value of the pair is thrown away: this way
+    /// the state stays a single u64.
     pub fn gauss(&mut self, mu: f64, sigma: f64) -> f64 {
-        let u1 = 1.0 - self.random(); // (0, 1] — логарифм нуля не берём
+        let u1 = 1.0 - self.random(); // (0, 1] — we do not take the logarithm of zero
         let u2 = self.random();
         mu + sigma * (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
     }

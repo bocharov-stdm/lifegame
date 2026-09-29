@@ -1,5 +1,5 @@
-# lifegame на Rust. Граница «движок не знает об экране» проведена по crate'ам:
-# life-core не зависит ни от чего графического, и компилятор это стережёт.
+# lifegame in Rust. The line «the engine knows nothing of the screen» is drawn along crate borders:
+# life-core depends on nothing graphical, and the compiler guards it.
 [workspace]
 resolver = "3"
 members  = ["crates/*"]
@@ -13,8 +13,8 @@ license = "MIT"
 life-core = { path = "crates/life-core" }
 life-sim  = { path = "crates/life-sim" }
 
-# Тесты гоняют настоящие симуляции на тысячи тиков: без оптимизаций они
-# идут в десятки раз медленнее, поэтому даже отладочная сборка оптимизируется.
+# The tests run real simulations of thousands of ticks: without optimisations they are tens of
+# times slower, so even the debug build is optimised.
 [profile.dev]
 opt-level = 2
 

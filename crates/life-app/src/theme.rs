@@ -1,4 +1,4 @@
-//! Палитра и мелочи оформления (как `app/theme.py`, тег python-final).
+//! The palette and small touches of style (like `app/theme.py`, tag python-final).
 
 use eframe::egui::{self, Color32};
 
@@ -12,7 +12,7 @@ pub const ACCENT: Color32 = Color32::from_rgb(245, 197, 66);
 pub const ACCENT_TEXT: Color32 = Color32::from_rgb(28, 24, 12);
 pub const DANGER: Color32 = Color32::from_rgb(239, 99, 81);
 pub const GOOD: Color32 = Color32::from_rgb(93, 211, 158);
-/// Затемнение под меню.
+/// The dimming behind the menu.
 pub const VEIL: Color32 = Color32::from_rgba_premultiplied(10, 11, 14, 190);
 
 /// Diet colours, in `Diet` order: the same as the creatures' rims in the shader (`diet_color`).
@@ -33,7 +33,7 @@ pub fn rgb(c: [u8; 3]) -> Color32 {
     Color32::from_rgb(c[0], c[1], c[2])
 }
 
-/// 12345 → «12 345»: крупные числа читаются легче.
+/// 12345 → «12 345»: big numbers read easier.
 pub fn spaced(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::new();
@@ -46,7 +46,7 @@ pub fn spaced(n: u64) -> String {
     out
 }
 
-/// Тёмная тема всегда: мир тёмный, и светлая панель над ним режет глаз.
+/// Always the dark theme: the world is dark, and a light panel over it hurts the eye.
 pub fn apply(ctx: &egui::Context) {
     let mut v = egui::Visuals::dark();
     v.panel_fill = PANEL;
@@ -56,8 +56,8 @@ pub fn apply(ctx: &egui::Context) {
     v.selection.bg_fill = ACCENT.gamma_multiply(0.55);
     v.selection.stroke.color = TEXT;
     v.hyperlink_color = ACCENT;
-    // Стрелки «→», тире «‒» и кружок «●» из текстов хроники в основном шрифте
-    // egui отсутствуют; встроенный Hack их знает — он запасной для обычного текста.
+    // The arrows «→», the dash «‒» and the dot «●» of the chronicle's texts are missing from egui's
+    // main font; the built-in Hack knows them, and it is the fallback for ordinary text.
     let mut fonts = egui::FontDefinitions::default();
     if let Some(list) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
         list.push("Hack".into());
@@ -72,7 +72,7 @@ pub fn apply(ctx: &egui::Context) {
     });
 }
 
-/// Главная кнопка: жёлтая, с тёмным текстом.
+/// The main button: yellow, with dark text.
 pub fn primary(text: &str) -> egui::Button<'_> {
     primary_rich(egui::RichText::new(text))
 }

@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
-rem Запуск игры lifegame на Windows: собрать, если нужно, и открыть окно.
-rem Двойной щелчок открывает меню. Из консоли можно передать флаги:
+rem Launch lifegame on Windows: build if needed and open the window.
+rem A double click opens the menu. From a console you can pass flags:
 rem   play.bat --scale 100 --seed 7
 cd /d "%~dp0"
 
@@ -21,8 +21,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem Без флагов окно запускается отдельно, и консоль закрывается.
-rem С флагами игра идёт в этой консоли, чтобы были видны ошибки в них.
+rem Without flags the window starts apart and the console closes.
+rem With flags the game runs in this console, so that errors in them are visible.
 if "%~1"=="" (
     start "" "target\release\life-app.exe"
 ) else (

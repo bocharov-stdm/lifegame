@@ -1,20 +1,20 @@
-//! Существа на видеокарте: один draw call на весь кадр.
+//! Creatures on the graphics card: one draw call for the whole frame.
 //!
-//! Каждое существо — экземпляр квадрата; фигуру вырезает фрагментный шейдер
-//! (`creatures.wgsl`) по расстоянию до края, с мягким краем в один пиксель.
-//! Круг — это тело: радиус — половина `size` существа.
+//! Every creature is an instance of a square; the fragment shader (`creatures.wgsl`) cuts the
+//! shape out by the distance to the edge, with a soft one-pixel edge. The circle is the body:
+//! the radius is half the creature's `size`.
 //!
-//! Что делает шейдер, чтобы мир не мельтешил:
-//! - рисует существо между позицией прошлого и нового кадра (`k` — доля
-//!   пути), а не прыжками от кадра к кадру;
-//! - новорождённое вырастает из точки, съеденное сжимается, умершее с голоду
-//!   сереет и гаснет (возраст кружка плюс `since` — время с его сборки);
-//! - мельче пикселя рисует пиксель, но тусклее по площади: точка при движении
-//!   не вспыхивает и не гаснет;
-//! - кайму, ядро сытости и глазок рисует, только когда существо на
-//!   экране крупнее нескольких пикселей: мелкие детали рябили бы.
+//! What the shader does so that the world does not flicker:
+//! - it draws a creature between the positions of the previous and the new frame (`k` is the
+//!   share of the way), not in jumps from frame to frame;
+//! - a newborn grows out of a point, an eaten one shrinks, one that starved to death goes grey
+//!   and fades (the circle's age plus `since`, the time since it was assembled);
+//! - smaller than a pixel it draws a pixel, but dimmer by area: a dot in motion neither flashes
+//!   nor goes out;
+//! - it draws the rim, the fullness core and the eye only when the creature is bigger than a few
+//!   pixels on the screen: small details would shimmer.
 //!
-//! Буфер кружков заливается в видеокарту только когда пришёл новый кадр.
+//! The buffer of circles is uploaded to the graphics card only when a new frame has come.
 
 use std::sync::Arc;
 
@@ -39,7 +39,7 @@ struct Uniforms {
     pad: [f32; 2],
 }
 
-/// Всё, что живёт в видеокарте между кадрами.
+/// Everything that lives on the graphics card between frames.
 struct Resources {
     pipeline: wgpu::RenderPipeline,
     uniforms: wgpu::Buffer,
@@ -47,11 +47,11 @@ struct Resources {
     instances: wgpu::Buffer,
     capacity: usize,
     count: u32,
-    /// Номер залитого кадра: тот же кадр второй раз не заливаем.
+    /// The number of the frame uploaded: the same frame is not uploaded twice.
     generation: u64,
 }
 
-/// Создать конвейер и буферы; живут в ресурсах рендера egui до конца программы.
+/// Create the pipeline and the buffers; they live in egui's render resources to the end of the program.
 pub fn init(render_state: &egui_wgpu::RenderState) {
     let device = &render_state.device;
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -139,20 +139,20 @@ fn instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
     })
 }
 
-/// Кружки одного кадра окна: что рисовать и где.
+/// The circles of one window frame: what to draw and where.
 pub struct Circles {
     pub instances: Arc<Vec<Instance>>,
     pub generation: u64,
-    /// Где на экране (в точках от левого верхнего угла вьюпорта) начало координат кадра.
+    /// Where on the screen (in points from the viewport's top left corner) the frame's origin lies.
     pub origin: [f32; 2],
     pub view: [f32; 2],
     pub zoom: f32,
     pub pixels_per_point: f32,
-    /// Доля пути от позиции прошлого кадра к новой (0‒1).
+    /// The share of the way from the previous frame's position to the new one (0‒1).
     pub k: f32,
-    /// Секунды с тех пор, как кадр собран: прибавляется к возрасту кружков.
+    /// Seconds since the frame was assembled: added to the circles' age.
     pub since: f32,
-    /// Секунды с начала программы, по модулю: фаза «глотков» хоботка.
+    /// Seconds since the program began, modulo: the phase of the proboscis's «gulps».
     pub time: f32,
     /// Diets to highlight, a bit per diet in `Diet` order; 0 — none, everyone drawn as usual.
     pub highlight: u32,

@@ -1,26 +1,26 @@
-//! Наблюдение за миром без окна: из чего человек или ИИ понимает, ЧТО в нём
-//! происходит и ПОЧЕМУ.
+//! Observing the world without a window: what a person or an AI uses to understand WHAT is
+//! happening in it and WHY.
 //!
-//! - [`Snapshot`] — срез мира: численности, накопленные счётчики рождений и
-//!   смертей, разброс каждого гена (не только среднее: среднее прячет раскол
-//!   на два вида), где по глубине и по ширине живут существа и растут
-//!   растения, сытость.
-//! - [`EventTracker`] / [`events`] — хроника по срезам: обвалы и подъёмы численности с причинами,
-//!   вымирание, растения у потолка, сдвиги генов, сжатие существ в узкий слой.
-//! - [`ascii_map`] — карта мира текстом: слои, скопления, пустые края.
+//! - [`Snapshot`] — a sample of the world: the counts, the accumulated counters of births and
+//!   deaths, the spread of each gene (not only the mean: the mean hides a split into two
+//!   kinds), where by depth and by width the creatures live and the plants grow, fullness.
+//! - [`EventTracker`] / [`events`] — a chronicle by samples: collapses and rises of the
+//!   population with causes, extinction, plants at the ceiling, gene shifts, creatures squeezing
+//!   into a narrow layer.
+//! - [`ascii_map`] — a map of the world as text: layers, clusters, empty edges.
 
 use life_core::config::*;
 use life_core::creature::{Activity, Creature, Diet};
 use life_core::genome::{GeneSpec, Genome, creature};
 use life_core::{Counters, World};
 
-/// На сколько полос делится глубина в срезе (0 — поверхность).
+/// How many bands the depth is divided into in a sample (0 — the surface).
 pub const DEPTH_BANDS: usize = 10;
-/// На сколько полос делится ширина (0 — левый край): видно, куда стянулась
-/// жизнь, когда еда распределена по ширине неравномерно.
+/// How many bands the width is divided into (0 — the left edge): one sees where life has
+/// drawn together when the food is unevenly distributed across the width.
 pub const WIDTH_BANDS: usize = 10;
 
-/// Разброс величины по популяции.
+/// The spread of a quantity over the population.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spread {
     pub p10: f64,
@@ -30,7 +30,7 @@ pub struct Spread {
 }
 
 impl Spread {
-    /// None для пустой выборки. Порядок значений портится (сортировка на месте).
+    /// None for an empty sample. The order of the values is spoiled (sorted in place).
     pub fn of(values: &mut [f64]) -> Option<Spread> {
         if values.is_empty() {
             return None;
@@ -42,17 +42,17 @@ impl Spread {
     }
 }
 
-/// Больше вариантов у гена-выбора не бывает (тест в `tests/observe.rs`
-/// сверяет с таблицами генов): доли лежат в массиве, а не в векторе, чтобы
-/// срез оставался дешёвым в копировании.
+/// A choice gene has no more variants than this (a test in `tests/observe.rs` checks it
+/// against the gene tables): the shares lie in an array, not a vector, so that a sample stays
+/// cheap to copy.
 pub const MAX_VARIANTS: usize = 8;
 
-/// Сводка одного гена по популяции.
+/// A summary of one gene over the population.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GeneStat {
-    /// Числовой ген: разброс.
+    /// A numeric gene: the spread.
     Number(Spread),
-    /// Ген-выбор: доля каждого варианта (0..1) в порядке вариантов.
+    /// A choice gene: the share of each variant (0..1) in the order of the variants.
     Shares([f64; MAX_VARIANTS]),
 }
 
@@ -72,8 +72,8 @@ impl GeneStat {
     }
 }
 
-/// Сводка генов популяции по таблице вида: разброс числовых генов (одна
-/// сортировка на ген), доли у генов-выборов (один проход). None — никого нет.
+/// A summary of the population's genes by the species' table: the spread of numeric genes (one
+/// sort a gene), the shares for choice genes (one pass). None — there is nobody.
 pub fn gene_stats<'a, G: Genome, const N: usize>(
     genes: &[GeneSpec; N],
     genomes: impl Iterator<Item = &'a G> + Clone,
@@ -147,34 +147,34 @@ impl DietStat {
     }
 }
 
-/// Срез мира на одном тике.
+/// A sample of the world at one tick.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
     /// Creatures by what they are doing, in `Activity::ALL` order.
     pub activities: [usize; Activity::ALL.len()],
     pub tick: u64,
-    /// Во сколько раз мир больше базового: пороги событий растут с площадью.
+    /// How many times the world is bigger than the base one: the events' thresholds grow with the area.
     pub area: f64,
     pub plants: usize,
     pub corpses: usize,
-    /// Потолок растений этого мира.
+    /// This world's plant ceiling.
     pub plant_cap: usize,
     pub creatures: usize,
     pub juveniles: usize,
     /// Creatures whose program (the track they live by now) shoots.
     pub shooters: usize,
-    /// Накопленные с начала мира; потоки за промежуток — `b.counters.since(&a.counters)`.
+    /// Accumulated since the world began; the flows over an interval are `b.counters.since(&a.counters)`.
     pub counters: Counters,
-    /// Сводка каждого гена существ, порядок — таблица `creature::GENES`.
-    /// None — существ нет.
+    /// A summary of each gene of the creatures, the order is the table `creature::GENES`.
+    /// None — there are no creatures.
     pub genes: Option<[GeneStat; creature::N]>,
-    /// Глубина существ, % высоты мира (0 — поверхность, где гуще растения).
+    /// The creatures' depth, % of the world's height (0 — the surface, where the plants are thicker).
     pub depth: Option<Spread>,
     pub creatures_by_depth: [usize; DEPTH_BANDS],
     pub plants_by_depth: [usize; DEPTH_BANDS],
     pub creatures_by_width: [usize; WIDTH_BANDS],
     pub plants_by_width: [usize; WIDTH_BANDS],
-    /// Средняя заполненность бака существ, 0..1.
+    /// The mean tank fullness of the creatures, 0..1.
     pub fullness: Option<f64>,
     /// Each diet's creatures, in `Diet` order, and all creatures by the same measures.
     pub diets: [DietStat; 4],
@@ -236,9 +236,9 @@ impl Snapshot {
     }
 }
 
-// ── хроника ─────────────────────────────────────────────────────────────────
+// ── chronicle ───────────────────────────────────────────────────────────────
 
-/// Что случилось. Ключ — для машинного разбора (JSON), текст — для чтения.
+/// What happened. The key is for machine parsing (JSON), the text is for reading.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventKind {
     CreaturesCrash,
@@ -275,28 +275,28 @@ pub struct Event {
     pub text: String,
 }
 
-/// Во сколько раз численность должна упасть от пика (или вырасти от дна),
-/// чтобы это было событием, а не шумом деления.
+/// By how many times the population must fall from a peak (or rise from a bottom) for it to be
+/// an event, not the division's noise.
 const SWING: f64 = 2.0;
-/// Ниже этой численности (на базовую площадь) колебания не считаются: десяток
-/// существ, ставших пятком, — шум, а не обвал.
+/// Below this population (per base area) swings do not count: a dozen creatures becoming five
+/// is noise, not a collapse.
 const SWING_MIN: f64 = 30.0;
-/// Сдвиг гена, который попадает в хронику: для размера, скорости и зрения —
-/// относительный, для генов-процентов — в процентных пунктах.
+/// The shift of a gene that gets into the chronicle: for size, speed and sight — relative, for
+/// percent genes — in percentage points.
 const GENE_SHIFT_REL: f64 = 0.3;
 const GENE_SHIFT_PTS: f64 = 15.0;
-/// Доля варианта гена-выбора (стратегии) сдвинулась на столько процентных
-/// пунктов — или вариант появился либо исчез.
+/// The share of a choice gene's (a strategy's) variant has shifted by this many percentage
+/// points — or a variant has appeared or vanished.
 const SHARE_SHIFT_PTS: f64 = 15.0;
-/// Слой существ (10‒90% по глубине) уже этого — «сжались», шире второго —
-/// «расселились». Зазор между порогами не даёт событию мигать туда-сюда.
+/// A creatures' layer (10‒90% by depth) already this — «squeezed», wider than the second —
+/// «spread out». The gap between the thresholds keeps the event from blinking back and forth.
 const LAYER_NARROW: f64 = 25.0;
 const LAYER_WIDE: f64 = 40.0;
-/// Растения «у потолка» от этой доли; «снова едят» — ниже второй.
+/// Plants are «at the ceiling» from this share; «eaten again» — below the second.
 const CAP_HIGH: f64 = 0.95;
 const CAP_LOW: f64 = 0.8;
 
-/// Причины перемены численности существ за промежуток.
+/// The causes of the creatures' population change over an interval.
 pub fn describe_flows(c: &Counters) -> String {
     let mut text = format!("родилось {}, умерло с голоду {}", c.born, c.starved);
     if c.old_age > 0 {
@@ -308,8 +308,8 @@ pub fn describe_flows(c: &Counters) -> String {
     text
 }
 
-/// Сдвиги генов вида с прошлых отметок: (части текста для числовых генов,
-/// для генов-выборов). Сдвинувшийся ген переносит свою отметку сюда.
+/// The species' gene shifts since the previous marks: (the parts of text for numeric genes, for
+/// choice genes). A gene that has shifted carries its mark over here.
 fn gene_shifts<const N: usize>(
     genes: &[GeneSpec; N],
     cur: Option<[GeneStat; N]>,
@@ -368,20 +368,20 @@ fn gene_shifts<const N: usize>(
     (numbers, choices)
 }
 
-/// Колебание популяции: пик и дно с прошлого события.
+/// A population swing: the peak and the bottom since the previous event.
 #[derive(Clone, Debug)]
 struct Swing {
     peak: Snapshot,
     trough: Snapshot,
 }
 
-/// Хроника, которая пишется по ходу: срез за срезом. Её ведёт и отчёт
-/// ([`events`]), и игра — поэтому тексты событий у них одинаковые.
+/// A chronicle that is written along the way: sample after sample. Both the report ([`events`])
+/// and the game keep it — so the events' texts are the same in both.
 #[derive(Clone, Debug, Default)]
 pub struct EventTracker {
     prev: Option<Snapshot>,
     swing: Option<Swing>,
-    /// Сводка каждого гена на прошлой отметке и тик этой отметки.
+    /// A summary of each gene at the previous mark and the tick of that mark.
     gene_base: Option<[(GeneStat, u64); creature::N]>,
     narrow: bool,
     capped: bool,
@@ -392,7 +392,7 @@ impl EventTracker {
         Self::default()
     }
 
-    /// Следующий срез (тики должны расти); события между прошлым и этим — в `out`.
+    /// The next sample (the ticks must grow); the events between the previous and this one go to `out`.
     pub fn observe(&mut self, cur: &Snapshot, out: &mut Vec<Event>) {
         let Some(prev) = self.prev.replace(cur.clone()) else {
             self.swing = Some(Swing { peak: cur.clone(), trough: cur.clone() });
@@ -404,8 +404,8 @@ impl EventTracker {
         let t = cur.tick;
         let mut push = |kind, text: String| out.push(Event { tick: t, kind, text });
 
-        // ── численность: обвал и подъём считаются от пика/дна с прошлого события,
-        // причины — счётчики между ними
+        // ── the population: a collapse and a rise are counted from the peak/bottom since the previous
+        // event, the causes are the counters between them
         let swing = self.swing.get_or_insert_with(|| Swing { peak: prev.clone(), trough: prev.clone() });
         let min = cur.area * SWING_MIN;
         let n = cur.creatures;
@@ -451,7 +451,7 @@ impl EventTracker {
             *swing = Swing { peak: cur.clone(), trough: cur.clone() };
         }
 
-        // ── растения у потолка: их растёт больше, чем успевают съесть
+        // ── plants at the ceiling: more grow than can be eaten
         let fill = cur.plants as f64 / cur.plant_cap as f64;
         if !self.capped && fill >= CAP_HIGH {
             self.capped = true;
@@ -468,8 +468,8 @@ impl EventTracker {
             );
         }
 
-        // ── гены: медиана ушла от прошлой отметки — отметка переносится; все
-        // сдвиги одного среза — одно событие, иначе хроника тонет в генах
+        // ── genes: the median has moved away from the previous mark — the mark is carried over; all
+        // shifts of one sample are one event, otherwise the chronicle drowns in genes
         let (numbers, choices) = gene_shifts(&creature::GENES, cur.genes, &mut self.gene_base, t);
         if !numbers.is_empty() {
             push(EventKind::GeneShift, format!("геном, медиана: {}", numbers.join("; ")));
@@ -478,7 +478,7 @@ impl EventTracker {
             push(EventKind::StrategyShift, format!("существа: {}", choices.join("; ")));
         }
 
-        // ── слой: где по глубине держатся 80% существ
+        // ── the layer: where by depth 80% of the creatures keep
         if let Some(d) = cur.depth {
             let width = d.p90 - d.p10;
             let text = |what: &str| {
@@ -498,7 +498,7 @@ impl EventTracker {
     }
 }
 
-/// Хроника прогона по срезам (они должны идти по возрастанию тиков).
+/// A run's chronicle by samples (they must go in ascending ticks).
 pub fn events(snaps: &[Snapshot]) -> Vec<Event> {
     let mut tracker = EventTracker::new();
     let mut out = Vec::new();
@@ -508,16 +508,16 @@ pub fn events(snaps: &[Snapshot]) -> Vec<Event> {
     out
 }
 
-// ── карта ───────────────────────────────────────────────────────────────────
+// ── map ─────────────────────────────────────────────────────────────────────
 
-/// Легенда к [`ascii_map`].
+/// A legend for [`ascii_map`].
 pub const MAP_LEGEND: &str =
     "O 4+ существ · o 1‒3 существа · : 4+ растений · . 1‒3 растения · верх — поверхность";
 
-/// Карта мира в `cols` колонок. Клетка показывает самое «важное», что в ней
-/// есть: существа важнее растений. Слева —
-/// глубина в процентах. Строк столько, чтобы пропорции мира сохранились
-/// (символ примерно вдвое выше своей ширины), но не меньше 8 и не больше 40.
+/// A map of the world in `cols` columns. A cell shows the most «important» thing in it:
+/// creatures are more important than plants. On the left is the depth in percent. There are as
+/// many rows as keep the world's proportions (a character is about twice as high as it is wide),
+/// but no fewer than 8 and no more than 40.
 pub fn ascii_map(world: &World, cols: usize) -> Vec<String> {
     let cols = cols.max(8);
     let (w, h) = (world.space.width, world.space.height);

@@ -2,7 +2,7 @@
 # build output, including stray per-crate target/ folders (screen test shots land there)
 target/
 
-# Python — прототипы в Relict/ ещё можно запустить
+# Python — the prototypes in Relict/ can still be run
 __pycache__/
 *.pyc
 

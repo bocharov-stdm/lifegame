@@ -1,9 +1,9 @@
-//! Прогон под лимитами: странные лимиты не роняют его, а сводятся к понятному.
+//! A run under limits: odd limits do not crash it, they boil down to something sensible.
 
 use life_core::WorldConfig;
 use life_sim::{Limits, simulate};
 
-/// Шаг срезов 0 — «каждый тик», а не деление на ноль.
+/// A sample step of 0 means «every tick», not a division by zero.
 #[test]
 fn нулевой_шаг_срезов_значит_каждый_тик() {
     let limits = Limits { ticks: 20, sample_every: 0, ..Default::default() };

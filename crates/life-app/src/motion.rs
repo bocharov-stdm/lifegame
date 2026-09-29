@@ -1,19 +1,18 @@
-//! Память между кадрами: откуда пришло существо, когда родилось, кто умер.
+//! The memory between frames: where a creature came from, when it was born, who has died.
 //!
-//! Без неё кружок перескакивает из позиции прошлого кадра в новую, новорождённые
-//! вспыхивают в полный рост, а съеденные пропадают за кадр — на экране
-//! мельтешение. С ней окно рисует движение между двумя кадрами, рост при
-//! рождении и угасание при смерти (это делает шейдер в `render.rs`).
+//! Without it a circle jumps from the previous frame's position to the new one, newborns flash
+//! up at full size, and eaten ones vanish in a frame — the screen flickers. With it the window
+//! draws motion between two frames, growth at birth and fading at death (the shader in
+//! `render.rs` does that).
 //!
-//! Всё — за линейное время от числа видимых существ:
-//! - прошлую позицию находит проход двумя указателями (векторы мира
-//!   отсортированы по id, значит и прошлый кадр тоже);
-//! - время рождения — по кольцу «наибольший id в кадре → время кадра», поиск
-//!   не нужен; существо, въехавшее в кадр при панораме, не «рождается» — его
-//!   id старый;
-//! - растения не двигаются и id не имеют: их узнаём по (тик рождения, x).
+//! All in linear time in the number of visible creatures:
+//! - the previous position is found by a pass with two pointers (the world's vectors are
+//!   sorted by id, so the previous frame is too);
+//! - the birth time is by a ring «the greatest id in a frame → the frame's time», no search
+//!   needed; a creature that rode into the frame while panning is not «born» — its id is old;
+//! - plants do not move and have no ids: we recognise them by (birth tick, x).
 //!
-//! Живёт в потоке симуляции; у нового мира — новая.
+//! Lives in the simulation thread; a new world has a new one.
 
 use std::collections::VecDeque;
 use std::f32::consts::TAU;
@@ -24,39 +23,39 @@ use life_core::config::PLANT_RADIUS;
 
 use crate::frame::{self, Instance, MAX_INSTANCES};
 
-/// Возраст давно родившегося: анимация роста для него давно кончилась.
+/// The age of one born long ago: the growth animation has long ended for it.
 pub const OLD: f32 = 1.0e6;
-/// Призрак хранится, пока не догорит самая долгая смерть — с голоду (шейдер: 0.5 с).
+/// A ghost is kept until the longest death burns out — by starvation (the shader: 0.5 s).
 const GHOST_LIFE: Duration = Duration::from_millis(600);
-/// Время рождения помним столько; кто старше — давно родился.
+/// We remember the birth time this long; one older was born long ago.
 const RING: Duration = Duration::from_secs(1);
-/// Меньше такой сытости в прошлом кадре — умер с голоду, а не съеден.
+/// Less fullness than this in the previous frame — starved to death, not eaten.
 const STARVED: f32 = 0.05;
-/// Курс поворачивает к направлению сдвига не сразу: зигзаги не дёргают нос.
+/// The heading turns towards the direction of the shift not at once: zigzags do not jerk the nose.
 const TURN: f32 = 0.5;
 
-// `meta`: курс 0–11 | диета 12–13 | ест 14 | ел в прошлом кадре 15 | вид 16–17 | призрак 18 |
-// с голоду 19 | точка 20 | направление к еде 21–27 | длина хоботка 28–31 (`creatures.wgsl`).
+// `meta`: heading 0–11 | diet 12–13 | eats 14 | ate in the previous frame 15 | view 16–17 | ghost 18 |
+// starved 19 | dot 20 | direction to the food 21–27 | proboscis length 28–31 (`creatures.wgsl`).
 pub const KIND_PLANT: u32 = 0;
 pub const KIND_CREATURE: u32 = 1;
 const DIET_SHIFT: u32 = 12;
-/// Бит `meta`: существо ест на тике кадра (или тиком раньше) — хоботок выдвинут.
+/// A `meta` bit: the creature eats at the frame's tick (or a tick before) — the proboscis is extended.
 pub const FEEDING: u32 = 1 << 14;
-/// Бит `meta`: ело в прошлом кадре — выдвинутый хоботок не выдвигается заново, а
-/// переставший есть втягивает его.
+/// A `meta` bit: it ate in the previous frame — an extended proboscis is not extended anew,
+/// and one that has stopped eating draws it in.
 pub const FED: u32 = 1 << 15;
 const FOOD_DIR_SHIFT: u32 = 21;
 const REACH_SHIFT: u32 = 28;
 /// A proboscis is drawn from a bite this many ticks old at most (then it is retracting).
 const MEAL_TICKS: u64 = 3;
-/// Бит `meta`: призрак — существо уже умерло, `age` — время с его смерти.
+/// A `meta` bit: a ghost — the creature has already died, `age` is the time since its death.
 pub const GHOST: u32 = 1 << 18;
-/// Бит `meta`: призрак умер с голоду (сереет), а не съеден (сжимается).
+/// A `meta` bit: the ghost starved to death (goes grey), not eaten (shrinks).
 pub const STARVED_BIT: u32 = 1 << 19;
-/// Упрощённый двухпиксельный квадрат без анимации и поиска прошлого кадра.
+/// A simplified two-pixel square without animation and without a search for the previous frame.
 pub const DOT_BIT: u32 = 1 << 20;
 
-/// Существо прошлого кадра (координаты в мире).
+/// A creature of the previous frame (coordinates in the world).
 #[derive(Clone, Copy, Debug)]
 struct Seen {
     id: u64,
@@ -71,7 +70,7 @@ struct Seen {
     diet: u32,
 }
 
-/// Растение прошлого кадра: ключ (тик рождения, биты x) и y.
+/// A plant of the previous frame: the key (birth tick, bits of x) and y.
 #[derive(Clone, Copy, Debug)]
 struct SeenPlant {
     born: u32,
@@ -93,8 +92,8 @@ struct Ghost {
     diet: u32,
 }
 
-/// Кольцо «значение в кадре → время кадра»: по нему видно, в каком кадре
-/// что-то появилось. `floor` — всё, что не больше него, появилось давно.
+/// A ring «a value in a frame → the frame's time»: it shows in which frame something appeared.
+/// `floor` — everything no greater than it appeared long ago.
 #[derive(Default, Debug)]
 struct Ring {
     marks: VecDeque<(u64, Instant)>,
@@ -113,8 +112,8 @@ impl Ring {
         }
     }
 
-    /// Сколько секунд назад появилось то, что впервые попало в кадр, где
-    /// значение стало не меньше `key`.
+    /// How many seconds ago that appeared which first got into a frame where the value became no
+    /// less than `key`.
     fn age(&self, key: u64, now: Instant) -> f32 {
         if key <= self.floor {
             return OLD;
@@ -128,7 +127,7 @@ impl Ring {
 pub struct Motion {
     started: bool,
     creatures: Vec<Seen>,
-    /// Отсортированы по (born, xbits).
+    /// Sorted by (born, xbits).
     plants: Vec<SeenPlant>,
     ids: Ring,
     ticks: Ring,
@@ -136,7 +135,7 @@ pub struct Motion {
     ghosts: Vec<Ghost>,
 }
 
-/// Угол курса в 12 битах: полный круг — 4096.
+/// The heading's angle in 12 bits: a full circle is 4096.
 fn pack_heading(a: f32) -> u32 {
     ((a.rem_euclid(TAU) / TAU * 4096.0) as u32) & 0xFFF
 }
@@ -173,28 +172,28 @@ fn meta(kind: u32, heading: f32) -> u32 {
     pack_heading(heading) | kind << 16
 }
 
-/// Курс, пока существо не сдвинулось: у каждого свой, чтобы новорождённые
-/// не смотрели все в одну сторону.
+/// The heading until the creature has moved: each has its own, so that newborns do not all
+/// look in one direction.
 fn initial_heading(id: u64) -> f32 {
     (id.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40) as f32 / (1u64 << 24) as f32 * TAU
 }
 
-/// Повернуть курс `from` к `to` на долю `k` кратчайшим путём.
+/// Turn the heading `from` to `to` by the share `k` the shortest way.
 fn turn(from: f32, to: f32, k: f32) -> f32 {
     let d = (to - from + std::f32::consts::PI).rem_euclid(TAU) - std::f32::consts::PI;
     from + d * k
 }
 
 impl Motion {
-    /// Кружки видимой части мира в `out` (растения, потом существа — в таком
-    /// порядке и рисуются; призраки — в конце своего вида). false —
-    /// видимых больше `MAX_INSTANCES`: нужна карта плотности, память кадра сброшена.
+    /// The circles of the visible part of the world into `out` (plants, then creatures — they are
+    /// drawn in this order; ghosts at the end of their kind). false — more than `MAX_INSTANCES`
+    /// are visible: a density map is needed, the frame's memory is dropped.
     pub fn collect(&mut self, world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) -> bool {
         let now = Instant::now();
         let max_id = world.creatures.last().map_or(0, |v| v.id).max(self.max_id);
         self.max_id = max_id;
         if !self.started {
-            // Первый кадр мира: всё, что есть, было всегда.
+            // The world's first frame: everything that is there always was.
             self.started = true;
             self.ids.floor = max_id;
             self.ticks.floor = world.tick;
@@ -207,7 +206,7 @@ impl Motion {
         let full =
             self.collect_plants(world, rect, now, out) && self.collect_creatures(world, rect, now, out);
         if !full {
-            // Кадр недособран: сопоставлять следующий не с чем.
+            // The frame is half assembled: there is nothing to match the next one against.
             self.creatures.clear();
             self.plants.clear();
             self.ghosts.clear();
@@ -250,12 +249,12 @@ impl Motion {
             }
             seen.push(SeenPlant { born: p.born, xbits: p.x.to_bits(), y: p.y, r: radius });
         }
-        // Внутри одного тика рождения порядок по x — свой, но одинаковый в обоих
-        // кадрах; растения идут по тику рождения, так что сортировка почти даром.
+        // Inside one birth tick the order by x is its own, but the same in both frames; plants go by
+        // birth tick, so the sort is almost free.
         seen.sort_unstable_by_key(|s| (s.born, s.xbits));
 
-        // Растение прошлого кадра, которое лежит в новом прямоугольнике, но в
-        // кадр не попало, — съедено.
+        // A plant of the previous frame that lies in the new rectangle but did not get into the
+        // frame — was eaten.
         let mut j = 0;
         for p in &self.plants {
             while j < seen.len() && (seen[j].born, seen[j].xbits) < (p.born, p.xbits) {
@@ -297,7 +296,7 @@ impl Motion {
         let alive = |id: u64| world.creature(id).is_some();
         let mut ghosts = Vec::new();
         let mut j = 0;
-        // Прошлое существо без пары: если его нет в мире — умерло.
+        // A past creature without a pair: if it is not in the world — it died.
         let mut gone = |s: &Seen| {
             if !alive(s.id) {
                 ghosts.push(Ghost {
@@ -426,10 +425,10 @@ mod tests {
     #[test]
     fn в_кадр_попадают_только_видимые_по_телу() {
         let mut world = empty_world();
-        // Центр за левым краем, но тело крупное — торчит в кадр.
+        // The centre is past the left edge, but the body is big — it sticks into the frame.
         let big = BASE.with(Gene::Size, 400.0);
         world.spawn(big, 1000.0 - 150.0, 2000.0, None);
-        world.spawn(big, 100.0, 2000.0, None); // далеко слева
+        world.spawn(big, 100.0, 2000.0, None); // far to the left
         world.spawn(BASE, 1500.0, 2000.0, None);
         let mut out = Vec::new();
         assert!(Motion::default().collect(&world, (1000.0, 0.0, 2000.0, 4000.0), &mut out));
@@ -453,7 +452,7 @@ mod tests {
         let after = out[0];
         assert_eq!((after.px, after.py), (before.x, before.y), "прошлая позиция — из прошлого кадра");
         assert_eq!(after.x, before.x + 10.0);
-        // курс повернул к востоку (угол 0) от начального
+        // the heading has turned to the east (angle 0) from the initial one
         let heading = (after.meta & 0xFFF) as f32 / 4096.0 * TAU;
         let expected = turn(initial_heading(id), 0.0, TURN).rem_euclid(TAU);
         assert!((heading - expected).abs() <= TAU / 4096.0, "курс {heading}, ожидался {expected}");
@@ -479,12 +478,12 @@ mod tests {
         world.spawn(BASE, 500.0, 2000.0, None);
         let mut m = Motion::default();
         let mut out = Vec::new();
-        // первый кадр видит только левую половину; старое существо справа за краем
+        // the first frame sees only the left half; an old creature on the right past the edge
         world.spawn(BASE, 5000.0, 2000.0, None);
         m.collect(&world, (0.0, 0.0, 3000.0, 4000.0), &mut out);
         assert_eq!(out.len(), 1);
 
-        // новое существо и сдвиг вида на весь мир
+        // a new creature and a shift of the view onto the whole world
         world.spawn(BASE, 1000.0, 2000.0, None);
         m.collect(&world, ALL, &mut out);
         assert_eq!(out.len(), 3);
@@ -504,14 +503,14 @@ mod tests {
         m.collect(&world, ALL, &mut out);
         assert_eq!(out.len(), 3);
 
-        // оба существ пропали из мира: одного съели, другой умер с голоду
+        // both creatures are gone from the world: one was eaten, the other starved to death
         world.creatures.retain(|v| v.id != fed && v.id != hungry);
         m.collect(&world, ALL, &mut out);
         let ghosts: Vec<&Instance> = out.iter().filter(|i| i.meta & GHOST != 0).collect();
         assert_eq!(ghosts.len(), 2);
         assert!(ghosts.iter().all(|g| kind(g) == KIND_CREATURE));
         assert_eq!(ghosts.iter().filter(|g| g.meta & STARVED_BIT != 0).count(), 1, "с голоду — один");
-        // растение — до существ: порядок рисования не нарушен
+        // the plant before the creatures: the drawing order is not broken
         assert_eq!(kind(&out[0]), KIND_PLANT);
 
         std::thread::sleep(GHOST_LIFE + Duration::from_millis(20));
@@ -547,7 +546,7 @@ mod tests {
         m.collect(&world, ALL, &mut out);
         assert_eq!(out.len(), 4);
 
-        // растение на 2000 съели; вид сдвинулся — растение на 100 ушло за край
+        // the plant at 2000 was eaten; the view shifted — the plant at 100 went past the edge
         world.plants.remove(1);
         m.collect(&world, (1000.0, 0.0, 6000.0, 4000.0), &mut out);
         let ghosts: Vec<&Instance> = out.iter().filter(|i| i.meta & GHOST != 0).collect();

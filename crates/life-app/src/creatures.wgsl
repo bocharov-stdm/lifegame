@@ -1,15 +1,15 @@
 struct U {
-    // где на экране (в точках, от левого верхнего угла вьюпорта) начало координат кадра
+    // where on the screen (in points, from the viewport's top left corner) the frame's origin lies
     origin: vec2<f32>,
-    // размер вьюпорта в точках
+    // the viewport's size in points
     view: vec2<f32>,
     zoom: f32,
     pixels_per_point: f32,
-    // доля пути от прошлого кадра к новому
+    // the share of the way from the previous frame to the new one
     k: f32,
-    // секунды с тех пор, как кадр собран
+    // seconds since the frame was assembled
     since: f32,
-    // секунды с начала программы (по модулю): «глотки» бегут по хоботку непрерывно
+    // seconds since the program began (modulo): the «gulps» run along the proboscis continuously
     time: f32,
     // diets to highlight, a bit per diet; 0 — nobody highlighted
     highlight: u32,
@@ -17,7 +17,7 @@ struct U {
 };
 @group(0) @binding(0) var<uniform> u: U;
 
-// длительности анимаций, с; призрак хранится в motion.rs чуть дольше самой долгой
+// the animations' durations, s; a ghost is kept in motion.rs a little longer than the longest
 const GROW: f32 = 0.35;
 const SHRINK: f32 = 0.25;
 const STARVE: f32 = 0.5;
@@ -25,24 +25,25 @@ const STARVE: f32 = 0.5;
 const PLANT: u32 = 0u;
 const TAU: f32 = 6.2831853;
 
-// meta (motion.rs): курс 0–11 | диета 12–13 | ест 14 | ел в прошлом кадре 15 | вид 16–17 |
-// призрак 18 | с голоду 19 | точка 20 | направление к еде 21–27 | длина хоботка 28–31
+// meta (motion.rs): heading 0–11 | diet 12–13 | eats 14 | ate in the previous frame 15 | view 16–17 |
+// ghost 18 | starved 19 | dot 20 | direction to the food 21–27 | proboscis length 28–31
 struct VOut {
     @builtin(position) clip: vec4<f32>,
-    // точка квадрата относительно центра, в пикселях
+    // a point of the square relative to the centre, in pixels
     @location(0) local: vec2<f32>,
-    // радиус тела в пикселях
+    // the body's radius in pixels
     @location(1) r_px: f32,
-    // RGB и сытость
+    // RGB and fullness
     @location(2) color: vec4<f32>,
     @location(3) alpha: f32,
     @location(4) grey: f32,
-    // курс: единичный вектор
+    // heading: a unit vector
     @location(5) dir: vec2<f32>,
     @location(6) @interpolate(flat) kind: u32,
     @location(7) @interpolate(flat) dot: u32,
     @location(8) @interpolate(flat) diet: u32,
-    // хоботок: направление к еде, длина за краем тела в пикселях (0 — нет), фаза «глотков»
+    // the proboscis: the direction to the food, the length past the body's edge in pixels (0 — none), the
+    // phase of the «gulps»
     @location(9) @interpolate(flat) proboscis: vec4<f32>,
     // highlight: 0 as usual, 1 highlighted (a halo in its diet's colour), 2 dimmed
     @location(10) @interpolate(flat) hl: u32,
@@ -90,7 +91,7 @@ fn vs_main(
     var alpha = 1.0;
     var grey = 0.0;
     if !ghost {
-        // рост: быстро в начале и мягко к концу, без отскока
+        // growth: fast at the start and soft towards the end, without a bounce
         let a = clamp(age / GROW, 0.0, 1.0);
         let e = 1.0 - (1.0 - a) * (1.0 - a) * (1.0 - a);
         scale = e;
@@ -107,7 +108,7 @@ fn vs_main(
 
     let p = select(mix(prev, pos, u.k), pos, dot);
     let r_px = select(r * u.zoom * scale * u.pixels_per_point, 1.0, dot);
-    // мельче пикселя: рисуем пиксель, но с яркостью по площади
+    // smaller than a pixel: we draw a pixel, but with a brightness by area
     let drawn = max(r_px, select(0.7, HL_MIN_PX, hl == 1u));
     alpha = select(alpha * min(1.0, r_px * r_px / (drawn * drawn)), 1.0, dot);
     if hl == 1u {
@@ -116,8 +117,8 @@ fn vs_main(
         alpha = alpha * select(DIM_CREATURE, DIM_PLANT, kind == PLANT);
     }
 
-    // Хоботок выдвигается, пока идёт кадр, в котором существо начало есть, и втягивается в
-    // кадре, где оно перестало; только вблизи, как остальные детали.
+    // The proboscis extends during the frame in which the creature began to eat and is drawn in
+    // during the frame in which it stopped; only near, like the other details.
     var extend = 0.0;
     if feeding && fed {
         extend = 1.0;
@@ -152,12 +153,12 @@ fn vs_main(
     return out;
 }
 
-// 1 внутри фигуры с расстоянием d, 0 снаружи, мягкий край в пиксель
+// 1 inside the shape at distance d, 0 outside, a soft one-pixel edge
 fn inside(d: f32) -> f32 {
     return clamp(0.5 - d, 0.0, 1.0);
 }
 
-// Цвет каёмки по диете: травоядный, всеядный, падальщик, мясоед.
+// The rim's colour by diet: herbivore, omnivore, scavenger, carnivore.
 fn diet_color(diet: u32) -> vec3<f32> {
     switch diet {
         case 0u: { return vec3(0.35, 0.80, 0.42); }
@@ -178,11 +179,11 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     var d = len - r;
     let base = in.color.rgb;
     let full = in.color.a;
-    // детали появляются плавно между 3 и 6 пикселями радиуса
+    // the details appear smoothly between 3 and 6 pixels of radius
     let detail = clamp((r - 3.0) / 3.0, 0.0, 1.0);
 
     var col = base;
-    // хоботок: цвет и покрытие, под телом
+    // the proboscis: colour and coverage, under the body
     var tube = vec3(0.0);
     var tube_a = 0.0;
     if in.kind == PLANT {
@@ -200,17 +201,17 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
         col = mix(col, base * 0.55, rib * 0.7 * detail);
         col = mix(col, base * 0.6, inside(len - 0.18 * r) * detail);
     } else {
-        // координаты вдоль курса и поперёк
+        // coordinates along the heading and across it
         let f = vec2(dot(q, in.dir), dot(q, vec2(-in.dir.y, in.dir.x)));
         let rim_w = max(1.0, 0.16 * r);
         let within = inside(d + rim_w);
-        // ядро растёт с сытостью: полный бак — светлое тело, пустой — одна оболочка
+        // the core grows with fullness: a full tank — a light body, an empty one — a shell alone
         let core_r = (r - rim_w) * sqrt(full);
         let core = inside(len - core_r);
-        // каёмка — цвет диеты
+        // the rim is the diet's colour
         let rim = mix(base * 0.3, diet_color(in.diet) * 0.85, 0.8);
         var fill = mix(base * 0.6, base * 1.05, core);
-        // глазок по курсу
+        // an eye along the heading
         let eye_r = max(1.0, 0.15 * r);
         let eye = inside(length(f - vec2(0.55 * r, 0.0)) - eye_r) * clamp((r - 5.0) / 3.0, 0.0, 1.0);
         fill = mix(fill, vec3(0.95, 0.93, 0.98), eye);
@@ -224,7 +225,7 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
             let end = r + reach;
             let along = clamp(dot(q, toward), start, end);
             let t = (along - start) / max(end - start, 0.001);
-            // тоньше к кончику; «глотки» — вздутия, бегущие от кончика к телу
+            // thinner towards the tip; the «gulps» are swellings running from the tip to the body
             var w = max(0.8, 0.13 * r) * (1.0 - 0.35 * t);
             let gulp = 1.0 - fract(in.proboscis.w * 1.7);
             w = w * (1.0 + 0.5 * exp(-pow((t - gulp) / 0.14, 2.0)));

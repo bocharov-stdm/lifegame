@@ -1,4 +1,4 @@
-//! Растения: неподвижная еда. Где они вырастают, решает профиль мира (`flora.rs`).
+//! Plants: motionless food. Where they grow is decided by the world's profile (`flora.rs`).
 
 pub const PORTIONS: u8 = 5;
 
@@ -10,14 +10,14 @@ pub const NO_SLOT: usize = (1 << 24) - 1;
 pub struct Plant {
     pub x: f64,
     pub y: f64,
-    /// Одна порция за контактный тик; первоначально их пять. Съеденное (ноль порций)
-    /// выметается раз за тик в конце хода существ.
+    /// One portion per tick of contact; at first there are five. What is eaten (zero portions)
+    /// is swept out once a tick at the end of the creatures' move.
     pub portions: u8,
     /// The place it holds (`flora.rs`), 24 bits: it fits into the padding, like `born`.
     slot: [u8; 3],
-    /// Тик, на котором выросло (с насыщением на u32). Движку не нужен: по нему
-    /// окно узнаёт новые растения и сопоставляет кадры. Лежит в выравнивании —
-    /// растение от него не толстеет.
+    /// The tick it grew on (saturating at u32). The engine does not need it: the window uses it to
+    /// learn of new plants and to match frames. It sits in the alignment padding, so it does not
+    /// make a plant fatter.
     pub born: u32,
 }
 
@@ -49,7 +49,7 @@ impl Plant {
         self.slot = [0xFF; 3];
     }
 
-    /// Возвращает `Some(true)`, если съедена последняя порция.
+    /// Returns `Some(true)` if the last portion has been eaten.
     pub fn bite(&mut self) -> Option<bool> {
         if self.portions == 0 {
             return None;
@@ -63,7 +63,7 @@ impl Plant {
 mod tests {
     use super::*;
 
-    /// Растений в огромном мире миллионы: метка рождения и место не должны их толстить.
+    /// A huge world has millions of plants: the birth mark and the place must not fatten them.
     #[test]
     fn растение_не_толстеет() {
         assert_eq!(std::mem::size_of::<Plant>(), 24);

@@ -6,7 +6,7 @@
 //! The world's flags are the same as `life-report`'s, so a game can be repeated without the window
 //! with the same seed, scale and rules.
 
-// Релиз на Windows — без чёрного окна консоли: игру запускают двойным щелчком.
+// A release build on Windows has no black console window: the game is launched by a double click.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
@@ -35,21 +35,21 @@ use life_core::{Rules, Shape, WorldConfig};
 #[derive(Parser)]
 #[command(about = "lifegame — эволюция растений и существ")]
 struct Args {
-    /// Сид мира; без него — случайный.
+    /// The world's seed; without it, a random one.
     #[arg(long)]
     seed: Option<u64>,
-    /// Масштаб мира по площади (1 — базовый 6000x4000; от 1 до 10 000).
+    /// The world's scale by area (1 is the base 6000x4000; from 1 to 10 000).
     #[arg(long, default_value_t = 1.0, value_parser = parse_scale)]
     scale: f64,
-    /// Форма мира: 1:1, 3:2 (по умолчанию), 2:1 или strip — полоса высотой 4000.
+    /// The world's shape: 1:1, 3:2 (default), 2:1 or strip — a strip 4000 high.
     #[arg(long, value_parser = Shape::parse)]
     shape: Option<Shape>,
-    /// Существ на старте (по умолчанию — по площади мира); старое имя —
+    /// Creatures at the start (by default by the world's area); the old name is
     /// `--vegetarians`.
     #[arg(long, alias = "vegetarians")]
     creatures: Option<usize>,
-    /// Правило мира: имя=число (можно несколько раз), как в life-report. Профиль
-    /// еды — и именем: `--rule plant_width_profile=waves`.
+    /// A world rule: name=number (can be repeated), as in life-report. The food profile is also
+    /// given by name: `--rule plant_width_profile=waves`.
     #[arg(long = "rule")]
     rules: Vec<String>,
 }
@@ -72,8 +72,8 @@ fn parse_rules(pairs: &[String]) -> Result<Rules, String> {
     Ok(rules)
 }
 
-/// Без своей консоли (релиз на Windows) ошибки флагов и `--help` пропали бы
-/// молча. Если игру запустили из консоли — пишем в неё.
+/// Without a console of its own (a release build on Windows) the errors of the flags and `--help`
+/// would vanish silently. If the game was started from a console, we write into it.
 fn attach_parent_console() {
     #[cfg(all(windows, not(debug_assertions)))]
     {
@@ -81,14 +81,14 @@ fn attach_parent_console() {
             fn AttachConsole(process: u32) -> i32;
         }
         const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
-        // SAFETY: вызов WinAPI без указателей; неудача (нет консоли) безвредна.
+        // SAFETY: a WinAPI call without pointers; a failure (no console) is harmless.
         unsafe {
             AttachConsole(ATTACH_PARENT_PROCESS);
         }
     }
 }
 
-/// Значок окна: три кружка — растение, крупное и мелкое существо.
+/// The window icon: three circles — a plant, a big and a small creature.
 fn icon() -> eframe::egui::IconData {
     const N: usize = 64;
     let circles = [
@@ -124,7 +124,7 @@ fn main() -> eframe::Result {
         eprintln!("ошибка: {e}");
         std::process::exit(2);
     });
-    // Любой флаг мира — сразу в игру с этим миром; без флагов — меню.
+    // Any world flag goes straight into the game with that world; without flags, the menu.
     let direct = args.seed.is_some()
         || args.scale != 1.0
         || args.shape.is_some()
@@ -144,8 +144,8 @@ fn main() -> eframe::Result {
             .with_title("lifegame")
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([960.0, 600.0])
-            // развёрнуто: мир большой, а окно 1280×800 при масштабе 125% выше
-            // многих экранов ноутбуков
+            // maximised: the world is big, and a 1280×800 window at 125% scaling is taller than
+            // many laptop screens
             .with_maximized(true)
             .with_icon(icon()),
         renderer: eframe::Renderer::Wgpu,

@@ -1,4 +1,4 @@
-//! Геном существа.
+//! A creature's genome.
 
 use super::{GeneKind, GeneSpec, Genome, Mutation, Variant, bases};
 use crate::config::{
@@ -9,7 +9,7 @@ use crate::creature::Programs;
 use crate::creature::strategy::VARIANTS as STRATEGIES;
 use crate::rng::Rng;
 
-/// Гены существа — номера строк `GENES`.
+/// A creature's genes: the row numbers of `GENES`.
 #[repr(usize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gene {
@@ -86,13 +86,13 @@ pub const DIET_VARIANTS: [Variant; 4] = [
     },
 ];
 
-/// Мутация существ: множитель не ниже 0.1, выпавшее ниже перетягивается
-/// заново, как в Python. Сигма — из правил мира.
+/// A creature's mutation: the multiplier is no lower than 0.1, and one that falls lower is drawn
+/// again, as in the Python version. The sigma comes from the world's rules.
 const SCALE: Mutation = Mutation::Scale { keep_above: None, reject_below: Some(-0.9) };
 
-/// Таблица генов. Только дописывать в конец (см. `genome/mod.rs`).
+/// The gene table. Only append to the end (see `genome/mod.rs`).
 ///
-/// Процентные гены при мутации держатся в 0‒100. The layer, the division, the shooting and the
+/// Percent genes are held in 0‒100 when they mutate. The layer, the division, the shooting and the
 /// care for children were genes until `life-behavior/14`: they are settings of the behaviour
 /// programs now (`program.rs`).
 pub const GENES: [GeneSpec; N] = [
@@ -209,7 +209,7 @@ pub const GENES: [GeneSpec; N] = [
 pub struct CreatureGenome([f64; N]);
 
 impl CreatureGenome {
-    /// Стартовый геном — базы таблицы.
+    /// The starting genome: the table's bases.
     pub const BASE: Self = Self(bases(&GENES));
 
     pub const fn from_values(values: [f64; N]) -> Self {
@@ -220,7 +220,7 @@ impl CreatureGenome {
         self.0
     }
 
-    /// Тот же геном с другим значением одного гена.
+    /// The same genome with another value of one gene.
     pub const fn with(mut self, gene: Gene, value: f64) -> Self {
         self.0[gene as usize] = value;
         self

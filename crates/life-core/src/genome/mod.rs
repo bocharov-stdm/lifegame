@@ -1,17 +1,17 @@
-//! Геном таблицей: у каждого вида — список генов (`GENES`) с именем, подписью,
-//! базой, видом значения и законом мутации. Всё, что обходит гены (мутация,
-//! сводки, отчёт, графики, карточка существа), идёт по таблице, а не по
-//! номерам: новый ген — одна строка таблицы и его действие в фенотипе.
+//! The genome as a table: every species has a list of genes (`GENES`) with a name, a label, a
+//! base, a kind of value and a law of mutation. Everything that walks the genes (mutation,
+//! summaries, the report, charts, a creature's card) goes by the table, not by numbers: a new
+//! gene is one row of the table and its effect in the phenotype.
 //!
-//! **Таблица только дописывается в конец.** От порядка генов зависят порядок
-//! случайных чисел при мутации (значит, каждый сид), позиции генов в эталоне
-//! баланса и JSON отчёта.
+//! **The table is only appended to at the end.** The order of the genes determines the order of
+//! random numbers in mutation (so every seed), the genes' positions in the balance reference
+//! and in the report's JSON.
 //! Deliberate exceptions: the numeric `carnivory` row was replaced in place by the choice gene
 //! `diet` (model `life-behavior/10`), and `life_pace` by `maturation` (same law, same draws). A
 //! gene that no longer acts should not keep a dead row that still draws numbers, and replacing it
 //! in place keeps every later gene's position.
 //!
-//! Значение гена всегда f64: у гена-выбора это номер варианта (0, 1, 2…).
+//! A gene's value is always an f64: for a choice gene it is the number of the variant (0, 1, 2…).
 
 pub mod creature;
 
@@ -20,7 +20,7 @@ use crate::rng::Rng;
 
 pub use creature::CreatureGenome;
 
-/// Вариант гена-выбора: например, стратегия поведения.
+/// A variant of a choice gene: for example, a behaviour strategy.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Variant {
     pub key: &'static str,
@@ -28,31 +28,30 @@ pub struct Variant {
     pub about: &'static str,
 }
 
-/// Какое значение у гена.
+/// What kind of value a gene has.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GeneKind {
-    /// Число в своих единицах (размер, скорость, зрение).
+    /// A number in its own units (size, speed, sight).
     Absolute,
-    /// Проценты: при мутации держатся в 0‒100.
+    /// Percent: held in 0‒100 when it mutates.
     Percent,
-    /// Один из вариантов; значение — его номер.
+    /// One of the variants; the value is its number.
     Choice(&'static [Variant]),
 }
 
-/// Как ген меняется у потомка.
+/// How a gene changes in a descendant.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mutation {
-    /// Умножение на (1 + gauss(0, sigma)). `keep_above: Some(p)` — сначала
-    /// жребий: выпало больше p — ген не меняется. `reject_below: Some(m)` —
-    /// множитель ниже 1 + m перетягивается заново (без этого при большой
-    /// сигме ген уходил бы в ноль и в минус).
+    /// A multiplication by (1 + gauss(0, sigma)). `keep_above: Some(p)` — a draw first: if it
+    /// comes out above p, the gene does not change. `reject_below: Some(m)` — a multiplier below
+    /// 1 + m is drawn again (without this, with a big sigma a gene would go to zero and below).
     Scale { keep_above: Option<f64>, reject_below: Option<f64> },
     /// A percent gene whose zero means something (the warm-blooded `cold_blood` 0): adds
     /// gauss(0, `points` × the spread's share of `MUTATION_SIGMA`) points, clamped to 0‒100. A
     /// factor could never move it off zero.
     Shift { points: f64 },
-    /// Смена варианта с шансом `chance` на любой другой. С одним вариантом
-    /// жребий не тянется вовсе: ген инертен и не сдвигает случайные числа.
+    /// A change of variant with chance `chance` to any other one. With one variant no draw is
+    /// taken at all: the gene is inert and shifts no random numbers.
     Switch { chance: f64 },
     /// A step to a neighbouring variant: `of[k]` lists the neighbours of variant `k` (the diets:
     /// the omnivore is a fork to the herbivore, the scavenger and the carnivore), `up[k]` those of
@@ -72,17 +71,17 @@ pub enum Mutation {
     },
 }
 
-/// Строка таблицы генов.
+/// A row of the gene table.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GeneSpec {
-    /// Машинное имя: JSON отчёта, эталон баланса.
+    /// The machine name: the report's JSON, the balance reference.
     pub key: &'static str,
-    /// Короткая подпись для таблиц и графиков.
+    /// A short label for tables and charts.
     pub label: &'static str,
-    /// Что ген делает — для справки и подсказок.
+    /// What the gene does — for reference and hints.
     pub about: &'static str,
     pub kind: GeneKind,
-    /// Значение у стартовых существ.
+    /// The value of the starting creatures.
     pub base: f64,
     pub mutation: Mutation,
 }
@@ -100,7 +99,7 @@ impl GeneSpec {
     }
 }
 
-/// Геном вида: значения по таблице `GENES`.
+/// A species' genome: values by the `GENES` table.
 pub trait Genome: Copy + PartialEq + core::fmt::Debug + 'static {
     const GENES: &'static [GeneSpec];
 
@@ -108,25 +107,25 @@ pub trait Genome: Copy + PartialEq + core::fmt::Debug + 'static {
 
     fn values_mut(&mut self) -> &mut [f64];
 
-    /// Значение гена по машинному имени.
+    /// A gene's value by its machine name.
     fn get(&self, key: &str) -> Option<f64> {
         index_of(Self::GENES, key).map(|i| self.values()[i])
     }
 }
 
-/// Номер гена в таблице по машинному имени.
+/// A gene's number in the table by its machine name.
 pub fn index_of(genes: &[GeneSpec], key: &str) -> Option<usize> {
     genes.iter().position(|g| g.key == key)
 }
 
-/// Мутация значений по таблице, ген за геном в её порядке. `sigma` — разброс
-/// законов `Scale` — из правил мира.
-/// `mutability` — ген мутагенности родителя (`mutability_of`): умножает и
-/// разброс, и шанс смены варианта, у всех генов сразу, включая себя самого.
+/// The mutation of values by the table, gene after gene in its order. `sigma` — the spread of
+/// the `Scale` laws — comes from the world's rules.
+/// `mutability` is the parent's mutability gene (`mutability_of`): it multiplies both the spread
+/// and the chance of a change of variant, for all genes at once, itself included.
 ///
-/// Порядок и число случайных чисел — часть поведения мира: у существ цикл
-/// gauss до множителя не ниже 0.1 (`reject_below`), с `keep_above` — ещё жребий
-/// «оставить» перед ним.
+/// The order and the number of random numbers are part of the world's behaviour: for creatures
+/// a gauss loop until a multiplier of at least 0.1 (`reject_below`), with `keep_above` one more
+/// «keep» draw before it.
 ///
 /// `diet` replaces the chances of the `Neighbours` law (step, step up, jump, own leaps) with the
 /// world's rules.
@@ -147,8 +146,8 @@ pub(crate) fn mutate_values(
                 {
                     continue;
                 }
-                // Шанс перетягивания не выше половины при любой сигме, так что
-                // цикл конечен (сигма обязана быть конечной — это проверяет Rules).
+                // The chance of drawing again is no higher than a half at any sigma, so the loop is finite
+                // (the sigma must be finite — `Rules` checks this).
                 let gauss = match reject_below {
                     Some(floor) => loop {
                         let g = rng.gauss(0.0, sigma);
@@ -171,10 +170,10 @@ pub(crate) fn mutate_values(
             Mutation::Switch { chance } => {
                 let n = spec.variants().map_or(0, <[Variant]>::len);
                 if n < 2 {
-                    continue; // один вариант: менять не на что, жребий не тянем
+                    continue; // one variant: nothing to change to, no draw is taken
                 }
                 if rng.random() < chance * mutability {
-                    // любой другой вариант, равновероятно
+                    // any other variant, with equal probability
                     let k = rng.randint(0, n as i64 - 2) as usize;
                     let current = *value as usize;
                     *value = (k + (k >= current) as usize) as f64;
@@ -300,12 +299,12 @@ impl Heredity {
     }
 }
 
-/// Какой вариант гена-выбора получит существо `i` из `n` при стартовой смеси
-/// `shares` (доли по порядку вариантов; пустая — у всех первый).
+/// Which variant of a choice gene creature `i` of `n` gets at the starting mix `shares` (the
+/// shares in the order of the variants; an empty one — the first for all).
 ///
-/// Без жребия: существо `i` берёт вариант, чья накопленная доля покрывает
-/// точку (i + 0.5) / n. Смесь, разыгранная случайно, сдвинула бы все случайные
-/// числа мира — и тот же сид дал бы другой мир при другой смеси.
+/// Without a draw: creature `i` takes the variant whose cumulative share covers the point
+/// (i + 0.5) / n. A mix dealt at random would shift all the world's random numbers — and the
+/// same seed would give another world at another mix.
 pub fn variant_for(i: usize, n: usize, shares: &[f64], variants: usize) -> usize {
     let total: f64 = shares.iter().sum();
     if variants == 0 || n == 0 || total.is_nan() || total <= 0.0 {
@@ -339,7 +338,7 @@ pub fn spread_ranks(n: usize) -> Vec<usize> {
     ranks
 }
 
-/// Базовые значения таблицы — стартовый геном.
+/// The table's base values — the starting genome.
 pub(crate) const fn bases<const N: usize>(genes: &[GeneSpec; N]) -> [f64; N] {
     let mut out = [0.0; N];
     let mut i = 0;

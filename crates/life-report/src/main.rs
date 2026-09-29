@@ -1,24 +1,24 @@
-//! Отчёт о балансе без окна — преемник `python/sim_report.py` (тег python-final).
+//! A balance report without a window — the successor of `python/sim_report.py` (tag python-final).
 //!
-//!     cargo run -p life-report --release                              # сид 1, 600 тиков
+//!     cargo run -p life-report --release                              # seed 1, 600 ticks
 //!     cargo run -p life-report --release -- --seeds 1 2 3 --ticks 3000
 //!     cargo run -p life-report --release -- --rule plant_energy=80 --rule size_power=1.5
-//!     cargo run -p life-report --release -- --scale 100 --ticks 2000   # мир в 100 раз больше
-//!     cargo run -p life-report --release -- --scale 100 --shape 1:1    # и квадратный
-//!     cargo run -p life-report --release -- --mix 1 1                # стратегии поровну
-//!     cargo run -p life-report --release -- --diet-mix 1             # все травоядные
+//!     cargo run -p life-report --release -- --scale 100 --ticks 2000   # a world 100 times bigger
+//!     cargo run -p life-report --release -- --scale 100 --shape 1:1    # and a square one
+//!     cargo run -p life-report --release -- --mix 1 1                # the strategies equally
+//!     cargo run -p life-report --release -- --diet-mix 1             # all herbivores
 //!     cargo run -p life-report --release -- --compare reference/fingerprint.json
 //!     cargo run -p life-report --release -- --save-reference reference/fingerprint.json
 //!
-//! Чтобы понять, что происходило (человеку или ИИ, без окна):
+//! To understand what happened (for a person or an AI, without a window):
 //!
-//!     cargo run -p life-report --release -- --ticks 20000 --maps 4       # рассказ + карты
-//!     cargo run -p life-report --release -- --seeds 1 2 3 --story        # рассказ по каждому сиду
-//!     cargo run -p life-report --release -- --ticks 5000 --json -        # всё в JSON в stdout
+//!     cargo run -p life-report --release -- --ticks 20000 --maps 4       # the story + maps
+//!     cargo run -p life-report --release -- --seeds 1 2 3 --story        # a story for every seed
+//!     cargo run -p life-report --release -- --ticks 5000 --json -        # everything as JSON to stdout
 //!
-//! Сиды считаются параллельно, по одному на ядро. Лимиты те же, что в Python:
-//! бюджет работы растёт с числом тиков, и оборванные прогоны сводка
-//! перечисляет отдельно, а не выдаёт за здоровые.
+//! The seeds are computed in parallel, one to a core. The limits are the same as in Python: the
+//! work budget grows with the number of ticks, and the summary lists cut-off runs separately
+//! instead of passing them off as healthy.
 
 mod json;
 mod metrics;
@@ -37,83 +37,82 @@ use life_sim::observe::{self, Event, ascii_map};
 use life_sim::{Limits, SimResult, simulate};
 use rayon::prelude::*;
 
-/// Бюджет «существа x растения» на тик — как WORK_PER_TICK в Python.
+/// The «creatures x plants» budget per tick — like WORK_PER_TICK in Python.
 const WORK_PER_TICK: f64 = 60_000.0;
 
 #[derive(Parser, Debug)]
 #[command(about = "Отчёт о балансе lifegame без окна")]
 struct Args {
-    /// Один сид (если не заданы --seeds).
+    /// One seed (if --seeds is not given).
     #[arg(long, default_value_t = 1)]
     seed: u64,
-    /// Несколько сидов — сводная таблица.
+    /// Several seeds — a summary table.
     #[arg(long, num_args = 1..)]
     seeds: Vec<u64>,
-    /// Тиков на прогон (по умолчанию 600; для --save-reference — 20 000).
+    /// Ticks per run (600 by default; for --save-reference — 20 000).
     #[arg(long)]
     ticks: Option<u64>,
-    /// Срез раз во столько тиков (по умолчанию — 50 срезов на прогон; для
-    /// --save-reference — 60, кратно периоду деления).
+    /// A sample once in this many ticks (by default 50 samples per run; for --save-reference — 60,
+    /// a multiple of the division period).
     #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     sample: Option<u64>,
-    /// Масштаб мира по площади (1 — базовый 6000x4000; от 1 до 10 000).
+    /// The world's scale by area (1 is the base 6000x4000; from 1 to 10 000).
     #[arg(long, default_value_t = 1.0, value_parser = parse_scale)]
     scale: f64,
-    /// Форма мира: 1:1, 3:2, 2:1 или strip (полоса высотой 4000, как до форм).
-    /// При масштабе 1 полоса и 3:2 — один и тот же мир 6000x4000.
+    /// The world's shape: 1:1, 3:2, 2:1 or strip (a strip 4000 high, as before the shapes).
+    /// At scale 1 a strip and 3:2 are one and the same 6000x4000 world.
     #[arg(long, default_value = "3:2", value_parser = Shape::parse)]
     shape: Shape,
-    /// Существ на старте (по умолчанию — по площади мира). Старое имя
-    /// `--vegetarians` тоже понимается.
+    /// Creatures at the start (by default by the world's area). The old name `--vegetarians` is
+    /// understood too.
     #[arg(long, alias = "vegetarians")]
     creatures: Option<usize>,
-    /// Стартовая смесь стратегий: доли вариантов по порядку (стандартный,
-    /// затаившийся). Например, `--mix 1 1` — поровну. Старое имя — `--veg-mix`.
+    /// The starting mix of strategies: the shares of the variants in order (standard, lurker).
+    /// For example, `--mix 1 1` — equally. The old name is `--veg-mix`.
     #[arg(long, alias = "veg-mix", num_args = 1.., value_name = "ДОЛИ")]
     mix: Vec<f64>,
-    /// Диеты основателей: доли по порядку (травоядный, всеядный, падальщик, мясоед).
-    /// По умолчанию 70 30 0 0 — мясные диеты возникают из мутантов; `--diet-mix 1` — все травоядные.
+    /// The founders' diets: the shares in order (herbivore, omnivore, scavenger, carnivore).
+    /// By default 70 30 0 0 — meat diets arise from mutants; `--diet-mix 1` — all herbivores.
     #[arg(long, num_args = 1.., value_name = "ДОЛИ")]
     diet_mix: Vec<f64>,
     /// How many times bigger the meat-eating founders (scavengers, carnivores) start; default 2.
     #[arg(long, value_name = "РАЗ")]
     meat_founders: Option<f64>,
-    /// Правило мира: имя=число (можно несколько раз). Профиль еды — и именем:
+    /// A world rule: name=number (can be repeated). A food profile is also given by name:
     /// `--rule plant_width_profile=waves`.
     #[arg(long = "rule", value_name = "ИМЯ=ЧИСЛО")]
     rules: Vec<String>,
-    /// Бюджет работы на весь прогон (по умолчанию растёт с --ticks).
+    /// The work budget for the whole run (by default grows with --ticks).
     #[arg(long)]
     max_work: Option<f64>,
-    /// Дедлайн одного прогона, секунд.
+    /// The deadline of one run, seconds.
     #[arg(long, default_value_t = 600)]
     seconds: u64,
-    /// Потоков процессора (по умолчанию все).
+    /// Processor threads (all by default).
     #[arg(long)]
     threads: Option<usize>,
-    /// Сверить с эталонным отпечатком (reference/fingerprint.json): берутся его
-    /// сиды и число тиков; правила, масштаб и старт обязаны совпадать.
+    /// Check against a reference fingerprint (reference/fingerprint.json): its seeds and number of
+    /// ticks are taken; the rules, the scale and the start must match.
     #[arg(long)]
     compare: Option<PathBuf>,
-    /// Снять новый эталон с Rust и записать в ФАЙЛ (формат --compare). Сиды по
-    /// умолчанию 1‒8. Нужно после намеренной смены баланса.
+    /// Take a new reference from Rust and write it to a FILE (the --compare format). The default
+    /// seeds are 1‒8. Needed after a deliberate change of balance.
     #[arg(long, value_name = "ФАЙЛ")]
     save_reference: Option<PathBuf>,
-    /// Рассказ о каждом прогоне: причины смертей, промежутки, геном, глубина,
-    /// хроника событий. Для одного сида печатается и без флага.
+    /// A story of each run: causes of deaths, intervals, genome, depth, the chronicle of events.
+    /// For one seed it is printed even without the flag.
     #[arg(long)]
     story: bool,
-    /// Строк в таблице промежутков рассказа.
+    /// Rows in the story's table of intervals.
     #[arg(long, default_value_t = 12)]
     rows: usize,
-    /// Карт мира текстом на прогон — через равные промежутки, последняя в конце
-    /// (включает рассказ).
+    /// Text maps of the world per run — at equal intervals, the last at the end (includes the story).
     #[arg(long, default_value_t = 0)]
     maps: usize,
-    /// Ширина карты, символов.
+    /// The map's width, characters.
     #[arg(long, default_value_t = 72)]
     map_width: usize,
-    /// Весь отчёт в JSON: каждый срез, хроника, карты. «-» — в stdout вместо текста.
+    /// The whole report as JSON: every sample, the chronicle, maps. «-» — to stdout instead of text.
     #[arg(long, value_name = "ФАЙЛ")]
     json: Option<PathBuf>,
     /// Write «tick of ticks» to this file about once a second (one seed; `life-sweep` shows it).
@@ -139,8 +138,8 @@ fn parse_rules(pairs: &[String]) -> Result<Rules, String> {
     Ok(rules)
 }
 
-/// Смесь стратегий: доли не отрицательные, в сумме больше нуля, не больше
-/// вариантов, чем есть.
+/// A mix of strategies: the shares are non-negative, sum to more than zero, and there are no
+/// more than there are variants.
 fn check_mix(flag: &str, shares: &[f64], variants: &[Variant]) -> Result<(), String> {
     if shares.len() > variants.len() {
         let names: Vec<&str> = variants.iter().map(|v| v.label).collect();
@@ -175,7 +174,7 @@ fn main() {
     check_mix("--mix", &args.mix, &creature_strategy::VARIANTS).unwrap_or_else(|e| fail(e));
     check_mix("--diet-mix", &args.diet_mix, &life_core::genome::creature::DIET_VARIANTS)
         .unwrap_or_else(|e| fail(e));
-    // JSON в stdout — и больше ничего: текст сломал бы разбор
+    // JSON to stdout — and nothing else: text would break the parsing
     let quiet = args.json.as_deref().is_some_and(|p| p.as_os_str() == "-");
     if quiet && (args.compare.is_some() || args.save_reference.is_some()) {
         fail("сверку и эталон нельзя печатать вместе с JSON в stdout: укажите --json ФАЙЛ".into());
@@ -209,8 +208,8 @@ fn main() {
         metrics::Reference::load(path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())))
     });
     if let Some(r) = &reference {
-        // сравнивать можно только одинаковые миры: иначе «расхождение» — это
-        // разница условий, а не баланса
+        // only identical worlds can be compared: otherwise a «divergence» is a difference of
+        // conditions, not of balance
         r.check_same_world(&base_cfg).unwrap_or_else(|e| fail(format!("эталон снят на другом мире: {e}")));
         if let Some(note) = r.genes_note() {
             eprintln!("заметка: {note}");
@@ -220,7 +219,8 @@ fn main() {
         args.sample = Some(r.sample_every);
     }
     if reference.is_some() || saving {
-        // эталон снимается без бюджета работы — иначе сравнивали бы оборванное с целым
+        // a reference is taken without a work budget — otherwise a cut-off run would be compared with a whole
+        // one
         args.max_work.get_or_insert(1e15);
     }
 
@@ -286,7 +286,7 @@ fn main() {
                     written = Instant::now();
                 }
             });
-            // последняя карта — всегда конечное состояние, даже если прогон оборван
+            // the last map is always the final state, even if the run was cut off
             if args.maps > 0 && maps.last().map(|m| m.0) != Some(res.world.tick) {
                 maps.push((res.world.tick, ascii_map(&res.world, args.map_width)));
             }
@@ -335,7 +335,7 @@ fn main() {
         println!("\nэталон записан: {}", path.display());
     }
     println!("\nвсего {:.1} с", started.elapsed().as_secs_f64());
-    // Сверка — проверка, а не справка: расхождение с эталоном должно ронять CI.
+    // The comparison is a check, not a reference: a divergence from the reference must fail CI.
     if !agrees {
         eprintln!("ошибка: баланс разошёлся с эталоном");
         std::process::exit(1);

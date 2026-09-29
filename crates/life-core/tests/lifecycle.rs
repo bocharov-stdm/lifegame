@@ -1,4 +1,4 @@
-//! Регрессии жизненного цикла.
+//! Regressions of the life cycle.
 use life_core::corpse::Stage;
 use life_core::creature::strategy::Divide;
 use life_core::creature::{Action, Block, Creature, Diet, Phenotype, Program};

@@ -22,7 +22,7 @@ fn hunter(size: f64) -> CreatureGenome {
     genom(size).with(Gene::Diet, life_core::creature::Diet::Carnivore as usize as f64)
 }
 
-/// Пустой мир: ни существ, ни растений.
+/// An empty world: neither creatures nor plants.
 fn empty_world(rules: Rules) -> World {
     let mut w = World::new(&WorldConfig { seed: 3, rules, n_creatures: Some(0), ..Default::default() });
     w.plants.clear();
@@ -50,9 +50,9 @@ fn dividing(v: &mut Creature, tank: f64, share: f64) {
     v.mind.stance.divide = Some(life_core::creature::strategy::Divide { tank, share });
 }
 
-// ── регрессии ───────────────────────────────────────────────────────────────
+// ── regressions ─────────────────────────────────────────────────────────────
 
-/// Темп растений — ожидаемое число за тик, а не вероятность (было: ровно 1 за тик).
+/// The plants' pace is an expected number per tick, not a probability (it was: exactly 1 a tick).
 /// Seeds landing in occupied slots are lost, so an empty world fills
 /// logistically: `cap * (1 - exp(-rate * t / cap))`.
 #[test]
@@ -183,7 +183,7 @@ fn a_hunter_leaves_the_big_and_the_distant_alone() {
     }
 }
 
-// ── родство и бегство ──────────────────────────────────────────────────────
+// ── kinship and flight ─────────────────────────────────────────────────────
 
 /// A child knows its parent. Family is a parent and its growing child while the parent still
 /// knows it (base care: until the child is adult); siblings and grandchildren are strangers.
@@ -269,7 +269,7 @@ fn threat_world(big: f64, dx: f64, kin: impl Fn(&mut World)) -> World {
     w
 }
 
-/// Тик мира: сдвиг мелкого по x и y и бежит ли он теперь.
+/// A world tick: the small one's shift in x and y and whether it is now running.
 fn small_step(mut w: World) -> (f64, f64, bool) {
     let (x0, y0) = (w.creatures[1].x, w.creatures[1].y);
     w.step();
@@ -279,7 +279,7 @@ fn small_step(mut w: World) -> (f64, f64, bool) {
 
 #[test]
 fn мелкий_бежит_от_крупного_чужака() {
-    // до края тела крупного 150 - 50 = 100: ближе трети зрения (133)
+    // to the big one's body edge 150 - 50 = 100: closer than a third of sight (133)
     let w = threat_world(100.0, 150.0, |_| {});
     let speed = w.creatures[1].pheno.speed;
     let (dx, dy, fleeing) = small_step(w);
@@ -327,9 +327,8 @@ fn does_not_flee_a_parent_that_knows_it_nor_an_equal_or_distant_one() {
     }
 }
 
-/// Испуг длится FLEE_TICKS тиков и тогда, когда угроза пропала из виду, —
-/// даже мимо видимой еды; потом существо снова идёт к еде. Затаившийся бежит
-/// на полной скорости.
+/// A fright lasts FLEE_TICKS ticks even when the threat has gone out of sight — even past
+/// visible food; then the creature goes to the food again. A lurker runs at full speed.
 #[test]
 fn бежит_ещё_после_пропажи_угрозы() {
     let food = |_: f64, _: f64, _: f64| Some((900.0, 1000.0));
@@ -350,7 +349,7 @@ fn бежит_ещё_после_пропажи_угрозы() {
         move_once(&mut v, &senses_from(food));
         assert!(v.x < x, "испуг прошёл, а к еде не идёт");
     }
-    // угроза в виду, но дальше порога — к еде
+    // the threat in view, but beyond the threshold — to the food
     let mut v = creature(1000.0, 1000.0, BASE);
     // the template flees from a hunter within a third of its sight
     let far = Threat { gap: v.pheno.vision * FLEE_SIGHT_SHARE + 1.0, ..threat };
@@ -400,7 +399,7 @@ fn a_hunter_spares_its_growing_child_but_not_a_brother() {
     );
 }
 
-/// Мир с бегством детерминирован: сородичей видят по снимку на начало фазы.
+/// A world with flight is deterministic: relatives are seen by the snapshot at the start of the phase.
 #[test]
 fn мир_с_бегством_детерминирован() {
     let run = || {
@@ -417,13 +416,13 @@ fn мир_с_бегством_детерминирован() {
     assert!(a.2 > 0, "за 2000 тиков никто ни разу не испугался");
 }
 
-/// Умершее от голода на своём ходу существо не ест и не делится.
+/// A creature that starved to death on its own move neither eats nor divides.
 #[test]
 fn умерший_от_голода_не_ест() {
     let mut w = empty_world(Rules::default());
     w.spawn(genom(40.0), 1000.0, 1000.0, None);
     let v = &mut w.creatures[0];
-    v.energy = v.pheno.upkeep / 2.0; // этот ход — последний
+    v.energy = v.pheno.upkeep / 2.0; // this move is the last
     let (x, y) = (v.x, v.y);
     w.plants.push(Plant::at(x, y));
     w.plants.push(Plant::at(x + 5.0, y));
@@ -432,7 +431,7 @@ fn умерший_от_голода_не_ест() {
     assert!(w.plants.iter().filter(|p| p.y == y).count() == 2, "труп съел растение");
 }
 
-/// После деления у родителя остаётся резерв (было: отдавал всё и умирал).
+/// After a division the parent keeps a reserve (it was: it gave everything and died).
 #[test]
 fn родитель_сохраняет_резерв() {
     // Without mutation the child's capacity is known (half of 40 by 2.5), so a large share
@@ -457,7 +456,7 @@ fn родитель_сохраняет_резерв() {
     assert!(divided > 0 && blocked > 0, "одна из веток не проверена");
 }
 
-/// Тело крупнее мира не выходит за мир и не прыгает дальше скорости.
+/// A body bigger than the world does not leave the world and does not jump farther than its speed.
 #[test]
 fn огромное_тело_не_прыгает() {
     let s = Space::default();
@@ -484,8 +483,8 @@ fn огромное_тело_не_прыгает() {
     }
 }
 
-/// Ребёнок рождается у родителя (слой мягкий — не телепортируется в свой),
-/// внутри мира и не на диагонали от родителя.
+/// A child is born next to its parent (the layer is soft — it is not teleported into its
+/// own), inside the world and not on a diagonal from the parent.
 #[test]
 fn ребёнок_рождается_у_родителя() {
     let (s, r) = (Space::default(), Rules::default());
@@ -514,7 +513,7 @@ fn ребёнок_рождается_у_родителя() {
     assert!(outside > 0, "ни один ребёнок не родился вне своего слоя — тест ничего не проверил");
 }
 
-/// Слой мягкий: растение над слоем видно — существо идёт и съедает его.
+/// The layer is soft: a plant above the layer is visible — the creature goes and eats it.
 #[test]
 fn еда_над_слоем_съедается() {
     // no plants grow: a nearer sprout between patches would be eaten first
@@ -537,7 +536,7 @@ fn еда_над_слоем_съедается() {
     assert!(w.creatures[0].y < body_lo, "съело, не выходя из слоя?");
 }
 
-/// Вне своего слоя и без еды существо возвращается домой и дальше держится в слое.
+/// Outside its layer and without food a creature returns home and then keeps to the layer.
 #[test]
 fn без_еды_возвращается_в_слой() {
     let mut v = creature(3000.0, 500.0, BASE);
@@ -562,7 +561,7 @@ fn без_еды_возвращается_в_слой() {
     assert!(t < ideal + 5, "шло домой {t} тиков вместо ~{ideal}: не по прямой");
 }
 
-/// Слой уже тела: существо живёт на линии и не стоит столбом.
+/// A layer narrower than the body: the creature lives on a line and does not stand like a post.
 #[test]
 fn схлопнутый_слой_проходим() {
     let mut v = creature(3000.0, 2000.0, BASE);
@@ -571,7 +570,8 @@ fn схлопнутый_слой_проходим() {
     assert_eq!(body_lo, body_hi);
     let x0 = v.x;
     for _ in 0..50 {
-        // Сытость ниже порога отдыха: здесь проверяется именно движение по линии.
+        // The fullness is below the rest threshold: what is checked here is precisely the movement along a
+        // line.
         v.energy = v.pheno.max_energy * 0.8;
         v.step(&Blind);
         assert_eq!(v.y, body_lo);
@@ -579,15 +579,15 @@ fn схлопнутый_слой_проходим() {
     assert!(v.x != x0, "существо на схлопнутом слое стоит столбом");
 }
 
-// ── стратегии и гены поведения ─────────────────────────────────────────────
+// ── strategies and behaviour genes ─────────────────────────────────────────
 
 const LURKER: CreatureGenome = BASE.with(Gene::Strategy, 1.0);
-/// Расход, восстановленный из разницы энергий, совпадает с точностью до округления.
+/// The upkeep recovered from the difference of energies matches up to rounding.
 fn close(a: f64, b: f64) -> bool {
     (a - b).abs() < 1e-12
 }
 
-/// Ход существа: (пройдено, потрачено).
+/// A creature's move: (distance covered, energy spent).
 fn move_once(v: &mut Creature, senses: &impl life_core::senses::Senses) -> (f64, f64) {
     let (x, y, e) = (v.x, v.y, v.energy);
     v.step(senses);
@@ -633,7 +633,7 @@ fn a_lurker_without_food_wanders_slowly() {
     }
 }
 
-/// К еде затаившийся идёт на полной скорости.
+/// A lurker goes to food at full speed.
 #[test]
 fn затаившийся_к_еде_на_полной() {
     let mut v = creature(1000.0, 1000.0, LURKER);
@@ -683,7 +683,7 @@ fn a_child_inherits_its_parents_program_and_it_mutates_now_and_then() {
     }
 }
 
-/// Смешанный мир: стартовая смесь раздаётся без жребия, и тот же сид — тот же мир.
+/// A mixed world: the starting mix is dealt without a draw, and the same seed is the same world.
 #[test]
 fn смешанный_мир_детерминирован() {
     let cfg = WorldConfig { seed: 5, strategies: vec![1.0, 1.0], ..Default::default() };
@@ -731,11 +731,11 @@ fn a_world_of_mutating_programs_runs_and_stays_deterministic() {
     assert!(changes(0) >= 2 && changes(1) >= 2, "lineages gather mutations in both tracks");
 }
 
-// ── сетка соседей ───────────────────────────────────────────────────────────
+// ── the neighbour grid ──────────────────────────────────────────────────────
 
-/// Сетка обязана быть НАДмножеством честного перебора. Пропусти она соседа —
-/// существо перестанет замечать еду под носом, а численность останется
-/// правдоподобной, так что другие тесты этого не поймают.
+/// The grid must be a SUPERset of an honest brute-force search. Should it miss a neighbour, a
+/// creature would stop noticing food under its nose while the population stays plausible, so
+/// other tests would not catch it.
 #[test]
 fn сетка_совпадает_с_перебором() {
     let mut rng = Rng::new(42);
@@ -744,7 +744,7 @@ fn сетка_совпадает_с_перебором() {
         for cell in [64.0, 256.0, 1000.0] {
             let mut pts: Vec<(f64, f64)> =
                 (0..800).map(|_| (rng.uniform(0.0, s.width), rng.uniform(0.0, s.height))).collect();
-            // точки на самых краях и углах мира
+            // points on the very edges and corners of the world
             pts.extend([(0.0, 0.0), (s.width, s.height), (0.0, s.height), (s.width, 0.0)]);
             let mut g = Grid::new(cell);
             g.rebuild(&s, pts.iter().copied());
@@ -769,7 +769,7 @@ fn сетка_совпадает_с_перебором() {
     }
 }
 
-// ── правила ────────────────────────────────────────────────────────────────
+// ── rules ──────────────────────────────────────────────────────────────────
 
 #[test]
 fn не_конечные_правила_отвергаются() {
@@ -779,7 +779,7 @@ fn не_конечные_правила_отвергаются() {
     assert!(Rules::default().with("нет_такого", 1.0).is_err());
 }
 
-/// Значения, при которых правило теряет смысл, отвергаются; края допустимого — нет.
+/// Values at which a rule loses meaning are rejected; the edges of what is allowed are not.
 #[test]
 fn бессмысленные_правила_отвергаются() {
     let r = Rules::default();
@@ -803,7 +803,7 @@ fn расход_по_умолчанию_это_формула_конфига() {
     }
 }
 
-/// Показатель меняет крутизну, а базовый стат стоит столько же.
+/// An exponent changes the steepness, and the base stat costs the same.
 #[test]
 fn показатель_меняет_крутизну_а_не_базу() {
     let base = Rules::default();
@@ -823,7 +823,7 @@ fn цена_статов_масштабирует_всё() {
     assert!((double.upkeep(55.0, 17.0, 300.0) - 2.0 * base.upkeep(55.0, 17.0, 300.0)).abs() < 1e-12);
 }
 
-// ── инварианты и воспроизводимость ─────────────────────────────────────────
+// ── invariants and reproducibility ─────────────────────────────────────────
 
 #[test]
 fn инварианты_держатся_со_временем() {
@@ -836,7 +836,7 @@ fn инварианты_держатся_со_временем() {
             let g = v.genome.values();
             for (spec, x) in GENES.iter().zip(g) {
                 match spec.variants() {
-                    // ген-выбор — номер существующего варианта
+                    // a choice gene is the number of an existing variant
                     Some(variants) => {
                         assert!(x.fract() == 0.0 && (*x as usize) < variants.len(), "ген {} = {x}", spec.key)
                     }
@@ -871,9 +871,9 @@ fn один_сид_один_мир() {
     assert_ne!(run(5), run(6));
 }
 
-/// Счётчики — бухгалтерия без потерь: сколько было, плюс родилось, минус
-/// съедено и умерло, равно тому, сколько есть. Пропусти мир одну смерть —
-/// отчёт стал бы объяснять численность неверными причинами.
+/// The counters are lossless bookkeeping: how many there were, plus born, minus eaten and
+/// dead, equals how many there are. Should the world miss one death, the report would explain
+/// the population by wrong causes.
 #[test]
 fn счётчики_сходятся_с_численностью() {
     let mut w = World::new(&WorldConfig { seed: 3, ..Default::default() });
@@ -888,8 +888,8 @@ fn счётчики_сходятся_с_численностью() {
     assert_eq!(c.since(&c), Counters::default());
 }
 
-/// Большой мир — тот же мир, только больше: стартовые популяции и потолки
-/// растут с площадью. Полоса растёт вширь, остальные формы — в обе стороны.
+/// A big world is the same world, only bigger: the starting populations and the ceilings grow
+/// with the area. A strip grows in width, the other shapes both ways.
 #[test]
 fn масштаб_растит_площадь() {
     let strip = World::new(&WorldConfig { scale: 10.0, shape: Shape::Strip, ..Default::default() });
@@ -910,15 +910,15 @@ fn масштаб_растит_площадь() {
     assert!((PLANT_MAX * 2 * 9 / 10..=PLANT_MAX * 2).contains(&e.plants.len()), "{}", e.plants.len());
 }
 
-/// Мир уже базового не строится: в узком мире полоса блуждания переворачивалась,
-/// и мир падал на первом же тике вместо внятной ошибки.
+/// A world narrower than the base is not built: in a narrow world the wandering strip turned
+/// over, and the world crashed on the very first tick instead of giving a clear error.
 #[test]
 #[should_panic(expected = "масштаб мира")]
 fn масштаб_меньше_базового_отвергается() {
     Space::new(0.01, Shape::Strip);
 }
 
-/// Гигантский масштаб — внятная ошибка, а не падение на выделении памяти.
+/// A gigantic scale is a clear error, not a crash on a memory allocation.
 #[test]
 #[should_panic(expected = "масштаб мира")]
 fn масштаб_больше_предела_отвергается() {
@@ -973,16 +973,16 @@ fn стартовые_численности_известны_до_постро�
     }
 }
 
-// ── производительность ─────────────────────────────────────────────────────
+// ── performance ────────────────────────────────────────────────────────────
 
-/// Страж от обвала скорости: сетка держит тик почти линейным по численности, полный
-/// перебор делает его квадратичным. Два мира одной плотности — ×2,5 с 1000 существ и 1000
-/// растений и ×10 с 4000/4000, оба с толпами по 50 существ, — и отношение их тиков: с
-/// сеткой большой дороже примерно вчетверо, при переборе — примерно в 16 раз. Порог 8 ловит
-/// поломку вроде «сетка перестала работать и всё стало O(n²)», а не скорость машины:
-/// абсолютные миллисекунды на медленном CI гуляли больше, чем вдвое. Замеры чередуются, от
-/// каждого мира берётся лучший (шум только замедляет). Растения подсыпаются каждый тик, чтобы
-/// нагрузка не таяла.
+/// A guard against a collapse of speed: the grid keeps a tick almost linear in the population,
+/// a brute-force search makes it quadratic. Two worlds of one density — ×2.5 with 1000
+/// creatures and 1000 plants and ×10 with 4000/4000, both with crowds of 50 creatures — and
+/// the ratio of their ticks: with the grid the big one is about four times dearer, with a
+/// brute-force search about 16 times. The threshold 8 catches a breakage like «the grid stopped
+/// working and everything became O(n²)», not the machine's speed: absolute milliseconds on a
+/// slow CI wandered by more than a factor of two. The measurements alternate, the best of each
+/// world is taken (noise only slows). Plants are topped up every tick so that the load does not melt.
 #[test]
 fn тик_растёт_линейно_с_численностью() {
     fn world(n: usize) -> World {
@@ -1034,7 +1034,7 @@ fn тик_растёт_линейно_с_численностью() {
     );
 }
 
-// ── игра: выбор, слежение, правила на ходу ──────────────────────────────────
+// ── the game: selection, following, rules on the fly ────────────────────────
 
 #[test]
 fn выбор_кликом_совпадает_с_перебором_в_живом_мире() {
@@ -1043,7 +1043,8 @@ fn выбор_кликом_совпадает_с_перебором_в_живо�
         w.step();
     }
     assert!(w.creatures.len() > 20);
-    // Клики по сетке точек: ответ — ближайший по краю тела среди тех, кто ближе radius.
+    // Clicks on a grid of points: the answer is the nearest by the body's edge among those closer than
+    // radius.
     let radius = 15.0;
     let mut hits = 0;
     for i in 0..60 {
@@ -1093,8 +1094,8 @@ fn новые_правила_пересчитывают_живых_как_нов
     assert_eq!(w.rules, rules);
 }
 
-/// Профиль еды меняется на ходу: выросшее остаётся на местах, новое растёт
-/// по-новому. Мир пустой, поэтому растения не едят и порядок их сохраняется.
+/// The food profile changes on the fly: what has grown stays in place, what is new grows
+/// anew. The world is empty, so the plants are not eaten and their order is kept.
 #[test]
 fn профиль_еды_меняется_на_ходу() {
     let mut w = empty_world(Rules::default());
@@ -1103,7 +1104,7 @@ fn профиль_еды_меняется_на_ходу() {
     }
     let before = w.plants.len();
     let third = w.space.width / 3.0;
-    // крутизна 30 по ширине: правее трети оси — e^-10 еды
+    // a steepness of 30 across the width: right of a third of the axis — e^-10 of the food
     let rules = w
         .rules
         .with_text("plant_width_profile", "exp")

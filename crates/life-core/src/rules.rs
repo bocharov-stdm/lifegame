@@ -1,7 +1,7 @@
-//! Правила мира, которые игрок меняет в «Лаборатории», не трогая config.rs.
+//! The world's rules that the player changes in the «Лаборатория», without touching config.rs.
 //!
-//! У каждого мира свой `Rules`: миров в процессе бывает два сразу (фон меню и
-//! игра). Значения по умолчанию — ровно константы из config.rs.
+//! Every world has its own `Rules`: there can be two worlds in a process at once (the menu's
+//! background and the game). The default values are exactly the constants of config.rs.
 
 use crate::config::*;
 use crate::flora::{self, Along, FoodAxis, Profile};
@@ -80,8 +80,8 @@ pub const DIET_RULE_KEYS: [[&str; 10]; 4] = [
     ],
 ];
 
-/// Имена настраиваемых правил — для отчёта (`--rule имя=число`) и настроек.
-/// Профили еды — по шесть на ось, по порядку `flora::AXIS_PARAMS`; the diet edges come last.
+/// The names of the configurable rules — for the report (`--rule name=number`) and the settings.
+/// The food profiles — six per axis, in the order of `flora::AXIS_PARAMS`; the diet edges come last.
 pub const RULE_KEYS: [&str; 90] = {
     let mut all = [""; 90];
     let mut i = 0;
@@ -160,7 +160,7 @@ const WORLD_RULE_KEYS: [&str; 50] = [
 /// with fewer a patch is a lone plant, not an island.
 pub const MAX_PATCHES: f64 = 300.0;
 
-/// Параметры профилей еды, пока их не выбрали (config.rs).
+/// The parameters of the food profiles while none have been chosen (config.rs).
 const FOOD_AXIS: FoodAxis = FoodAxis {
     profile: 0.0,
     steepness: PLANT_WIDTH_DECAY,
@@ -228,30 +228,30 @@ fn split_diet_key(key: &str) -> Option<(usize, &str)> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Rules {
-    /// Растений за тик на базовый мир 6000x4000 (не вероятность).
+    /// Plants per tick per base world 6000x4000 (not a probability).
     pub plant_rate: f64,
-    /// Энергии за одно растение.
+    /// Energy per plant.
     pub plant_energy: f64,
-    /// Разброс мутаций существ.
+    /// The spread of the creatures' mutations.
     pub mutation_sigma: f64,
-    /// Множитель ко всей цене статов.
+    /// A multiplier on the whole price of the stats.
     pub cost_scale: f64,
-    /// Крутизна цены размера.
+    /// The steepness of the size price.
     pub size_power: f64,
-    /// Крутизна цены скорости.
+    /// The steepness of the speed price.
     pub speed_power: f64,
-    /// Крутизна цены зрения.
+    /// The steepness of the sight price.
     pub sight_power: f64,
-    /// Где растёт еда: профиль по глубине и по ширине (`flora.rs`).
+    /// Where the food grows: the profile by depth and by width (`flora.rs`).
     pub plant_depth: FoodAxis,
     pub plant_width: FoodAxis,
-    /// Цена рождения и сила/стоимость боя; умолчания берутся из config.rs.
+    /// The price of birth and the strength/cost of a fight; the defaults come from config.rs.
     pub repro_cost: f64,
     pub melee_damage_share: f64,
     pub shot_damage_share: f64,
     pub shot_energy_share: f64,
     pub shot_period: f64,
-    /// Доля питательной ценности растения, усваиваемая за пять порций.
+    /// The share of a plant's nutritional value digested over five portions.
     pub plant_bite_yield: f64,
     /// Patches of food per base world (0 — scattered) and their mean radius (`flora.rs`).
     pub plant_patches: f64,
@@ -301,7 +301,7 @@ pub struct Rules {
     pub thermo_bottom: f64,
     /// What each diet is good at, by diet (H/O/S/C).
     pub diets: [DietEdges; 4],
-    // производные коэффициенты — считает `renormalize`
+    // derived coefficients — computed by `renormalize`
     size_coef: f64,
     speed_coef: f64,
     sight_coef: f64,
@@ -371,9 +371,9 @@ fn unknown(key: &str) -> String {
 }
 
 impl Rules {
-    /// Копия с другим значением одного правила. Неизвестное имя и не конечное
-    /// число — ошибка, а не молчание: NaN ломает не арифметику, а циклы
-    /// (мутация ждёт gauss >= -0.9, а с сигмой NaN не дождётся никогда).
+    /// A copy with another value of one rule. An unknown name and a non-finite number are an
+    /// error, not silence: NaN breaks not arithmetic but loops (the mutation waits for
+    /// gauss >= -0.9, and with a NaN sigma it never will).
     pub fn with(&self, key: &str, value: f64) -> Result<Rules, String> {
         if !value.is_finite() {
             return Err(format!("правило {key}: нужно конечное число, а не {value}"));
@@ -442,9 +442,9 @@ impl Rules {
             "corpse_rest" => r.corpse_rest = value,
             _ => return Err(unknown(key)),
         }
-        // Пределы — только те, за которыми правило теряет смысл, а не «разумные»:
-        // лаборатория для того и нужна, чтобы ломать баланс. Отрицательная цена
-        // статов кормила бы существ за то, что они живут.
+        // The limits are only those past which a rule loses meaning, not «reasonable» ones: the lab
+        // exists precisely to break the balance. A negative price of the stats would feed the
+        // creatures for living.
         let allowed = match key {
             "shot_period" => value >= 1.0 && value.fract() == 0.0,
             "plant_bite_yield" => (0.0..=1.0).contains(&value),
@@ -490,8 +490,8 @@ impl Rules {
         Ok(r)
     }
 
-    /// Как `with`, но значение — текстом: числом, а у профиля еды — и именем
-    /// (`plant_width_profile=waves`). Для флагов `--rule` отчёта и игры.
+    /// Like `with`, but the value is text: a number, and for a food profile also a name
+    /// (`plant_width_profile=waves`). For the `--rule` flags of the report and the game.
     pub fn with_text(&self, key: &str, text: &str) -> Result<Rules, String> {
         let text = text.trim();
         if !RULE_KEYS.contains(&key) {
@@ -510,7 +510,7 @@ impl Rules {
         }
     }
 
-    /// Значение правила по имени (для отчёта и настроек).
+    /// A rule's value by name (for the report and the settings).
     pub fn get(&self, key: &str) -> Option<f64> {
         if let Some((d, edge)) = split_diet_key(key) {
             return self.diets[d].clone().slot(edge).map(|v| *v);
@@ -575,10 +575,10 @@ impl Rules {
         }
     }
 
-    /// Смена показателя меняет только КРУТИЗНУ: базовый стат стоит столько же,
-    /// сколько стоил. Иначе показатель 1.5 вместо 2.5 сделал бы размер почти
-    /// бесплатным целиком, и опыт мерил бы не то. При показателях из конфига
-    /// множитель — base ** 0.0, то есть ровно 1.0.
+    /// Changing an exponent changes only the STEEPNESS: the base stat costs as much as it did.
+    /// Otherwise an exponent of 1.5 instead of 2.5 would make size almost entirely free, and the
+    /// experiment would measure the wrong thing. At the config's exponents the multiplier is
+    /// base ** 0.0, that is exactly 1.0.
     fn renormalize(&mut self) {
         // the prices are exactly 1.0 by default: the products keep config's bits
         self.size_coef = SIZE_ENERGY_COEF
@@ -595,8 +595,8 @@ impl Rules {
             * self.sight_cost;
     }
 
-    /// Расход энергии за тик: COEF * стат ** POWER, суммарно по трём статам.
-    /// Цена скорости ещё и растёт с размером: см. SPEED_MASS_POWER.
+    /// The energy spent per tick: COEF * stat ** POWER, summed over the three stats.
+    /// The speed's price also grows with size: see SPEED_MASS_POWER.
     pub fn upkeep(&self, size: f64, speed: f64, vision: f64) -> f64 {
         self.upkeep_diet(size, speed, vision, [1.0, 1.0])
     }
@@ -727,7 +727,7 @@ mod tests {
         assert_eq!((r.plant_patches, r.plant_patch_size), (PLANT_PATCHES, PLANT_PATCH_SIZE));
     }
 
-    /// Пределы — только за которыми правило теряет смысл.
+    /// The limits are only those past which a rule loses meaning.
     #[test]
     fn профиль_еды_отвергает_бессмыслицу() {
         let r = Rules::default();

@@ -1,12 +1,11 @@
-//! Тесты экранов без окна (egui_kittest) — преемник `TestLayout` Python-версии.
+//! Screen tests without a window (egui_kittest) — the successor of the Python version's `TestLayout`.
 //!
-//! Каждый экран на наименьшем окне 960×600 и на обычном 1600×900: кнопки и
-//! ползунки целиком в окне и не налезают друг на друга. Масштаб интерфейса ×2
-//! на окне вдвое большего размера даёт ту же раскладку в точках, поэтому
-//! отдельно не проверяется.
+//! Every screen on the smallest window 960×600 and on a usual one 1600×900: buttons and sliders
+//! whole inside the window and not overlapping one another. An interface scale of ×2 on a window
+//! twice the size gives the same layout in points, so it is not checked separately.
 //!
-//! С переменной TINYLIFE_SHOTS=папка тесты ещё и сохраняют картинки экранов —
-//! чтобы посмотреть на них глазами.
+//! With the variable TINYLIFE_SHOTS=folder the tests also save pictures of the screens — to look
+//! at them with one's own eyes.
 
 use eframe::egui::accesskit::Role;
 use eframe::egui::{Event, Modifiers, PointerButton, Pos2, Rect, Vec2};
@@ -25,8 +24,8 @@ const CARNIVORE: f64 = life_core::creature::Diet::Carnivore as usize as f64;
 const SCAVENGER: f64 = life_core::creature::Diet::Scavenger as usize as f64;
 use crate::stats::StatsTab;
 
-/// Видеокарта одна: параллельные рендеры wgpu в одном процессе роняют
-/// драйвер на Windows, поэтому тесты экранов идут по очереди.
+/// There is one graphics card: parallel wgpu renders in one process crash the driver on
+/// Windows, so the screen tests go one after another.
 static GPU: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn gpu() -> std::sync::MutexGuard<'static, ()> {
@@ -44,7 +43,7 @@ fn harness_with(size: Vec2, cfg: WorldConfig) -> Harness<'static, LifeApp> {
     let mut h =
         Harness::builder().with_size(size).wgpu().build_eframe(|cc| LifeApp::new(cc, Some(cfg), None));
     h.state_mut().sim.send(Command::SetPaused(true));
-    // первый кадр мира приходит из потока симуляции; ждём ограниченно
+    // the world's first frame comes from the simulation thread; we wait a limited time
     for _ in 0..300 {
         h.step();
         if h.state().view.frame.is_some() {
@@ -53,7 +52,7 @@ fn harness_with(size: Vec2, cfg: WorldConfig) -> Harness<'static, LifeApp> {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(h.state().view.frame.is_some(), "кадр мира пришёл");
-    // историю и хронику — чтобы графикам было что рисовать
+    // the history and the chronicle — so that the charts have something to draw
     for _ in 0..600 {
         h.state_mut().sim.send(Command::Step);
     }
@@ -67,8 +66,8 @@ fn harness_with(size: Vec2, cfg: WorldConfig) -> Harness<'static, LifeApp> {
     h
 }
 
-/// Прогнать несколько кадров окна (не `run`: поток симуляции будит окно сам,
-/// и «пока не успокоится» не наступает).
+/// Run a few window frames (not `run`: the simulation thread wakes the window by itself, and
+/// «until it settles» never comes).
 fn settle(h: &mut Harness<'static, LifeApp>) {
     for _ in 0..6 {
         h.step();
@@ -78,9 +77,9 @@ fn settle(h: &mut Harness<'static, LifeApp>) {
 const ROLES: [Role; 6] =
     [Role::Button, Role::CheckBox, Role::Slider, Role::ComboBox, Role::Tab, Role::SpinButton];
 
-/// Все кнопки, флажки и ползунки — целиком в окне и не налезают друг на друга.
-/// `scrolled` — прокручиваемая область: что ушло из неё прокруткой, не ошибка
-/// раскладки, и такие элементы не проверяются.
+/// All buttons, checkboxes and sliders are whole inside the window and do not overlap.
+/// `scrolled` — a scrollable area: what left it by scrolling is not a layout error, and such
+/// elements are not checked.
 fn check_layout(h: &Harness<'static, LifeApp>, size: Vec2, what: &str, scrolled: Option<Rect>) {
     let window = Rect::from_min_size(Pos2::ZERO, size).expand(0.5);
     let mut widgets: Vec<(String, Rect)> = Vec::new();
@@ -154,7 +153,7 @@ fn игра_помещается_в_окно() {
                 h.state().view.frame.as_ref().and_then(|f| f.selected).expect("существо выбрано");
             }
             settle(h);
-            // боковая панель прокручивается: от её вкладок до нижней панели
+            // the side panel scrolls: from its tabs to the bottom panel
             let top = h.get_by_label("Графики").rect();
             let bottom = h.get_by_label("Выбор").rect().top();
             let panel =
@@ -184,15 +183,14 @@ fn игра_помещается_в_окно() {
     });
 }
 
-/// Крупный план: вблизи у существ кайма, ядро сытости и глазок
-/// (`creatures.wgsl`). Шейдер компилируется и рисует — остальное видно на
-/// картинке с TINYLIFE_SHOTS.
+/// A close-up: near, creatures have a rim, a fullness core and an eye (`creatures.wgsl`). The
+/// shader compiles and draws — the rest is visible in the picture with TINYLIFE_SHOTS.
 #[test]
 fn крупный_план_рисуется() {
     let _gpu = gpu();
     let mut h = harness(NORMAL);
     h.state_mut().side_open = false;
-    // там, где существ гуще всего: существо с наибольшим числом соседей
+    // where the creatures are thickest: the creature with the most neighbours
     let (x, y) = {
         let f = h.state().view.frame.as_ref().expect("кадр");
         let all = h.state().view.instances();
@@ -211,7 +209,7 @@ fn крупный_план_рисуется() {
         cam.zoom = 1.5;
         cam.center_on(x, y);
     }
-    // кадр для нового вида приходит из потока симуляции
+    // the frame for the new view comes from the simulation thread
     for _ in 0..100 {
         h.step();
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -221,8 +219,8 @@ fn крупный_план_рисуется() {
     shot(&mut h, "крупный-план-1600x900");
 }
 
-/// Квадратный мир с едой волнами по ширине: вблизи видна миникарта квадратом,
-/// и она не заслоняет инструменты.
+/// A square world with food in waves across the width: near, the minimap is seen as a square,
+/// and it does not cover the tools.
 #[test]
 fn квадратный_мир_помещается_в_окно() {
     let _gpu = gpu();
@@ -298,7 +296,7 @@ fn меню_и_новый_мир_помещаются_в_окно() {
             check_layout(h, size, &format!("новый мир, {tab:?}, {tag}"), None);
             shot(h, &format!("новый-мир-{tab:?}-{tag}"));
         }
-        // волны по обеим осям: у каждой оси видны два параметра — самая длинная вкладка
+        // waves along both axes: each axis shows two parameters — the longest tab
         h.state_mut().setup_tab = Tab::Food;
         let s = &mut h.state_mut().settings;
         s.set(Key::PlantDepthProfile, Profile::Waves.index());
@@ -387,8 +385,8 @@ fn новый_мир_из_экрана_настроек_запускает_па�
     assert_eq!(h.state().screen, Screen::Game);
 }
 
-/// Окно «Статистика» на всех вкладках, с заданной областью: элементы окна
-/// в окне программы и не налезают друг на друга.
+/// The «Статистика» window on all tabs, with a region set: the window's elements are inside the
+/// program's window and do not overlap.
 #[test]
 fn статистика_помещается_в_окно() {
     let _gpu = gpu();
@@ -506,9 +504,10 @@ fn следы_залпа_и_труп_рисуются_без_окна() {
     }
 }
 
-/// Вблизи едящий тянет хоботок к еде: травоядный — к растению, падальщик — к гнилому трупу на
-/// дне, мясоед — к свежему. Каёмка — цвет диеты. Кадр несёт это в `meta` (бит «ест», направление
-/// и длина); сам рисунок виден на картинке с TINYLIFE_SHOTS.
+/// Near, an eater stretches its proboscis to the food: a herbivore to a plant, a scavenger to a
+/// rotten corpse on the bottom, a carnivore to a fresh one. The rim is the diet's colour. The
+/// frame carries this in `meta` (the «eats» bit, the direction and the length); the picture
+/// itself is visible in the image with TINYLIFE_SHOTS.
 #[test]
 fn хоботок_тянется_к_еде_вблизи() {
     use life_core::{CreatureGenome, Rules, World, corpse::Corpse, genome::creature::Gene, plant::Plant};
@@ -586,8 +585,8 @@ fn хоботок_тянется_к_еде_вблизи() {
     }
 }
 
-/// При отдалении тела становятся двухпиксельными квадратами, а выключение рендера
-/// прекращает сбор всех слоёв мира, сохраняя карточку и статистику.
+/// When zooming out the bodies become two-pixel squares, and switching the render off stops
+/// collecting all the world's layers, keeping the card and the statistics.
 #[test]
 fn режимы_рендера_и_размер_трупа_без_окна() {
     use life_core::{CreatureGenome, Rules, World, corpse::Corpse, genome::creature::Gene};
@@ -708,7 +707,7 @@ fn режимы_рендера_и_размер_трупа_без_окна() {
         assert!(h.query_by_label("Снять выбор").is_some(), "{tag}: карточка работает без рендера");
         shot(&mut h, &format!("рендер-выкл-{tag}"));
 
-        // Пустой фон остаётся интерактивной областью: подсадка работает и без рисунка мира.
+        // An empty background stays an interactive area: planting works even without the world's picture.
         let before = h.state().view.frame.as_ref().unwrap().creatures;
         h.state_mut().tool = Tool::Spawn;
         let pos = Pos2::new(size.x * 0.35, size.y * 0.5);

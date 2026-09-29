@@ -1,30 +1,29 @@
-//! Пространство мира: масштаб и форма.
+//! The world's space: scale and shape.
 //!
-//! Масштаб — это площадь при прежней плотности. Всё, что задано «на мир» —
-//! темп растений, их потолок, стартовая популяция, — умножается
-//! на `area_ratio`. Форма решает, куда мир растёт: полоса — только вширь (высота
-//! остаётся 4000, как было всегда), остальные формы — в обе стороны, держа
-//! пропорции. Вертикальная экология (профиль еды по глубине, гены слоя) задана в
-//! процентах глубины, поэтому переносится на любую высоту.
+//! Scale is the area at the former density. Everything set «per world» — the plants' pace,
+//! their ceiling, the starting population — is multiplied by `area_ratio`. The shape decides
+//! where the world grows: a strip only in width (the height stays 4000, as it always was), the
+//! other shapes both ways, keeping proportions. The vertical ecology (the food profile by depth,
+//! the layer genes) is given in percent of depth, so it carries over to any height.
 
 use crate::config::{WORLD_HEIGHT, WORLD_WIDTH};
 
-/// Меньше базового мира не бывает: баланс подобран на нём, а в узком мире
-/// ломается геометрия (полоса блуждания уже тела).
+/// There is no world smaller than the base one: the balance is tuned on it, and in a narrow
+/// world the geometry breaks (the wandering strip is narrower than the body).
 pub const MIN_SCALE: f64 = 1.0;
-/// И больше этого тоже не бывает: мир x10 000 — уже 200 тыс. существ на
-/// старте и 15 млн растений в потолке. Дальше память кончается раньше, чем
-/// видна разница, и без предела процесс падал бы на выделении памяти вместо
-/// внятной ошибки.
+/// And no bigger than this either: a world x10 000 is already 200 thousand creatures at the
+/// start and 15 million plants in the ceiling. Beyond that memory runs out before any difference
+/// shows, and without a limit the process would fall over on an allocation instead of a clear
+/// error.
 pub const MAX_SCALE: f64 = 10_000.0;
 
-/// Форма мира. Площадь задаёт масштаб, форма — пропорции.
+/// The world's shape. The area sets the scale, the shape the proportions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Shape {
-    /// Высота 4000, мир растёт только вширь — так было до форм.
+    /// A height of 4000, the world grows only in width — as it was before shapes.
     Strip,
     Square,
-    /// Пропорции базового мира 6000x4000: при x1 это он и есть.
+    /// The proportions of the base world 6000x4000: at x1 this is it.
     R3x2,
     R2x1,
 }
@@ -32,7 +31,7 @@ pub enum Shape {
 impl Shape {
     pub const ALL: [Shape; 4] = [Shape::Square, Shape::R3x2, Shape::R2x1, Shape::Strip];
 
-    /// Имя для флагов и файлов: `--shape 3:2`.
+    /// The name for flags and files: `--shape 3:2`.
     pub fn key(self) -> &'static str {
         match self {
             Shape::Strip => "strip",
@@ -59,7 +58,7 @@ impl Shape {
         })
     }
 
-    /// Ширина к высоте; у полосы пропорции растут с масштабом.
+    /// Width to height; for a strip the proportions grow with the scale.
     pub fn ratio(self) -> Option<f64> {
         match self {
             Shape::Strip => None,
@@ -83,7 +82,7 @@ impl Default for Space {
 }
 
 impl Space {
-    /// Мир в `scale` раз больше базового по площади, заданной формы.
+    /// A world `scale` times bigger than the base by area, of the given shape.
     pub fn new(scale: f64, shape: Shape) -> Self {
         assert!(
             (MIN_SCALE..=MAX_SCALE).contains(&scale),
@@ -91,8 +90,8 @@ impl Space {
         );
         match shape.ratio() {
             None => Space { width: WORLD_WIDTH * scale, height: WORLD_HEIGHT },
-            // При 3:2 и x1: 24e6 / 1.5 = 16e6, корень — ровно 4000, ширина —
-            // ровно 6000. Базовый мир получается бит в бит.
+            // At 3:2 and x1: 24e6 / 1.5 = 16e6, the root is exactly 4000, the width exactly 6000. The
+            // base world comes out bit for bit.
             Some(r) => {
                 let height = (WORLD_WIDTH * WORLD_HEIGHT * scale / r).sqrt();
                 Space { width: r * height, height }
@@ -100,17 +99,17 @@ impl Space {
         }
     }
 
-    /// Полоса: мир в `scale` раз больше базового по площади (растёт ширина).
+    /// A strip: a world `scale` times bigger than the base by area (the width grows).
     pub fn scaled(scale: f64) -> Self {
         Space::new(scale, Shape::Strip)
     }
 
-    /// Во сколько раз площадь больше базового мира 6000x4000.
+    /// How many times the area is bigger than the base world 6000x4000.
     pub fn area_ratio(&self) -> f64 {
         self.width * self.height / (WORLD_WIDTH * WORLD_HEIGHT)
     }
 
-    /// Величина, заданная на базовый мир, пересчитанная на этот (не меньше 1).
+    /// A quantity given for the base world, recomputed for this one (at least 1).
     pub fn per_area(&self, base: usize) -> usize {
         ((base as f64 * self.area_ratio()).round() as usize).max(1)
     }
@@ -135,7 +134,7 @@ mod tests {
         }
     }
 
-    /// Эталон баланса снят на x1: при 3:2 это тот же мир, бит в бит.
+    /// The balance reference was taken at x1: at 3:2 this is the same world, bit for bit.
     #[test]
     fn три_к_двум_при_единице_это_базовый_мир() {
         assert_eq!(Space::new(1.0, Shape::R3x2), Space::default());

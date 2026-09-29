@@ -1,6 +1,5 @@
-//! Экран игры: верхняя панель (темп и численности), нижняя (инструменты),
-//! мир, боковая панель (графики, хроника, существо), лаборатория на ходу,
-//! конец игры.
+//! The game screen: the top panel (tempo and counts), the bottom one (tools), the world, the
+//! side panel (charts, chronicle, creature), the lab on the fly, the end of the game.
 
 use eframe::egui::{self, Align2, Key, RichText, Vec2};
 use life_core::flora::Profile;
@@ -18,7 +17,7 @@ use crate::sim::{Command, SPEEDS};
 use crate::theme::{self, ACCENT, DANGER, GOOD, MUTED, TEXT, rgb, spaced};
 use crate::view::Click;
 
-/// Скорость панорамы клавишами, точек экрана в секунду.
+/// The speed of panning with the keys, screen points a second.
 const PAN_SPEED: f64 = 900.0;
 
 fn speed_label(index: usize) -> String {
@@ -42,7 +41,7 @@ pub(crate) fn hunting_summary(history: &History) -> Option<([f64; 4], f64)> {
     Some((diets, last.shooters as f64 / last.creatures as f64 * 100.0))
 }
 
-/// Команда `life-report`, которая повторяет партию без окна.
+/// The `life-report` command that repeats a game without a window.
 pub fn report_command(cfg: &WorldConfig, ticks: u64) -> String {
     let mut cmd =
         format!("cargo run -p life-report --release -- --seed {} --ticks {}", cfg.seed, ticks.max(600));
@@ -69,7 +68,7 @@ pub fn report_command(cfg: &WorldConfig, ticks: u64) -> String {
     for key in life_core::rules::RULE_KEYS {
         let (v, d) = (cfg.rules.get(key), default.get(key));
         if let Some(v) = v.filter(|v| Some(*v) != d) {
-            // профиль еды — именем: plant_width_profile=waves понятнее, чем =4
+            // the food profile by name: plant_width_profile=waves is clearer than =4
             match life_core::flora::split_key(key) {
                 Some((_, "profile")) => cmd += &format!(" --rule {key}={}", Profile::of(v).key()),
                 _ => cmd += &format!(" --rule {key}={v}"),
@@ -80,7 +79,7 @@ pub fn report_command(cfg: &WorldConfig, ticks: u64) -> String {
 }
 
 impl LifeApp {
-    /// Спокойный профиль доступен и существующей партии со старыми настройками.
+    /// The calm profile is available to an existing game with old settings too.
     pub fn calm_world(&mut self) {
         let Some(f) = &self.view.frame else { return };
         let rules = f.rules.with("cost_scale", 3.0).expect("допустимая стоимость содержания");
@@ -421,7 +420,7 @@ impl LifeApp {
         });
     }
 
-    /// Для исследователя: как повторить партию без окна.
+    /// For a researcher: how to repeat a game without a window.
     fn research(&mut self, ui: &mut egui::Ui) {
         let (Some(game), Some(f)) = (&self.game, &self.view.frame) else { return };
         ui.collapsing("Повторить без окна", |ui| {
@@ -670,7 +669,7 @@ impl LifeApp {
     }
 }
 
-/// Карточка выбранного существа: энергия, гены.
+/// The card of the selected creature: energy, genes.
 /// `behaviour`: whether its behaviour window is open; the card's header toggles it.
 fn creature_card(
     ui: &mut egui::Ui,
@@ -769,8 +768,8 @@ fn creature_card(
     });
 }
 
-/// Гены существа по таблице. `avg` — средний геном популяции: кто этот —
-/// крупнее, дальнозорче? Ген-выбор с одним вариантом не показывается.
+/// A creature's genes by the table. `avg` is the population's mean genome: who is this one —
+/// bigger, more far-sighted? A choice gene with one variant is not shown.
 fn gene_rows(ui: &mut egui::Ui, genes: &[GeneSpec], g: &[f64], avg: Option<&[f64; N]>) {
     for (i, spec) in genes.iter().enumerate().filter(|(_, spec)| charts::shown(spec)) {
         ui.colored_label(MUTED, spec.label);
@@ -781,7 +780,7 @@ fn gene_rows(ui: &mut egui::Ui, genes: &[GeneSpec], g: &[f64], avg: Option<&[f64
             continue;
         }
         let percent = spec.is_percent();
-        // мелкие величины (скорость) — с десятыми, крупные — целыми
+        // small values (speed) with tenths, big ones in whole numbers
         ui.label(match (percent, g[i] < 20.0) {
             (true, _) => format!("{:.0}%", g[i]),
             (false, true) => format!("{:.1}", g[i]),

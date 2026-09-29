@@ -1,6 +1,6 @@
-//! Тесты наблюдателя: срезы, хроника, карта. Хроника — то, по чему ИИ или
-//! человек судит о прогоне без окна, поэтому ложное или пропущенное событие
-//! здесь так же плохо, как ошибка в движке.
+//! Tests of the observer: samples, the chronicle, the map. The chronicle is what an AI or a
+//! person judges a run by without the window, so a false or a missed event is as bad here as a
+//! bug in the engine.
 
 use life_core::config::*;
 use life_core::genome::creature::Gene;
@@ -56,7 +56,7 @@ fn срез_раскладывает_всех_по_глубине() {
     assert!(s.genes.is_none() && s.depth.is_none() && s.fullness.is_none());
 }
 
-/// Одна волна по ширине — богатая полоса посередине: полосы среза это видят.
+/// One wave across the width — a rich strip in the middle: the sample's bands see it.
 #[test]
 fn срез_видит_еду_по_ширине() {
     let rules = life_core::Rules::default()
@@ -88,19 +88,19 @@ fn хроника_видит_обвал_и_вымирание() {
     let k = kinds(&[before.clone(), after, Snapshot::of(&w)]);
     assert_eq!(k, [EventKind::CreaturesCrash, EventKind::CreaturesExtinct]);
 
-    // без перемен — без событий
+    // no changes — no events
     let mut same = before.clone();
     same.tick = 60;
     assert!(kinds(&[before, same]).is_empty());
 }
 
-/// Мелкие колебания не событие: 25 существ, ставших десятью, — шум.
+/// Small fluctuations are no event: 25 creatures becoming ten is noise.
 #[test]
 fn мелочь_не_попадает_в_хронику() {
     let mut w = world();
     w.creatures.truncate(25);
-    // Проверяем именно численность: случайный состав маленькой выборки
-    // основателей может сам по себе дать заметный сдвиг долей генов-выборов.
+    // We check the population precisely: the random composition of a small sample of founders can
+    // by itself give a noticeable shift in the shares of the choice genes.
     for v in &mut w.creatures {
         v.genome = life_core::CreatureGenome::BASE;
     }
@@ -138,7 +138,7 @@ fn карта_ставит_существо_на_место() {
     assert_eq!(map.iter().filter(|r| r.contains('o')).count(), 1);
 }
 
-/// Срезы идут в те же моменты, что история, а хроника — по порядку тиков.
+/// Samples come at the same moments as the history, and the chronicle in the order of ticks.
 #[test]
 fn прогон_снимает_срезы_вместе_с_историей() {
     let limits = Limits { ticks: 3000, sample_every: 100, ..Default::default() };
@@ -152,7 +152,7 @@ fn прогон_снимает_срезы_вместе_с_историей() {
     assert!(ev.iter().all(|e| !e.text.is_empty()));
 }
 
-/// Стратегия расползлась по популяции — хроника это видит.
+/// A strategy has spread over the population — the chronicle sees it.
 #[test]
 fn хроника_видит_смену_стратегий() {
     use life_core::genome::creature::Gene;
@@ -170,8 +170,8 @@ fn хроника_видит_смену_стратегий() {
     assert!(shifts[0].starts_with("существа") && shifts[0].contains("затаившийся"), "{shifts:?}");
 }
 
-/// Доли гена-выбора лежат в массиве на `MAX_VARIANTS`: вариантов в таблице
-/// не больше.
+/// The shares of a choice gene lie in an array of `MAX_VARIANTS`: there are no more variants in
+/// the table.
 #[test]
 fn вариантов_не_больше_места_в_срезе() {
     for spec in life_core::genome::creature::GENES.iter() {

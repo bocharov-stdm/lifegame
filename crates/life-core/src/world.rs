@@ -1,11 +1,11 @@
-//! Состояние симуляции и один логический тик.
+//! The simulation's state and one logical tick.
 //!
-//! Порядок тика: растения → существа (снимок стада, ходы, еда, бой, трупы) →
-//! счётчик тиков. Сородичей видят по снимку на начало фазы. Съеденный в этом
-//! тике и умерший на своём ходу не действуют дальше. Дети копятся в отдельном
-//! буфере и не ходят в тик рождения. Съеденные растения помечаются и
-//! выметаются раз за тик. Бой — отдельный проход после хода всех существ, когда
-//! они уже стоят; бои включены всегда.
+//! The order of a tick: plants → creatures (the herd snapshot, moves, eating, fighting, corpses)
+//! → the tick counter. Relatives are seen by the snapshot at the start of the phase. One eaten
+//! in this tick and one that died on its own move act no further. Children pile up in a separate
+//! buffer and do not move in the tick of their birth. Eaten plants are marked and swept out once
+//! a tick. A fight is a separate pass after all the creatures have moved, when they already
+//! stand; fights are always on.
 //!
 //! Predators were a species of their own until the tag `predators-final`; the meat diets and
 //! corpses took their place.
@@ -22,19 +22,19 @@ use crate::rules::Rules;
 use crate::senses::{GridSenses, Herd, bite_plant};
 use crate::space::{Shape, Space};
 
-/// С чего начинается мир. None у существ — значение из конфига,
-/// пересчитанное на площадь мира.
+/// What the world begins with. None for creatures — the value from the config, recomputed for
+/// the world's area.
 #[derive(Clone, Debug)]
 pub struct WorldConfig {
     pub seed: u64,
     pub scale: f64,
-    /// Форма мира. По умолчанию 3:2: при x1 это базовый мир 6000x4000, тот же,
-    /// что у полосы, а большой мир растёт в обе стороны, а не в ленту.
+    /// The world's shape. By default 3:2: at x1 it is the base world 6000x4000, the same as the
+    /// strip's, and a big world grows both ways, not into a ribbon.
     pub shape: Shape,
     pub rules: Rules,
     pub n_creatures: Option<usize>,
-    /// Стартовая смесь стратегий: доли вариантов по порядку `VARIANTS`
-    /// (пустая — у всех первый). Раздаётся без жребия (`variant_for`).
+    /// The starting mix of strategies: the shares of the variants in the order of `VARIANTS` (an
+    /// empty one — the first for all). Dealt without a draw (`variant_for`).
     pub strategies: Vec<f64>,
     /// Founders' diets: shares in the order of `DIET_VARIANTS` (empty — all herbivores).
     /// Dealt without a draw and spread over the founders (`spread_ranks`).
@@ -59,18 +59,18 @@ impl Default for WorldConfig {
 }
 
 impl WorldConfig {
-    /// Размеры мира: масштаб задаёт площадь, форма — пропорции.
+    /// The world's dimensions: the scale sets the area, the shape the proportions.
     pub fn space(&self) -> Space {
         Space::new(self.scale, self.shape)
     }
 
-    /// Сколько существ будет на старте: заданное или из конфига на площадь мира.
+    /// How many creatures there will be at the start: the given number or the config's for the world's area.
     pub fn creatures_at_start(&self) -> usize {
         self.n_creatures.unwrap_or_else(|| self.space().per_area(CREATURES_AT_START))
     }
 }
 
-/// Сводка по популяции; `avg_genom` и `avg_energy` — None, если существ нет.
+/// A summary of the population; `avg_genom` and `avg_energy` are None if there are no creatures.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stats {
     pub tick: u64,
@@ -80,10 +80,10 @@ pub struct Stats {
     pub avg_energy: Option<f64>,
 }
 
-/// Сколько всего выросло, родилось и умерло с начала мира. Численность говорит,
-/// ЧТО стало, а разность двух снимков счётчиков — ОТЧЕГО: существ стало
-/// меньше, потому что их съели или потому что им нечего есть. Стартовые и
-/// подсаженные существа рождениями не считаются.
+/// How many have grown, been born and died in all since the world began. The population says
+/// WHAT it became, and the difference of two counter snapshots says WHY: there are fewer
+/// creatures because they were eaten or because they have nothing to eat. Starting and planted
+/// creatures do not count as births.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Counters {
     pub plants_grown: u64,
@@ -139,7 +139,7 @@ impl DietCounters {
 }
 
 impl Counters {
-    /// Потоки за промежуток от `earlier` до `self`.
+    /// The flows over the interval from `earlier` to `self`.
     pub fn since(&self, earlier: &Counters) -> Counters {
         Counters {
             plants_grown: self.plants_grown - earlier.plants_grown,
@@ -177,14 +177,14 @@ pub struct World {
     pub counters: Counters,
 
     next_id: u64,
-    /// Где растёт еда — выведено из правил и размеров мира, пересчитывается
-    /// вместе с правилами (`set_rules`).
+    /// Where the food grows — derived from the rules and the world's dimensions, recomputed with
+    /// the rules (`set_rules`).
     flora: Flora,
     /// Occupied fertility cells, kept in step with `plants`.
     plant_cells: Occupancy,
-    /// Поток мира: растения и подсадка. У каждого существа поток свой.
+    /// The world's stream: plants and planting. Every creature has a stream of its own.
     rng: Rng,
-    /// Снимок стада на начало фазы существ: по нему видят сородичей.
+    /// The herd's snapshot at the start of the creatures' phase: relatives are seen by it.
     herd: Herd,
     prey_grid: Grid,
     food_grid: Grid,
@@ -224,7 +224,7 @@ impl World {
         for (i, &diet_rank) in diet_ranks.iter().enumerate() {
             let k = variant_for(i, n_start, &cfg.strategies, variants);
             let diet = variant_for(diet_rank, n_start, &cfg.diets, creature::DIET_VARIANTS.len());
-            // Независимые от потока мира жребии не меняют места рождения и растения.
+            // Draws independent of the world's stream do not change the places of birth and the plants.
             let mut founder = Rng::keyed(cfg.seed, 0x5A6C_5A6C_0000_0000 ^ i as u64);
             // The first two draws decided a founder's flock and territoriality until flocks went
             // (tag `flocks-final`); they stay, so the shooters are the same founders.
@@ -275,7 +275,7 @@ impl World {
         self.creatures.push(v);
     }
 
-    /// Новое существо с заданным геномом в заданном месте (для тестов и игры).
+    /// A new creature with a given genome at a given place (for tests and the game).
     pub fn spawn(&mut self, genome: CreatureGenome, x: f64, y: f64, energy: Option<f64>) -> u64 {
         let rng = self.rng.fork();
         let v = Creature::new(&self.space, &self.rules, genome, Some(x), Some(y), energy, rng);
@@ -283,15 +283,15 @@ impl World {
         self.next_id - 1
     }
 
-    // ── один логический тик ─────────────────────────────────────────────────
+    // ── one logical tick ────────────────────────────────────────────────────
     pub fn step(&mut self) {
         self.spawn_plants();
         self.update_creatures();
         self.tick += 1;
     }
 
-    /// Растений за тик — ожидаемое число (не вероятность): целую часть спауним
-    /// всегда, дробную — с соответствующим шансом. Выше потолка не растём.
+    /// Plants per tick are an expected number (not a probability): the whole part is always
+    /// spawned, the fractional part with the corresponding chance. Above the ceiling we do not grow.
     /// A seed that lands in an occupied slot (`flora.rs`) does not sprout, so
     /// growth slows as the neighbourhood fills up.
     fn spawn_plants(&mut self) {
@@ -354,8 +354,8 @@ impl World {
         corpse_grid.rebuild(space, corpses.iter().map(|c| (c.x, c.y)));
         bitten_plants.clear();
         bitten_plants.resize(plants.len(), false);
-        // Сородичей видят такими, какими они были в начале фазы: исход не
-        // зависит от порядка ходов.
+        // Relatives are seen as they were at the start of the phase: the outcome does not depend on
+        // the order of moves.
         herd.rebuild(space, creatures);
 
         let mut offspring = Vec::new();
@@ -376,15 +376,15 @@ impl World {
                     counters.starved += 1;
                 }
                 counters.by_diet.deaths[v.pheno.diet as usize][death as usize] += 1;
-                continue; // умер от голода на этом ходу: не ест и не делится
+                continue; // starved to death on this move: neither eats nor divides
             }
         }
-        // Один укус на существо и не больше одной порции с растения за тик.
+        // One bite per creature and no more than one portion from a plant per tick.
         let mut fed = vec![false; creatures.len()];
         let max_corpse_half = corpses.iter().fold(0.0_f64, |m, c| m.max(c.size * 0.5));
-        // Растения идут до боя, трупы — после. На копии заранее распределяем
-        // порции трупов по ID: тот, кому остатка уже не хватит, может взять
-        // растение сейчас, не получая второй порции в этом тике. Only the corpses somebody claims
+        // Plants go before the fight, corpses after. On a copy we distribute the corpses' portions by
+        // ID in advance: one whose remainder would no longer suffice may take a plant now, without
+        // getting a second portion in this tick. Only the corpses somebody claims
         // are copied (a few a tick); the rest are read as they lie.
         let mut claimed: Vec<(usize, crate::corpse::Corpse)> = Vec::new();
         let lying: &[crate::corpse::Corpse] = corpses;
@@ -439,8 +439,8 @@ impl World {
                 fed[i] = true;
                 feeding[i] = crate::combat::Feeding::Plants;
             } else if let Some(j) = corpse {
-                // Мясо выгоднее, или растение досталось более раннему ID: этот едок
-                // претендует на труп раньше следующих участников.
+                // The meat pays better, or the plant went to an earlier ID: this eater claims the corpse
+                // before the following participants.
                 let at = claimed.iter().position(|(k, _)| *k == j).unwrap_or_else(|| {
                     claimed.push((j, lying[j].clone()));
                     claimed.len() - 1
@@ -450,7 +450,7 @@ impl World {
                 c.bite(now, rules.plant_energy);
             }
         }
-        // Все уже сходили; новорождённых ещё нет. Удары одновременны.
+        // Everyone has already moved; there are no newborns yet. The strikes are simultaneous.
         let result = crate::combat::resolve_with(
             space,
             rules,
@@ -462,7 +462,7 @@ impl World {
         );
         counters.ranged_shots += result.len() as u64;
         shots.extend(result);
-        // Трупы прошлого тика делятся между выжившими по порядку ID.
+        // The previous tick's corpses are shared among the survivors in the order of ID.
         for (i, v) in creatures.iter_mut().enumerate() {
             if !v.alive || fed[i] || v.torpid || !takes(v, Food::Corpse) {
                 continue;
@@ -511,7 +511,7 @@ impl World {
                 plant_cells.free(p.slot());
             }
             p.alive()
-        }); // выметаем съеденное
+        }); // sweep out what has been eaten
         counters.born += offspring.len() as u64;
         for child in &offspring {
             counters.by_diet.born[child.pheno.diet as usize] += 1;
@@ -521,7 +521,7 @@ impl World {
         }
     }
 
-    // ── статистика ──────────────────────────────────────────────────────────
+    // ── statistics ──────────────────────────────────────────────────────────
     pub fn stats(&self) -> Stats {
         let n = self.creatures.len();
         let (avg_genom, avg_energy) = if n == 0 {
@@ -540,15 +540,14 @@ impl World {
         Stats { tick: self.tick, plants: self.plants.len(), creatures: n, avg_genom, avg_energy }
     }
 
-    /// Новые правила посреди партии (лаборатория на ходу). Живые существа
-    /// пересчитывают всё, что вычислили из правил при рождении, — иначе новая
-    /// цена действовала бы только на новорождённых, и игрок двигал бы ползунок,
-    /// не видя последствий.
+    /// New rules in the middle of a game (the lab on the fly). Living creatures recompute
+    /// everything they computed from the rules at birth — otherwise the new price would act only on
+    /// newborns, and the player would move a slider without seeing the consequences.
     pub fn set_rules(&mut self, rules: Rules) {
         for v in &mut self.creatures {
             v.apply_rules(&rules, &self.space);
         }
-        // уже выросшие растения остаются на местах, новые — по новому профилю
+        // plants already grown stay in place, new ones follow the new profile
         let flora = Flora::new(&rules, &self.space, self.seed);
         if flora != self.flora {
             // the slots moved: old plants hold none, and new ones fill in as they are eaten
@@ -559,18 +558,17 @@ impl World {
         self.rules = rules;
     }
 
-    /// Где растёт еда в этом мире.
+    /// Where the food grows in this world.
     pub fn flora(&self) -> &Flora {
         &self.flora
     }
 
-    // ── выбор существа (для игры) ───────────────────────────────────────────
+    // ── selecting a creature (for the game) ─────────────────────────────────
 
-    /// Номер ближайшего к точке существа, до края тела которого не дальше
-    /// `radius`. Мелкое существо находится, даже если промахнуться на `radius`;
-    /// крупное — если кликнуть в любое место его тела. Вызывается по клику,
-    /// поэтому простой перебор: сетки мира строятся внутри тика и к этому
-    /// моменту уже устарели.
+    /// The number of the creature nearest to a point, no farther than `radius` from the edge of
+    /// its body. A small creature is found even if one misses by `radius`; a big one — if one
+    /// clicks anywhere on its body. Called on a click, so a plain scan: the world's grids are built
+    /// inside a tick and are already stale by then.
     pub fn pick(&self, x: f64, y: f64, radius: f64) -> Option<u64> {
         let dist = |v: &Creature| ((v.x - x).powi(2) + (v.y - y).powi(2)).sqrt() - v.pheno.half;
         self.creatures
@@ -581,9 +579,9 @@ impl World {
             .map(|(_, id)| id)
     }
 
-    /// Существо по id. Номера выдаются по возрастанию, новые встают в конец,
-    /// а умершие удаляются с сохранением порядка — поэтому список отсортирован
-    /// по id и поиск двоичный: следить за существом можно и среди миллиона.
+    /// A creature by id. Numbers are issued in ascending order, new ones go to the end, and the
+    /// dead are removed keeping the order — so the list is sorted by id and the search is binary:
+    /// a creature can be followed even among a million.
     pub fn creature(&self, id: u64) -> Option<&Creature> {
         self.creatures.binary_search_by_key(&id, |v| v.id).ok().map(|i| &self.creatures[i])
     }
