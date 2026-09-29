@@ -454,16 +454,17 @@ pub(crate) struct Seen {
     nutrition: f64,
     /// Its melee strike: what a hunter expects back from it or from it as an ally.
     strike: f64,
-    /// Its program's defence (`Program::defence`): it strikes back an enemy with a smaller radius
-    /// than this (0: nobody), for this share of the strikes that kill it (down to its block's
-    /// health threshold). A hunter weighs what the prey will do, as the prey fears the hunter's
-    /// hunt block.
+    /// Its defence (`Menace::fight`): it strikes back an enemy with a smaller radius than this
+    /// (0: nobody), for this share of the strikes that kill it (down to its block's health
+    /// threshold). A hunter weighs what the prey did on its last move, as the prey fears the
+    /// hunter's hunt block that its tests let through.
     fights_below: f64,
     fights_share: f64,
     kinship: Kinship,
     /// It chose a target on its last move: it is hunting (or fighting) someone.
     hunting: bool,
-    /// Its program defends its children (`Program::defends`): a hunter counts it as their ally.
+    /// Its defence block's tests held on its last move (`Menace::defends`): a hunter counts it as
+    /// its children's ally.
     defends: bool,
     /// The enemy that struck it last, and — while it is young — the threat it met last: what its
     /// parent sees of its need (`child_in_need`).
@@ -499,20 +500,20 @@ impl Herd {
 
     /// A snapshot of the creatures as they stand now. At the start of the phase all are alive:
     /// the dead are swept at the end of the previous one. The ones looking into the snapshot are
-    /// the ones in it: children are born after the moves. Whom one may eat is the most permissive
-    /// hunt of the program it lives by now (`Program::hunt_ratio`).
+    /// the ones in it: children are born after the moves. Whom one may eat, how it fights back and
+    /// whether it covers its children is what its blocks did on its last move (`Creature::menace`).
     pub fn rebuild(&mut self, space: &Space, creatures: &[Creature]) {
         debug_assert!(creatures.iter().all(|v| v.alive), "в снимке стада мёртвые");
         self.seen.clear();
         self.seen.extend(creatures.iter().map(|v| {
-            let program = v.program();
+            let menace = v.menace();
             let (fights_below, fights_share) =
-                program.defence().map_or((0.0, 0.0), |(ratio, health)| (v.pheno.half * ratio, 1.0 - health));
+                menace.fight.map_or((0.0, 0.0), |(ratio, health)| (v.pheno.half * ratio, 1.0 - health));
             Seen {
                 x: v.x,
                 y: v.y,
                 half: v.pheno.half,
-                eats_up_to: match program.hunt_ratio() {
+                eats_up_to: match menace.hunt {
                     Some(ratio) if v.pheno.hunts() => v.pheno.size / ratio,
                     _ => 0.0,
                 },
@@ -523,7 +524,7 @@ impl Herd {
                 fights_share,
                 kinship: v.kinship(),
                 hunting: v.mind.attack.is_some(),
-                defends: program.defends(),
+                defends: menace.defends,
                 hit: v.mind.hit,
                 alarm: if v.adult() { None } else { v.mind.alarm },
             }
@@ -1082,7 +1083,7 @@ mod tests {
                     let got = nearest_threats(&snapshot, v.kinship(), v.x, v.y, size, within);
                     let can_eat_me = |u: &&Creature| {
                         u.pheno.hunts()
-                            && u.program().hunt_ratio().is_some_and(|ratio| size <= u.pheno.size / ratio)
+                            && u.menace().hunt.is_some_and(|ratio| size <= u.pheno.size / ratio)
                             && dist2(u.x, u.y, v.x, v.y) < (within + u.pheno.half).powi(2)
                     };
                     let gap = |u: &Creature| dist2(u.x, u.y, v.x, v.y).sqrt() - u.pheno.half;
@@ -1177,7 +1178,7 @@ mod tests {
                             let u = &w.creatures[j];
                             let mut allies = 0.0;
                             if let Some(p) = w.creatures.iter().find(|p| p.id == u.parent)
-                                && p.program().defends()
+                                && p.menace().defends
                                 && p.kinship().kin(u.kinship())
                                 && (p.x - v.x).hypot(p.y - v.y) <= v.pheno.vision
                             {

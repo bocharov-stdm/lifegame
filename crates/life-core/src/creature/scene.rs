@@ -1,7 +1,8 @@
 //! What a creature perceives each tick before and while its program runs (`strategy::plan`): the
 //! enemy that struck it, and — asked only when a block needs them — threats, its plant, the
 //! corpse, the prey and what each food is worth. Senses are pure reads, so asking late or not at
-//! all changes nothing but the time spent: a program that never hunts never looks for prey.
+//! all changes nothing but the time spent: a program that never hunts never looks for prey. A test
+//! writes nothing into its memory: only the block that goes to a plant keeps it (`Mind::personal_food`).
 //!
 //! What it takes for food depends on the settings its program applied this tick (`Stance`): the
 //! other niche's food, how far past its layer. They apply before the deciding blocks; a setting
@@ -198,13 +199,14 @@ impl Scene {
         found
     }
 
-    /// What the plant's portions left add to the tank, per tick of the way and the meal.
-    pub fn plant_score(&mut self, me: &Me, mind: &mut Mind, senses: &impl Senses) -> f64 {
+    /// What the portions left of its usual plant add to the tank, per tick of the way and the
+    /// meal; the weighing does not choose the plant.
+    pub fn plant_score(&mut self, me: &Me, senses: &impl Senses) -> f64 {
         if let Some(score) = self.plant_score {
             return score;
         }
         let score = self
-            .plant(me, mind, senses)
+            .plant_by(me, senses, PlantChoice::USUAL)
             .map_or(0.0, |(px, py)| crate::senses::plant_worth(me, px, py, senses.plant_portions(px, py)));
         self.plant_score = Some(score);
         score
@@ -233,9 +235,11 @@ impl Scene {
                 .is_some_and(|h| senses.visible_enemy(me, h.enemy).is_some()),
             Cond::Fleeing => mind.flee_ticks > 0,
             Cond::Resting => mind.rest_until > mind.tick,
-            Cond::FoodSeen => self.plant(me, mind, senses).is_some() || self.corpse(me, senses).is_some(),
+            Cond::FoodSeen => {
+                self.plant_by(me, senses, PlantChoice::USUAL).is_some() || self.corpse(me, senses).is_some()
+            }
             Cond::PreySeen => self.prey_near(me, senses, value * me.pheno.vision).is_some(),
-            Cond::PlantSeen => self.plant(me, mind, senses).is_some(),
+            Cond::PlantSeen => self.plant_by(me, senses, PlantChoice::USUAL).is_some(),
             Cond::CorpseSeen => self.corpse(me, senses).is_some(),
             Cond::Age => me.age >= value * me.pheno.lifespan,
             Cond::Winded => me.winded,

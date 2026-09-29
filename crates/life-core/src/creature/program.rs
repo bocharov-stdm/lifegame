@@ -17,8 +17,8 @@
 //! The programs are inherited apart from the gene table: a child copies its parent's; unless it is
 //! an exact copy, every number drifts a little, like its genes (`Program::drift`, the rule
 //! `program_drift` × mutability), and with the rule `program_mutation` × mutability one mutation
-//! changes each — a number, a test, an action, the order, a copy, a deletion or a new block
-//! (`Program::mutate`). Founders start from the template of their `strategy` gene
+//! changes each — a number, a test, an action, the order, a copy, a deletion, a new block, a block
+//! switched off or on (`Program::mutate`). Founders start from the template of their `strategy` gene
 //! (`Program::template`), which carries the values of the behaviour genes the programs replaced.
 //!
 //! A program is behaviour: it costs no upkeep and creates no energy — an action only chooses where
@@ -621,8 +621,8 @@ impl Action {
         match self {
             Action::FightBack => {
                 "Бьёт того, кто его ударил, или угрозу, которая уже рядом, если она не слишком велика и \
-                 хватает энергии на удар. Охотник знает это правило жертвы и боится её ударов, только \
-                 если сам в него попадает."
+                 хватает энергии на удар. Охотник знает это правило жертвы по её последнему ходу — пока \
+                 условие блока выполнено — и боится её ударов, только если сам в него попадает."
             }
             Action::Flee => {
                 "Бежит от ближайшей угрозы в поле зрения; потеряв её из виду, бежит ещё столько тиков. \
@@ -635,7 +635,8 @@ impl Action {
                  доли зрения, и бьёт её. Осторожность — насколько боится ответных ударов (100% — \
                  обычная, 0 — не боится); погоню, которая за «терпение» тиков не сократила разрыв, \
                  бросает и столько тиков эту добычу не трогает. «Только если выгоднее» — не охотится, \
-                 когда растение или падаль дают не меньше. Ход погони — доля скорости."
+                 когда растение или падаль дают не меньше. Ход погони — доля скорости. Пока условие блока \
+                 выполнено, добыча его боится; отдыхающего или бегущего — нет."
             }
             Action::EatCorpse => {
                 "Идёт к лучшей видимой падали, которую ест, и ест. «Только если выгоднее» — когда \
@@ -708,7 +709,8 @@ impl Action {
                 "Идёт на врага своего ребёнка и бьёт его, какого бы размера тот ни был: ребёнка \
                  недавно ударили или, пока он мал, его напугала угроза. Только пока ребёнок ближе \
                  этой доли зрения, бак полнее этой доли, не дольше столько тиков — потом пауза. \
-                 Охотники считают такого родителя защитником его детей."
+                 Охотники считают его защитником детей, пока условие блока выполнено на его \
+                 последнем ходу."
             }
         }
     }
@@ -908,7 +910,8 @@ struct Summary {
     reachable: u8,
     /// The farthest a threat test looks, % of sight.
     threat: u16,
-    /// Its most permissive hunt's ratio; 0: it never hunts.
+    /// Its most permissive hunt's ratio; 0: it never hunts. Its own `Cond::PreySeen` reads it;
+    /// the others read what its blocks did on its last move (`Menace`), the shape only before it.
     hunt: u16,
     /// Its first fight-back block's ratio (0: it never fights back) and health threshold.
     fight: u16,
@@ -920,7 +923,7 @@ struct Summary {
     layer: (u16, u16),
     /// It has a live shooting setting.
     shoots: bool,
-    /// It has a live block defending its children: hunters count it as its child's ally.
+    /// It has a live block defending its children.
     defends: bool,
 }
 
@@ -1144,8 +1147,8 @@ impl Program {
         !b.off() && (b.action.is_setting() || i < self.reachable())
     }
 
-    /// How many times smaller its most permissive hunt takes prey: others fear it by this. None —
-    /// it never hunts.
+    /// How many times smaller its most permissive hunt takes prey (`Cond::PreySeen`; what the
+    /// others read of it before its first move, `Menace::of`). None — it never hunts.
     pub fn hunt_ratio(&self) -> Option<f64> {
         (self.summary.hunt > 0).then(|| f64::from(self.summary.hunt) / 100.0)
     }
@@ -1223,10 +1226,17 @@ impl Program {
         }
         let len = usize::from(self.len);
         for b in &mut self.blocks[..len] {
-            let numbers: Vec<(usize, ParamSpec)> = b.numbers().collect();
-            for (slot, spec) in numbers {
-                let raw = b.number(slot);
-                *raw = spec.moved(*raw, spec.nudge * share, rng);
+            // the slots of `Block::numbers`, in its order, without collecting them
+            for slot in 0..TESTS + MAX_ARGS {
+                let spec = if slot < TESTS {
+                    b.when[slot].cond.param()
+                } else {
+                    b.action.params().get(slot - TESTS).copied()
+                };
+                if let Some(spec) = spec.filter(ParamSpec::drifts) {
+                    let raw = b.number(slot);
+                    *raw = spec.moved(*raw, spec.nudge * share, rng);
+                }
             }
         }
         self.summary = Summary::of(&self.blocks, len);
@@ -1234,8 +1244,8 @@ impl Program {
 
     /// The child's program: with chance `chance` (the rule × the parent's mutability) one
     /// mutation, else an exact copy. One draw always; a mutation draws its kind and what it needs.
-    /// A mutation that cannot apply (a full program, a single block, nothing to nudge) or lands
-    /// where it was changes nothing and is not counted.
+    /// A mutation that cannot apply (a full program, a single block, nothing to nudge, no test to
+    /// negate) or lands where it was changes nothing and is not counted.
     pub fn mutate(&mut self, chance: f64, rng: &mut Rng) {
         if rng.random() >= chance {
             return;
@@ -1283,8 +1293,20 @@ impl Program {
                 self.blocks[i].when[s] = random_test(rng);
             }
             Mutation::Negate => {
-                let (i, s) = (pick(rng, len), pick(rng, TESTS));
-                self.blocks[i].when[s].negate ^= true;
+                // only a test with a condition: «always» is `Toggle`'s, so that a negation does
+                // not knock a block out two times in three
+                let i = pick(rng, len);
+                let mut real = [0; TESTS];
+                let mut n = 0;
+                for s in 0..TESTS {
+                    if self.blocks[i].when[s].cond != Cond::Always {
+                        real[n] = s;
+                        n += 1;
+                    }
+                }
+                if n > 0 {
+                    self.blocks[i].when[real[pick(rng, n)]].negate ^= true;
+                }
             }
             Mutation::Action => {
                 let i = pick(rng, len);
@@ -1306,7 +1328,17 @@ impl Program {
             }
             Mutation::Delete => {
                 if len > 1 {
-                    let i = pick(rng, len);
+                    // a dead block first — switched off, or a deciding one never reached — so that
+                    // the dead do not pile up; any block when none is dead
+                    let mut dead = [0; MAX_BLOCKS];
+                    let mut n = 0;
+                    for i in 0..len {
+                        if !self.live(i) {
+                            dead[n] = i;
+                            n += 1;
+                        }
+                    }
+                    let i = if n > 0 { dead[pick(rng, n)] } else { pick(rng, len) };
                     self.blocks.copy_within(i + 1..len, i);
                     self.blocks[len - 1] = FILLER;
                     self.len -= 1;
@@ -1318,6 +1350,21 @@ impl Program {
                     let test = random_test(rng);
                     let action = Action::ALL[pick(rng, Action::ALL.len())];
                     self.insert(at, Block::when(test, action));
+                }
+            }
+            Mutation::Toggle => {
+                // off: every «never» back to «always»; on: the first «always» to «never» (a block
+                // of three real tests has none and stays on)
+                let i = pick(rng, len);
+                let b = &mut self.blocks[i];
+                if b.off() {
+                    for t in &mut b.when {
+                        if t.never() {
+                            t.negate = false;
+                        }
+                    }
+                } else if let Some(t) = b.when.iter_mut().find(|t| t.always()) {
+                    t.negate = true;
                 }
             }
         }
@@ -1349,7 +1396,7 @@ enum Mutation {
     Nudge,
     /// A test becomes another random one.
     Condition,
-    /// A test turns to its opposite: «always» becomes «never», switching the block off.
+    /// A test with a condition turns to its opposite («always» is left to `Toggle`).
     Negate,
     /// A block's action becomes a random one, its parameters at their bases.
     Action,
@@ -1360,19 +1407,24 @@ enum Mutation {
     Delete,
     /// A new random block goes to a random place.
     Insert,
+    /// A block is switched off (its first «always» becomes «never») or on again.
+    Toggle,
 }
 
 /// The mutation kinds and their shares of the mutations; the shares sum to 1. Small changes
-/// (a number, the order) are the most common, so a working program usually stays working.
-const MUTATIONS: [(Mutation, f64); 8] = [
-    (Mutation::Nudge, 0.35),
+/// (a number, the order) are the most common, so a working program usually stays working. A
+/// deletion is as likely as a copy and an insertion together, so programs do not grow by
+/// themselves; switching a block off is rare and its own kind.
+const MUTATIONS: [(Mutation, f64); 9] = [
+    (Mutation::Nudge, 0.32),
     (Mutation::Condition, 0.12),
     (Mutation::Negate, 0.08),
     (Mutation::Action, 0.08),
     (Mutation::Swap, 0.15),
-    (Mutation::Duplicate, 0.08),
-    (Mutation::Delete, 0.08),
-    (Mutation::Insert, 0.06),
+    (Mutation::Duplicate, 0.06),
+    (Mutation::Delete, 0.11),
+    (Mutation::Insert, 0.05),
+    (Mutation::Toggle, 0.03),
 ];
 
 /// A creature's two programs (`JUVENILE`, `ADULT`), shared rather than copied: most children
@@ -1552,12 +1604,13 @@ mod tests {
     }
 
     /// Mutations keep a program valid (1 to `MAX_BLOCKS` blocks, every number in its range, the
-    /// summary current), count only what changed it, and a long line of mutants fills up.
+    /// summary current), count only what changed it, and a long line of mutants grows and shrinks.
     #[test]
     fn mutations_keep_a_program_valid_and_change_it() {
         let mut rng = Rng::new(5);
         let mut p = Program::STANDARD;
-        let (mut longest, mut changed) = (0, 0);
+        let start = p.blocks().len();
+        let (mut longest, mut shortest, mut changed) = (0, MAX_BLOCKS, 0);
         for _ in 0..20_000 {
             let before = p;
             p.mutate(1.0, &mut rng);
@@ -1566,8 +1619,9 @@ mod tests {
             assert_eq!(p.changes, before.changes.saturating_add(differs as u16), "only a change counts");
             changed += differs as usize;
             longest = longest.max(p.blocks().len());
+            shortest = shortest.min(p.blocks().len());
         }
-        assert_eq!(longest, MAX_BLOCKS, "insertions fill a program up");
+        assert!(longest > start && shortest < start, "it grows and shrinks: {shortest}‒{longest}");
         // a nudge by less than half a unit, a swap of equal blocks, the same random pick or a
         // copy into a full program change nothing; most mutations change something
         assert!(changed > 12_000, "changed {changed} of 20 000");
@@ -1598,8 +1652,8 @@ mod tests {
     #[test]
     fn each_kind_of_mutation_does_its_change() {
         let mut rng = Rng::new(17);
-        let (mut longer, mut shorter, mut negated, mut reordered, mut nudged, mut flipped) =
-            (0, 0, 0, 0, 0, 0);
+        let (mut longer, mut shorter, mut negated, mut switched_off, mut reordered, mut nudged, mut flipped) =
+            (0, 0, 0, 0, 0, 0, 0);
         let two = Program::of(&[
             Block::when(Test::at(Cond::Fullness, 50), Action::Flee),
             Block::does(Action::Wander).with(0, 60),
@@ -1613,9 +1667,9 @@ mod tests {
             if b.len() != a.len() {
                 continue;
             }
-            negated +=
-                b.iter().zip(a).any(|(x, y)| x.when.iter().zip(y.when).any(|(s, t)| s.negate != t.negate))
-                    as usize;
+            // a negation turns a real test; only a toggle touches an «always»
+            switched_off += b.iter().any(Block::off) as usize;
+            negated += (b[0].when[0].cond == Cond::Fullness && b[0].when[0].negate) as usize;
             reordered += (b[0] == a[1] && b[1] == a[0]) as usize;
             let same_shape = b[0].action == a[0].action && b[1].action == a[1].action;
             nudged += (same_shape
@@ -1625,7 +1679,8 @@ mod tests {
             flipped += (same_shape && b[0].args[1] != a[0].args[1]) as usize;
         }
         assert!(longer > 600 && shorter > 300, "insertions and copies {longer}, deletions {shorter}");
-        assert!(negated > 400 && reordered > 900, "{negated} {reordered}");
+        assert!(negated > 220 && switched_off > 150, "negated {negated}, switched off {switched_off}");
+        assert!(reordered > 900, "{reordered}");
         assert!(nudged > 2000 && flipped > 250, "nudged {nudged}, a flag flipped {flipped}");
     }
 

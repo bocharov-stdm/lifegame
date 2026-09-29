@@ -14,7 +14,7 @@ pub mod strategy;
 
 pub use phenotype::{Diet, Phenotype, melee_damage, vigour};
 pub use program::{ADULT, Action, Block, Cond, JUVENILE, Program, Programs, Test};
-pub use strategy::{Activity, Aid, Chase, Food, Intent, Me, Mind, Sighting, Stance, Strategy};
+pub use strategy::{Activity, Aid, Chase, Food, Intent, Me, Menace, Mind, Sighting, Stance, Strategy};
 
 use crate::config::*;
 use crate::genome::CreatureGenome;
@@ -272,7 +272,7 @@ impl Creature {
         let (slower, cheaper) = self.pheno.temper(y);
         // torpor: its program chose to stand and sleep (`Action::Torpor`); a rest or an ambush pays
         // its standing upkeep
-        self.torpid = intent.torpor && !self.fleeing();
+        self.torpid = intent.torpor;
         if self.torpid {
             self.energy -= self.pheno.still_upkeep * TORPOR_UPKEEP * cheaper;
             if self.energy <= 0.0 {
@@ -435,9 +435,17 @@ impl Creature {
         &self.programs[self.stage()]
     }
 
-    /// Бежит ли сейчас от кого-то (для окна игры и наблюдателя).
+    /// Its flight block decided its last move (`Mind::flight`): it strikes nobody (`combat`), its
+    /// burst goes the whole step, the window shows it running. Whatever its block's memory of a
+    /// lost threat, even none.
     pub fn fleeing(&self) -> bool {
-        self.mind.flee_ticks > 0
+        self.mind.flight
+    }
+
+    /// What the others read of it: by its last move (`Stance::menace`), by its program's shape
+    /// before its first (`Menace::of`).
+    pub fn menace(&self) -> Menace {
+        if self.mind.stance.moved { self.mind.stance.menace } else { Menace::of(self.program()) }
     }
 
     /// Ребёнок, если его программа делится в этот тик (`Action::Divide`) и после деления у

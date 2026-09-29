@@ -285,8 +285,18 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
         let decided = fired == Some(i as u8);
         let applied = path.is_some_and(|p| setting && Path::has(p.applied, i));
         let tried = !decided && path.is_some_and(|p| !setting && Path::has(p.tried, i));
-        // the settings are all looked at; the deciding blocks down to the one that decided
-        let on_path = depth.is_some_and(|d| setting || i <= d);
+        // a setting is skipped, its condition not looked at, when one of its kind above it applied
+        let skipped = path.is_some_and(|p| {
+            setting
+                && (0..i).any(|j| {
+                    blocks[j].action.is_setting()
+                        && blocks[j].setting_kind() == b.setting_kind()
+                        && Path::has(p.applied, j)
+                })
+        });
+        // the settings are looked at but the skipped; the deciding blocks down to the one that
+        // decided
+        let on_path = depth.is_some_and(|d| if setting { !skipped } else { i <= d });
         let cond = Rect::from_min_size(Pos2::new(cond_x, top), Vec2::new(COND_W, ch));
         let action = Rect::from_min_size(Pos2::new(action_x, top), Vec2::new(ACTION_W, h));
 
@@ -345,6 +355,8 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
             "\nБлок выключен: одно из условий — «никогда». Мутация может включить его снова."
         } else if tried {
             "\nЭтот тик: условие выполнено, но сделать не вышло — решал следующий блок."
+        } else if skipped {
+            "\nЭтот тик: пропущена — выше уже сработала установка того же рода."
         } else {
             ""
         };

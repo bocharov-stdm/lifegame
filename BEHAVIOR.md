@@ -5,7 +5,42 @@ and how it was checked. The exact current model is in `CLAUDE.md`; everything be
 section describes earlier models and is kept as a record (flocks, cannibalism as a rule and the
 `--rule cannibalism` commands no longer exist).
 
-## Every behaviour in blocks, flocks removed (`life-behavior/14`, this stage)
+## Review fixes of the programs (`life-behavior/15`, this stage)
+
+Model `life-behavior/15`, format `life-report/12`.
+
+A review of the block programs (2026-09-29; the user: «исправляй, задавая вопросы») found the
+interpreter sound and four things in the way of evolution or of the rules:
+- **A free bluff.** Others feared a creature by the most permissive *live* hunt block of its
+  program, a hunter counted a parent as its child's ally by a live defence block and expected
+  strikes back by the first live fight-back block — never asking whether their conditions could
+  hold. A hunt block behind «сытость ≥ 99%» scared prey off the plants for free: a behaviour with no
+  catch. Now the others read what a creature's blocks did on its **last move** (`Menace`, kept in
+  its `Stance`): the hunt, fight-back and defence blocks whose tests held — the decider and the
+  blocks before it, whether or not their action could be done. A hunter resting or fleeing this
+  tick is not feared, so an ambush is real; before its first move a creature is read by its
+  program's shape. The user chose this over leaving it.
+- **Programs grew by themselves**: insertions and copies (6 + 8%) outweighed deletions (8%), so
+  every line filled up to 32 blocks with junk. Now a deletion is as likely as both (11 against
+  5 + 6) and takes a dead block first (switched off or never reached). The user's choice.
+- **Two negations in three knocked a block out**: they landed on an «всегда». A negation now turns
+  only a test with a condition; switching a block off or on is its own mutation, 3% (taken from the
+  nudge, 35 → 32). The user's choice.
+- **A hidden coupling**: a flight's burst, its truce in combat and the window's «убегает» read the
+  flight's memory (`flee_ticks`), so a block whose «бежать ещё» drifted to 0 lost them. They read
+  the flight block's decision now (`Mind::flight`).
+
+Smaller: a test («видит еду», «видит растение», the weighing of prey and corpses against the
+plant) no longer chooses the kept plant — only the plant block does; an ambush and torpor count as
+resting in the chronicle; the behaviour window shows a setting skipped behind an earlier one of its
+kind as not looked at; the drift allocates nothing.
+
+How it was checked: in a cloud session — reading, `cargo build`, `clippy`, `fmt`; no tests, no
+golden, no runs. The golden digests and the references are to be re-recorded on Windows; the
+balance is unmeasured. The tests of the mutation kinds were re-aimed by expectation (of 8000
+mutations ~320 negations, ~240 switch-offs).
+
+## Every behaviour in blocks, flocks removed (`life-behavior/14`, previous stage)
 
 Model `life-behavior/14`, format `life-report/12`.
 

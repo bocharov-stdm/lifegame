@@ -565,7 +565,7 @@ mod tests {
         let mut w = world();
         w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(100.0));
         let enemy = w.spawn(CreatureGenome::BASE.with(Gene::Size, 80.0), 1010.0, 1000.0, Some(100.0));
-        w.creatures[0].mind.flee_ticks = 5;
+        w.creatures[0].mind.flight = true;
         w.creatures[0].mind.hit = Some(Sighting { enemy, x: 1010.0, y: 1000.0, tick: 1 });
         w.creatures[0].mind.attack = Some(enemy);
         assert!(at(&mut w, 2).is_empty());

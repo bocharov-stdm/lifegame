@@ -1,7 +1,7 @@
 # Working in this repository
 
 lifegame is an evolutionary simulation in Rust with a native wgpu/egui window. The Python version
-is kept at the `python-final` tag. `CLAUDE.md` is the current model (`life-behavior/14`) and the
+is kept at the `python-final` tag. `CLAUDE.md` is the current model (`life-behavior/15`) and the
 full set of working rules; this file is the short version.
 
 ## Structure

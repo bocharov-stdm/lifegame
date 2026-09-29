@@ -47,7 +47,7 @@ battles, territories, the social layer, kin grace).
 - The user keeps a short PDF of genes, strategies and diet edges (a throwaway fpdf2 script, Arial
   for Cyrillic); regenerate and send it after diet or gene changes.
 
-## The model (`life-behavior/14`: every behaviour in blocks, on the ocean reform)
+## The model (`life-behavior/15`: every behaviour in blocks, on the ocean reform)
 
 A creature eats plants and corpses in portions, grows from food up to its size gene, divides when
 grown and its program's «делиться» says so, and dies of hunger, in a fight or of old age. Combat is
@@ -80,8 +80,9 @@ could not be done).
 - **Two tracks**: `Creature::programs[JUVENILE]` while it grows to its size gene, `[ADULT]` after
   (`Creature::stage`, `program()`); inherited and mutating apart. `Programs` is an `Arc`: children
   that inherit them unchanged share them, so a creature holds a pointer, not a kilobyte. Each
-  `Program` keeps a summary the world reads every tick (reach, threat range, hunt ratio, defence,
-  defends, wander reach, home layer, shoots), recomputed whenever it changes.
+  `Program` keeps a summary (reach, threat range, hunt ratio, defence, defends, wander reach, home
+  layer, shoots), recomputed whenever it changes: its own tests, the report and a founder's
+  placement read it; the others read the creature by its last move (`Menace`, below).
 - **Settings** (bases = what the deleted genes and the world did, so the templates act as `/13`):
   «есть и чужую пищу», «гнать соперников у еды» (×1.5 smaller), «за едой из слоя» (X% of depth) as
   before; «слой» top 5%, bottom 100% (swapped if reversed; was `min_y`, `max_y`, `layer_bound`) —
@@ -122,7 +123,7 @@ could not be done).
   (`Stance::defending`, `Senses::child_in_need`), with a tank above 50%, for at most 90 ticks, then
   a pause of 60; an episode another block interrupts ends with the pause too (`Mind::aid`,
   `aid_cooldown`). The child is its own only while its «щадить детей» holds. Hunters count a parent
-  in sight as the prey's ally only if its program defends.
+  in sight as the prey's ally only if its defence block's tests held on its last move (`Menace`).
 - **No behaviour genes and no world behaviour constants are left**: `/13` deleted `bravery`,
   `prey_ratio`, `caution`, `picky`, `rivalry`, `layer_reach`, `cruise`, `rest`, `torpor`; `/14` the
   layer (`min_y`, `max_y`, `layer_bound`), shooting (`shooter`, `fire_preference`, `fire_reserve`),
@@ -145,19 +146,27 @@ could not be done).
   points, a ratio 0.2, a time a quarter of its base, as the genes drift by 30% (through the rare
   mutation alone a given number moved in one child of ~1700, and the old genes' adaptations could not
   happen) — and with `program_mutation` (rule, base 5%) × mutability gets one mutation: nudge a
-  number 35%, replace a test 12%, negate one 8%, replace the action 8%, swap with a neighbour 15%,
-  duplicate 8%, delete 8% (keeps ≥ 1), insert a random block 6%. One that cannot apply or lands where
-  it was changes nothing, its draws spent. `Program::changes` counts the mutations that changed
+  number 32%, replace a test 12%, negate a test with a condition 8%, replace the action 8%, swap
+  with a neighbour 15%, duplicate 6%, delete 11% (a dead block first — off or never reached; keeps
+  ≥ 1), insert a random block 5%, switch a block off or on 3% (its first «всегда» becomes «никогда»
+  and back). A deletion is as likely as a copy and an insertion together, so programs do not grow by
+  themselves. One that cannot apply (no test with a condition to negate) or lands where it was
+  changes nothing, its draws spent. `Program::changes` counts the mutations that changed
   something (not the drift). Past its end a program is filled with the same block, so equal blocks
   are equal programs. A mutation can switch off division, healing or eating on the move: such
   children die out — the catch is the consequence.
 - **Free behaviour**: no upkeep, no energy made — an action only chooses where to step or how to
   stand and a setting what the phases may do; `act`, combat, division and healing pay as before.
-  Others fear a creature by the most permissive hunt block of the program it lives by
-  (`Program::hunt_ratio`, `Herd`); a hunter expects strikes back only as the prey's program gives
-  them (`Program::defence`: a hunter within its first fight-back block's ratio, for the share of the
-  killing strikes above that block's health threshold) — the templates' prey never strikes a
-  template hunter, which is ≥ 1.5 times bigger.
+  Others read a creature by what its blocks did on its **last move** (`Menace` in `Stance::menace`,
+  `Creature::menace`, `Herd`): the hunt, fight-back and defence blocks whose tests held — the
+  decider and the blocks before it, whether or not the action could be done. They fear it by the
+  most permissive such hunt (a hunter resting or fleeing this tick is not feared; a hunt block
+  behind a condition that never holds is no bluff); a hunter expects strikes back as the first such
+  fight-back block gives them (a hunter within its ratio, for the share of the killing strikes
+  above that block's health threshold) and counts a parent as an ally only by such a defence
+  block. Before its first move a creature is read by its program's shape (`Program::hunt_ratio`,
+  `defence`, `defends`). The templates' prey never strikes a template hunter, which is ≥ 1.5 times
+  bigger.
 - The interpreter: `scene.rs` (perception, lazily memoised queries), `actions.rs` (one function per
   action and setting), `steer.rs` (the step: the band, smoothing), `strategy::plan` (settings, then
   the deciding blocks, then the step). `Cond`, `Action` and their parameter tables are append-only,
@@ -189,7 +198,8 @@ goes for it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{
 - **Own niche**: without its program's «есть и чужую пищу» setting a creature takes only its own
   food — a scavenger skips fresh corpses and does not hunt, a carnivore skips rot and bones
   (`Phenotype::corpse_efficiency(stage, foreign)`, `DIET_OWN`); the templates set it below 30%
-  fullness. Anyone who eats fresh meat (`hunts`) and has a working hunt block is feared.
+  fullness. Anyone who eats fresh meat (`hunts`) and whose hunt block's tests held on its last move
+  is feared.
 - No meat founders by default (`DIET_START_MIX` 70/30/0/0): they starved with nothing to eat. Meat
   diets arise from mutants (see mutation laws). Meat founders set in a mix start
   `meat_founder_size` (×2) bigger.
@@ -232,6 +242,17 @@ goes for it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{
 
 ## Where the work stands
 
+- **Review fixes of the programs** (2026-09-29, model `/15`, the user: «исправляй»): the others
+  read a creature by the blocks whose tests held on its last move, not by its program's shape (a
+  free bluff before: a hunt or defence block behind an impossible condition); a deletion as likely
+  as a copy and an insertion together (11% against 6 + 5), the dead blocks deleted first; a
+  negation only of a test with a condition, switching a block off or on its own 3% mutation; a
+  flight's burst, its truce in combat and «убегает» by the flight block's decision (`Mind::flight`),
+  not by its memory (a «бежать ещё» drifted to 0 lost them); a test («видит еду», «видит растение»,
+  the weighing of prey and corpses against the plant) no longer chooses the kept plant; an ambush
+  and torpor count as resting; the window shows a setting skipped behind one of its kind as not
+  looked at; the drift allocates nothing. **Not run** (cloud): tests, golden, runs — golden and the
+  references are to be re-recorded on Windows; the balance is unmeasured.
 - **Round 3: every behaviour in blocks, flocks removed** (plan
   `~/.claude/plans/starry-jumping-shannon.md`, 2026-09-28, model `/14`). Stages: A the flock layer
   removed (tag `flocks-final`), B the language (three tests, eight parameters, 32 blocks, units, the
@@ -290,11 +311,11 @@ goes for it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{
   parent paying for the child's body (halved populations, no meat diets); birth at ¼ size; a nose
   paid like sight (killed the niche); `melee_size_power` 1.75 (carnivores boomed and starved) or 1.0
   (they died out).
-- Golden digests are re-recorded for `/14` (2026-09-28, Windows). Both references
+- Golden digests are re-recorded for `/14` (2026-09-28, Windows), not yet for `/15`. Both references
   (`reference/fingerprint.json`, `calm-fingerprint.json`) are still the `/9` ones, so `--compare`
   refuses them (another model) and CI fails there by design: re-take them with `--save-reference`
   once the user accepts the balance (8 seeds × 20 000 each).
-- `README.md` and `AGENTS.md` describe the `/14` model in short; `BEHAVIOR.md` is the history of
+- `README.md` and `AGENTS.md` describe the `/15` model in short; `BEHAVIOR.md` is the history of
   the models, newest first. This file is the exact model.
   When a mechanic changes, update all four.
 

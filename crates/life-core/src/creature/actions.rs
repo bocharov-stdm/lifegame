@@ -17,7 +17,7 @@ pub(super) enum Mode {
     Flee,
     Food,
     Wander,
-    /// Resting: it stands, and shows it resting.
+    /// Standing: a rest, an ambush, torpor — no step, and it shows as resting.
     Rest,
     /// Defending its child: it goes for the enemy, not smoothed, in alarm.
     Defend,
@@ -87,7 +87,7 @@ pub(super) fn act(
         Action::Hunt => hunt(b, scene, me, mind, senses),
         Action::EatCorpse => {
             let c = scene.corpse(me, senses)?;
-            if b.flag(0) && c.score <= scene.plant_score(me, mind, senses) {
+            if b.flag(0) && c.score <= scene.plant_score(me, senses) {
                 return None;
             }
             mind.personal_food = None;
@@ -112,11 +112,11 @@ pub(super) fn act(
             let (tx, ty) = wander(me, mind, rng, me.pheno.speed * pace, b.arg(1) * me.pheno.vision, band);
             Some((go(tx, ty, pace), Mode::Wander))
         }
-        Action::Ambush => Some((stand(me), Mode::Wander)),
+        Action::Ambush => Some((stand(me), Mode::Rest)),
         Action::Surface => to_layer_edge(me, mind, me.pheno.band(scene.stance.layer).0, b.arg(0)),
         Action::Dive => to_layer_edge(me, mind, me.pheno.band(scene.stance.layer).1, b.arg(0)),
         Action::Rest => rest(b, me, mind, me.pheno.band(scene.stance.layer)),
-        Action::Torpor => Some((Intent { torpor: true, ..stand(me) }, Mode::Wander)),
+        Action::Torpor => Some((Intent { torpor: true, ..stand(me) }, Mode::Rest)),
         Action::DefendChild => defend_child(b, scene, me, mind, senses),
         _ => unreachable!("a setting decides nothing: {:?}", b.action),
     }
@@ -261,7 +261,7 @@ fn hunt(
     let p = scene.prey(me, mind, senses, Hunting { ratio, caution, taste, range })?;
     if b.flag(3) && mind.attack != Some(p.id) {
         let corpse = scene.corpse(me, senses).map_or(0.0, |c| c.score);
-        if p.score <= scene.plant_score(me, mind, senses).max(corpse) {
+        if p.score <= scene.plant_score(me, senses).max(corpse) {
             return None;
         }
     }

@@ -5,8 +5,8 @@ table of genes that mutates when it divides. Nobody scripts selection: the genom
 themselves survive. The game, the headless runs and the balance report are Rust; the earlier
 Python and pygame version is kept under the tag `python-final`.
 
-The current model is `life-behavior/14` (every behaviour in evolving programs, on the ocean
-reform).
+The current model is `life-behavior/15` (every behaviour in evolving programs, each creature read
+by the others by its last move, on the ocean reform).
 [CLAUDE.md](CLAUDE.md) is its exact
 description and the project's working rules; [BEHAVIOR.md](BEHAVIOR.md) records how the model got
 here and how each stage was checked.
