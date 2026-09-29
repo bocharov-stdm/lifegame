@@ -30,7 +30,8 @@
 
 use super::strategy::Strategy;
 use crate::config::{
-    CHASE_GIVE_UP_TICKS, CHASE_PATIENCE, FLEE_SIGHT_SHARE, FLEE_TICKS, PROGRAM_NUDGE_POINTS,
+    CHASE_GIVE_UP_TICKS, CHASE_PATIENCE, FLEE_SIGHT_SHARE, FLEE_TICKS, PROGRAM_DRIFT_SHARE,
+    PROGRAM_NUDGE_POINTS,
 };
 use crate::rng::Rng;
 use std::sync::Arc;
@@ -562,6 +563,19 @@ impl Action {
         args
     }
 
+    /// The parameters for this action taken over from a block of `old`: a parameter of the same
+    /// label and unit (the pace, a burst, «only if it pays more») keeps its number, the rest start
+    /// at their bases.
+    pub fn args_from(self, old: Action, old_args: &[u16; MAX_ARGS]) -> [u16; MAX_ARGS] {
+        let mut args = self.base_args();
+        for (i, p) in self.params().iter().enumerate() {
+            if let Some(j) = old.params().iter().position(|q| q.label == p.label && q.unit == p.unit) {
+                args[i] = old_args[j];
+            }
+        }
+        args
+    }
+
     /// A setting does not decide the step: it applies before the deciding blocks, wherever it
     /// stands.
     pub const fn is_setting(self) -> bool {
@@ -1022,6 +1036,13 @@ pub struct Program {
 pub const JUVENILE: usize = 0;
 pub const ADULT: usize = 1;
 
+/// The founders' modes (`Action::Mode`, `Cond::Mode`): their memory of an alarm, of a full tank
+/// and of hunger. The founders remember through modes rather than the special tests («ещё
+/// убегает», «отдыхает»), so every line starts with a working memory a mutation can rebuild.
+pub const ALARM_MODE: u16 = 1;
+pub const FULL_MODE: u16 = 2;
+pub const HUNGRY_MODE: u16 = 3;
+
 /// The founders' behaviour — the old hand-written strategy with the base values of the behaviour
 /// genes the programs replaced — wandering at `pace` % of its speed.
 const fn founders(pace: u16) -> Program {
@@ -1037,20 +1058,25 @@ const fn founders(pace: u16) -> Program {
         Block::does(Action::Heal),
         Block::does(Action::Graze),
         Block::does(Action::Spare),
-        // below the old picky and rivalry (30%) it eats the other niche's food and fights for its own
-        Block::when(Test::at(Cond::Fullness, 30).not(), Action::EatForeign),
-        Block::when(Test::at(Cond::Fullness, 30).not(), Action::Rival),
+        // hunger remembered 60 ticks: below the old picky and rivalry (30%) it eats the other
+        // niche's food and fights for its own
+        Block::when(Test::at(Cond::Fullness, 30).not(), Action::Mode).with(0, HUNGRY_MODE),
+        Block::when(Test::at(Cond::Mode, HUNGRY_MODE), Action::EatForeign),
+        Block::when(Test::at(Cond::Mode, HUNGRY_MODE), Action::Rival),
+        // an alarm remembered 60 ticks (the old flight's memory): a hunter within the flight
+        // distance, a calm stranger within half of it
+        Block::when(Test::at(Cond::HunterNear, FLEE_PCT), Action::Mode).with(0, ALARM_MODE),
+        Block::when(Test::at(Cond::ThreatNear, calm), Action::Mode).with(0, ALARM_MODE),
+        // a full tank remembered 200 ticks: the old rest gene, from 95% fullness
+        Block::when(Test::at(Cond::Fullness, 95), Action::Mode).with(0, FULL_MODE).with(1, 200),
         // the old bravery 50%: it defends itself down to half its health
         Block::when(Test::at(Cond::Health, 50), Action::FightBack),
-        Block::when(Test::at(Cond::HunterNear, FLEE_PCT), Action::Flee),
-        Block::when(Test::at(Cond::ThreatNear, calm), Action::Flee),
-        Block::when(Test::is(Cond::Fleeing), Action::Flee),
+        Block::when(Test::at(Cond::Mode, ALARM_MODE), Action::Flee),
         // the old parent's cover, while it stood firm: 10 points above its fight-back threshold
         Block::when(Test::at(Cond::Health, 60), Action::DefendChild),
         Block::does(Action::Hunt),
-        // the old rest gene: from 95% fullness, given up 10 points lower
-        Block::when(Test::at(Cond::Fullness, 95), Action::Rest),
-        Block::when2(Test::is(Cond::Resting), Test::at(Cond::Fullness, 85), Action::Rest),
+        // the rest is given up 10 points below where it began
+        Block::when2(Test::at(Cond::Mode, FULL_MODE), Test::at(Cond::Fullness, 85), Action::Rest),
         Block::does(Action::EatCorpse),
         Block::does(Action::EatPlant),
         Block::does(Action::Wander).with(0, pace),
@@ -1202,6 +1228,28 @@ impl Program {
         Some(m)
     }
 
+    /// How far the numbers of programs of one shape have spread: the mean over its numbers of
+    /// the interquartile range as a share of the number's range (0: all alike, about 0.5: as
+    /// random values). None for none or mixed shapes.
+    pub fn spread(programs: &[Program]) -> Option<f64> {
+        let first = *programs.first()?;
+        let shape = first.shape();
+        if programs.iter().any(|p| p.shape() != shape) {
+            return None;
+        }
+        let (mut sum, mut count) = (0.0, 0);
+        for i in 0..usize::from(first.len) {
+            for (slot, spec) in first.blocks[i].numbers() {
+                let mut xs: Vec<u16> = programs.iter().map(|p| p.blocks[i].get(slot)).collect();
+                xs.sort_unstable();
+                let (lo, hi) = (xs[xs.len() / 4], xs[xs.len() * 3 / 4]);
+                sum += f64::from(hi - lo) / f64::from(spec.hi - spec.lo).max(1.0);
+                count += 1;
+            }
+        }
+        (count > 0).then(|| sum / f64::from(count))
+    }
+
     /// The blocks as text lines, «2. если сытость < 30% → установка: гнать соперников у еды
     /// (соперник мельче в 1,5 раза)». Game UI.
     pub fn describe(&self) -> Vec<String> {
@@ -1217,9 +1265,10 @@ impl Program {
             .collect()
     }
 
-    /// A child's drift: every number of the program but the flags moves by gauss(0, its nudge ×
-    /// `share`), held in range — `share` is the rule `program_drift` × mutability — as its genes
-    /// drift. One draw a number; none at all when `share` is 0. Not counted in `changes`.
+    /// A child's drift: a third of the numbers of the program (`PROGRAM_DRIFT_SHARE`; never the
+    /// flags and the indices) move by gauss(0, its nudge × `share`), held in range — `share` is
+    /// the rule `program_drift` × mutability — as its genes drift. One draw a number and one more
+    /// for each that moves; none at all when `share` is 0. Not counted in `changes`.
     pub fn drift(&mut self, share: f64, rng: &mut Rng) {
         if share <= 0.0 {
             return;
@@ -1233,7 +1282,9 @@ impl Program {
                 } else {
                     b.action.params().get(slot - TESTS).copied()
                 };
-                if let Some(spec) = spec.filter(ParamSpec::drifts) {
+                if let Some(spec) = spec.filter(ParamSpec::drifts)
+                    && rng.random() < PROGRAM_DRIFT_SHARE
+                {
                     let raw = b.number(slot);
                     *raw = spec.moved(*raw, spec.nudge * share, rng);
                 }
@@ -1242,18 +1293,46 @@ impl Program {
         self.summary = Summary::of(&self.blocks, len);
     }
 
+    /// The child's program without the other track: no transfer (tests, tools).
+    pub fn mutate(&mut self, chance: f64, rng: &mut Rng) {
+        self.mutate_with(chance, None, rng);
+    }
+
     /// The child's program: with chance `chance` (the rule × the parent's mutability) one
     /// mutation, else an exact copy. One draw always; a mutation draws its kind and what it needs.
-    /// A mutation that cannot apply (a full program, a single block, nothing to nudge, no test to
-    /// negate) or lands where it was changes nothing and is not counted.
-    pub fn mutate(&mut self, chance: f64, rng: &mut Rng) {
+    /// `other` is the parent's other track, for a transfer. A mutation that cannot apply (a full
+    /// program, a single block, nothing to nudge, no test to negate) or lands where it was changes
+    /// nothing and is not counted. A new or copied deciding block goes where it is reached — no
+    /// lower than the first block that always fires — and a copy is of a live block: no junk born.
+    pub fn mutate_with(&mut self, chance: f64, other: Option<&Program>, rng: &mut Rng) {
         if rng.random() >= chance {
             return;
         }
         let before = (self.blocks, self.len);
         let len = usize::from(self.len);
+        let reachable = self.reachable();
         let u = rng.random();
         let pick = |rng: &mut Rng, n: usize| rng.randint(0, n as i64 - 1) as usize;
+        // where a block goes: a setting anywhere, a deciding one above the block that always fires
+        let place = |rng: &mut Rng, block: &Block| {
+            if block.action.is_setting() || reachable >= len {
+                pick(rng, len + 1)
+            } else {
+                pick(rng, reachable)
+            }
+        };
+        // the live blocks of a program, to copy from
+        let live_of = |p: &Program| {
+            let mut live = [0; MAX_BLOCKS];
+            let mut n = 0;
+            for i in 0..p.blocks().len() {
+                if p.live(i) {
+                    live[n] = i;
+                    n += 1;
+                }
+            }
+            (live, n)
+        };
         let mut acc = 0.0;
         let mut op = MUTATIONS.len() - 1;
         for (k, &(_, share)) in MUTATIONS.iter().enumerate() {
@@ -1311,8 +1390,9 @@ impl Program {
             Mutation::Action => {
                 let i = pick(rng, len);
                 let action = Action::ALL[pick(rng, Action::ALL.len())];
-                self.blocks[i].action = action;
-                self.blocks[i].args = action.base_args();
+                let b = &mut self.blocks[i];
+                b.args = action.args_from(b.action, &b.args);
+                b.action = action;
             }
             Mutation::Swap => {
                 if len >= 2 {
@@ -1322,8 +1402,12 @@ impl Program {
             }
             Mutation::Duplicate => {
                 if len < MAX_BLOCKS {
-                    let (i, at) = (pick(rng, len), pick(rng, len + 1));
-                    self.insert(at, self.blocks[i]);
+                    let (live, n) = live_of(self);
+                    if n > 0 {
+                        let block = self.blocks[live[pick(rng, n)]];
+                        let at = place(rng, &block);
+                        self.insert(at, block);
+                    }
                 }
             }
             Mutation::Delete => {
@@ -1346,10 +1430,49 @@ impl Program {
             }
             Mutation::Insert => {
                 if len < MAX_BLOCKS {
-                    let at = pick(rng, len + 1);
                     let test = random_test(rng);
                     let action = Action::ALL[pick(rng, Action::ALL.len())];
-                    self.insert(at, Block::when(test, action));
+                    let block = Block::when(test, action);
+                    let at = place(rng, &block);
+                    self.insert(at, block);
+                }
+            }
+            Mutation::Pair => {
+                // a memory in one step: a setting that switches a mode on by a random test, and
+                // that mode as a test on another block with a free «always» — apart they would be
+                // two mutations with nothing to select between them
+                if len < MAX_BLOCKS {
+                    let mode = MODE.random(rng);
+                    let setting = Block::when(random_test(rng), Action::Mode).with(0, mode);
+                    let at = pick(rng, len + 1);
+                    self.insert(at, setting);
+                    let mut free = [0; MAX_BLOCKS];
+                    let mut n = 0;
+                    for i in 0..len + 1 {
+                        if i != at && self.blocks[i].when.iter().any(|t| t.always()) {
+                            free[n] = i;
+                            n += 1;
+                        }
+                    }
+                    if n > 0 {
+                        let b = &mut self.blocks[free[pick(rng, n)]];
+                        let slot = b.when.iter().position(|t| t.always()).expect("a free slot");
+                        b.when[slot] = Test::at(Cond::Mode, mode);
+                    }
+                }
+            }
+            Mutation::Transfer => {
+                // a live block of its other track — the adult's into the juvenile's or back —
+                // copied to where it is reached: what one stage found the other may try
+                if let Some(other) = other
+                    && len < MAX_BLOCKS
+                {
+                    let (live, n) = live_of(other);
+                    if n > 0 {
+                        let block = other.blocks()[live[pick(rng, n)]];
+                        let at = place(rng, &block);
+                        self.insert(at, block);
+                    }
                 }
             }
             Mutation::Toggle => {
@@ -1409,22 +1532,30 @@ enum Mutation {
     Insert,
     /// A block is switched off (its first «always» becomes «never») or on again.
     Toggle,
+    /// A memory: a setting switching a mode on by a random test, and that mode as a test on
+    /// another block.
+    Pair,
+    /// A live block of the other track copied in.
+    Transfer,
 }
 
 /// The mutation kinds and their shares of the mutations; the shares sum to 1. Small changes
 /// (a number, the order) are the most common, so a working program usually stays working. A
-/// deletion is as likely as a copy and an insertion together, so programs do not grow by
-/// themselves; switching a block off is rare and its own kind.
-const MUTATIONS: [(Mutation, f64); 9] = [
-    (Mutation::Nudge, 0.32),
+/// deletion is as likely as the kinds that add a block together (a copy, an insertion, a pair;
+/// a transfer needs the other track), so programs do not grow by themselves; switching a block
+/// off is rare and its own kind.
+const MUTATIONS: [(Mutation, f64); 11] = [
+    (Mutation::Nudge, 0.27),
     (Mutation::Condition, 0.12),
     (Mutation::Negate, 0.08),
     (Mutation::Action, 0.08),
-    (Mutation::Swap, 0.15),
+    (Mutation::Swap, 0.12),
     (Mutation::Duplicate, 0.06),
-    (Mutation::Delete, 0.11),
+    (Mutation::Delete, 0.14),
     (Mutation::Insert, 0.05),
     (Mutation::Toggle, 0.03),
+    (Mutation::Pair, 0.03),
+    (Mutation::Transfer, 0.02),
 ];
 
 /// A creature's two programs (`JUVENILE`, `ADULT`), shared rather than copied: most children
@@ -1512,6 +1643,7 @@ mod tests {
         assert!((s.threat_range() - 0.33).abs() < 1e-12);
         assert_eq!((s.home_layer(), s.shoots()), ((0.05, 1.0), false));
         let text = s.describe();
+        assert_eq!(text.len(), 20);
         // what the genes and the world did: the settings on top
         assert_eq!(
             text[..6],
@@ -1524,27 +1656,42 @@ mod tests {
                 "6. если всегда → установка: щадить детей (пока ребёнок не вырос до 100%)",
             ]
         );
-        assert_eq!(text[6], "7. если сытость < 30% → установка: есть и чужую пищу");
-        assert_eq!(text[8], "9. если здоровье ≥ 50% → дать сдачи (враг крупнее не более чем в 1,5 раза)");
+        // the founders' memory: hunger, an alarm, a full tank
+        assert_eq!(text[6], "7. если сытость < 30% → установка: включить режим (режим 3, на 60 тиков)");
+        assert_eq!(text[7], "8. если включён режим 3 → установка: есть и чужую пищу");
         assert_eq!(
-            text[12],
-            "13. если здоровье ≥ 60% → защищать детёныша (ребёнок ближе 50% зрения, при баке больше 50%, \
+            text[9],
+            "10. если охотник ближе 33% зрения → установка: включить режим (режим 1, на 60 тиков)"
+        );
+        assert_eq!(
+            text[10],
+            "11. если угроза ближе 16% зрения → установка: включить режим (режим 1, на 60 тиков)"
+        );
+        assert_eq!(text[11], "12. если сытость ≥ 95% → установка: включить режим (режим 2, на 200 тиков)");
+        assert_eq!(text[12], "13. если здоровье ≥ 50% → дать сдачи (враг крупнее не более чем в 1,5 раза)");
+        assert_eq!(
+            text[13],
+            "14. если включён режим 1 → убегать (бежать ещё 60 тиков, рывком, снова пугается угрозы ближе \
+             33% зрения, ход 100%, прямо)"
+        );
+        assert_eq!(
+            text[14],
+            "15. если здоровье ≥ 60% → защищать детёныша (ребёнок ближе 50% зрения, при баке больше 50%, \
              не дольше 90 тиков, потом пауза 60 тиков, ребёнка ударили за 30 тиков)"
         );
         assert_eq!(
-            text[9],
-            "10. если охотник ближе 33% зрения → убегать (бежать ещё 60 тиков, рывком, снова пугается угрозы \
-             ближе 33% зрения, ход 100%, прямо)"
-        );
-        assert_eq!(
-            text[13],
-            "14. если всегда → охотиться (добыча мельче в 1,5 раза, осторожность 100%, терпение 30 тиков, \
+            text[15],
+            "16. если всегда → охотиться (добыча мельче в 1,5 раза, осторожность 100%, терпение 30 тиков, \
              только если выгоднее, рывком, брошенную не трогать 180 тиков, добыча не дальше 100% зрения, \
              ход погони 100%)"
         );
         assert_eq!(
-            text[17],
-            "18. если всегда → к растению (ход 100%, держится выбранного, не самое выгодное)"
+            text[16],
+            "17. если включён режим 2 и сытость ≥ 85% → отдыхать (отдых 90 тиков, пауза 180 тиков)"
+        );
+        assert_eq!(
+            text[18],
+            "19. если всегда → к растению (ход 100%, держится выбранного, не самое выгодное)"
         );
         assert_eq!(
             *text.last().unwrap(),
@@ -1678,10 +1825,10 @@ mod tests {
                 as usize;
             flipped += (same_shape && b[0].args[1] != a[0].args[1]) as usize;
         }
-        assert!(longer > 600 && shorter > 300, "insertions and copies {longer}, deletions {shorter}");
+        assert!(longer > 600 && shorter > 600, "insertions, copies and pairs {longer}, deletions {shorter}");
         assert!(negated > 220 && switched_off > 150, "negated {negated}, switched off {switched_off}");
-        assert!(reordered > 900, "{reordered}");
-        assert!(nudged > 2000 && flipped > 250, "nudged {nudged}, a flag flipped {flipped}");
+        assert!(reordered > 700, "{reordered}");
+        assert!(nudged > 1800 && flipped > 200, "nudged {nudged}, a flag flipped {flipped}");
     }
 
     /// A mutation moves an index to another of its values, never where it was; the drift leaves it.
@@ -1706,13 +1853,13 @@ mod tests {
         assert_eq!((p.blocks()[0].when[0].param, p.blocks()[1].args[0]), (3, 4), "the drift leaves indices");
     }
 
-    /// The drift moves the numbers, never the shape or a flag, keeps them in range, is not counted
-    /// as a mutation, and at 0 draws nothing.
+    /// The drift moves a third of the numbers, never the shape or a flag, keeps them in range, is
+    /// not counted as a mutation, and at 0 draws nothing.
     #[test]
     fn the_drift_moves_numbers_not_the_shape() {
         let mut rng = Rng::new(21);
         let mut p = Program::STANDARD;
-        let mut moved = 0;
+        let (mut moved, mut numbers, mut total) = (0, 0, 0);
         for _ in 0..200 {
             let before = p;
             p.drift(1.0, &mut rng);
@@ -1720,8 +1867,16 @@ mod tests {
             assert_eq!(p.shape(), Program::STANDARD.shape());
             assert_eq!(p.changes, 0);
             moved += !p.same_blocks(&before) as usize;
+            for i in 0..p.blocks().len() {
+                for (slot, _) in p.blocks[i].numbers() {
+                    total += 1;
+                    numbers += (p.blocks[i].get(slot) != before.blocks[i].get(slot)) as usize;
+                }
+            }
         }
         assert!(moved > 190, "almost every drift moves some number: {moved}");
+        let share = numbers as f64 / total as f64;
+        assert!((0.2..0.4).contains(&share), "a third of the numbers a drift, less the rounding: {share}");
         let hunt = p.blocks().iter().find(|b| b.action == Action::Hunt).unwrap();
         assert!(hunt.flag(3) && hunt.flag(4), "flags stay");
         assert_ne!(hunt.args[0], 150, "the ratio walked away in 200 generations");
@@ -1742,6 +1897,79 @@ mod tests {
         assert_eq!(m.hunt_ratio(), Some(1.5));
         assert_eq!(Program::median(&[group[0], Program::of(&[Block::does(Action::Hunt)])]), None);
         assert_eq!(Program::median(&[]), None);
+    }
+
+    /// Structure: a new or copied deciding block lands where it is reached, a copy is of a live
+    /// block, a pair brings a mode and its test together, a transfer copies a live block of the
+    /// other track, and a replaced action keeps the pace.
+    #[test]
+    fn structural_mutations_build_reachable_working_programs() {
+        let mut rng = Rng::new(11);
+        // an off block, a decider, an always-firing wander, a dead decider after it
+        let base = Program::of(&[
+            Block::when(Test::ALWAYS.not(), Action::Ambush),
+            Block::when(Test::at(Cond::Fullness, 40).not(), Action::EatPlant).with(0, 55),
+            Block::does(Action::Wander),
+            Block::does(Action::Hunt).with(1, 200),
+        ]);
+        let other = Program::of(&[
+            Block::when(Test::ALWAYS.not(), Action::Torpor),
+            Block::does(Action::EatCorpse).with(1, 70),
+        ]);
+        let (mut pairs, mut transfers, mut kept_pace) = (0, 0, 0);
+        for _ in 0..6000 {
+            let mut p = base;
+            p.mutate_with(1.0, Some(&other), &mut rng);
+            check(&p);
+            let (a, b) = (base.blocks(), p.blocks());
+            if b.len() == a.len() + 1 {
+                let at = (0..b.len()).find(|&i| a.get(i) != Some(&b[i])).unwrap();
+                let new = b[at];
+                if !new.action.is_setting() {
+                    let wander = b.iter().position(Block::always_fires).unwrap();
+                    assert!(at < wander, "a deciding block goes where it is reached: {at} of {wander}");
+                }
+                if let Some(j) = a.iter().position(|x| *x == new) {
+                    assert!(base.live(j), "a copy is of a live block: {j}");
+                }
+                assert_ne!(new, other.blocks()[0], "a transfer copies no dead block");
+                transfers += (new == other.blocks()[1]) as usize;
+                if new.action == Action::Mode {
+                    let mode = new.args[0];
+                    let tested = |x: &Block| x.when.iter().any(|t| t.cond == Cond::Mode && t.param == mode);
+                    pairs += b.iter().enumerate().any(|(i, x)| i != at && tested(x)) as usize;
+                }
+            } else if b.len() == a.len() && b[1].action != a[1].action {
+                let pace = b[1].action.params().iter().position(|p| p.label == PACE.label);
+                if let Some(k) = pace {
+                    assert_eq!(b[1].args[k], 55, "the pace goes over to {:?}", b[1].action);
+                    kept_pace += 1;
+                }
+            }
+        }
+        assert!(pairs > 100 && transfers > 60 && kept_pace > 5, "{pairs} {transfers} {kept_pace}");
+    }
+
+    /// The spread of a group's numbers: none for copies, about a half for random values.
+    #[test]
+    fn the_spread_of_a_group_tells_copies_from_random_numbers() {
+        assert_eq!(Program::spread(&[Program::STANDARD; 5]), Some(0.0));
+        let mut rng = Rng::new(2);
+        let random: Vec<Program> = (0..400)
+            .map(|_| {
+                let mut p = Program::of(&[Block::does(Action::Hunt), Block::does(Action::Wander)]);
+                for b in &mut p.blocks[..2] {
+                    for (slot, spec) in b.numbers().collect::<Vec<_>>() {
+                        *b.number(slot) = spec.random(&mut rng);
+                    }
+                }
+                p
+            })
+            .collect();
+        let spread = Program::spread(&random).unwrap();
+        assert!((0.4..0.6).contains(&spread), "{spread}");
+        assert_eq!(Program::spread(&[Program::STANDARD, Program::of(&[Block::does(Action::Hunt)])]), None);
+        assert_eq!(Program::spread(&[]), None);
     }
 
     #[test]

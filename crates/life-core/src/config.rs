@@ -180,6 +180,10 @@ pub const PROGRAM_NUDGE_POINTS: f64 = 10.0;
 /// given number moved in about one child of 1700, and the old genes' adaptations (the pace to
 /// ~55%, the rest to ~78%, the layer reach to 69% within 20 000 ticks) could not happen.
 pub const PROGRAM_DRIFT: f64 = 1.0;
+/// The share of a program's numbers the drift moves in one child: a third, so that selection sees
+/// a few changes at a time rather than the sum of sixty (with every number moving, a good change
+/// was buried in the noise of the rest).
+pub const PROGRAM_DRIFT_SHARE: f64 = 1.0 / 3.0;
 /// The same rare switch for the other choice genes: shooting, layer.
 pub const CHOICE_SWITCH_CHANCE: f64 = 0.001;
 /// Ближний удар: доля диаметра, одновременно базовый урон и цена энергии.

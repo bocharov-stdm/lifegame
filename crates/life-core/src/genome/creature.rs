@@ -23,6 +23,7 @@ pub enum Gene {
     Lifespan,
     ColdBlood,
     Burst,
+    ProgramMutability,
 }
 
 impl Gene {
@@ -37,10 +38,11 @@ impl Gene {
         Gene::Lifespan,
         Gene::ColdBlood,
         Gene::Burst,
+        Gene::ProgramMutability,
     ];
 }
 
-pub const N: usize = 10;
+pub const N: usize = 11;
 
 /// Which diets a child's diet may step to: the herbivore only to the omnivore; the omnivore is a
 /// fork to the herbivore, the scavenger and the carnivore, a third each; the scavenger and the
@@ -129,7 +131,8 @@ pub const GENES: [GeneSpec; N] = [
     GeneSpec {
         key: "mutability",
         label: "мутагенность",
-        about: "Множитель на разброс мутаций у потомка — всех генов, и этого тоже.",
+        about: "Множитель на разброс мутаций генов тела у потомка — всех, и этого тоже. Программы \
+                поведения мутируют по своей мутагенности.",
         kind: GeneKind::Absolute,
         base: 1.0,
         mutation: SCALE,
@@ -189,6 +192,17 @@ pub const GENES: [GeneSpec; N] = [
         base: 1.0,
         mutation: SCALE,
     },
+    // The programs' own rate, apart from the body's: the tempo of behaviour and the tempo of the
+    // body need not be one. Its floor is the body's (`min_mutability`), so it cannot fall to zero.
+    GeneSpec {
+        key: "program_mutability",
+        label: "мутагенность поведения",
+        about: "Множитель на дрейф чисел и мутации программ поведения у потомка. Не ниже пола \
+                мутагенности: до нуля не падает.",
+        kind: GeneKind::Absolute,
+        base: 1.0,
+        mutation: SCALE,
+    },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -235,11 +249,12 @@ impl CreatureGenome {
             return (*self, programs.clone());
         }
         let child = self.mutated(h, rng);
-        let mutability = super::mutability_of(self[Gene::Mutability], h.min_mutability);
+        // the programs' own rate; a transfer copies from the parent's other track
+        let behaviour = super::mutability_of(self[Gene::ProgramMutability], h.min_mutability);
         let mut next = **programs;
-        for p in &mut next {
-            p.drift(h.program_drift * mutability, rng);
-            p.mutate(h.program_mutation * mutability, rng);
+        for stage in 0..2 {
+            next[stage].drift(h.program_drift * behaviour, rng);
+            next[stage].mutate_with(h.program_mutation * behaviour, Some(&programs[1 - stage]), rng);
         }
         let programs = if next == **programs { programs.clone() } else { Programs::new(next) };
         (child, programs)
@@ -259,6 +274,8 @@ impl CreatureGenome {
         };
         super::mutate_values(&mut child.0, &GENES, h.sigma, mutability, rng, Some(diet));
         child.0[Gene::Mutability as usize] = super::mutability_of(child[Gene::Mutability], h.min_mutability);
+        child.0[Gene::ProgramMutability as usize] =
+            super::mutability_of(child[Gene::ProgramMutability], h.min_mutability);
         child.0[Gene::Lifespan as usize] = child[Gene::Lifespan].clamp(LIFESPAN_MIN, LIFESPAN_MAX);
         child
     }

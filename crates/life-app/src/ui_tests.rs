@@ -767,7 +767,7 @@ fn поведение_выбранного_помещается_в_окно() {
                 break;
             }
             full.drift(1.0, &mut rng);
-            full.mutate(1.0, &mut rng);
+            full.mutate_with(1.0, Some(&Program::LURKER), &mut rng);
         }
         assert_eq!(full.blocks().len(), MAX_BLOCKS);
         // a founder is grown: it lives by the adult track, the mutated one

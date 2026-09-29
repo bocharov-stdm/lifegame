@@ -133,25 +133,37 @@ could not be done).
 - **Templates**: the `strategy` gene («происхождение») picks the founders' template and never
   switches (`STRATEGY_SWITCH_CHANCE` 0); both tracks start from it. `Program::STANDARD` carries the
   old genes' and the world's bases: always the layer, smoothing, division, healing, eating on the
-  move and sparing its children; below 30% fullness eat foreign food and drive rivals ×1.5 smaller;
-  fight back above 50% health; flee a hunter within 33% of sight, a calm stranger within 16%, keep
-  fleeing; defend a child above 60% health; hunt; rest from 95%, keep resting to 85%; corpse; plant;
-  wander. `Program::LURKER` is the same, wandering at 33% of its speed.
+  move and sparing its children; its memory in three modes (`ALARM_MODE` 1, `FULL_MODE` 2,
+  `HUNGRY_MODE` 3, so every line starts with a working memory a mutation can rebuild): below 30%
+  fullness mode 3 for 60 ticks, and under it eat foreign food and drive rivals ×1.5 smaller; a
+  hunter within 33% of sight or a calm stranger within 16% mode 1 for 60 ticks; from 95% fullness
+  mode 2 for 200; then fight back above 50% health; flee under mode 1; defend a child above 60%
+  health; hunt; rest under mode 2 while above 85%; corpse; plant; wander (20 blocks; the tests
+  «ещё убегает» and «отдыхает» stay in the language, unused by the templates). `Program::LURKER`
+  is the same, wandering at 33% of its speed.
   `Program::founder(strategy, layer, shoots)` gives a founder its layer (5–100%; a quarter of them,
   by a hash, 0–100%; scavengers 50–100%) and the 5% shooters «стрелять» after the leading settings;
   a founder is placed in its program's first unconditional layer.
 - **Heredity** (`CreatureGenome::inherit`): one clone draw for genome and programs (a clone shares
-  them); else the genes mutate, then each program **drifts** — every number but the flags and the
-  indices moves by gauss(0, its nudge × `program_drift` (rule, base 1) × mutability): a threshold ~10
-  points, a ratio 0.2, a time a quarter of its base, as the genes drift by 30% (through the rare
-  mutation alone a given number moved in one child of ~1700, and the old genes' adaptations could not
-  happen) — and with `program_mutation` (rule, base 5%) × mutability gets one mutation: nudge a
-  number 32%, replace a test 12%, negate a test with a condition 8%, replace the action 8%, swap
-  with a neighbour 15%, duplicate 6%, delete 11% (a dead block first — off or never reached; keeps
-  ≥ 1), insert a random block 5%, switch a block off or on 3% (its first «всегда» becomes «никогда»
-  and back). A deletion is as likely as a copy and an insertion together, so programs do not grow by
-  themselves. One that cannot apply (no test with a condition to negate) or lands where it was
-  changes nothing, its draws spent. `Program::changes` counts the mutations that changed
+  them); else the genes mutate, then each program **drifts** — a third of its numbers
+  (`PROGRAM_DRIFT_SHARE`; never the flags and the indices) move by gauss(0, its nudge ×
+  `program_drift` (rule, base 1) × `program_mutability`): a threshold ~10 points, a ratio 0.2, a
+  time a quarter of its base, as the genes drift by 30% (through the rare mutation alone a given
+  number moved in one child of ~1700, and the old genes' adaptations could not happen; with every
+  number moving at once a good change was buried in the noise of the rest) — and with
+  `program_mutation` (rule, base 5%) × `program_mutability` gets one mutation
+  (`Program::mutate_with`, the parent's other track at hand): nudge a number 27%, replace a test
+  12%, negate a test with a condition 8%, replace the action 8% (a parameter of the same label and
+  unit — the pace, a burst, «только если выгоднее» — keeps its number, `Action::args_from`), swap
+  with a neighbour 12%, duplicate a live block 6%, delete 14% (a dead block first — off or never
+  reached; keeps ≥ 1), insert a random block 5%, switch a block off or on 3% (its first «всегда»
+  becomes «никогда» and back), a **pair** 3% (a setting switching a mode on by a random test, and
+  that mode as a test on another block with a free «всегда»: a memory in one step), a **transfer**
+  2% (a live block of the other track copied in). A new or copied deciding block goes where it is
+  reached — above the first block that always fires — and a copy is of a live block, so no junk is
+  born; a deletion is as likely as the kinds that add a block together, so programs do not grow by
+  themselves. One that cannot apply (no test with a condition to negate, no other track) or lands
+  where it was changes nothing, its draws spent. `Program::changes` counts the mutations that changed
   something (not the drift). Past its end a program is filled with the same block, so equal blocks
   are equal programs. A mutation can switch off division, healing or eating on the move: such
   children die out — the catch is the consequence.
@@ -177,7 +189,11 @@ could not be done).
   actions, flags and indices, no numbers), prints the three most common with the medians of their
   numbers (`Program::median`) and `METRIC` lines for sweeps (`{juvenile,adult}_shapes`,
   `_template_share` (the templates' and the shooting founders' shape), `_hunt_ratio`, `_threat_range`,
-  `_mode_share` (a working «режим»), `_conditional_layer_share` (a «слой» under a condition)).
+  `_mode_share` (a working «режим»; ~1 since the templates remember through modes),
+  `_conditional_layer_share` (a «слой» under a condition), and the fitness for evolution: `_blocks`
+  (median length), `_dead_share` (blocks off or never reached), `_modes` (median live mode settings),
+  `_spread` (`Program::spread`: the mean interquartile range of the biggest shape's numbers as a
+  share of their ranges — 0 copies, ~0.5 random)).
 
 **Diets** — the `diet` choice gene, variant order H/O/S/C (the order of every `DIET_*` table in
 `config.rs`). Digestion (`DIET_DIGESTION`: plants, fresh meat, rot, bones; 0 = neither eats nor
@@ -251,8 +267,14 @@ goes for it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{
   not by its memory (a «бежать ещё» drifted to 0 lost them); a test («видит еду», «видит растение»,
   the weighing of prey and corpses against the plant) no longer chooses the kept plant; an ambush
   and torpor count as resting; the window shows a setting skipped behind one of its kind as not
-  looked at; the drift allocates nothing. **Not run** (cloud): tests, golden, runs — golden and the
-  references are to be re-recorded on Windows; the balance is unmeasured.
+  looked at; the drift allocates nothing. Then, for complex and stable programs without junk
+  (the user's choices): the drift moves a third of the numbers; the founders remember through
+  three modes; the mutations «pair» and «transfer»; a new or copied block only where it is
+  reached, a copy only of a live block; a replaced action keeps its compatible parameters; the
+  gene `program_mutability` (eleventh, floored); the report's `_blocks`, `_dead_share`, `_modes`,
+  `_spread`. **Not run** (cloud): tests, golden, runs — golden and the references are to be
+  re-recorded on Windows; the balance is unmeasured; the genome panel and the card were not
+  looked at with `TINYLIFE_SHOTS`.
 - **Round 3: every behaviour in blocks, flocks removed** (plan
   `~/.claude/plans/starry-jumping-shannon.md`, 2026-09-28, model `/14`). Stages: A the flock layer
   removed (tag `flocks-final`), B the language (three tests, eight parameters, 32 blocks, units, the
@@ -508,9 +530,11 @@ A creature killed in combat gets no prey and does not reproduce.
 order fixes the RNG draw order and positions in references and JSON; the only in-place
 replacements were `carnivory` → `diet` and `life_pace` → `maturation`, same law so same draws, and
 the deletions the behaviour genes that moved into the programs (nine in `/13`, fifteen with the
-flock genes in `/14`, the user's calls). Ten genes are left: `size`, `speed`, `vision`, `strategy`,
-`mutability`, `maturation`, `diet`, `lifespan`, `cold_blood`, `burst`. A choice gene with one
-variant is inert (draws nothing, hidden in the UI).
+flock genes in `/14`, the user's calls). Eleven genes: `size`, `speed`, `vision`, `strategy`,
+`mutability`, `maturation`, `diet`, `lifespan`, `cold_blood`, `burst`, `program_mutability` (the
+programs' own rate of drift and mutation, appended in `/15`; the body's `mutability` no longer
+touches them; both floored by `min_mutability`). A choice gene with one variant is inert (draws
+nothing, hidden in the UI).
 
 Mutation (`genome::Heredity`, built from the rules): `CLONE_CHANCE` 50% of children are exact
 copies; otherwise `Scale` for numbers (× (1 + gauss(0, σ·mutability)), multiplier ≥ 0.1), `Shift`
@@ -519,8 +543,8 @@ for choice genes (0.1% × mutability), and `Neighbours { chance, rise, jump, of,
 diet, independent of mutability: a step towards meat 2% (herbivore → omnivore → scavenger or
 carnivore), another neighbour step 0.5%, the herbivore's own leaps to the carnivore 0.1% and the
 scavenger 0.01% (rules `diet_leap_*`, replacing its general jump), others a general jump 0.01%.
-Mutability is clamped to `MIN_MUTABILITY` 0.1 (without a floor selection froze evolution) and costs
-nothing. Start mixes (strategies, diets) are dealt without draws (`variant_for`, `spread_ranks`).
+Mutability (the body's and the programs') is clamped to `MIN_MUTABILITY` 0.1 (without a floor
+selection froze evolution) and costs nothing. Start mixes (strategies, diets) are dealt without draws (`variant_for`, `spread_ranks`).
 
 A program **decides** (`strategy::decide(&Me, &Program, &mut Mind, &mut Rng, &senses) -> Intent`),
 the creature **acts** (`act`); a block cannot move, feed or divide the creature — a setting only

@@ -67,10 +67,10 @@ Diets are a gene (herbivore, omnivore, scavenger, carnivore): each has its own b
 own foods among plants, fresh meat, rot and bones; meat diets arise from mutants. A corpse is
 fresh for 300 ticks, then rot that sinks and decays to bones by 3000, then bones for 5000. The deep
 is cold below a thermocline, where the `cold_blood` gene makes a body cheaper and slower. Upkeep is
-the body and eyes plus the speed of the step actually taken. Ten genes are left, the body and life
+the body and eyes plus the speed of the step actually taken. Eleven genes, the body and life
 history: `size`, `speed`, `vision`, `strategy`, `mutability`, `maturation`, `diet`, `lifespan`,
-`cold_blood`, `burst` (the muscles, paid standing). From 70% of its lifespan a creature weakens to
-70% at 90%.
+`cold_blood`, `burst` (the muscles, paid standing), `program_mutability` (the programs' own rate).
+From 70% of its lifespan a creature weakens to 70% at 90%.
 
 All behaviour is a program (`creature/program.rs`): an ordered list of ≤ 32 blocks «if up to
 three tests → an action with its parameters». Each tick the settings apply first, wherever they
@@ -80,12 +80,15 @@ shooting, and modes (the program's memory, read by a test). Without a setting of
 creature does not do it: a program without «делиться» never divides. Then the first deciding block
 whose tests hold and whose action can be done decides. A creature has two programs, juvenile and
 adult, shared between relatives that inherited them unchanged. On division a mutating child's
-programs drift — every number a little, like genes (`program_drift`) — and mutate
-(`program_mutation`, 5% × mutability each). Founders start from their `strategy` template
-(standard or lurker), which carries the bases of the deleted genes and of what the world used to
-do; a founder's layer and the 5% shooters are set in its program. No world behaviour constants:
-numbers live in the blocks. A torpid creature eats nothing; a hunter expects strikes back only as
-its prey's program gives them.
+programs drift — a third of the numbers a little, like genes (`program_drift`) — and mutate
+(`program_mutation`, 5% × `program_mutability` each; a new block only where it is reached, a
+deletion takes a dead block first, a «pair» makes a memory in one step, a «transfer» copies a
+block from the other track). Founders start from their `strategy` template (standard or lurker),
+which carries the bases of the deleted genes and of what the world used to do and remembers
+hunger, an alarm and a full tank through modes; a founder's layer and the 5% shooters are set in
+its program. No world behaviour constants: numbers live in the blocks. A torpid creature eats
+nothing; others read a creature by the blocks whose tests held on its last move, so a hunt block
+behind an impossible condition scares nobody.
 
 Family is only a parent and its growing child while the parent's «щадить детей» holds; siblings
 and grandchildren are strangers. A parent whose program has «защищать детёныша» goes for its

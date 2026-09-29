@@ -35,6 +35,31 @@ plant) no longer chooses the kept plant — only the plant block does; an ambush
 resting in the chronicle; the behaviour window shows a setting skipped behind an earlier one of its
 kind as not looked at; the drift allocates nothing.
 
+Then, the user's ask: «чтобы вследствие мутаций могли появляться сложные и устойчивые алгоритмы и не
+было мусора». Four choices put to the user, all taken as recommended:
+- **The drift moves a third of the numbers** a child (`PROGRAM_DRIFT_SHARE`), not all sixty at
+  once: selection sees a few changes at a time instead of the sum of the noise.
+- **Memory that can evolve.** No working mode had ever evolved (`_mode_share` 0): a mode needs a
+  setting that switches it on and a test that reads it, two mutations with nothing to select
+  between. Now the mutation «pair» (3%) inserts both at once, and the founders remember through
+  modes — hunger (mode 3), an alarm (mode 1), a full tank (mode 2) — instead of the special tests
+  «ещё убегает» and «отдыхает», so every line starts with a working memory a mutation can rebuild.
+  The templates went from 19 to 20 blocks; the flight, the rest and the foreign food act as before
+  within a tick or two (the memory now expires 60 or 200 ticks after the last trigger).
+- **Structure without junk** (the user: «я сам не понял, что ты предложил, но хочу чтобы было
+  лучше», so all four): a new, copied or transferred deciding block goes only where it is reached
+  (above the first block that always fires); a copy is only of a live block; a «transfer» (2%)
+  copies a live block of the other track (the adult's into the juvenile's or back), so what one
+  stage found the other may try; a replaced action keeps the parameters of the same label and unit
+  (the pace, a burst, «только если выгоднее») instead of starting over. Deletion 14% against 5 + 6
+  + 3 (+ 2) adding.
+- **A gene of its own for the programs' rate**, `program_mutability` (eleventh, appended; base 1,
+  Scale, floored by `min_mutability` at the user's word so it cannot fall to zero): the tempo of
+  the body and of behaviour need not be one.
+The report prints, per track, the median length, the share of dead blocks, the median number of
+live mode settings and `Program::spread` — how far the biggest shape's numbers have spread (0
+copies, ~0.5 random) — as `METRIC` lines, to see whether these measures work.
+
 How it was checked: in a cloud session — reading, `cargo build`, `clippy`, `fmt`; no tests, no
 golden, no runs. The golden digests and the references are to be re-recorded on Windows; the
 balance is unmeasured. The tests of the mutation kinds were re-aimed by expectation (of 8000

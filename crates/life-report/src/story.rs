@@ -222,12 +222,40 @@ fn print_programs(world: &life_core::World) {
             let b = &p.blocks()[i];
             b.action == Action::Layer && b.when.iter().any(|t| !t.always())
         });
+        // how fit for evolution the programs are: their length, the dead blocks among them (off or
+        // never reached), the memories they keep, and how far the numbers of the biggest shape
+        // have spread (0: copies, about 0.5: random)
+        let blocks = median(programs().map(|p| p.blocks().len() as f64).collect());
+        let (all, dead) = programs().fold((0, 0), |(all, dead), p| {
+            let n = p.blocks().len();
+            (all + n, dead + (0..n).filter(|&i| !p.live(i)).count())
+        });
+        let dead_share = dead as f64 / all.max(1) as f64;
+        let memories = median(
+            programs()
+                .map(|p| {
+                    (0..p.blocks().len())
+                        .filter(|&i| p.live(i) && p.blocks()[i].action == Action::Mode)
+                        .count() as f64
+                })
+                .collect(),
+        );
+        let spread =
+            groups.values().max_by_key(|g| g.len()).and_then(|g| Program::spread(g)).unwrap_or(f64::NAN);
+        println!(
+            "  блоков в программе {blocks:.0}, мёртвых {}, режимов {memories:.0}, разброс чисел главной формы {spread:.2}",
+            percent((dead_share * 10_000.0).round() as u64, 10_000)
+        );
         println!("METRIC {key}_shapes {}", groups.len());
         println!("METRIC {key}_template_share {:.4}", on_template as f64 / total as f64);
         println!("METRIC {key}_hunt_ratio {hunt:.3}");
         println!("METRIC {key}_threat_range {threat:.3}");
         println!("METRIC {key}_mode_share {modes:.4}");
         println!("METRIC {key}_conditional_layer_share {layers:.4}");
+        println!("METRIC {key}_blocks {blocks:.1}");
+        println!("METRIC {key}_dead_share {dead_share:.4}");
+        println!("METRIC {key}_modes {memories:.1}");
+        println!("METRIC {key}_spread {spread:.4}");
     }
 }
 
