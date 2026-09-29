@@ -24,6 +24,12 @@ const PLANT_RATE: f64 = life_core::config::PLANT_SPAWN_CHANCE;
 pub const GAME_COST_SCALE: f64 = 2.0;
 /// The price of life is shown per 100 of the game's own: 100 is `GAME_COST_SCALE`.
 const COST_SHOWN: f64 = 100.0 / GAME_COST_SCALE;
+/// The game's own price of speed (`speed_cost`, on top of the price of life 2): the sweep of
+/// 2026-09-29 (60 000 ticks, 8 seeds; speed at half price against the price of life 2 alone) kept
+/// carnivores in 8 worlds and scavengers in 7 (control 7 and 6), the best mix of the single stats —
+/// a difference of a world or two, within the noise, the user's pick. Shown per 100 of it.
+pub const GAME_SPEED_COST: f64 = 0.5;
+const SPEED_COST_SHOWN: f64 = 100.0 / GAME_SPEED_COST;
 /// Масштаб интерфейса; 0 — как в системе.
 pub const UI_SCALES: [f64; 6] = [0.0, 1.0, 1.25, 1.5, 1.75, 2.0];
 
@@ -174,11 +180,16 @@ const NUMBER: Field = Field {
 /// changed default would never reach a player who saved before it: a file loads each key of
 /// `CHANGED_DEFAULTS` changed after the file's version as the new default, the rest as saved. 1 — the
 /// ocean reform (2026-09-27): the «океаническое» profile, the corpse stages' times; 2 — the price of
-/// life 3 → 2 (2026-09-29).
-const DEFAULTS_VERSION: u64 = 2;
+/// life 3 → 2 (2026-09-29); 3 — the price of speed 1 → 0.5 (2026-09-29).
+const DEFAULTS_VERSION: u64 = 3;
 /// A key whose default changed and the version that changed it.
-const CHANGED_DEFAULTS: [(Key, u64); 4] =
-    [(Key::PlantDepthProfile, 1), (Key::CorpseFresh, 1), (Key::CorpseDecay, 1), (Key::CostScale, 2)];
+const CHANGED_DEFAULTS: [(Key, u64); 5] = [
+    (Key::PlantDepthProfile, 1),
+    (Key::CorpseFresh, 1),
+    (Key::CorpseDecay, 1),
+    (Key::CostScale, 2),
+    (Key::SpeedCost, 3),
+];
 
 /// Подписи профилей еды — по порядку `Profile::ALL` (сверено тестом).
 const PROFILES: [&str; 7] =
@@ -773,12 +784,13 @@ const BASE_FIELDS: [Field; 57] = [
     Field {
         key: Key::SpeedCost,
         label: "Цена скорости",
-        hint: "Сколько обходится базовая скорость (10); 100 — как задумано.",
+        hint: "Сколько обходится базовая скорость (10); 100 — цена игры, вдвое дешевле задуманной: \
+               бегать дешевле, и мясоедам с падальщиками проще жить. 200 — как задумано.",
         lo: 0.1,
         hi: 10.0,
-        step: 0.01,
-        format: per100,
-        shown: 100.0,
+        step: 0.005,
+        format: |v| format!("{:.0}", v * SPEED_COST_SHOWN),
+        shown: SPEED_COST_SHOWN,
         tab: Tab::Body,
         rule: Some("speed_cost"),
         ..NUMBER
@@ -1242,6 +1254,7 @@ impl Default for Settings {
             values: FIELDS.map(|f| match f.key {
                 Key::Creatures => CREATURES_AT_START as f64,
                 Key::CostScale => GAME_COST_SCALE,
+                Key::SpeedCost => GAME_SPEED_COST,
                 Key::PlantGrowth => 0.2,
                 Key::Lurkers => 50.0,
                 Key::PlantDepthSteepness => 5.0,
@@ -1496,6 +1509,7 @@ mod tests {
     fn по_умолчанию_спокойный_игровой_профиль() {
         let want = Rules::default()
             .with("cost_scale", 2.0)
+            .and_then(|r| r.with("speed_cost", 0.5))
             .and_then(|r| r.with("plant_rate", Rules::default().plant_rate * 0.2))
             .and_then(|r| r.with("plant_depth_steepness", 5.0))
             .unwrap();
@@ -1504,7 +1518,12 @@ mod tests {
         assert_eq!((s.scale, s.shape), (20.0, Shape::R2x1));
         assert_eq!(s.world_config(1).strategies, vec![50.0, 50.0]);
         let mut s = Settings::default();
-        for (key, v) in [(Key::CostScale, 1.0), (Key::PlantGrowth, 1.0), (Key::PlantDepthSteepness, 8.0)] {
+        for (key, v) in [
+            (Key::CostScale, 1.0),
+            (Key::SpeedCost, 1.0),
+            (Key::PlantGrowth, 1.0),
+            (Key::PlantDepthSteepness, 8.0),
+        ] {
             s.set(key, v);
         }
         assert_eq!(s.rules(), Rules::default());
@@ -1680,20 +1699,29 @@ mod tests {
         assert_eq!(new.to_json()["defaults"], DEFAULTS_VERSION);
     }
 
-    /// A file of version 1 saved the old price of life 3 as its default: it takes the new one and
-    /// keeps what it chose after the ocean reform; a later file keeps its price.
+    /// A file of version 1 saved the old prices (life 3, speed 1) as its defaults: it takes the new
+    /// ones and keeps what it chose after the ocean reform; a version 2 file takes only the new
+    /// price of speed, and a current file keeps both.
     #[test]
     fn a_file_takes_only_the_defaults_changed_after_it() {
         use life_core::flora::Profile;
         let saved = serde_json::json!({
-            "defaults": 1, "cost_scale": 3.0, "plant_depth_profile": Profile::Game.index()
+            "defaults": 1, "cost_scale": 3.0, "speed_cost": 1.0,
+            "plant_depth_profile": Profile::Game.index()
         });
         let s = Settings::from_json(&saved);
         assert_eq!(s.get(Key::CostScale), GAME_COST_SCALE);
+        assert_eq!(s.get(Key::SpeedCost), GAME_SPEED_COST);
         assert_eq!(s.get(Key::PlantDepthProfile), Profile::Game.index());
+        let mut v2 = saved.clone();
+        v2["defaults"] = 2.into();
+        let s = Settings::from_json(&v2);
+        assert_eq!(s.get(Key::CostScale), 3.0, "the price of life chosen after its change");
+        assert_eq!(s.get(Key::SpeedCost), GAME_SPEED_COST);
         let mut current = saved.clone();
-        current["defaults"] = 2.into();
-        assert_eq!(Settings::from_json(&current).get(Key::CostScale), 3.0);
+        current["defaults"] = DEFAULTS_VERSION.into();
+        let s = Settings::from_json(&current);
+        assert_eq!((s.get(Key::CostScale), s.get(Key::SpeedCost)), (3.0, 1.0));
     }
 
     /// The game's price of life reads 100, and every factor with a common value shows it as 100.
@@ -1708,6 +1736,9 @@ mod tests {
         let f = field(Key::CostScale);
         assert_eq!(f.snap(3.0), 3.0, "the old price is on the grid");
         assert_eq!((f.format)(3.0), "150");
+        let f = field(Key::SpeedCost);
+        assert_eq!(f.snap(1.0), 1.0, "the designed price of speed is on the grid");
+        assert_eq!((f.format)(1.0), "200");
         assert_eq!((field(Key::Diet(3, 0)).format)(s.get(Key::Diet(3, 0))), "300", "carnivore strike ×3");
         assert_eq!((field(Key::Diet(1, 5)).format)(s.get(Key::Diet(1, 5))), "70%", "a share stays in %");
     }
