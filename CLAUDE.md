@@ -302,8 +302,14 @@ goes for it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{
 
 ```bash
 cargo run -p life-report --release -- --seeds 1 2 3 4 5 6 7 8 --ticks 20000 --max-work 1e15 \
-  --scale 20 --shape 2:1 --rule plant_rate=0.5 --rule cost_scale=3 --rule plant_depth_steepness=5 --mix 1 1
+  --scale 20 --shape 2:1 --rule plant_rate=0.5 --rule cost_scale=2 --rule plant_depth_steepness=5 --mix 1 1
 ```
+
+The price of life went from 3 to 2 on 2026-09-29 (sweep of `cost_scale` 2–5, these conditions, 8 seeds
+× 40 000 ticks; results in `target/sweeps/cost-2026-09-29`): at 2 all 8 worlds survive, carnivores hold in 8
+(6.8% late), scavengers in 4 (1.3%), late population 970, minimum 416; at 3 carnivores 8 (4.9%),
+scavengers 1, 1136 / 604; at 4 carnivores 4, at 5 none. The measurements above this line before that
+date were taken at 3.
 
 ## Commands
 
@@ -507,7 +513,12 @@ window, tests of it in `strategy.rs`, re-record golden. Adding a template: a var
 ## The game (`crates/life-app`)
 
 **The window never waits for the simulation.** Defaults are the user's world (×20, 2:1,
-`cost_scale=3`, half lurkers, steepness 5).
+`cost_scale=2` = `settings::GAME_COST_SCALE`, half lurkers, steepness 5). The settings show every
+factor with a common value as a plain number per 100 of it (the user: no %): the price of life
+100 = ×2, the size, speed and sight prices, the diet edges, the drift and the meat founders' size
+100 = ×1; the diet's digestion shares stay in %, the rules and the report keep the raw factors.
+«Спокойнее» sets the price to 150 (×3). A settings file carries the version of
+its defaults (`DEFAULTS_VERSION`): a key whose default changed after it takes the new one.
 
 - `sim.rs` — the simulation thread owns `World`; the UI sends `Command`s applied between ticks.
   Frames go through a one-slot mailbox and are never dropped, so history, log and snapshots travel

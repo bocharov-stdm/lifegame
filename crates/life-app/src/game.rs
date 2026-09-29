@@ -88,13 +88,13 @@ impl LifeApp {
         self.settings.set(settings::Key::CostScale, 3.0);
         self.save_settings();
         self.sim.send(Command::SetRules {
-            rules, note: "спокойный профиль: содержание ×3".into()
+            rules, note: "спокойный профиль: цена жизни 150".into()
         });
         self.sim.send(Command::SetSpeed(crate::sim::DEFAULT_SPEED));
         if let Some(g) = &mut self.game {
             g.rules_changed = true;
         }
-        self.toast("30 т/с · содержание ×3; численность изменится постепенно".into());
+        self.toast("30 т/с · цена жизни 150; численность изменится постепенно".into());
     }
 
     pub fn game_screen(&mut self, ui: &mut egui::Ui) {
@@ -344,7 +344,7 @@ impl LifeApp {
             ui.toggle_value(&mut self.stats_open, "Статистика")
                 .on_hover_text("Сытость, где живут, область (I)");
             ui.toggle_value(&mut self.side_open, "Панель").on_hover_text("Графики, хроника, существо (Tab)");
-            if ui.button("Спокойнее").on_hover_text("30 тиков/с и содержание ×3: численность постепенно снижается. Можно применить к старой партии.").clicked() {
+            if ui.button("Спокойнее").on_hover_text("30 тиков/с и цена жизни 150 (обычная — 100): численность постепенно снижается, но падальщики почти не держатся. Можно применить к старой партии.").clicked() {
                 self.calm_world();
             }
             if ui

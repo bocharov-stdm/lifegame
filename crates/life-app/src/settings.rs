@@ -18,6 +18,12 @@ pub const SEED_MAX: u64 = 99_999;
 /// Plants a tick per base area at the energy density 1 (`config::PLANT_SPAWN_CHANCE`): the input
 /// shows the density in plants a tick.
 const PLANT_RATE: f64 = life_core::config::PLANT_SPAWN_CHANCE;
+/// The game's own price of life (`cost_scale`): the sweep of 2026-09-29 (the player's world, 8 seeds
+/// × 40 000 ticks, 2 to 5) kept carnivores in every world and scavengers in half at 2, the best mix;
+/// 3, the old default, lost the scavengers, 4 and 5 the carnivores.
+pub const GAME_COST_SCALE: f64 = 2.0;
+/// The price of life is shown per 100 of the game's own: 100 is `GAME_COST_SCALE`.
+const COST_SHOWN: f64 = 100.0 / GAME_COST_SCALE;
 /// Масштаб интерфейса; 0 — как в системе.
 pub const UI_SCALES: [f64; 6] = [0.0, 1.0, 1.25, 1.5, 1.75, 2.0];
 
@@ -165,11 +171,14 @@ const NUMBER: Field = Field {
 };
 
 /// The version of the defaults a settings file was saved with. A file saves every value, so a
-/// changed default would never reach a player who saved before it: a file older than this loads
-/// `CHANGED_DEFAULTS` as the new defaults and the rest as saved. 1 — the ocean reform (2026-09-27):
-/// the «океаническое» profile, the corpse stages' times.
-const DEFAULTS_VERSION: u64 = 1;
-const CHANGED_DEFAULTS: [Key; 3] = [Key::PlantDepthProfile, Key::CorpseFresh, Key::CorpseDecay];
+/// changed default would never reach a player who saved before it: a file loads each key of
+/// `CHANGED_DEFAULTS` changed after the file's version as the new default, the rest as saved. 1 — the
+/// ocean reform (2026-09-27): the «океаническое» profile, the corpse stages' times; 2 — the price of
+/// life 3 → 2 (2026-09-29).
+const DEFAULTS_VERSION: u64 = 2;
+/// A key whose default changed and the version that changed it.
+const CHANGED_DEFAULTS: [(Key, u64); 4] =
+    [(Key::PlantDepthProfile, 1), (Key::CorpseFresh, 1), (Key::CorpseDecay, 1), (Key::CostScale, 2)];
 
 /// Подписи профилей еды — по порядку `Profile::ALL` (сверено тестом).
 const PROFILES: [&str; 7] =
@@ -202,6 +211,11 @@ fn percent(v: f64) -> String {
     format!("{v:.0}%")
 }
 
+/// A factor per 100 of its common value: ×1 is written 100.
+fn per100(v: f64) -> String {
+    format!("{:.0}", v * 100.0)
+}
+
 /// Every field: the world's and the rules' (`BASE_FIELDS`), then the diet edges, diet by diet
 /// (`diet_field`).
 pub const FIELDS: [Field; 97] = {
@@ -227,11 +241,17 @@ pub const FIELDS: [Field; 97] = {
 /// The «Питание» table's rows, in `rules::DIET_EDGES` order: what the row is called and what it
 /// means; a cell is one diet's value.
 pub const DIET_ROWS: [(&str, &str); 10] = [
-    ("Удар", "Во сколько раз сильнее бьёт, чем обычно. Энергии удар стоит столько же."),
-    ("Здоровье", "Здоровья на единицу размера. Крепкого дольше убивать, и охотник это взвешивает."),
-    ("Цена размера", "Множитель цены размера в содержании: меньше 1 — большое тело обходится дешевле."),
-    ("Цена скорости", "Множитель цены скорости в содержании: меньше 1 — бегать дешевле."),
-    ("Нюх", "Как далеко чует трупы, в долях своего зрения. Нюх бесплатный, платят только за зрение."),
+    ("Удар", "Сила удара; 100 — обычная, 300 — втрое сильнее. Энергии удар стоит столько же."),
+    (
+        "Здоровье",
+        "Здоровья на единицу размера; 100 — обычно. Крепкого дольше убивать, и охотник это взвешивает.",
+    ),
+    ("Цена размера", "Цена размера в содержании; 100 — обычная, меньше — большое тело обходится дешевле."),
+    ("Цена скорости", "Цена скорости в содержании; 100 — обычная, меньше — бегать дешевле."),
+    (
+        "Нюх",
+        "Как далеко чует трупы; 100 — на своё зрение, 300 — втрое дальше. Нюх бесплатный, платят только за зрение.",
+    ),
     ("Растения", "Какую долю энергии растения усваивает. 0 — растения не ест и к ним не идёт."),
     (
         "Свежее мясо",
@@ -306,7 +326,7 @@ const DIET_FIELD_LABELS: [[&str; 10]; 4] = [
 
 const EATEN: &str = "Больше 100% — энергия из ничего: она только растёт в растениях и переходит по цепочке.";
 
-/// The field of diet `d`'s edge `e`.
+/// The field of diet `d`'s edge `e`. A factor is shown per 100 of a common body (×1 is 100).
 const fn diet_field(d: usize, e: usize) -> Field {
     let times = Field {
         key: Key::Diet(d as u8, e as u8),
@@ -315,9 +335,8 @@ const fn diet_field(d: usize, e: usize) -> Field {
         lo: 0.1,
         hi: 5.0,
         step: 0.01,
-        format: |v| format!("×{v:.2}"),
-        unit: " ×",
-        decimals: 2,
+        format: per100,
+        shown: 100.0,
         tab: Tab::Diets,
         rule: Some(life_core::rules::DIET_RULE_KEYS[d][e]),
         ..NUMBER
@@ -326,9 +345,7 @@ const fn diet_field(d: usize, e: usize) -> Field {
         lo: 0.0,
         hi: 1.0,
         format: |v| format!("{:.0}%", v * 100.0),
-        shown: 100.0,
         unit: " %",
-        decimals: 0,
         limit: EATEN,
         ..times
     };
@@ -437,15 +454,14 @@ const BASE_FIELDS: [Field; 57] = [
     },
     Field {
         key: Key::MeatFounders,
-        label: "Мясоеды на старте крупнее",
-        hint: "Во сколько раз крупнее рождаются основатели-падальщики и мясоеды. Равные остальным, \
-               они не находили добычи и умирали с голоду. Дальше размер наследуется как обычно.",
+        label: "Размер мясоедов на старте",
+        hint: "Размер основателей-падальщиков и мясоедов; 100 — обычный, 200 — вдвое крупнее. Равные \
+               остальным, они не находили добычи и умирали с голоду. Дальше размер наследуется как обычно.",
         lo: 0.25,
         hi: 5.0,
         step: 0.05,
-        format: |v| format!("×{v:.2}"),
-        unit: " ×",
-        decimals: 2,
+        format: per100,
+        shown: 100.0,
         tab: Tab::World,
         rule: None,
         ..NUMBER
@@ -712,14 +728,14 @@ const BASE_FIELDS: [Field; 57] = [
     Field {
         key: Key::CostScale,
         label: "Общая цена жизни",
-        hint: "Множитель ко всему содержанию тела — размеру, скорости и зрению сразу. \
-               ×3 — жизнь втрое дороже: существ меньше, и они спокойнее.",
+        hint: "Цена всего содержания тела — размера, скорости и зрения сразу; 100 — обычная. \
+               Дороже — падальщики почти не держатся, а при 200 мясоеды держатся лишь в половине \
+               миров; дешевле — мясоедов и падальщиков больше.",
         lo: 0.1,
         hi: 10.0,
-        step: 0.01,
-        format: |v| format!("×{v:.2}"),
-        unit: " ×",
-        decimals: 2,
+        step: 0.02,
+        format: |v| format!("{:.0}", v * COST_SHOWN),
+        shown: COST_SHOWN,
         tab: Tab::Body,
         rule: Some("cost_scale"),
         ..NUMBER
@@ -727,14 +743,13 @@ const BASE_FIELDS: [Field; 57] = [
     Field {
         key: Key::SizeCost,
         label: "Цена размера",
-        hint: "Во сколько раз дороже задуманного обходится тело базового размера (40). \
+        hint: "Сколько обходится тело базового размера (40); 100 — как задумано. \
                Степень решает, насколько дороже тело крупнее.",
         lo: 0.1,
         hi: 10.0,
         step: 0.01,
-        format: |v| format!("×{v:.2}"),
-        unit: " ×",
-        decimals: 2,
+        format: per100,
+        shown: 100.0,
         limit: "Почти бесплатное тело раздулось бы без предела, а с ним и поиск соседей.",
         tab: Tab::Body,
         rule: Some("size_cost"),
@@ -758,13 +773,12 @@ const BASE_FIELDS: [Field; 57] = [
     Field {
         key: Key::SpeedCost,
         label: "Цена скорости",
-        hint: "Во сколько раз дороже задуманного обходится базовая скорость (10).",
+        hint: "Сколько обходится базовая скорость (10); 100 — как задумано.",
         lo: 0.1,
         hi: 10.0,
         step: 0.01,
-        format: |v| format!("×{v:.2}"),
-        unit: " ×",
-        decimals: 2,
+        format: per100,
+        shown: 100.0,
         tab: Tab::Body,
         rule: Some("speed_cost"),
         ..NUMBER
@@ -799,13 +813,12 @@ const BASE_FIELDS: [Field; 57] = [
     Field {
         key: Key::SightCost,
         label: "Цена зрения",
-        hint: "Во сколько раз дороже задуманного обходится базовое зрение (400).",
+        hint: "Сколько обходится базовое зрение (400); 100 — как задумано.",
         lo: 0.1,
         hi: 10.0,
         step: 0.01,
-        format: |v| format!("×{v:.2}"),
-        unit: " ×",
-        decimals: 2,
+        format: per100,
+        shown: 100.0,
         limit: "Почти бесплатное зрение выросло бы на весь мир, и каждый тик каждый смотрел бы на всех.",
         tab: Tab::Body,
         rule: Some("sight_cost"),
@@ -1096,13 +1109,13 @@ const BASE_FIELDS: [Field; 57] = [
         key: Key::ProgramDrift,
         label: "Дрейф чисел поведения",
         hint: "У каждого мутирующего ребёнка все числа программы поведения немного сдвигаются, как \
-               гены: при 1 порог — примерно на 10 пунктов, отношение — на 0,2, время — на четверть \
+               гены: при 100 порог — примерно на 10 пунктов, отношение — на 0,2, время — на четверть \
                базы. Умножается на мутагенность. 0 — числа меняют только редкие мутации.",
         lo: 0.0,
         hi: 5.0,
         step: 0.05,
-        format: |v| format!("{v:.2}"),
-        decimals: 2,
+        format: per100,
+        shown: 100.0,
         tab: Tab::Evolution,
         rule: Some("program_drift"),
         ..NUMBER
@@ -1228,8 +1241,7 @@ impl Default for Settings {
             shape: Shape::R2x1,
             values: FIELDS.map(|f| match f.key {
                 Key::Creatures => CREATURES_AT_START as f64,
-                // Меньше плотность популяции при прежней модели жизненного цикла.
-                Key::CostScale => 3.0,
+                Key::CostScale => GAME_COST_SCALE,
                 Key::PlantGrowth => 0.2,
                 Key::Lurkers => 50.0,
                 Key::PlantDepthSteepness => 5.0,
@@ -1375,7 +1387,7 @@ impl Settings {
         for (i, f) in FIELDS.iter().enumerate() {
             // до переименования в «существ» ключ был другим
             let old = (f.key == Key::Creatures).then_some("n_vegetarians");
-            if version < DEFAULTS_VERSION && CHANGED_DEFAULTS.contains(&f.key) {
+            if CHANGED_DEFAULTS.iter().any(|&(key, changed)| key == f.key && version < changed) {
                 continue;
             }
             if let Some(v) = num(json_key(f.key)).or_else(|| old.and_then(num)) {
@@ -1478,12 +1490,12 @@ mod tests {
         assert!(hint(Key::PlantEnergy).contains(&format!("существа — {tank:.0}")));
     }
 
-    /// The game's default is the player's own world: the calm profile (dearer life, fewer
-    /// creatures), a fifth of the food, a softer food slope; ×20, 2:1, half lurkers.
+    /// The game's default is the player's own world: a dearer life (fewer creatures), a fifth of the
+    /// food, a softer food slope; ×20, 2:1, half lurkers.
     #[test]
     fn по_умолчанию_спокойный_игровой_профиль() {
         let want = Rules::default()
-            .with("cost_scale", 3.0)
+            .with("cost_scale", 2.0)
             .and_then(|r| r.with("plant_rate", Rules::default().plant_rate * 0.2))
             .and_then(|r| r.with("plant_depth_steepness", 5.0))
             .unwrap();
@@ -1656,7 +1668,7 @@ mod tests {
         let old = Settings::from_json(&saved);
         assert_eq!(old.get(Key::PlantEnergy), 80.0, "the player's value stays");
         let new = Settings::default();
-        for key in CHANGED_DEFAULTS {
+        for (key, _) in CHANGED_DEFAULTS {
             assert_eq!(old.get(key), new.get(key), "{key:?} takes the new default");
         }
         assert_eq!(new.get(Key::PlantDepthProfile), Profile::Ocean.index());
@@ -1666,6 +1678,38 @@ mod tests {
         assert_eq!(kept.get(Key::PlantDepthProfile), Profile::Game.index(), "chosen after the change");
         assert_eq!(kept.get(Key::CorpseFresh), 150.0);
         assert_eq!(new.to_json()["defaults"], DEFAULTS_VERSION);
+    }
+
+    /// A file of version 1 saved the old price of life 3 as its default: it takes the new one and
+    /// keeps what it chose after the ocean reform; a later file keeps its price.
+    #[test]
+    fn a_file_takes_only_the_defaults_changed_after_it() {
+        use life_core::flora::Profile;
+        let saved = serde_json::json!({
+            "defaults": 1, "cost_scale": 3.0, "plant_depth_profile": Profile::Game.index()
+        });
+        let s = Settings::from_json(&saved);
+        assert_eq!(s.get(Key::CostScale), GAME_COST_SCALE);
+        assert_eq!(s.get(Key::PlantDepthProfile), Profile::Game.index());
+        let mut current = saved.clone();
+        current["defaults"] = 2.into();
+        assert_eq!(Settings::from_json(&current).get(Key::CostScale), 3.0);
+    }
+
+    /// The game's price of life reads 100, and every factor with a common value shows it as 100.
+    #[test]
+    fn factors_read_100_at_their_common_value() {
+        let s = Settings::default();
+        for key in [Key::CostScale, Key::SizeCost, Key::SpeedCost, Key::SightCost, Key::ProgramDrift] {
+            let f = field(key);
+            assert_eq!((f.format)(s.get(key)), "100", "{}", f.label);
+            assert_eq!(s.get(key) * f.shown, 100.0, "{}", f.label);
+        }
+        let f = field(Key::CostScale);
+        assert_eq!(f.snap(3.0), 3.0, "the old price is on the grid");
+        assert_eq!((f.format)(3.0), "150");
+        assert_eq!((field(Key::Diet(3, 0)).format)(s.get(Key::Diet(3, 0))), "300", "carnivore strike ×3");
+        assert_eq!((field(Key::Diet(1, 5)).format)(s.get(Key::Diet(1, 5))), "70%", "a share stays in %");
     }
 
     #[test]
