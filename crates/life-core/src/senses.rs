@@ -963,8 +963,8 @@ mod tests {
     }
 
     /// Each diet smells corpses as far as its `DIET_SMELL` edge says, and no farther, through the
-    /// corpse grid itself: the scavenger at 3× its vision, the carnivore at 1.5×, the omnivore by
-    /// sight; the herbivore, eating no meat, never goes for one. Hungry, so any corpse will do.
+    /// corpse grid itself: the scavenger at 3× its vision, the carnivore at 1.5×, the omnivore at
+    /// 1.2×; the herbivore, eating no meat, never goes for one. Hungry, so any corpse will do.
     #[test]
     fn each_diet_smells_as_far_as_its_edge() {
         use crate::config::DIET_SMELL;
@@ -976,7 +976,7 @@ mod tests {
                 "diet {diet} smells no farther than {smell}×"
             );
         }
-        assert_eq!(DIET_SMELL, [1.0, 1.0, 3.0, 1.5], "the ranges the niches were measured with");
+        assert_eq!(DIET_SMELL, [1.0, 1.2, 3.0, 1.5], "the ranges the user calibrated");
         assert!(!finds_corpse(0.0, true, 990, 0.5), "a herbivore does not go for meat");
     }
 

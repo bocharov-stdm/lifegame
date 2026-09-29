@@ -9,6 +9,12 @@ section describes earlier models and is kept as a record (flocks, cannibalism as
 
 Model `life-behavior/15`, format `life-report/12`.
 
+**The diet edges calibrated by the user** (2026-09-29, from the lab's «Питание» tab): the
+omnivore strikes ×1.5 (was 1.15), smells corpses at 1.2× vision (was 1) and digests plants,
+fresh meat and rot at 80/60/20% (was 70/30/5%); the scavenger digests fresh meat at 100% (was
+80%); the carnivore rot at 30% (was 10%); every diet has a juvenile gut (plants while young:
+100/100/70/70%, was only the carnivore's 70%). All shares stay ≤ 100%. Unmeasured.
+
 A review of the block programs (2026-09-29; the user: «исправляй, задавая вопросы») found the
 interpreter sound and four things in the way of evolution or of the rules:
 - **A free bluff.** Others feared a creature by the most permissive *live* hunt block of its

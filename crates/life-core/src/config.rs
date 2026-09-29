@@ -244,11 +244,11 @@ pub const HERBIVORE_LEAP_SCAVENGER: f64 = 0.0001;
 /// the mutability: so a line is not locked into its branch forever.
 pub const DIET_JUMP_CHANCE: f64 = 0.0001;
 /// Strike damage by diet, times the world's `melee_damage_share` (and `shot_damage_share`): meat
-/// eaters are built to kill. The omnivore strikes a little harder than the herbivore, the
-/// scavenger harder still, the carnivore hardest: at ×1.5 a carnivore could hold only the newborns
-/// it caught, and hunting did not pay (user's choice, 2026-09-27). The energy a strike costs does
-/// not change.
-pub const DIET_STRIKE: [f64; 4] = [1.0, 1.15, 1.3, 3.0];
+/// eaters are built to kill. The omnivore strikes half as hard again as the herbivore (1.15 until
+/// the user's calibration of 2026-09-29), the scavenger ×1.3, the carnivore hardest: at ×1.5 a
+/// carnivore could hold only the newborns it caught, and hunting did not pay (user's choice,
+/// 2026-09-27). The energy a strike costs does not change.
+pub const DIET_STRIKE: [f64; 4] = [1.0, 1.5, 1.3, 3.0];
 /// Health by diet, times the body size: the herbivore is hardy. It cannot strike like a meat
 /// eater, so it outlasts one — a hunter needs half as many strikes again, and weighs that.
 pub const DIET_HEALTH: [f64; 4] = [1.5, 1.0, 1.0, 1.0];
@@ -269,8 +269,9 @@ pub const DIET_SPEED_COST: [f64; 4] = [1.0, 1.0, 1.0, 0.5];
 /// gut (`DIET_YOUNG_PLANTS`) in 8 of 8, but fresh corpses were eaten before they rotted and the
 /// scavengers held in 1; the scavenger's nose ×3 gives both — carnivores in 6, scavengers in 3. A
 /// nose paid for like sight at its radius killed the carnivores everywhere: a mutant is born with
-/// it and cannot pay for it before it finds meat.
-pub const DIET_SMELL: [f64; 4] = [1.0, 1.0, 3.0, 1.5];
+/// it and cannot pay for it before it finds meat. The omnivore smells a little past its sight
+/// (×1.2, the user's calibration of 2026-09-29).
+pub const DIET_SMELL: [f64; 4] = [1.0, 1.2, 3.0, 1.5];
 // Cold deep water (the user's choice, 2026-09-27; it replaced the scavenger's own deep saving,
 // −40% on the bottom). The water is warm down to the thermocline's top, cold below its bottom, a
 // smooth step between (% of depth, rules `thermo_top`, `thermo_bottom`). A cold-blooded body takes
@@ -315,11 +316,13 @@ pub const MEAT_FOUNDER_SIZE: f64 = 2.0;
 /// line of them is not starved out before it finds meat.
 /// Bones only the scavenger digests (the user's choice, 2026-09-27): the long-lying remains on the
 /// bottom are its own food, which nobody else can take.
+/// The user's calibration of 2026-09-29: the omnivore 0.7/0.3/0.05 → 0.8/0.6/0.2, the scavenger's
+/// fresh meat 0.8 → 1.0, the carnivore's rot 0.1 → 0.3.
 pub const DIET_DIGESTION: [[f64; 4]; 4] = [
     [1.0, 0.0, 0.0, 0.0],  // herbivore
-    [0.7, 0.3, 0.05, 0.0], // omnivore
-    [0.15, 0.8, 0.9, 0.9], // scavenger
-    [0.2, 1.0, 0.1, 0.0],  // carnivore
+    [0.8, 0.6, 0.2, 0.0],  // omnivore
+    [0.15, 1.0, 0.9, 0.9], // scavenger
+    [0.2, 1.0, 0.3, 0.0],  // carnivore
 ];
 /// Plants while not grown to its own size (the size gene), by diet — a juvenile gut: a young
 /// carnivore digests plants like an omnivore, grows on them and hunts once grown. A carnivore
@@ -328,8 +331,10 @@ pub const DIET_DIGESTION: [[f64; 4]; 4] = [
 /// loophole in staying young: only the grown divide (57‒67% of carnivores were grown in every
 /// variant of the sweep). It is a floor under the grown value, not a value of its own: 0 means
 /// "young as grown", so the others follow their grown `plants` rule when the lab changes it (a copy
-/// of it here kept young scavengers on plants after `scavenger_plants=0`).
-pub const DIET_YOUNG_PLANTS: [f64; 4] = [0.0, 0.0, 0.0, 0.7];
+/// of it here kept young scavengers on plants after `scavenger_plants=0`). The user's calibration
+/// of 2026-09-29 gave every diet a juvenile gut: the herbivore and the omnivore 100%, the
+/// scavenger 70%, as the carnivore.
+pub const DIET_YOUNG_PLANTS: [f64; 4] = [1.0, 1.0, 0.7, 0.7];
 /// Founders' diets, shares in the same order. Dealt without a draw. No meat eaters: at the start
 /// there are neither corpses nor prey small enough, and every such founder starved (none struck
 /// once in the user's world, 2026-09-27); the meat diets arise from mutants

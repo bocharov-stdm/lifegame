@@ -179,15 +179,27 @@ const NUMBER: Field = Field {
 /// changed default would never reach a player who saved before it: a file loads each key of
 /// `CHANGED_DEFAULTS` changed after the file's version as the new default, the rest as saved. 1 — the
 /// ocean reform (2026-09-27): the «океаническое» profile, the corpse stages' times; 2 — the price of
-/// life 3 → 2 (2026-09-29); 3 — the price of speed 1 → 0.5 (2026-09-29).
-const DEFAULTS_VERSION: u64 = 3;
+/// life 3 → 2 (2026-09-29); 3 — the price of speed 1 → 0.5 (2026-09-29); 4 — the diet edges
+/// calibrated by the user (2026-09-29).
+const DEFAULTS_VERSION: u64 = 4;
 /// A key whose default changed and the version that changed it.
-const CHANGED_DEFAULTS: [(Key, u64); 5] = [
+const CHANGED_DEFAULTS: [(Key, u64); 15] = [
     (Key::PlantDepthProfile, 1),
     (Key::CorpseFresh, 1),
     (Key::CorpseDecay, 1),
     (Key::CostScale, 2),
     (Key::SpeedCost, 3),
+    // diet edges: (diet H/O/S/C, edge in `rules::DIET_EDGES` order)
+    (Key::Diet(0, 9), 4),
+    (Key::Diet(1, 0), 4),
+    (Key::Diet(1, 4), 4),
+    (Key::Diet(1, 5), 4),
+    (Key::Diet(1, 6), 4),
+    (Key::Diet(1, 7), 4),
+    (Key::Diet(1, 9), 4),
+    (Key::Diet(2, 6), 4),
+    (Key::Diet(2, 9), 4),
+    (Key::Diet(3, 7), 4),
 ];
 
 /// The food profiles' labels — in the order of `Profile::ALL` (checked by a test).
@@ -1740,7 +1752,7 @@ mod tests {
         assert_eq!(f.snap(1.0), 1.0, "the designed price of speed is on the grid");
         assert_eq!((f.format)(1.0), "200");
         assert_eq!((field(Key::Diet(3, 0)).format)(s.get(Key::Diet(3, 0))), "300", "carnivore strike ×3");
-        assert_eq!((field(Key::Diet(1, 5)).format)(s.get(Key::Diet(1, 5))), "70%", "a share stays in %");
+        assert_eq!((field(Key::Diet(1, 5)).format)(s.get(Key::Diet(1, 5))), "80%", "a share stays in %");
     }
 
     #[test]

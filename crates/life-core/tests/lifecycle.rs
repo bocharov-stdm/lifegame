@@ -195,9 +195,9 @@ fn диеты_усваивают_по_таблице() {
     let plant_bite = r.plant_energy * r.plant_bite_yield / 5.0;
     for (diet, plants, fresh, rot, bones) in [
         (Diet::Herbivore, 1.0, 0.0, 0.0, 0.0),
-        (Diet::Omnivore, 0.7, 0.3, 0.05, 0.0),
-        (Diet::Carnivore, 0.2, 1.0, 0.1, 0.0),
-        (Diet::Scavenger, 0.15, 0.8, 0.9, 0.9),
+        (Diet::Omnivore, 0.8, 0.6, 0.2, 0.0),
+        (Diet::Carnivore, 0.2, 1.0, 0.3, 0.0),
+        (Diet::Scavenger, 0.15, 1.0, 0.9, 0.9),
     ] {
         let mut v = parent();
         v.genome = with_diet(v.genome, diet);
@@ -218,12 +218,13 @@ fn диеты_усваивают_по_таблице() {
             "{diet:?}: the cost has no bonus"
         );
     }
-    // meat eaters strike harder: herbivore < omnivore < scavenger < carnivore
+    // meat eaters strike harder: herbivore < scavenger < omnivore < carnivore (the user's
+    // calibration of 2026-09-29 put the omnivore above the scavenger)
     let bonus = |d: Diet| Rules::default().diets[d as usize].strike;
     assert_eq!(bonus(Diet::Herbivore), 1.0);
-    assert!(bonus(Diet::Herbivore) < bonus(Diet::Omnivore));
-    assert!(bonus(Diet::Omnivore) < bonus(Diet::Scavenger));
-    assert!(bonus(Diet::Scavenger) < bonus(Diet::Carnivore));
+    assert!(bonus(Diet::Herbivore) < bonus(Diet::Scavenger));
+    assert!(bonus(Diet::Scavenger) < bonus(Diet::Omnivore));
+    assert!(bonus(Diet::Omnivore) < bonus(Diet::Carnivore));
 }
 
 /// The lab edits a diet's edges: every one of them reaches the phenotype, and only that diet's.
@@ -264,10 +265,11 @@ fn diet_edges_follow_the_rules() {
     }
 }
 
-/// A carnivore grows on plants like an omnivore until it reaches its own size (the juvenile gut),
-/// then digests them at its grown 20% and must hunt; the other diets digest plants young as grown.
-/// The juvenile gut is a floor under the grown `plants` rule, so a lab change of that rule reaches
-/// the young too: `scavenger_plants=0` leaves no young scavenger on plants.
+/// Every diet has a juvenile gut (the user's calibration of 2026-09-29): until it reaches its own
+/// size it digests plants at `young_plants` (100/100/70/70%), then at its grown share — a carnivore
+/// at 20% and must hunt. The juvenile gut is a floor under the grown `plants` rule, so a lab change
+/// of that rule reaches the young too, and with the floor at 0 a young scavenger at
+/// `scavenger_plants=0` leaves plants alone.
 #[test]
 fn a_young_carnivore_grows_on_plants() {
     let space = Space::default();
@@ -276,15 +278,14 @@ fn a_young_carnivore_grows_on_plants() {
         Phenotype::at_size(&g, r, &space, g[Gene::Size] * share).plant_efficiency
     };
     let r = Rules::default();
-    for diet in [Diet::Herbivore, Diet::Omnivore, Diet::Scavenger] {
-        let grown = life_core::config::DIET_DIGESTION[diet as usize][0];
-        assert_eq!(
-            (plants(&r, diet, 0.5), plants(&r, diet, 1.0)),
-            (grown, grown),
-            "{diet:?}: young as grown"
-        );
+    for (diet, young, grown) in [
+        (Diet::Herbivore, 1.0, 1.0),
+        (Diet::Omnivore, 1.0, 0.8),
+        (Diet::Scavenger, 0.7, 0.15),
+        (Diet::Carnivore, 0.7, 0.2),
+    ] {
+        assert_eq!((plants(&r, diet, 0.5), plants(&r, diet, 1.0)), (young, grown), "{diet:?}");
     }
-    assert_eq!((plants(&r, Diet::Carnivore, 0.5), plants(&r, Diet::Carnivore, 1.0)), (0.7, 0.2));
     let c = with_diet(parent().genome, Diet::Carnivore);
     let almost = Phenotype::at_size(&c, &r, &space, c[Gene::Size] - 0.01);
     assert_eq!((almost.plant_efficiency, Phenotype::of(&c, &r, &space).plant_efficiency), (0.7, 0.2));
@@ -292,7 +293,11 @@ fn a_young_carnivore_grows_on_plants() {
     let lab = r
         .with("scavenger_plants", 0.0)
         .unwrap()
+        .with("scavenger_young_plants", 0.0)
+        .unwrap()
         .with("herbivore_plants", 0.8)
+        .unwrap()
+        .with("herbivore_young_plants", 0.0)
         .unwrap()
         .with("carnivore_plants", 0.9)
         .unwrap();
@@ -357,7 +362,7 @@ fn бонусы_диет() {
     let saved = 1.0 - life_core::config::DIET_SPEED_COST[3];
     assert!((o.pheno.upkeep - c.pheno.upkeep - saved * speed_term).abs() < 1e-12);
     assert_eq!(s.pheno.upkeep, o.pheno.upkeep, "the scavenger pays the base");
-    assert_eq!((s.pheno.smell, c.pheno.smell, o.pheno.smell), (3.0 * vision, 1.5 * vision, vision));
+    assert_eq!((s.pheno.smell, c.pheno.smell, o.pheno.smell), (3.0 * vision, 1.5 * vision, 1.2 * vision));
 }
 
 /// Cold deep water: a cold-blooded body is slower and cheaper below the thermocline, by its gene
