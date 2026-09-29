@@ -65,6 +65,27 @@ golden, no runs. The golden digests and the references are to be re-recorded on 
 balance is unmeasured. The tests of the mutation kinds were re-aimed by expectation (of 8000
 mutations ~320 negations, ~240 switch-offs).
 
+A second review (the same day; the user: «исправь») found junk still born and a bluff left:
+- **Dead settings.** Only the first setting of a kind whose tests hold applies, so one behind an
+  earlier unconditional setting of its kind never acts; it counted as live. Now it is dead: the
+  window mutes it, a deletion takes it first, `_dead_share` counts it.
+- **Junk still born.** An always-firing block (an unconditional wander, ambush, torpor) copied or
+  inserted above the ending killed every deciding block below it; with the ending as the last
+  block (every template) a new deciding block could land after it; a copy of an unconditional
+  setting was dead at once; a pair could hang its mode test on a dead block or on the ending
+  (bringing the dead tail back). Now a copy is of a block that can live beside the original, a
+  pair's reader is live and never the ending, and any added block that would leave a block dead is
+  not added.
+- **Growth.** A child always has the other track, so the transfer always applied: 16% adding
+  against 14% deleting. Deletion is 16% now (the nudge 27 → 25%).
+- **A sated or grazing hunter was feared.** A hunt block whose tests held counted even when it could
+  take no prey (a full tank; a scavenger without «есть и чужую пищу»). Now it counts only while the
+  hunter could hunt.
+- **The alarm ran a tick short.** The templates flee under an alarm mode of 60 ticks, which covers
+  the tick it is raised and 59 after; the old flight ran 61. The alarm is 61 ticks now.
+
+Checked: `clippy` on the whole workspace, `fmt --check`; no tests, no golden, no runs.
+
 ## Every behaviour in blocks, flocks removed (`life-behavior/14`, previous stage)
 
 Model `life-behavior/14`, format `life-report/12`.

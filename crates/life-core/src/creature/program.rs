@@ -15,11 +15,13 @@
 //! its size gene, the adult one after.
 //!
 //! The programs are inherited apart from the gene table: a child copies its parent's; unless it is
-//! an exact copy, every number drifts a little, like its genes (`Program::drift`, the rule
-//! `program_drift` × mutability), and with the rule `program_mutation` × mutability one mutation
-//! changes each — a number, a test, an action, the order, a copy, a deletion, a new block, a block
-//! switched off or on (`Program::mutate`). Founders start from the template of their `strategy` gene
-//! (`Program::template`), which carries the values of the behaviour genes the programs replaced.
+//! an exact copy, a third of the numbers drift, like its genes (`Program::drift`, the rule
+//! `program_drift` × the gene `program_mutability`), and with the rule `program_mutation` × the
+//! same gene one mutation changes each — a number, a test, a negation, an action, the order, a
+//! copy, a deletion, a new block, a block switched off or on, a mode and its test together (a
+//! pair), a block of the other track copied in (a transfer; `Program::mutate_with`). Founders
+//! start from the template of their `strategy` gene (`Program::template`), which carries the
+//! values of the behaviour genes the programs replaced.
 //!
 //! A program is behaviour: it costs no upkeep and creates no energy — an action only chooses where
 //! to step or how to stand; `Creature::act` pays. Its catch is its consequences: a program that
@@ -43,6 +45,8 @@ pub const MAX_BLOCKS: usize = 32;
 pub const MAX_ARGS: usize = 8;
 /// Tests a block has; «always» fills the unused ones.
 pub const TESTS: usize = 3;
+/// Numbers a block has: its tests' thresholds, then its action's parameters (`Block::spec`).
+const SLOTS: usize = TESTS + MAX_ARGS;
 /// Modes a creature can switch on (`Action::Mode`, `Cond::Mode`), numbered from 1.
 pub const MODES: usize = 4;
 
@@ -649,8 +653,9 @@ impl Action {
                  доли зрения, и бьёт её. Осторожность — насколько боится ответных ударов (100% — \
                  обычная, 0 — не боится); погоню, которая за «терпение» тиков не сократила разрыв, \
                  бросает и столько тиков эту добычу не трогает. «Только если выгоднее» — не охотится, \
-                 когда растение или падаль дают не меньше. Ход погони — доля скорости. Пока условие блока \
-                 выполнено, добыча его боится; отдыхающего или бегущего — нет."
+                 когда растение или падаль дают не меньше. Ход погони — доля скорости. Добыча его \
+                 боится, если на последнем ходу условие блока выполнилось и он мог охотиться: не сыт \
+                 и свежее мясо ему сейчас пища. Если охоту заслонил блок выше (бегство, отдых) — нет."
             }
             Action::EatCorpse => {
                 "Идёт к лучшей видимой падали, которую ест, и ест. «Только если выгоднее» — когда \
@@ -847,7 +852,7 @@ impl Block {
 
     /// Whether it decides every time it is reached.
     pub const fn always_fires(&self) -> bool {
-        self.when[0].always() && self.when[1].always() && self.when[2].always() && self.action.never_fails()
+        self.unconditional() && self.action.never_fails()
     }
 
     /// Its tests as one line: «сытость < 40% и его ударили за 1 тик»; «всегда» when there are none.
@@ -898,13 +903,41 @@ impl Block {
             | fixed << 32
     }
 
+    /// Whether every test is «always»: it applies (a setting) or is tried (a deciding block) each
+    /// time it is reached.
+    pub const fn unconditional(&self) -> bool {
+        self.when[0].always() && self.when[1].always() && self.when[2].always()
+    }
+
+    /// The spec of the number in `slot`: a test's threshold (slots 0‒2) or a parameter (3‒); None
+    /// for a test without a threshold or past the action's parameters.
+    fn spec(&self, slot: usize) -> Option<ParamSpec> {
+        if slot < TESTS {
+            self.when[slot].cond.param()
+        } else {
+            self.action.params().get(slot - TESTS).copied()
+        }
+    }
+
     /// The numbers of the block the drift moves: each test's threshold and each parameter but the
     /// flags and indices, as (slot, its spec); slots 0‒2 are the tests, 3‒ the parameters.
     fn numbers(&self) -> impl Iterator<Item = (usize, ParamSpec)> + '_ {
-        let tests =
-            (0..TESTS).filter_map(|s| self.when[s].cond.param().filter(ParamSpec::drifts).map(|p| (s, p)));
-        let args = self.action.params().iter().enumerate().filter(|(_, p)| p.drifts());
-        tests.chain(args.map(|(i, p)| (TESTS + i, *p)))
+        (0..SLOTS).filter_map(|s| self.spec(s).filter(ParamSpec::drifts).map(|p| (s, p)))
+    }
+
+    /// The health share down to which a fight-back block fights: its highest «health ≥» test
+    /// (0 without one). `Summary::of` reads the shape by it, `Menace` a creature's last move.
+    pub const fn fight_health(&self) -> u16 {
+        let mut health = 0;
+        let mut t = 0;
+        while t < TESTS {
+            let test = self.when[t];
+            if !test.negate && matches!(test.cond, Cond::Health) && test.param > health {
+                health = test.param;
+            }
+            t += 1;
+        }
+        health
     }
 
     fn number(&mut self, slot: usize) -> &mut u16 {
@@ -922,6 +955,8 @@ impl Block {
 struct Summary {
     /// Blocks up to the first deciding one that always fires.
     reachable: u8,
+    /// The blocks that may act, a bit a block (`Program::live`).
+    live: u32,
     /// The farthest a threat test looks, % of sight.
     threat: u16,
     /// Its most permissive hunt's ratio; 0: it never hunts. Its own `Cond::PreySeen` reads it;
@@ -952,8 +987,30 @@ impl Summary {
             }
             i += 1;
         }
+        // live: not switched off, and a deciding block reached or a setting that no earlier
+        // unconditional one of its kind hides (only the first of a kind whose tests hold applies)
+        let (mut live, mut hidden) = (0_u32, 0_u64);
+        let mut i = 0;
+        while i < len {
+            let b = &blocks[i];
+            if b.off() {
+                // switched off
+            } else if b.action.is_setting() {
+                let kind = b.setting_kind();
+                if hidden & kind == 0 {
+                    live |= 1 << i;
+                    if b.unconditional() {
+                        hidden |= kind;
+                    }
+                }
+            } else if i < reachable {
+                live |= 1 << i;
+            }
+            i += 1;
+        }
         let mut s = Summary {
             reachable: reachable as u8,
+            live,
             threat: 0,
             hunt: 0,
             fight: 0,
@@ -967,7 +1024,7 @@ impl Summary {
         i = 0;
         while i < len {
             let b = &blocks[i];
-            if !b.off() && (b.action.is_setting() || i < reachable) {
+            if live & (1 << i) != 0 {
                 let mut t = 0;
                 while t < TESTS {
                     let test = b.when[t];
@@ -984,25 +1041,13 @@ impl Summary {
                     Action::FightBack if !fights => {
                         fights = true;
                         s.fight = b.args[0];
-                        let mut t = 0;
-                        while t < TESTS {
-                            let test = b.when[t];
-                            if !test.negate
-                                && matches!(test.cond, Cond::Health)
-                                && test.param > s.fight_health
-                            {
-                                s.fight_health = test.param;
-                            }
-                            t += 1;
-                        }
+                        s.fight_health = b.fight_health();
                     }
                     Action::Wander if !wanders => {
                         wanders = true;
                         s.wander = b.args[1];
                     }
-                    Action::Layer
-                        if !layered && b.when[0].always() && b.when[1].always() && b.when[2].always() =>
-                    {
+                    Action::Layer if !layered && b.unconditional() => {
                         layered = true;
                         let (a, z) = (b.args[0], b.args[1]);
                         s.layer = if a <= z { (a, z) } else { (z, a) };
@@ -1042,6 +1087,9 @@ pub const ADULT: usize = 1;
 pub const ALARM_MODE: u16 = 1;
 pub const FULL_MODE: u16 = 2;
 pub const HUNGRY_MODE: u16 = 3;
+/// The founders' alarm lasts the tick it is raised and the old flight's memory after it, so the
+/// template runs as long as the old strategy did.
+const ALARM_TICKS: u16 = FLEE_TICKS as u16 + 1;
 
 /// The founders' behaviour — the old hand-written strategy with the base values of the behaviour
 /// genes the programs replaced — wandering at `pace` % of its speed.
@@ -1063,10 +1111,12 @@ const fn founders(pace: u16) -> Program {
         Block::when(Test::at(Cond::Fullness, 30).not(), Action::Mode).with(0, HUNGRY_MODE),
         Block::when(Test::at(Cond::Mode, HUNGRY_MODE), Action::EatForeign),
         Block::when(Test::at(Cond::Mode, HUNGRY_MODE), Action::Rival),
-        // an alarm remembered 60 ticks (the old flight's memory): a hunter within the flight
-        // distance, a calm stranger within half of it
-        Block::when(Test::at(Cond::HunterNear, FLEE_PCT), Action::Mode).with(0, ALARM_MODE),
-        Block::when(Test::at(Cond::ThreatNear, calm), Action::Mode).with(0, ALARM_MODE),
+        // an alarm remembered the old flight's memory: a hunter within the flight distance, a calm
+        // stranger within half of it
+        Block::when(Test::at(Cond::HunterNear, FLEE_PCT), Action::Mode)
+            .with(0, ALARM_MODE)
+            .with(1, ALARM_TICKS),
+        Block::when(Test::at(Cond::ThreatNear, calm), Action::Mode).with(0, ALARM_MODE).with(1, ALARM_TICKS),
         // a full tank remembered 200 ticks: the old rest gene, from 95% fullness
         Block::when(Test::at(Cond::Fullness, 95), Action::Mode).with(0, FULL_MODE).with(1, 200),
         // the old bravery 50%: it defends itself down to half its health
@@ -1167,10 +1217,21 @@ impl Program {
         usize::from(self.summary.reachable)
     }
 
-    /// Whether block `i` may act: not switched off, and a setting or reached.
+    /// Whether block `i` may act: not switched off, and a deciding block that is reached or a
+    /// setting that no earlier unconditional setting of its kind hides.
     pub fn live(&self, i: usize) -> bool {
-        let b = &self.blocks()[i];
-        !b.off() && (b.action.is_setting() || i < self.reachable())
+        i < usize::from(self.len) && self.summary.live & (1 << i) != 0
+    }
+
+    /// Blocks that never act (`live`).
+    fn dead(&self) -> usize {
+        usize::from(self.len) - self.summary.live.count_ones() as usize
+    }
+
+    /// The first deciding block that always fires, which ends what is reached; None when none does.
+    fn ending(&self) -> Option<usize> {
+        let last = self.reachable() - 1;
+        self.blocks[last].always_fires().then_some(last)
     }
 
     /// How many times smaller its most permissive hunt takes prey (`Cond::PreySeen`; what the
@@ -1185,6 +1246,12 @@ impl Program {
     pub fn defence(&self) -> Option<(f64, f64)> {
         let s = self.summary;
         (s.fight > 0).then(|| (f64::from(s.fight) / 100.0, f64::from(s.fight_health) / 100.0))
+    }
+
+    /// `hunt_ratio` and `defence` raw, as `Menace` keeps them (hundredths, %; 0: none).
+    pub(super) fn menace_raw(&self) -> (u16, (u16, u16)) {
+        let s = self.summary;
+        (s.hunt, (s.fight, s.fight_health))
     }
 
     /// The farthest a threat test looks, a share of sight: the first threat query covers it.
@@ -1211,19 +1278,8 @@ impl Program {
     /// Of programs of one shape, the one with every number the median of theirs (the upper of two
     /// middle ones): what a group of drifting programs holds to. None for none or mixed shapes.
     pub fn median(programs: &[Program]) -> Option<Program> {
-        let first = *programs.first()?;
-        let shape = first.shape();
-        if programs.iter().any(|p| p.shape() != shape) {
-            return None;
-        }
-        let mut m = first;
-        for i in 0..usize::from(first.len) {
-            for (slot, _) in first.blocks[i].numbers() {
-                let mut xs: Vec<u16> = programs.iter().map(|p| p.blocks[i].get(slot)).collect();
-                xs.sort_unstable();
-                *m.blocks[i].number(slot) = xs[xs.len() / 2];
-            }
-        }
+        let mut m = *programs.first()?;
+        Program::columns(programs, |i, slot, _, xs| *m.blocks[i].number(slot) = xs[xs.len() / 2])?;
         m.summary = Summary::of(&m.blocks, usize::from(m.len));
         Some(m)
     }
@@ -1232,22 +1288,33 @@ impl Program {
     /// the interquartile range as a share of the number's range (0: all alike, about 0.5: as
     /// random values). None for none or mixed shapes.
     pub fn spread(programs: &[Program]) -> Option<f64> {
-        let first = *programs.first()?;
+        let (mut sum, mut count) = (0.0, 0);
+        Program::columns(programs, |_, _, spec, xs| {
+            let (lo, hi) = (xs[xs.len() / 4], xs[xs.len() * 3 / 4]);
+            sum += f64::from(hi - lo) / f64::from(spec.hi - spec.lo).max(1.0);
+            count += 1;
+        })?;
+        (count > 0).then(|| sum / f64::from(count))
+    }
+
+    /// Each drifting number of programs of one shape, sorted across them, given to `f` with its
+    /// block, slot and spec. None (and no call) for none or mixed shapes.
+    fn columns(programs: &[Program], mut f: impl FnMut(usize, usize, ParamSpec, &[u16])) -> Option<()> {
+        let first = programs.first()?;
         let shape = first.shape();
         if programs.iter().any(|p| p.shape() != shape) {
             return None;
         }
-        let (mut sum, mut count) = (0.0, 0);
+        let mut xs = Vec::with_capacity(programs.len());
         for i in 0..usize::from(first.len) {
             for (slot, spec) in first.blocks[i].numbers() {
-                let mut xs: Vec<u16> = programs.iter().map(|p| p.blocks[i].get(slot)).collect();
+                xs.clear();
+                xs.extend(programs.iter().map(|p| p.blocks[i].get(slot)));
                 xs.sort_unstable();
-                let (lo, hi) = (xs[xs.len() / 4], xs[xs.len() * 3 / 4]);
-                sum += f64::from(hi - lo) / f64::from(spec.hi - spec.lo).max(1.0);
-                count += 1;
+                f(i, slot, spec, &xs);
             }
         }
-        (count > 0).then(|| sum / f64::from(count))
+        Some(())
     }
 
     /// The blocks as text lines, «2. если сытость < 30% → установка: гнать соперников у еды
@@ -1267,8 +1334,9 @@ impl Program {
 
     /// A child's drift: a third of the numbers of the program (`PROGRAM_DRIFT_SHARE`; never the
     /// flags and the indices) move by gauss(0, its nudge × `share`), held in range — `share` is
-    /// the rule `program_drift` × mutability — as its genes drift. One draw a number and one more
-    /// for each that moves; none at all when `share` is 0. Not counted in `changes`.
+    /// the rule `program_drift` × the parent's `program_mutability` — as its genes drift. One draw
+    /// a number, and two more (a gauss) for each that moves; none at all when `share` is 0. Not
+    /// counted in `changes`.
     pub fn drift(&mut self, share: f64, rng: &mut Rng) {
         if share <= 0.0 {
             return;
@@ -1276,13 +1344,8 @@ impl Program {
         let len = usize::from(self.len);
         for b in &mut self.blocks[..len] {
             // the slots of `Block::numbers`, in its order, without collecting them
-            for slot in 0..TESTS + MAX_ARGS {
-                let spec = if slot < TESTS {
-                    b.when[slot].cond.param()
-                } else {
-                    b.action.params().get(slot - TESTS).copied()
-                };
-                if let Some(spec) = spec.filter(ParamSpec::drifts)
+            for slot in 0..SLOTS {
+                if let Some(spec) = b.spec(slot).filter(ParamSpec::drifts)
                     && rng.random() < PROGRAM_DRIFT_SHARE
                 {
                     let raw = b.number(slot);
@@ -1298,40 +1361,37 @@ impl Program {
         self.mutate_with(chance, None, rng);
     }
 
-    /// The child's program: with chance `chance` (the rule × the parent's mutability) one
-    /// mutation, else an exact copy. One draw always; a mutation draws its kind and what it needs.
-    /// `other` is the parent's other track, for a transfer. A mutation that cannot apply (a full
-    /// program, a single block, nothing to nudge, no test to negate) or lands where it was changes
-    /// nothing and is not counted. A new or copied deciding block goes where it is reached — no
-    /// lower than the first block that always fires — and a copy is of a live block: no junk born.
+    /// The child's program: with chance `chance` (the rule × the parent's `program_mutability`)
+    /// one mutation, else an exact copy. One draw always; a mutation draws its kind and what it
+    /// needs. `other` is the parent's other track, for a transfer. A mutation that cannot apply (a
+    /// full program, a single block, nothing to nudge, no test to negate, nothing to copy) or lands
+    /// where it was changes nothing and is not counted. No junk is born: a copy is of a live block
+    /// that can stay live beside the original (not an unconditional setting, not a block that
+    /// always fires), a new or copied deciding block goes where it is reached — no lower than the
+    /// block that always fires — and a block added (a copy, a new one, a pair, a transfer) that
+    /// would leave a block dead, itself or another, is not added, its draws spent.
     pub fn mutate_with(&mut self, chance: f64, other: Option<&Program>, rng: &mut Rng) {
         if rng.random() >= chance {
             return;
         }
-        let before = (self.blocks, self.len);
+        let before = *self;
         let len = usize::from(self.len);
-        let reachable = self.reachable();
+        let ending = self.ending();
         let u = rng.random();
         let pick = |rng: &mut Rng, n: usize| rng.randint(0, n as i64 - 1) as usize;
         // where a block goes: a setting anywhere, a deciding one above the block that always fires
-        let place = |rng: &mut Rng, block: &Block| {
-            if block.action.is_setting() || reachable >= len {
-                pick(rng, len + 1)
-            } else {
-                pick(rng, reachable)
-            }
+        // (or anywhere when none does)
+        let place = |rng: &mut Rng, block: &Block| match ending {
+            Some(end) if !block.action.is_setting() => pick(rng, end + 1),
+            _ => pick(rng, len + 1),
         };
-        // the live blocks of a program, to copy from
-        let live_of = |p: &Program| {
-            let mut live = [0; MAX_BLOCKS];
-            let mut n = 0;
-            for i in 0..p.blocks().len() {
-                if p.live(i) {
-                    live[n] = i;
-                    n += 1;
-                }
-            }
-            (live, n)
+        // a live block of a program worth copying: its copy can live beside it
+        let copy_of = |rng: &mut Rng, p: &Program| {
+            let copyable = |i: usize| {
+                let b = &p.blocks[i];
+                p.live(i) && !(b.action.is_setting() && b.unconditional()) && !b.always_fires()
+            };
+            pick_where(rng, usize::from(p.len), copyable).map(|i| p.blocks[i])
         };
         let mut acc = 0.0;
         let mut op = MUTATIONS.len() - 1;
@@ -1342,28 +1402,19 @@ impl Program {
                 break;
             }
         }
+        let adds = matches!(
+            MUTATIONS[op].0,
+            Mutation::Duplicate | Mutation::Insert | Mutation::Pair | Mutation::Transfer
+        );
         match MUTATIONS[op].0 {
             Mutation::Nudge => {
-                // every number of the program: the tests' thresholds (slots 0‒2) and the action's (3‒)
-                let slots: Vec<(usize, usize)> = (0..len)
-                    .flat_map(|i| (0..TESTS + MAX_ARGS).map(move |s| (i, s)))
-                    .filter(|&(i, s)| {
-                        if s < TESTS {
-                            self.blocks[i].when[s].cond.param().is_some()
-                        } else {
-                            s - TESTS < self.blocks[i].action.params().len()
-                        }
-                    })
-                    .collect();
-                if !slots.is_empty() {
-                    let (i, s) = slots[pick(rng, slots.len())];
-                    let b = &mut self.blocks[i];
-                    let spec = if s < TESTS {
-                        b.when[s].cond.param().expect("a test with a threshold")
-                    } else {
-                        b.action.params()[s - TESTS]
-                    };
-                    let raw = b.number(s);
+                // any number of the program: the tests' thresholds (slots 0‒2) and the action's (3‒)
+                let blocks = &self.blocks;
+                if let Some(k) = pick_where(rng, len * SLOTS, |k| blocks[k / SLOTS].spec(k % SLOTS).is_some())
+                {
+                    let (i, slot) = (k / SLOTS, k % SLOTS);
+                    let spec = self.blocks[i].spec(slot).expect("a number");
+                    let raw = self.blocks[i].number(slot);
                     *raw = spec.nudged(*raw, rng);
                 }
             }
@@ -1375,16 +1426,9 @@ impl Program {
                 // only a test with a condition: «always» is `Toggle`'s, so that a negation does
                 // not knock a block out two times in three
                 let i = pick(rng, len);
-                let mut real = [0; TESTS];
-                let mut n = 0;
-                for s in 0..TESTS {
-                    if self.blocks[i].when[s].cond != Cond::Always {
-                        real[n] = s;
-                        n += 1;
-                    }
-                }
-                if n > 0 {
-                    self.blocks[i].when[real[pick(rng, n)]].negate ^= true;
+                let when = self.blocks[i].when;
+                if let Some(s) = pick_where(rng, TESTS, |s| when[s].cond != Cond::Always) {
+                    self.blocks[i].when[s].negate ^= true;
                 }
             }
             Mutation::Action => {
@@ -1401,28 +1445,18 @@ impl Program {
                 }
             }
             Mutation::Duplicate => {
-                if len < MAX_BLOCKS {
-                    let (live, n) = live_of(self);
-                    if n > 0 {
-                        let block = self.blocks[live[pick(rng, n)]];
-                        let at = place(rng, &block);
-                        self.insert(at, block);
-                    }
+                if len < MAX_BLOCKS
+                    && let Some(block) = copy_of(rng, self)
+                {
+                    let at = place(rng, &block);
+                    self.insert(at, block);
                 }
             }
             Mutation::Delete => {
                 if len > 1 {
-                    // a dead block first — switched off, or a deciding one never reached — so that
-                    // the dead do not pile up; any block when none is dead
-                    let mut dead = [0; MAX_BLOCKS];
-                    let mut n = 0;
-                    for i in 0..len {
-                        if !self.live(i) {
-                            dead[n] = i;
-                            n += 1;
-                        }
-                    }
-                    let i = if n > 0 { dead[pick(rng, n)] } else { pick(rng, len) };
+                    // a dead block first — switched off, never reached, or a setting hidden by one
+                    // of its kind — so that the dead do not pile up; any block when none is dead
+                    let i = pick_where(rng, len, |i| !self.live(i)).unwrap_or_else(|| pick(rng, len));
                     self.blocks.copy_within(i + 1..len, i);
                     self.blocks[len - 1] = FILLER;
                     self.len -= 1;
@@ -1439,25 +1473,31 @@ impl Program {
             }
             Mutation::Pair => {
                 // a memory in one step: a setting that switches a mode on by a random test, and
-                // that mode as a test on another block with a free «always» — apart they would be
-                // two mutations with nothing to select between them
+                // that mode as a test on another live block with a free «always» — apart they
+                // would be two mutations with nothing to select between them. Not the block that
+                // always fires: a condition on it would bring the dead tail back to life. No such
+                // reader: no memory either.
                 if len < MAX_BLOCKS {
                     let mode = MODE.random(rng);
                     let setting = Block::when(random_test(rng), Action::Mode).with(0, mode);
                     let at = pick(rng, len + 1);
                     self.insert(at, setting);
-                    let mut free = [0; MAX_BLOCKS];
-                    let mut n = 0;
-                    for i in 0..len + 1 {
-                        if i != at && self.blocks[i].when.iter().any(|t| t.always()) {
-                            free[n] = i;
-                            n += 1;
+                    let with = Summary::of(&self.blocks, len + 1);
+                    let blocks = &self.blocks;
+                    let reader = |i: usize| {
+                        let b = &blocks[i];
+                        i != at
+                            && with.live & (1 << i) != 0
+                            && !b.always_fires()
+                            && b.when.iter().any(|t| t.always())
+                    };
+                    match pick_where(rng, len + 1, reader) {
+                        Some(i) => {
+                            let b = &mut self.blocks[i];
+                            let slot = b.when.iter().position(|t| t.always()).expect("a free slot");
+                            b.when[slot] = Test::at(Cond::Mode, mode);
                         }
-                    }
-                    if n > 0 {
-                        let b = &mut self.blocks[free[pick(rng, n)]];
-                        let slot = b.when.iter().position(|t| t.always()).expect("a free slot");
-                        b.when[slot] = Test::at(Cond::Mode, mode);
+                        None => *self = before,
                     }
                 }
             }
@@ -1466,13 +1506,10 @@ impl Program {
                 // copied to where it is reached: what one stage found the other may try
                 if let Some(other) = other
                     && len < MAX_BLOCKS
+                    && let Some(block) = copy_of(rng, other)
                 {
-                    let (live, n) = live_of(other);
-                    if n > 0 {
-                        let block = other.blocks()[live[pick(rng, n)]];
-                        let at = place(rng, &block);
-                        self.insert(at, block);
-                    }
+                    let at = place(rng, &block);
+                    self.insert(at, block);
                 }
             }
             Mutation::Toggle => {
@@ -1491,10 +1528,16 @@ impl Program {
                 }
             }
         }
-        if (self.blocks, self.len) != before {
-            self.changes = self.changes.saturating_add(1);
-            self.summary = Summary::of(&self.blocks, usize::from(self.len));
+        if (self.blocks, self.len) == (before.blocks, before.len) {
+            return;
         }
+        self.summary = Summary::of(&self.blocks, usize::from(self.len));
+        if adds && self.dead() > before.dead() {
+            // the added block would be born dead, or would kill one: not added
+            *self = before;
+            return;
+        }
+        self.changes = self.changes.saturating_add(1);
     }
 
     fn insert(&mut self, at: usize, block: Block) {
@@ -1503,6 +1546,17 @@ impl Program {
         self.blocks[at] = block;
         self.len += 1;
     }
+}
+
+/// An index below `n` where `pred` holds, picked uniformly: counts them, draws one, walks again —
+/// no allocation. None, and no draw, when none holds.
+fn pick_where(rng: &mut Rng, n: usize, pred: impl Fn(usize) -> bool) -> Option<usize> {
+    let count = (0..n).filter(|&i| pred(i)).count();
+    if count == 0 {
+        return None;
+    }
+    let k = rng.randint(0, count as i64 - 1) as usize;
+    (0..n).filter(|&i| pred(i)).nth(k)
 }
 
 /// A random test: any condition, a threshold drawn in range for one that has it.
@@ -1521,14 +1575,16 @@ enum Mutation {
     Condition,
     /// A test with a condition turns to its opposite («always» is left to `Toggle`).
     Negate,
-    /// A block's action becomes a random one, its parameters at their bases.
+    /// A block's action becomes a random one; a parameter of the same label and unit keeps its
+    /// number, the others take their bases (`Action::args_from`).
     Action,
     /// A block trades places with the next one.
     Swap,
-    /// A copy of a block goes to a random place.
+    /// A copy of a live block goes where it is reached.
     Duplicate,
+    /// A block goes, a dead one first.
     Delete,
-    /// A new random block goes to a random place.
+    /// A new block of one random test goes where it is reached.
     Insert,
     /// A block is switched off (its first «always» becomes «never») or on again.
     Toggle,
@@ -1541,17 +1597,17 @@ enum Mutation {
 
 /// The mutation kinds and their shares of the mutations; the shares sum to 1. Small changes
 /// (a number, the order) are the most common, so a working program usually stays working. A
-/// deletion is as likely as the kinds that add a block together (a copy, an insertion, a pair;
-/// a transfer needs the other track), so programs do not grow by themselves; switching a block
-/// off is rare and its own kind.
+/// deletion is as likely as the kinds that add a block together (a copy, an insertion, a pair and
+/// a transfer, which a child always has the other track for), so programs do not grow by
+/// themselves; switching a block off is rare and its own kind.
 const MUTATIONS: [(Mutation, f64); 11] = [
-    (Mutation::Nudge, 0.27),
+    (Mutation::Nudge, 0.25),
     (Mutation::Condition, 0.12),
     (Mutation::Negate, 0.08),
     (Mutation::Action, 0.08),
     (Mutation::Swap, 0.12),
     (Mutation::Duplicate, 0.06),
-    (Mutation::Delete, 0.14),
+    (Mutation::Delete, 0.16),
     (Mutation::Insert, 0.05),
     (Mutation::Toggle, 0.03),
     (Mutation::Pair, 0.03),
@@ -1661,11 +1717,11 @@ mod tests {
         assert_eq!(text[7], "8. если включён режим 3 → установка: есть и чужую пищу");
         assert_eq!(
             text[9],
-            "10. если охотник ближе 33% зрения → установка: включить режим (режим 1, на 60 тиков)"
+            "10. если охотник ближе 33% зрения → установка: включить режим (режим 1, на 61 тик)"
         );
         assert_eq!(
             text[10],
-            "11. если угроза ближе 16% зрения → установка: включить режим (режим 1, на 60 тиков)"
+            "11. если угроза ближе 16% зрения → установка: включить режим (режим 1, на 61 тик)"
         );
         assert_eq!(text[11], "12. если сытость ≥ 95% → установка: включить режим (режим 2, на 200 тиков)");
         assert_eq!(text[12], "13. если здоровье ≥ 50% → дать сдачи (враг крупнее не более чем в 1,5 раза)");
@@ -1828,7 +1884,7 @@ mod tests {
         assert!(longer > 600 && shorter > 600, "insertions, copies and pairs {longer}, deletions {shorter}");
         assert!(negated > 220 && switched_off > 150, "negated {negated}, switched off {switched_off}");
         assert!(reordered > 700, "{reordered}");
-        assert!(nudged > 1800 && flipped > 200, "nudged {nudged}, a flag flipped {flipped}");
+        assert!(nudged > 1600 && flipped > 180, "nudged {nudged}, a flag flipped {flipped}");
     }
 
     /// A mutation moves an index to another of its values, never where it was; the drift leaves it.
@@ -1899,9 +1955,9 @@ mod tests {
         assert_eq!(Program::median(&[]), None);
     }
 
-    /// Structure: a new or copied deciding block lands where it is reached, a copy is of a live
-    /// block, a pair brings a mode and its test together, a transfer copies a live block of the
-    /// other track, and a replaced action keeps the pace.
+    /// Structure: no block added (a copy, a new one, a pair, a transfer) is born dead or kills
+    /// one, a copy is of a live block, a pair brings a mode and a live reader of it together, a
+    /// transfer copies a live block of the other track, and a replaced action keeps the pace.
     #[test]
     fn structural_mutations_build_reachable_working_programs() {
         let mut rng = Rng::new(11);
@@ -1912,6 +1968,7 @@ mod tests {
             Block::does(Action::Wander),
             Block::does(Action::Hunt).with(1, 200),
         ]);
+        assert_eq!((base.dead(), base.ending()), (2, Some(2)));
         let other = Program::of(&[
             Block::when(Test::ALWAYS.not(), Action::Torpor),
             Block::does(Action::EatCorpse).with(1, 70),
@@ -1923,23 +1980,24 @@ mod tests {
             check(&p);
             let (a, b) = (base.blocks(), p.blocks());
             if b.len() == a.len() + 1 {
+                assert!(p.dead() <= base.dead(), "an added block is no junk: {b:?}");
+                assert_eq!(p.ending().map(|i| b[i]), Some(a[2]), "the wander still ends it: {b:?}");
                 let at = (0..b.len()).find(|&i| a.get(i) != Some(&b[i])).unwrap();
                 let new = b[at];
-                if !new.action.is_setting() {
-                    let wander = b.iter().position(Block::always_fires).unwrap();
-                    assert!(at < wander, "a deciding block goes where it is reached: {at} of {wander}");
-                }
                 if let Some(j) = a.iter().position(|x| *x == new) {
                     assert!(base.live(j), "a copy is of a live block: {j}");
                 }
                 assert_ne!(new, other.blocks()[0], "a transfer copies no dead block");
                 transfers += (new == other.blocks()[1]) as usize;
-                if new.action == Action::Mode {
-                    let mode = new.args[0];
+                if let Some(setting) = b.iter().position(|x| x.action == Action::Mode) {
+                    let mode = b[setting].args[0];
                     let tested = |x: &Block| x.when.iter().any(|t| t.cond == Cond::Mode && t.param == mode);
-                    pairs += b.iter().enumerate().any(|(i, x)| i != at && tested(x)) as usize;
+                    if let Some(r) = (0..b.len()).find(|&i| i != setting && tested(&b[i])) {
+                        assert!(p.live(r) && !b[r].always_fires(), "a pair's reader lives: {b:?}");
+                        pairs += 1;
+                    }
                 }
-            } else if b.len() == a.len() && b[1].action != a[1].action {
+            } else if b.len() == a.len() && b[1].action != a[1].action && b[0] == a[0] && b[2..] == a[2..] {
                 let pace = b[1].action.params().iter().position(|p| p.label == PACE.label);
                 if let Some(k) = pace {
                     assert_eq!(b[1].args[k], 55, "the pace goes over to {:?}", b[1].action);
@@ -1948,6 +2006,28 @@ mod tests {
             }
         }
         assert!(pairs > 100 && transfers > 60 && kept_pace > 5, "{pairs} {transfers} {kept_pace}");
+        // an unconditional setting of a kind already set is dead, and a copy of it is not made
+        let set = Program::of(&[
+            Block::does(Action::Divide),
+            Block::does(Action::Divide),
+            Block::does(Action::Wander),
+        ]);
+        assert!(set.live(0) && !set.live(1) && set.dead() == 1);
+        let conditional = Program::of(&[
+            Block::when(Test::at(Cond::Fullness, 50), Action::Divide),
+            Block::does(Action::Divide),
+            Block::does(Action::Wander),
+        ]);
+        assert!(conditional.live(0) && conditional.live(1), "a conditional one hides nothing");
+        let mut rng = Rng::new(12);
+        let single = Program::of(&[Block::does(Action::Divide), Block::does(Action::Wander)]);
+        for _ in 0..500 {
+            let mut p = single;
+            p.mutate_with(1.0, Some(&single), &mut rng);
+            if p.blocks().len() > 2 {
+                assert_eq!(p.dead(), 0, "{:?}", p.blocks());
+            }
+        }
     }
 
     /// The spread of a group's numbers: none for copies, about a half for random values.

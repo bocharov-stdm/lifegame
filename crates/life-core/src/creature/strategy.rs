@@ -14,7 +14,7 @@
 //! inherited, drift and mutate on their own.
 
 use super::actions::{self, Mode};
-use super::program::{Action, Block, Cond, MODES, Program};
+use super::program::{Action, Block, MODES, Program};
 use super::scene::Scene;
 use super::{Kinship, Phenotype};
 use crate::genome::Variant;
@@ -185,48 +185,54 @@ pub struct Shoot {
     pub keep: f64,
 }
 
-/// What the others read of a creature: how many times smaller its prey must be (None: it does not
-/// hunt), its defence — the enemy's size ratio its fight-back block still fights and the health
-/// share down to which (0: no health test) — and whether it defends its children. Taken from the
+/// What the others read of a creature, raw as its blocks keep it: how many times smaller its prey
+/// must be (`hunt`, hundredths; 0: it does not hunt), its defence — the enemy's size ratio its
+/// fight-back block still fights (`fight`, hundredths; 0: none) and the health share down to which
+/// (`fight_health`, %; 0: no health test) — and whether it defends its children. Taken from the
 /// blocks whose tests held on its last move, the one that decided and those before it, whether
-/// or not their action could be done: a hunter whose hunt block stands behind a rest or a flight
-/// this tick is not feared, a parent whose defence block no test lets through covers nobody, and
-/// a block behind a condition that never holds is no bluff. Before its first move — from its
-/// program's shape (`Menace::of`, `Creature::menace`).
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// or not their action could be done — a hunt only while it could take prey at all (not full, and
+/// fresh meat its food this tick): a hunter whose hunt block stands behind a rest or a flight this
+/// tick is not feared, nor a sated one, a parent whose defence block no test lets through covers
+/// nobody, and a block behind a condition that never holds is no bluff. Before its first move —
+/// from its program's shape (`Menace::of`, `Creature::menace`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Menace {
-    pub hunt: Option<f64>,
-    pub fight: Option<(f64, f64)>,
+    hunt: u16,
+    fight: u16,
+    fight_health: u16,
     pub defends: bool,
 }
 
 impl Menace {
-    pub const NONE: Menace = Menace { hunt: None, fight: None, defends: false };
+    pub const NONE: Menace = Menace { hunt: 0, fight: 0, fight_health: 0, defends: false };
 
     /// By the shape of a program: its most permissive live hunt, its first live fight-back block,
     /// a live defence (`Program::hunt_ratio`, `defence`, `defends`).
     pub fn of(program: &Program) -> Menace {
-        Menace { hunt: program.hunt_ratio(), fight: program.defence(), defends: program.defends() }
+        let (hunt, (fight, fight_health)) = program.menace_raw();
+        Menace { hunt, fight, fight_health, defends: program.defends() }
     }
 
-    /// A block whose tests held this tick, in program order: the most permissive hunt, the first
-    /// fight-back with its health threshold, any defence — as `Summary::of` reads the shape.
-    fn note(&mut self, b: &Block) {
+    /// How many times smaller its prey must be; None: it does not hunt.
+    pub fn hunt(&self) -> Option<f64> {
+        (self.hunt > 0).then(|| f64::from(self.hunt) / 100.0)
+    }
+
+    /// The enemy's size ratio it still fights back and the health share down to which (0: no
+    /// health test); None: it does not fight back.
+    pub fn fight(&self) -> Option<(f64, f64)> {
+        (self.fight > 0).then(|| (f64::from(self.fight) / 100.0, f64::from(self.fight_health) / 100.0))
+    }
+
+    /// A block whose tests held this tick, in program order: the most permissive hunt (when
+    /// `can_hunt`), the first fight-back with its health threshold, any defence — as
+    /// `Summary::of` reads the shape.
+    fn note(&mut self, b: &Block, can_hunt: bool) {
         match b.action {
-            Action::Hunt => {
-                let ratio = b.arg(0);
-                if self.hunt.is_none_or(|h| ratio < h) {
-                    self.hunt = Some(ratio);
-                }
-            }
-            Action::FightBack if self.fight.is_none() => {
-                let health = b
-                    .when
-                    .iter()
-                    .filter(|t| !t.negate && t.cond == Cond::Health)
-                    .map(|t| t.value())
-                    .fold(0.0, f64::max);
-                self.fight = Some((b.arg(0), health));
+            Action::Hunt if can_hunt && (self.hunt == 0 || b.args[0] < self.hunt) => self.hunt = b.args[0],
+            Action::FightBack if self.fight == 0 => {
+                self.fight = b.args[0];
+                self.fight_health = b.fight_health();
             }
             Action::DefendChild => self.defends = true,
             _ => {}
@@ -419,6 +425,8 @@ pub(super) fn plan(
             kinds |= kind;
         }
     }
+    // a hunt is feared only while it could take prey: `Scene::prey` and the senses take none
+    let can_hunt = me.energy < me.pheno.max_energy && me.pheno.hunts_now(scene.stance.foreign);
     let (mut decided, mut tried) = (None, 0_u32);
     for (i, block) in blocks.iter().enumerate().filter(|(_, b)| !b.action.is_setting()) {
         if !scene.holds(block, me, mind, senses) {
@@ -426,7 +434,7 @@ pub(super) fn plan(
         }
         tried |= 1 << i;
         // its tests held: the others read of it what this block would do
-        scene.stance.menace.note(block);
+        scene.stance.menace.note(block, can_hunt);
         if let Some(done) = actions::act(block, &mut scene, me, mind, rng, senses) {
             decided = Some((i, block.action, done));
             break;
@@ -786,7 +794,8 @@ mod tests {
 
     /// The others read a creature by the blocks whose tests held on its last move — the hunt, the
     /// fight-back with its health threshold, the defence — whether or not the action could be done;
-    /// a block behind a test that fails this tick is no threat. Before its first move: by the shape.
+    /// a block behind a test that fails this tick is no threat, nor a hunt that could take no prey
+    /// (a full tank, fresh meat not its food). Before its first move: by the shape.
     #[test]
     fn others_read_the_blocks_whose_tests_held() {
         let program = Program::of(&[
@@ -795,22 +804,37 @@ mod tests {
             Block::when(Test::at(Cond::Fullness, 30).not(), Action::DefendChild),
             Block::does(Action::Wander),
         ]);
-        let shape = Menace { hunt: Some(1.5), fight: Some((1.5, 0.5)), defends: true };
+        let shape = Menace { hunt: 150, fight: 150, fight_health: 50, defends: true };
         assert_eq!(Menace::of(&program), shape);
-        let mut fed = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        assert_eq!((shape.hunt(), shape.fight()), (Some(1.5), Some((1.5, 0.5))));
+        let carnivore = CreatureGenome::BASE.with(Gene::Diet, Diet::Carnivore as usize as f64);
+        let mut fed = body(carnivore, Some(1000.0), 0.5);
         fed.programs = Programs::both(program);
         assert_eq!(fed.menace(), shape, "before its first move: by the shape");
         let mut mind = Mind::default();
         run(&fed, &program, &mut mind, &Blind);
-        let fight_only = Menace { hunt: None, fight: Some((1.5, 0.5)), defends: false };
+        let fight_only = Menace { hunt: 0, defends: false, ..shape };
         assert_eq!(mind.stance.menace, fight_only, "fed: its hunt and defence blocks were not reached");
         fed.mind = mind;
         assert_eq!(fed.menace(), fight_only, "after a move: by the move");
-        let hungry = body(CreatureGenome::BASE, Some(1000.0), 0.2);
+        let hungry = body(carnivore, Some(1000.0), 0.2);
         let mut mind = Mind::default();
         run(&hungry, &program, &mut mind, &Blind);
         assert_eq!(mind.stance.menace, shape, "hungry: they were tried, though nothing was in sight");
         assert_eq!(mind.fired, Some(3));
+        // a hunt that could take nothing is no threat: a grazer's, a full hunter's
+        let grazer = body(CreatureGenome::BASE, Some(1000.0), 0.2);
+        let mut mind = Mind::default();
+        run(&grazer, &program, &mut mind, &Blind);
+        assert_eq!(mind.stance.menace, Menace { hunt: 0, ..shape }, "fresh meat is not a grazer's food");
+        let hunter = Program::of(&[Block::does(Action::Hunt), Block::does(Action::Wander)]);
+        let full = body(carnivore, Some(1000.0), 1.0);
+        let mut mind = Mind::default();
+        run(&full, &hunter, &mut mind, &Blind);
+        assert_eq!(mind.stance.menace.hunt(), None, "a full tank takes no prey");
+        let mut mind = Mind::default();
+        run(&hungry, &hunter, &mut mind, &Blind);
+        assert_eq!(mind.stance.menace.hunt(), Some(1.5));
     }
 
     /// A flight is the flight block's decision, not its memory: with «бежать ещё 0» it still flees
@@ -1161,24 +1185,27 @@ mod tests {
     }
 
     /// Under way, only a threat nearer than the flight's «again» share of sight renews it; a farther
-    /// one steers it while its memory runs down, then it stops — the old flight distance.
+    /// one steers it while its memory runs down, then it stops — the old flight distance. (The
+    /// templates flee under their alarm mode; here the flight is kept by its own memory.)
     #[test]
     fn a_far_threat_steers_a_flight_but_does_not_renew_it() {
         let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
         let vision = v.pheno.vision;
+        let program =
+            Program::of(&[Block::when(Test::is(Cond::Fleeing), Action::Flee), Block::does(Action::Wander)]);
         let far = Threat { id: 7, x: 1000.0 + vision * 0.6, y: 1000.0, gap: vision * 0.5, half: 40.0 };
         let senses = senses_from(|_, _, _| None).with_threat(far);
         let mut mind = Mind { flee_ticks: 3, ..Mind::default() };
         for left in [2, 1, 0] {
-            let (intent, mode) = run(&v, &Program::STANDARD, &mut mind, &senses);
+            let (intent, mode) = run(&v, &program, &mut mind, &senses);
             assert_eq!((mode, mind.flee_ticks), (Mode::Flee, left));
             assert!(intent.tx < v.x, "away from the far threat: {intent:?}");
         }
-        let (_, mode) = run(&v, &Program::STANDARD, &mut mind, &senses);
+        let (_, mode) = run(&v, &program, &mut mind, &senses);
         assert_ne!(mode, Mode::Flee, "its memory ran out: a threat that far no longer scares it");
         let near = Threat { gap: vision * 0.2, ..far };
         let mut mind = Mind { flee_ticks: 3, ..Mind::default() };
-        run(&v, &Program::STANDARD, &mut mind, &senses_from(|_, _, _| None).with_threat(near));
+        run(&v, &program, &mut mind, &senses_from(|_, _, _| None).with_threat(near));
         assert_eq!(mind.flee_ticks, crate::config::FLEE_TICKS, "a near one renews it");
     }
 

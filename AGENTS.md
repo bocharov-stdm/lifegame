@@ -81,9 +81,9 @@ creature does not do it: a program without «делиться» never divides. T
 whose tests hold and whose action can be done decides. A creature has two programs, juvenile and
 adult, shared between relatives that inherited them unchanged. On division a mutating child's
 programs drift — a third of the numbers a little, like genes (`program_drift`) — and mutate
-(`program_mutation`, 5% × `program_mutability` each; a new block only where it is reached, a
-deletion takes a dead block first, a «pair» makes a memory in one step, a «transfer» copies a
-block from the other track). Founders start from their `strategy` template (standard or lurker),
+(`program_mutation`, 5% × `program_mutability` each; a new block only where it is reached and
+never one born dead or killing another, a deletion takes a dead block first, a «pair» makes a
+memory in one step, a «transfer» copies a block from the other track). Founders start from their `strategy` template (standard or lurker),
 which carries the bases of the deleted genes and of what the world used to do and remembers
 hunger, an alarm and a full tank through modes; a founder's layer and the 5% shooters are set in
 its program. No world behaviour constants: numbers live in the blocks. A torpid creature eats

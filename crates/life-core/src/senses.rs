@@ -507,12 +507,12 @@ impl Herd {
         self.seen.extend(creatures.iter().map(|v| {
             let menace = v.menace();
             let (fights_below, fights_share) =
-                menace.fight.map_or((0.0, 0.0), |(ratio, health)| (v.pheno.half * ratio, 1.0 - health));
+                menace.fight().map_or((0.0, 0.0), |(ratio, health)| (v.pheno.half * ratio, 1.0 - health));
             Seen {
                 x: v.x,
                 y: v.y,
                 half: v.pheno.half,
-                eats_up_to: match menace.hunt {
+                eats_up_to: match menace.hunt() {
                     Some(ratio) if v.pheno.hunts() => v.pheno.size / ratio,
                     _ => 0.0,
                 },
@@ -1081,7 +1081,7 @@ mod tests {
                     let got = nearest_threats(&snapshot, v.kinship(), v.x, v.y, size, within);
                     let can_eat_me = |u: &&Creature| {
                         u.pheno.hunts()
-                            && u.menace().hunt.is_some_and(|ratio| size <= u.pheno.size / ratio)
+                            && u.menace().hunt().is_some_and(|ratio| size <= u.pheno.size / ratio)
                             && dist2(u.x, u.y, v.x, v.y) < (within + u.pheno.half).powi(2)
                     };
                     let gap = |u: &Creature| dist2(u.x, u.y, v.x, v.y).sqrt() - u.pheno.half;

@@ -241,9 +241,10 @@ impl CreatureGenome {
 
     /// The child's genome and behaviour programs: with `clone_share` exact copies of all (the
     /// programs shared, not copied); otherwise the genes mutate (`mutate_values`), then each
-    /// program — the juvenile one, then the adult one — drifts, every number a little
+    /// program — the juvenile one, then the adult one — drifts, a third of its numbers
     /// (`Program::drift`, the rule `program_drift`), and mutates with the rule `program_mutation`
-    /// (`Program::mutate`), both times the parent's mutability.
+    /// (`Program::mutate_with`, the parent's other track at hand for a transfer), both times the
+    /// parent's `program_mutability` (the body's `mutability` does not touch them).
     pub fn inherit(&self, programs: &Programs, h: &super::Heredity, rng: &mut Rng) -> (Self, Programs) {
         if rng.random() < h.clone_share {
             return (*self, programs.clone());
@@ -410,8 +411,8 @@ mod tests {
         assert!((0..1000).all(|_| full.mutate(0.3, &mut rng)[Gene::ColdBlood] <= 100.0));
     }
 
-    /// A parent's mutability stretches the spread of every gene, its own too, and mutates the
-    /// behaviour program more often; the ceiling `MAX_MUTABILITY` keeps it finite.
+    /// A parent's mutability stretches the spread of every gene, its own too; the ceiling
+    /// `MAX_MUTABILITY` keeps it finite.
     #[test]
     fn мутагенность_растягивает_разброс_потомков() {
         let spread = |m: f64| {
@@ -426,11 +427,26 @@ mod tests {
             (size / 2000.0, own / 2000.0)
         };
         let (low, high) = (spread(0.2), spread(2.0));
-        assert!(high.0 > low.0 * 5.0, "размер: {:.3} против {:.3}", high.0, low.0);
-        assert!(high.1 > low.1 * 5.0, "сама мутагенность: {:.3} против {:.3}", high.1, low.1);
-        // the programs: how many mutate, and how far their numbers drift (the hunt's ratio)
-        let programs = |m: f64| {
-            let parent = CreatureGenome::BASE.with(Gene::Mutability, m);
+        assert!(high.0 > low.0 * 5.0, "size: {:.3} against {:.3}", high.0, low.0);
+        assert!(high.1 > low.1 * 5.0, "mutability itself: {:.3} against {:.3}", high.1, low.1);
+        let base = spread(1.0);
+        let expected = 0.3 * 0.8 * (1.0 - crate::config::CLONE_CHANCE);
+        assert!(
+            (base.0 - expected).abs() < 0.03,
+            "at 1 the spread is the rules' sigma (half are copies): {:.3}",
+            base.0
+        );
+        let capped = CreatureGenome::BASE.with(Gene::Mutability, 1e300).mutate(0.3, &mut Rng::new(1));
+        assert!(capped.to_values().iter().all(|v| v.is_finite()), "the ceiling: the genome stays finite");
+    }
+
+    /// The gene `program_mutability` sets how often the programs mutate and how far their numbers
+    /// drift; the body's `mutability` does not touch them.
+    #[test]
+    fn program_mutability_scales_the_programs_not_the_body() {
+        // (children whose programs mutated, the summed drift of the adult hunt's ratio)
+        let programs = |gene: Gene, m: f64| {
+            let parent = CreatureGenome::BASE.with(gene, m);
             let mut rng = Rng::new(317);
             let h = super::super::Heredity::with_sigma(0.0);
             let both = Programs::both(crate::creature::Program::STANDARD);
@@ -440,19 +456,16 @@ mod tests {
                 mutated += child.iter().any(|p| p.changes > 0) as usize;
                 drift += (child[crate::creature::ADULT].hunt_ratio().unwrap_or(1.5) - 1.5).abs();
             }
-            (mutated, drift)
+            (mutated as f64, drift)
         };
-        let (rare, frequent) = (programs(0.2), programs(2.0));
-        assert!(frequent.0 > rare.0 * 5, "programs mutated: {} against {}", frequent.0, rare.0);
+        let (rare, frequent) =
+            (programs(Gene::ProgramMutability, 0.2), programs(Gene::ProgramMutability, 2.0));
+        assert!(frequent.0 > rare.0 * 5.0, "programs mutated: {} against {}", frequent.0, rare.0);
         assert!(frequent.1 > rare.1 * 5.0, "numbers drifted: {:.0} against {:.0}", frequent.1, rare.1);
-        let base = spread(1.0);
-        let expected = 0.3 * 0.8 * (1.0 - crate::config::CLONE_CHANCE);
-        assert!(
-            (base.0 - expected).abs() < 0.03,
-            "at 1 the spread is the rules' sigma (half are copies): {:.3}",
-            base.0
-        );
-        let capped = CreatureGenome::BASE.with(Gene::Mutability, 1e300).mutate(0.3, &mut Rng::new(1));
-        assert!(capped.to_values().iter().all(|v| v.is_finite()), "потолок: геном конечен");
+        // the body's mutability: the programs change alike (only its rare switches of a choice
+        // gene shift the draws)
+        let (calm, wild) = (programs(Gene::Mutability, 0.2), programs(Gene::Mutability, 2.0));
+        let alike = |a: f64, b: f64| (0.8..1.25).contains(&(a / b));
+        assert!(alike(calm.0, wild.0) && alike(calm.1, wild.1), "{calm:?} against {wild:?}");
     }
 }

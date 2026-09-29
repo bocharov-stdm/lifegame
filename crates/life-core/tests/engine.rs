@@ -327,8 +327,9 @@ fn does_not_flee_a_parent_that_knows_it_nor_an_equal_or_distant_one() {
     }
 }
 
-/// A fright lasts FLEE_TICKS ticks even when the threat has gone out of sight — even past
-/// visible food; then the creature goes to the food again. A lurker runs at full speed.
+/// A fright lasts FLEE_TICKS ticks after the tick the threat was seen, even when it has gone out
+/// of sight — even past visible food (the templates' alarm mode); then the creature goes to the
+/// food again. A lurker runs at full speed.
 #[test]
 fn бежит_ещё_после_пропажи_угрозы() {
     let food = |_: f64, _: f64, _: f64| Some((900.0, 1000.0));
@@ -342,12 +343,11 @@ fn бежит_ещё_после_пропажи_угрозы() {
         for t in 0..FLEE_TICKS {
             let x = v.x;
             move_once(&mut v, &senses_from(food));
-            assert!(v.x > x, "бросил бежать на тике {t}");
+            assert!(v.x > x, "stopped running at tick {t}");
         }
-        assert!(!v.fleeing());
         let x = v.x;
         move_once(&mut v, &senses_from(food));
-        assert!(v.x < x, "испуг прошёл, а к еде не идёт");
+        assert!(v.x < x && !v.fleeing(), "the fright is over, yet it does not go to the food");
     }
     // the threat in view, but beyond the threshold — to the food
     let mut v = creature(1000.0, 1000.0, BASE);

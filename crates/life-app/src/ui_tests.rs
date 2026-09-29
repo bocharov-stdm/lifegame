@@ -765,8 +765,13 @@ fn поведение_выбранного_помещается_в_окно() {
             if full.blocks().len() == MAX_BLOCKS {
                 break;
             }
+            // the mutations do not grow a program by themselves: keep the ones that do not shrink it
+            let before = full;
             full.drift(1.0, &mut rng);
             full.mutate_with(1.0, Some(&Program::LURKER), &mut rng);
+            if full.blocks().len() < before.blocks().len() {
+                full = before;
+            }
         }
         assert_eq!(full.blocks().len(), MAX_BLOCKS);
         // a founder is grown: it lives by the adult track, the mutated one

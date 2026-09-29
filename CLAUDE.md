@@ -136,7 +136,8 @@ could not be done).
   move and sparing its children; its memory in three modes (`ALARM_MODE` 1, `FULL_MODE` 2,
   `HUNGRY_MODE` 3, so every line starts with a working memory a mutation can rebuild): below 30%
   fullness mode 3 for 60 ticks, and under it eat foreign food and drive rivals ×1.5 smaller; a
-  hunter within 33% of sight or a calm stranger within 16% mode 1 for 60 ticks; from 95% fullness
+  hunter within 33% of sight or a calm stranger within 16% mode 1 for 61 ticks (the tick it is
+  raised and the old flight's 60 after, so a template flees as long as `/13`); from 95% fullness
   mode 2 for 200; then fight back above 50% health; flee under mode 1; defend a child above 60%
   health; hunt; rest under mode 2 while above 85%; corpse; plant; wander (20 blocks; the tests
   «ещё убегает» and «отдыхает» stay in the language, unused by the templates). `Program::LURKER`
@@ -152,18 +153,24 @@ could not be done).
   number moved in one child of ~1700, and the old genes' adaptations could not happen; with every
   number moving at once a good change was buried in the noise of the rest) — and with
   `program_mutation` (rule, base 5%) × `program_mutability` gets one mutation
-  (`Program::mutate_with`, the parent's other track at hand): nudge a number 27%, replace a test
+  (`Program::mutate_with`, the parent's other track at hand): nudge a number 25%, replace a test
   12%, negate a test with a condition 8%, replace the action 8% (a parameter of the same label and
   unit — the pace, a burst, «только если выгоднее» — keeps its number, `Action::args_from`), swap
-  with a neighbour 12%, duplicate a live block 6%, delete 14% (a dead block first — off or never
-  reached; keeps ≥ 1), insert a random block 5%, switch a block off or on 3% (its first «всегда»
+  with a neighbour 12%, duplicate a live block 6%, delete 16% (a dead block first; keeps ≥ 1),
+  insert a random block 5%, switch a block off or on 3% (its first «всегда»
   becomes «никогда» and back), a **pair** 3% (a setting switching a mode on by a random test, and
-  that mode as a test on another block with a free «всегда»: a memory in one step), a **transfer**
-  2% (a live block of the other track copied in). A new or copied deciding block goes where it is
-  reached — above the first block that always fires — and a copy is of a live block, so no junk is
-  born; a deletion is as likely as the kinds that add a block together, so programs do not grow by
-  themselves. One that cannot apply (no test with a condition to negate, no other track) or lands
-  where it was changes nothing, its draws spent. `Program::changes` counts the mutations that changed
+  that mode as a test on another live block with a free «всегда», never the block that always
+  fires: a memory in one step), a **transfer** 2% (a live block of the other track copied in). A
+  block is **dead** (`Program::live`) when switched off, a deciding block never reached, or a
+  setting behind an earlier unconditional one of its kind (`Summary::live`). No junk is born: a
+  copy is of a live block that can live beside the original (not an unconditional setting, not a
+  block that always fires), a new or copied deciding block goes where it is reached — above the
+  block that always fires — and a block added (a copy, a new one, a pair, a transfer) that would
+  leave a block dead, itself or another, is not added. A deletion is as likely as the four kinds
+  that add a block together (16 against 6 + 5 + 3 + 2; a child always has the other track), so
+  programs do not grow by themselves. One that cannot apply (no test with a condition to negate,
+  nothing to copy, no reader for a pair, no other track) or lands where it was changes nothing, its
+  draws spent. `Program::changes` counts the mutations that changed
   something (not the drift). Past its end a program is filled with the same block, so equal blocks
   are equal programs. A mutation can switch off division, healing or eating on the move: such
   children die out — the catch is the consequence.
@@ -172,8 +179,9 @@ could not be done).
   Others read a creature by what its blocks did on its **last move** (`Menace` in `Stance::menace`,
   `Creature::menace`, `Herd`): the hunt, fight-back and defence blocks whose tests held — the
   decider and the blocks before it, whether or not the action could be done. They fear it by the
-  most permissive such hunt (a hunter resting or fleeing this tick is not feared; a hunt block
-  behind a condition that never holds is no bluff); a hunter expects strikes back as the first such
+  most permissive such hunt, if it could take prey at all — not full, fresh meat its food this
+  tick (a hunter whose hunt stands behind a rest or a flight this tick is not feared, nor a sated
+  one; a hunt block behind a condition that never holds is no bluff); a hunter expects strikes back as the first such
   fight-back block gives them (a hunter within its ratio, for the share of the killing strikes
   above that block's health threshold) and counts a parent as an ally only by such a defence
   block. Before its first move a creature is read by its program's shape (`Program::hunt_ratio`,
@@ -258,6 +266,17 @@ goes for it) and the edges are world rules (`Rules::diets`, `DietEdges`, keys `{
 
 ## Where the work stands
 
+- **Second review of the programs** (2026-09-29, model `/15`, the user: «исправь»): a setting
+  behind an earlier unconditional one of its kind is dead (the window mutes it, deletion takes it
+  first, `_dead_share` counts it); an added block that would be born dead or kill one is not added
+  (an always-firing copy above the ending, a copy of an unconditional setting, a deciding block
+  after an ending that is the last block); a pair's reader is a live block, never the ending;
+  deletion 16% balances the four adding kinds with the transfer (nudge 27 → 25%); `Menace` notes a
+  hunt only while it could take prey (sated, or fresh meat not its food: not feared) and keeps raw
+  numbers (8 bytes); the templates' alarm lasts 61 ticks (the flight ran a tick shorter than
+  `/13`'s); the tests of the flight, of `program_mutability` and of the structure re-aimed; the
+  Nudge allocates nothing. **Not run** (cloud): tests, golden, runs; checked: `clippy` on the
+  whole workspace (rustc 1.95), `fmt --check`.
 - **Review fixes of the programs** (2026-09-29, model `/15`, the user: «исправляй»): the others
   read a creature by the blocks whose tests held on its last move, not by its program's shape (a
   free bluff before: a hunt or defence block behind an impossible condition); a deletion as likely

@@ -196,7 +196,7 @@ fn print_programs(world: &life_core::World) {
         );
         let mut top: Vec<(&Vec<u64>, &Vec<Program>)> = groups.iter().collect();
         top.sort_by_key(|g| std::cmp::Reverse(g.1.len()));
-        for (shape, group) in top.into_iter().take(3) {
+        for &(shape, group) in top.iter().take(3) {
             let name = if *shape == template {
                 " — форма шаблонов основателей"
             } else if *shape == shooter {
@@ -240,10 +240,10 @@ fn print_programs(world: &life_core::World) {
                 })
                 .collect(),
         );
-        let spread =
-            groups.values().max_by_key(|g| g.len()).and_then(|g| Program::spread(g)).unwrap_or(f64::NAN);
+        // the most common shape as printed first above (a stable sort keeps the first of a tie)
+        let spread = top.first().and_then(|g| Program::spread(g.1)).unwrap_or(f64::NAN);
         println!(
-            "  блоков в программе {blocks:.0}, мёртвых {}, режимов {memories:.0}, разброс чисел главной формы {spread:.2}",
+            "  blocks in a program {blocks:.0}, dead {}, modes {memories:.0}, spread of the main shape's numbers {spread:.2}",
             percent((dead_share * 10_000.0).round() as u64, 10_000)
         );
         println!("METRIC {key}_shapes {}", groups.len());
