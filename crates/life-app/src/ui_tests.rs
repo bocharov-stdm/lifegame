@@ -1,4 +1,4 @@
-//! Screen tests without a window (egui_kittest) — the successor of the Python version's `TestLayout`.
+﻿//! Screen tests without a window (egui_kittest) — the successor of the Python version's `TestLayout`.
 //!
 //! Every screen on the smallest window 960×600 and on a usual one 1600×900: buttons and sliders
 //! whole inside the window and not overlapping one another. An interface scale of ×2 on a window
@@ -415,6 +415,23 @@ fn статистика_помещается_в_окно() {
             check_layout(h, size, &format!("статистика, {tab:?}, {tag}"), None);
             shot(h, &format!("статистика-{tab:?}-{tag}"));
         }
+        // the census comes on pause, on request, and its tab fits too
+        h.state_mut().stats_tab = StatsTab::Species;
+        for _ in 0..200 {
+            h.step();
+            if h.state().census.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(h.state().census.is_some(), "перепись пришла на паузе");
+        settle(h);
+        assert!(h.query_by_label("Признаки").is_some());
+        // the tab is longer than the window: what is scrolled away below the tabs is not checked
+        let tabs = h.get_by_label("Внутри видов").rect();
+        let scroll = Rect::from_min_max(Pos2::new(0.0, tabs.bottom()), size.to_pos2());
+        check_layout(h, size, &format!("статистика, внутри видов, {tag}"), Some(scroll));
+        shot(h, &format!("статистика-Species-{tag}"));
         h.state_mut().stats_open = false;
         h.state_mut().side_open = true;
         for tab in [SideTab::Charts, SideTab::Log, SideTab::Creature] {

@@ -9,6 +9,7 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stro
 use life_core::genome::GeneSpec;
 use life_sim::observe::{GeneStat, MAX_VARIANTS, Snapshot, Spread};
 
+use crate::census::{self, Census, Group};
 use crate::frame::{CREATURE_COLOR, PLANT_COLOR};
 use crate::history::{History, Sample};
 use crate::theme::{DIET_COLORS, DIET_NAMES, LINE, MUTED, TEXT, rgb, spaced};
@@ -360,6 +361,233 @@ fn shares_text(spec: &GeneSpec, now: &[f64; MAX_VARIANTS]) -> (String, Color32, 
         return (String::new(), TEXT, String::new());
     };
     (v.label.to_string(), VARIANT_COLORS[k % VARIANT_COLORS.len()], format!("{:.0}%", now[k] * 100.0))
+}
+
+/// Histograms of a census group, two in a row: bars of how many have each value, the median as a
+/// line and the middle 80% as a lighter strip under the bars. Two humps in a histogram are two
+/// kinds within one diet. Under the cursor — the bar's range and share.
+pub fn histograms(ui: &mut egui::Ui, group: &Group, columns: &[usize], color: Color32) {
+    let (gap, cell_h) = (14.0, 62.0);
+    let width = ui.available_width();
+    let col_w = ((width - gap) / 2.0).max(60.0);
+    let rows = columns.len().div_ceil(2);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, cell_h * rows as f32), Sense::hover());
+    let painter = ui.painter_at(rect.expand(2.0));
+    let font = FontId::proportional(12.0);
+    let small = FontId::proportional(10.5);
+    let pointer = ui.input(|i| i.pointer.hover_pos());
+    let mut hint = None;
+    for (k, &c) in columns.iter().enumerate() {
+        let column = &group.columns[c];
+        let min =
+            Pos2::new(rect.left() + (k % 2) as f32 * (col_w + gap), rect.top() + (k / 2) as f32 * cell_h);
+        let cell = Rect::from_min_size(min, Vec2::new(col_w, cell_h - 6.0));
+        painter.text(cell.left_top(), Align2::LEFT_TOP, census::label(c), font.clone(), MUTED);
+        let label_rect = Rect::from_min_size(cell.left_top(), Vec2::new(col_w * 0.5, 15.0));
+        ui.interact(label_rect, ui.id().with(("признак", c)), Sense::hover()).on_hover_text(format!(
+            "{} — {}",
+            census::label(c),
+            census::about(c)
+        ));
+        if group.count == 0 {
+            continue;
+        }
+        painter.text(
+            cell.right_top(),
+            Align2::RIGHT_TOP,
+            format!("медиана {}", census::number(c, column.p50)),
+            font.clone(),
+            TEXT,
+        );
+        let bars = Rect::from_min_max(
+            Pos2::new(cell.left(), cell.top() + 17.0),
+            cell.right_bottom() - Vec2::new(0.0, 12.0),
+        );
+        let x = |v: f64| {
+            let t = if column.hi > column.lo { (v - column.lo) / (column.hi - column.lo) } else { 0.5 };
+            bars.left() + t.clamp(0.0, 1.0) as f32 * bars.width()
+        };
+        painter.rect_filled(
+            Rect::from_min_max(
+                Pos2::new(x(column.p10), bars.bottom()),
+                Pos2::new(x(column.p90).max(x(column.p10) + 1.0), bars.bottom() + 3.0),
+            ),
+            1.0,
+            color.gamma_multiply(0.5),
+        );
+        let top = column.bins.iter().copied().max().unwrap_or(0).max(1) as f32;
+        let bar_w = bars.width() / census::BINS as f32;
+        for (b, &n) in column.bins.iter().enumerate() {
+            if n == 0 {
+                continue;
+            }
+            let h = (n as f32 / top).sqrt().max(0.08) * bars.height();
+            let left = bars.left() + b as f32 * bar_w;
+            let r = Rect::from_min_max(
+                Pos2::new(left + 0.5, bars.bottom() - h),
+                Pos2::new(left + bar_w - 0.5, bars.bottom()),
+            );
+            painter.rect_filled(r, 0.0, color.gamma_multiply(0.8));
+        }
+        let xm = x(column.p50);
+        painter
+            .line_segment([Pos2::new(xm, bars.top()), Pos2::new(xm, bars.bottom())], Stroke::new(1.2, TEXT));
+        painter.text(
+            bars.left_bottom() + Vec2::new(0.0, 3.0),
+            Align2::LEFT_TOP,
+            census::number(c, column.lo),
+            small.clone(),
+            MUTED,
+        );
+        painter.text(
+            bars.right_bottom() + Vec2::new(0.0, 3.0),
+            Align2::RIGHT_TOP,
+            census::number(c, column.hi),
+            small.clone(),
+            MUTED,
+        );
+        if let Some(p) = pointer.filter(|p| bars.contains(*p)) {
+            let b = (((p.x - bars.left()) / bar_w) as usize).min(census::BINS - 1);
+            let step = (column.hi - column.lo) / census::BINS as f64;
+            let (from, to) = (column.lo + step * b as f64, column.lo + step * (b + 1) as f64);
+            let share = column.bins[b] as f64 / group.count as f64 * 100.0;
+            painter.rect_stroke(
+                Rect::from_min_max(
+                    Pos2::new(bars.left() + b as f32 * bar_w, bars.top()),
+                    Pos2::new(bars.left() + (b + 1) as f32 * bar_w, bars.bottom()),
+                ),
+                0.0,
+                Stroke::new(1.0, MUTED),
+                egui::StrokeKind::Inside,
+            );
+            hint = Some(format!(
+                "{} {}‒{}: {} существ, {share:.0}%\n80% — от {} до {}",
+                census::label(c),
+                census::number(c, from),
+                census::number(c, to),
+                spaced(u64::from(column.bins[b])),
+                census::number(c, column.p10),
+                census::number(c, column.p90),
+            ));
+        }
+    }
+    if let Some(text) = hint {
+        ui.interact(rect, ui.id().with("гистограммы"), Sense::hover()).on_hover_text(text);
+    }
+}
+
+/// A choice gene's variants in a census group, as one bar of shares with a legend.
+pub fn shares(ui: &mut egui::Ui, spec: &GeneSpec, column: &census::Column) {
+    let total = column.bins.iter().sum::<u32>().max(1) as f32;
+    let variants = spec.variants().unwrap_or_default();
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [118.0, 16.0],
+            egui::Label::new(egui::RichText::new(spec.label).color(MUTED)).truncate(),
+        )
+        .on_hover_text(format!("{} — {}", spec.label, spec.about));
+        let (rect, _) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width().min(260.0), 12.0), Sense::hover());
+        let painter = ui.painter_at(rect);
+        let mut left = rect.left();
+        for (k, &n) in column.bins.iter().enumerate() {
+            let w = n as f32 / total * rect.width();
+            let r = Rect::from_min_max(Pos2::new(left, rect.top()), Pos2::new(left + w, rect.bottom()));
+            painter.rect_filled(r, 0.0, VARIANT_COLORS[k % VARIANT_COLORS.len()].gamma_multiply(0.8));
+            left += w;
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(126.0);
+        for (k, v) in variants.iter().enumerate() {
+            let share = column.bins.get(k).copied().unwrap_or(0) as f32 / total * 100.0;
+            ui.colored_label(VARIANT_COLORS[k % VARIANT_COLORS.len()], format!("{} {share:.0}%", v.label));
+        }
+    });
+}
+
+/// The side of a scatter's cell, in points.
+const SCATTER_CELL: f32 = 5.0;
+
+/// Two characteristics of a census group against each other, as a density: separate clouds are
+/// separate kinds. Everybody is coloured by diet; a cell's brightness is how many are there.
+pub fn scatter(ui: &mut egui::Ui, census: &Census, group: usize, axes: [usize; 2], height: f32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+    let painter = ui.painter_at(rect.expand(2.0));
+    painter.rect_stroke(rect, 3.0, Stroke::new(1.0, LINE), egui::StrokeKind::Inside);
+    let columns = &census.groups[group].columns;
+    let ([cx, cy], [ax, ay]) = (axes, [&columns[axes[0]], &columns[axes[1]]]);
+    let inner = rect.shrink2(Vec2::new(6.0, 6.0));
+    // square cells: dashes would read as a trend
+    let w = ((inner.width() / SCATTER_CELL).round() as usize).max(1);
+    let h = ((inner.height() / SCATTER_CELL).round() as usize).max(1);
+    let cell = |v: f32, lo: f64, hi: f64, n: usize| {
+        if hi > lo {
+            ((f64::from(v) - lo) / (hi - lo) * n as f64).floor().clamp(0.0, (n - 1) as f64) as usize
+        } else {
+            n / 2
+        }
+    };
+    let mut counts = vec![[0u32; 4]; w * h];
+    for (row, &diet) in census.rows.iter().zip(&census.diets) {
+        if group != 0 && usize::from(diet) != group - 1 {
+            continue;
+        }
+        let (i, j) = (cell(row[cx], ax.lo, ax.hi, w), cell(row[cy], ay.lo, ay.hi, h));
+        counts[(h - 1 - j) * w + i][usize::from(diet)] += 1;
+    }
+    let (cw, ch) = (inner.width() / w as f32, inner.height() / h as f32);
+    for (k, c) in counts.iter().enumerate() {
+        let n: u32 = c.iter().sum();
+        if n == 0 {
+            continue;
+        }
+        let mix: [f32; 3] = std::array::from_fn(|ch| {
+            (0..4).map(|d| c[d] as f32 * f32::from(DIET_COLORS[d][ch])).sum::<f32>() / n as f32
+        });
+        let a = (0.35 + (n as f32).log2() / 8.0).min(1.0);
+        let color = Color32::from_rgb(mix[0] as u8, mix[1] as u8, mix[2] as u8).gamma_multiply(a);
+        let min = Pos2::new(inner.left() + (k % w) as f32 * cw, inner.top() + (k / w) as f32 * ch);
+        painter.rect_filled(Rect::from_min_size(min, Vec2::new(cw + 0.5, ch + 0.5)), 0.0, color);
+    }
+    // the axes' ranges in the corners where each axis starts: up the left side, along the bottom
+    let small = FontId::proportional(10.5);
+    let range = |c: usize, col: &census::Column| {
+        format!("{} {}‒{}", census::label(c), census::number(c, col.lo), census::number(c, col.hi))
+    };
+    painter.text(
+        rect.right_bottom() + Vec2::new(-4.0, -2.0),
+        Align2::RIGHT_BOTTOM,
+        format!("{} →", range(cx, ax)),
+        small.clone(),
+        MUTED,
+    );
+    painter.text(
+        rect.left_top() + Vec2::new(4.0, 2.0),
+        Align2::LEFT_TOP,
+        format!("↑ {}", range(cy, ay)),
+        small,
+        MUTED,
+    );
+    if let Some(p) = ui.input(|i| i.pointer.hover_pos()).filter(|p| inner.contains(*p)) {
+        let (i, j) = (
+            (((p.x - inner.left()) / cw) as usize).min(w - 1),
+            (((p.y - inner.top()) / ch) as usize).min(h - 1),
+        );
+        let at = |t: usize, n: usize, lo: f64, hi: f64| lo + (hi - lo) * (t as f64 + 0.5) / n as f64;
+        let n: u32 = counts[j * w + i].iter().sum();
+        if n == 0 {
+            return;
+        }
+        ui.interact(rect, ui.id().with("разброс"), Sense::hover()).on_hover_text(format!(
+            "{} ≈ {}, {} ≈ {}: {} существ",
+            census::label(cx),
+            census::number(cx, at(i, w, ax.lo, ax.hi)),
+            census::label(cy),
+            census::number(cy, at(h - 1 - j, h, ay.lo, ay.hi)),
+            spaced(u64::from(n)),
+        ));
+    }
 }
 
 /// A hint colour for the energy bands: the hungry in red.

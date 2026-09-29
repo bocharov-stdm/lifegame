@@ -296,6 +296,8 @@ pub struct Frame {
     pub snapshots: Vec<Snapshot>,
     /// A summary for the given region — when it was recomputed (at setting and at every sample).
     pub region: Option<RegionStats>,
+    /// A census of the creatures, when the window asked for one (only while the world stands).
+    pub census: Option<crate::census::Census>,
     pub log: Vec<LogEntry>,
     /// When the frame was assembled: from that moment the window counts the circles' age.
     pub built: Option<std::time::Instant>,

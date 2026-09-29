@@ -12,6 +12,7 @@
 mod app;
 mod behaviour;
 mod camera;
+mod census;
 mod charts;
 mod diets;
 mod frame;

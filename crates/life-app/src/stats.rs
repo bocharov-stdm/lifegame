@@ -3,21 +3,24 @@
 //! samples of the world (`Snapshot`), which the simulation thread takes anyway for the chronicle.
 
 use eframe::egui::{self, RichText, Vec2};
+use life_core::creature::Action;
 use life_core::flora::Profile;
 use life_core::genome::{GeneSpec, creature};
 use life_sim::observe::GeneStat;
 
 use crate::app::{LifeApp, Tool};
-use crate::charts;
 use crate::frame::CREATURE_COLOR;
 use crate::sim::Command;
-use crate::theme::{DANGER, GOOD, MUTED, TEXT, rgb, spaced};
+use crate::theme::{DANGER, DIET_COLORS, DIET_NAMES, GOOD, MUTED, TEXT, rgb, spaced};
+use crate::{census, charts};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StatsTab {
     Energy,
     Where,
     Region,
+    /// How the characteristics spread within each diet: a census, taken only on pause.
+    Species,
 }
 
 impl LifeApp {
@@ -34,12 +37,14 @@ impl LifeApp {
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Energy, "Энергия");
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Where, "Где живут");
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Region, "Область");
+                    ui.selectable_value(&mut self.stats_tab, StatsTab::Species, "Внутри видов");
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| match self.stats_tab {
                     StatsTab::Energy => self.energy_tab(ui),
                     StatsTab::Where => self.where_tab(ui),
                     StatsTab::Region => self.region_tab(ui),
+                    StatsTab::Species => self.species_tab(ui),
                 });
             });
         self.stats_open &= open;
@@ -128,6 +133,116 @@ impl LifeApp {
         ui.colored_label(MUTED, "Сводка обновляется на каждом срезе мира и сразу, когда область задана.");
     }
 
+    fn species_tab(&mut self, ui: &mut egui::Ui) {
+        let Some((world_gen, tick, still)) = self
+            .view
+            .frame
+            .as_ref()
+            .map(|f| (f.world_gen, f.tick, f.status.paused || f.status.ended.is_some()))
+        else {
+            return;
+        };
+        if !still {
+            ui.colored_label(
+                MUTED,
+                "Распределения признаков внутри видов считаются только на паузе: перепись всех существ \
+                 не должна отнимать время у тиков.",
+            );
+            if ui.button("Поставить на паузу").clicked() {
+                self.sim.send(Command::SetPaused(true));
+            }
+            return;
+        }
+        let key = (world_gen, tick);
+        let Some(census) = self.census.as_ref().filter(|c| (c.world_gen, c.tick) == key) else {
+            if self.census_asked != Some(key) {
+                self.census_asked = Some(key);
+                self.sim.send(Command::Census);
+            }
+            ui.colored_label(MUTED, "считаю…");
+            return;
+        };
+
+        ui.horizontal_wrapped(|ui| {
+            for g in 0..census::GROUPS {
+                let (name, color) = match g {
+                    0 => ("все", rgb(CREATURE_COLOR)),
+                    d => (DIET_NAMES[d - 1], rgb(DIET_COLORS[d - 1])),
+                };
+                let text =
+                    RichText::new(format!("{name} {}", spaced(census.groups[g].count as u64))).color(color);
+                if ui.selectable_label(self.census_group == g, text).clicked() {
+                    self.census_group = g;
+                }
+            }
+        });
+        let g = self.census_group;
+        let group = &census.groups[g];
+        let color = match g {
+            0 => rgb(CREATURE_COLOR),
+            d => rgb(DIET_COLORS[d - 1]),
+        };
+        ui.colored_label(
+            MUTED,
+            format!("тик {} · перепись на паузе, шаг вперёд — новая", spaced(census.tick)),
+        );
+        if group.count == 0 {
+            ui.colored_label(MUTED, "таких существ сейчас нет");
+            return;
+        }
+
+        ui.add_space(4.0);
+        ui.label(RichText::new("Признаки").strong());
+        let columns: Vec<usize> = census::numeric().collect();
+        charts::histograms(ui, group, &columns, color);
+        for c in census::choices() {
+            charts::shares(ui, &creature::GENES[c], &group.columns[c]);
+        }
+        ui.colored_label(
+            MUTED,
+            "Столбик — сколько существ с таким значением, черта — медиана, полоска внизу — где 80%. \
+             Два горба — два подвида.",
+        );
+
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Два признака").strong());
+            for (k, axis) in ["по горизонтали", "по вертикали"].into_iter().enumerate()
+            {
+                egui::ComboBox::from_id_salt(("перепись-ось", k))
+                    .selected_text(census::label(self.census_axes[k]))
+                    .show_ui(ui, |ui| {
+                        for c in census::numeric() {
+                            ui.selectable_value(&mut self.census_axes[k], c, census::label(c));
+                        }
+                    })
+                    .response
+                    .on_hover_text(axis);
+            }
+        });
+        charts::scatter(ui, census, g, self.census_axes, 170.0);
+        ui.colored_label(
+            MUTED,
+            "Отдельные облака — отдельные подвиды; цвет — питание, яркость — сколько их там.",
+        );
+
+        ui.add_space(8.0);
+        ui.label(RichText::new("Поведение взрослых").strong());
+        let n = group.count as f64;
+        for b in &group.behaviours {
+            behaviour_row(ui, b.count as f64 / n, &chain(&b.chain), color);
+        }
+        let rest = group.count - group.behaviours.iter().map(|b| b.count).sum::<usize>();
+        if rest > 0 {
+            behaviour_row(ui, rest as f64 / n, "прочие", MUTED);
+        }
+        ui.colored_label(
+            MUTED,
+            "Существа с одинаковыми решающими блоками взрослой программы в одном порядке — \
+             условия и числа у них могут различаться.",
+        );
+    }
+
     /// Clear the region: both the frame in the world and the summary.
     pub fn clear_region(&mut self) {
         self.region = None;
@@ -146,6 +261,33 @@ impl LifeApp {
         self.stats_open = true;
         self.stats_tab = StatsTab::Region;
     }
+}
+
+/// A behaviour group's line: its share as a bar and a number, then its chain of actions.
+fn behaviour_row(ui: &mut egui::Ui, share: f64, text: &str, color: egui::Color32) {
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(60.0, 10.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 2.0, MUTED.gamma_multiply(0.25));
+        let filled =
+            egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * share as f32, rect.height()));
+        ui.painter().rect_filled(filled, 2.0, color.gamma_multiply(0.8));
+        ui.add_sized(
+            [34.0, 16.0],
+            egui::Label::new(
+                RichText::new(if share < 0.005 { "<1%".into() } else { format!("{:.0}%", share * 100.0) })
+                    .color(TEXT),
+            ),
+        );
+        ui.add(egui::Label::new(RichText::new(text).color(MUTED)).wrap());
+    });
+}
+
+/// The deciding actions in order: «дать сдачи → убегать → …».
+fn chain(actions: &[Action]) -> String {
+    if actions.is_empty() {
+        return "ничего не решает — стоит".into();
+    }
+    actions.iter().map(|a| a.label()).collect::<Vec<_>>().join(" → ")
 }
 
 /// The gene table: the mean in the region, the mean over the world and the difference. For a

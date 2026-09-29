@@ -16,6 +16,7 @@ use life_core::config::DIVIDE_PERIOD;
 use life_core::{CreatureGenome, Rules, World, WorldConfig};
 use life_sim::observe::{EventTracker, Snapshot};
 
+use crate::census::Census;
 use crate::frame::{
     self, Area, CorpseMark, Ending, Frame, Instance, LogEntry, Raster, RegionStats, Selected, ShotTrail,
     Status, ViewRequest,
@@ -83,6 +84,8 @@ pub enum Command {
     Select(Option<u64>),
     /// A region for the genes' summary (the «Область» tool); None — clear.
     SetRegion(Option<Area>),
+    /// A census of the creatures (the «Внутри видов» tab) — taken only while the world stands.
+    Census,
     /// New rules in the middle of a game; `note` — what has changed, for the chronicle.
     SetRules {
         rules: Rules,
@@ -159,6 +162,7 @@ struct Pending {
     samples: Vec<Sample>,
     snapshots: Vec<Snapshot>,
     region: Option<RegionStats>,
+    census: Option<Census>,
     log: Vec<LogEntry>,
 }
 
@@ -392,6 +396,13 @@ impl Sim {
                 // at once, not at the next sample: there are no samples on pause
                 self.pending.region = area.map(|a| RegionStats::of(&self.world, a, None));
                 self.dirty = true;
+            }
+            Command::Census => {
+                // a running world is never counted: the census would take time from the ticks
+                if !self.running() {
+                    self.pending.census = Some(Census::of(&self.world, self.world_gen));
+                    self.dirty = true;
+                }
             }
             Command::SetRules { rules, note } => {
                 self.world.set_rules(rules);
@@ -739,6 +750,7 @@ impl Sim {
             samples: pending.samples,
             snapshots: pending.snapshots,
             region: pending.region,
+            census: pending.census,
             log: pending.log,
             built: Some(Instant::now()),
             build_ms: start.elapsed().as_secs_f64() * 1000.0,
@@ -839,6 +851,22 @@ mod tests {
         h.send(Command::Step);
         let f = wait_frame(&h, |f| f.tick >= 2);
         assert_eq!(f.tick, 2);
+    }
+
+    /// A census is taken on pause, of that very tick, and never while the world runs.
+    #[test]
+    fn перепись_только_на_паузе() {
+        let h = paused(cfg());
+        (0..5).for_each(|_| h.send(Command::Step));
+        h.send(Command::Census);
+        let f = wait_frame(&h, |f| f.census.is_some());
+        let c = f.census.as_ref().unwrap();
+        assert_eq!((c.world_gen, c.tick, c.rows.len()), (f.world_gen, f.tick, f.creatures));
+        h.send(Command::SetPaused(false));
+        wait_frame(&h, |f| !f.status.paused);
+        h.send(Command::Census);
+        let running = frames_until(&h, |f| f.tick >= c.tick + 60);
+        assert!(running.iter().all(|f| f.census.is_none()), "идущий мир не переписывают");
     }
 
     #[test]

@@ -6,7 +6,9 @@ use std::path::PathBuf;
 
 use eframe::egui;
 use life_core::WorldConfig;
+use life_core::genome::creature::Gene;
 
+use crate::census::Census;
 use crate::frame::{LogEntry, RegionStats};
 use crate::history::History;
 use crate::settings::{self, Settings, Tab};
@@ -79,6 +81,12 @@ pub struct LifeApp {
     pub stats_tab: StatsTab,
     /// The last summary of the dragged region; None — there is no region.
     pub region: Option<RegionStats>,
+    /// The «Внутри видов» tab: the last census, the (world, tick) it was asked for, the group
+    /// looked at (0 everybody, then the diets) and the two characteristics of its scatter.
+    pub census: Option<Census>,
+    pub census_asked: Option<(u64, u64)>,
+    pub census_group: usize,
+    pub census_axes: [usize; 2],
     pub tool: Tool,
     pub setup_tab: Tab,
     pub prefs_open: bool,
@@ -135,6 +143,10 @@ impl LifeApp {
             stats_open: false,
             stats_tab: StatsTab::Energy,
             region: None,
+            census: None,
+            census_asked: None,
+            census_group: 0,
+            census_axes: [Gene::Size as usize, Gene::Speed as usize],
             tool: Tool::Select,
             setup_tab: Tab::World,
             prefs_open: false,
@@ -157,9 +169,14 @@ impl LifeApp {
             // the region is from the previous world; the thread has already forgotten it
             self.region = None;
             self.view.area = None;
+            self.census = None;
+            self.census_asked = None;
         }
         if let Some(r) = f.region.take().filter(|r| self.view.area == Some(r.area)) {
             self.region = Some(r);
+        }
+        if let Some(c) = f.census.take() {
+            self.census = Some(c);
         }
         for s in f.samples.drain(..) {
             self.history.add_sample(s);
