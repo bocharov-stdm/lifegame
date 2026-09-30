@@ -274,6 +274,8 @@ impl Creature {
         // its standing upkeep
         self.torpid = intent.torpor;
         if self.torpid {
+            // a sleep is a tick without a burst: it gets its breath back as standing does
+            self.burst(false);
             self.energy -= self.pheno.still_upkeep * TORPOR_UPKEEP * cheaper;
             if self.energy <= 0.0 {
                 self.alive = false;

@@ -1261,6 +1261,25 @@ fn torpor_saves_the_hungry_and_ends_at_food() {
     assert!(!fed.torpid && !base.torpid);
 }
 
+/// A torpid creature gets its breath back as a standing one does: «winded → torpor» sleeps
+/// `BURST_REST` ticks and wakes, never for ever.
+#[test]
+fn a_sleep_ends_the_windedness() {
+    use life_core::creature::{Action, Block, Cond, Test};
+    let mut v = creature(3000.0, 1000.0, BASE);
+    v.programs = [standard_with(&[Block::when(Test::is(Cond::Winded), Action::Torpor)]); 2].into();
+    // neither full (its template would rest) nor hungry
+    v.energy = v.pheno.max_energy * 0.6;
+    v.winded = BURST_REST;
+    for _ in 0..BURST_REST {
+        v.step(&Blind);
+        assert!(v.torpid, "asleep while winded: {} left", v.winded);
+    }
+    assert_eq!(v.winded, 0);
+    v.step(&Blind);
+    assert!(!v.torpid, "breath back: awake");
+}
+
 /// A rest is no torpor: of a rest block from 50% and a torpor block below 60%, the first in the
 /// program decides. Resting it stands at its standing upkeep, awake.
 #[test]

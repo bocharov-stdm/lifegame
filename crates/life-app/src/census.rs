@@ -95,6 +95,8 @@ pub struct Group {
 pub struct Census {
     pub world_gen: u64,
     pub tick: u64,
+    /// The world's edits between ticks it was taken after (`Frame::edits`).
+    pub edits: u64,
     /// Per creature: its diet and its row.
     pub diets: Vec<u8>,
     pub rows: Vec<[f32; COLUMNS]>,
@@ -102,7 +104,7 @@ pub struct Census {
 }
 
 impl Census {
-    pub fn of(world: &World, world_gen: u64) -> Census {
+    pub fn of(world: &World, world_gen: u64, edits: u64) -> Census {
         let depth = world.space.height.max(1.0);
         let mut diets = Vec::with_capacity(world.creatures.len());
         let mut rows = Vec::with_capacity(world.creatures.len());
@@ -130,7 +132,7 @@ impl Census {
                 (0..rows.len()).filter(|&i| g == 0 || usize::from(diets[i]) == g - 1).collect();
             group(&members, &rows, &chains)
         });
-        Census { world_gen, tick: world.tick, diets, rows, groups }
+        Census { world_gen, tick: world.tick, edits, diets, rows, groups }
     }
 }
 
@@ -207,8 +209,8 @@ mod tests {
         for _ in 0..200 {
             w.step();
         }
-        let c = Census::of(&w, 7);
-        assert_eq!((c.world_gen, c.tick), (7, w.tick));
+        let c = Census::of(&w, 7, 2);
+        assert_eq!((c.world_gen, c.tick, c.edits), (7, w.tick, 2));
         assert_eq!(c.rows.len(), w.creatures.len());
         assert_eq!(c.groups[0].count, w.creatures.len());
         assert_eq!(c.groups[1..].iter().map(|g| g.count).sum::<usize>(), w.creatures.len());
@@ -233,7 +235,7 @@ mod tests {
     #[test]
     fn пустой_мир_даёт_пустую_перепись() {
         let w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
-        let c = Census::of(&w, 1);
+        let c = Census::of(&w, 1, 0);
         assert!(c.rows.is_empty() && c.groups.iter().all(|g| g.count == 0 && g.behaviours.is_empty()));
     }
 

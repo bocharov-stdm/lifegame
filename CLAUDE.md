@@ -84,8 +84,9 @@ stance; eating, combat, shots, defence and division read this tick's.
   caution 100%, patience `CHASE_PATIENCE` 30 ticks, only if better than plants/corpses, burst, leave
   a given-up prey `CHASE_GIVE_UP_TICKS` 180, within 100% of sight, pace); to a corpse (only if
   better, pace); to a plant (pace, keep the chosen one, nearest or `best_plant`); wander (pace,
-  targets ¼ to 200% of sight away); ambush; to the top / bottom of its layer; rest (90 ticks, pause
-  180); torpor (pays `TORPOR_UPKEEP` 30% of standing upkeep, **eats nothing**); defend its child.
+  targets ¼ to 200% of sight away, a target out of a changed layer dropped); ambush; to the top /
+  bottom of its layer; rest (90 ticks, pause 180); torpor (pays `TORPOR_UPKEEP` 30% of standing
+  upkeep, **eats nothing**, gets its breath back like standing); defend its child.
 - **«Защищать детёныша»**: its child within 50% of sight, struck within 30 ticks by an enemy in
   sight (or, while young, alarmed by a threat) → goes for the enemy and strikes it whatever its
   size, with a tank > 50%, ≤ 90 ticks, then a pause of 60 (`Mind::aid`, `aid_cooldown`). The child
@@ -217,8 +218,8 @@ observer, `life-app` alone knows the screen.
 - `config.rs` — every tunable constant with a comment on *why* that value.
 - `rules.rs` — `Rules`, the lab's world rules (`World::set_rules`, `apply_rules` recomputes
   phenotypes). `Rules::default()` is `config.rs` bit for bit. Changing an exponent renormalises its
-  coefficient. `with()` rejects unknown keys, non-finite and senseless values, never merely
-  unbalanced ones. A new rule: `RULE_KEYS` + `with`/`get` + a `FIELDS` entry in
+  coefficient. `with()` rejects unknown keys, non-finite and senseless values (an exponent over 10,
+  an upkeep that leaves f64), never merely unbalanced ones. A new rule: `RULE_KEYS` + `with`/`get` + a `FIELDS` entry in
   `life-app/src/settings.rs`.
 - `world.rs` — `WorldConfig`, `World::step()` (phase order only), counters, `spawn_*`.
 - `genome/` — gene table, `CreatureGenome`, mutation.

@@ -84,7 +84,7 @@ struct Args {
     #[arg(long = "rule", value_name = "ИМЯ=ЧИСЛО")]
     rules: Vec<String>,
     /// The work budget for the whole run (by default grows with --ticks).
-    #[arg(long)]
+    #[arg(long, value_parser = parse_budget)]
     max_work: Option<f64>,
     /// The deadline of one run, seconds.
     #[arg(long, default_value_t = 600)]
@@ -131,6 +131,17 @@ fn parse_scale(s: &str) -> Result<f64, String> {
         Ok(scale)
     } else {
         Err(format!("масштаб должен быть от {MIN_SCALE} до {MAX_SCALE}"))
+    }
+}
+
+/// A work budget is a finite number: NaN or infinity would switch the budget off, and every run
+/// must be capped.
+fn parse_budget(s: &str) -> Result<f64, String> {
+    let budget: f64 = s.trim().parse().map_err(|_| format!("«{s}» — не число"))?;
+    if budget.is_finite() && budget >= 0.0 {
+        Ok(budget)
+    } else {
+        Err("бюджет работы — конечное число не меньше нуля".into())
     }
 }
 

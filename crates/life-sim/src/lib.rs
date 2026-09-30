@@ -138,7 +138,8 @@ pub fn run(mut world: World, limits: &Limits, on_tick: &mut dyn FnMut(&World)) -
             stop = StopReason::Explosion;
             break;
         }
-        if total_work > max_work {
+        // a NaN budget stops the run instead of switching the budget off
+        if total_work > max_work || max_work.is_nan() {
             stop = StopReason::Overload;
             break;
         }

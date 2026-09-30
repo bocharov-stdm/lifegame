@@ -10,6 +10,11 @@ use crate::genome::creature::{GENES, Gene};
 const BASE_SIZE: f64 = GENES[Gene::Size as usize].base;
 const BASE_SPEED: f64 = GENES[Gene::Speed as usize].base;
 const BASE_VISION: f64 = GENES[Gene::Vision as usize].base;
+/// The steepest exponent of a price or of the size's edge in a fight: past it a large body's
+/// numbers leave f64 (40 ** 200 is infinite), and the lab shows at most 4.
+const MAX_POWER: f64 = 10.0;
+/// How many times the base stats the overflow check's body has: far past any grown one.
+const FAR_STAT: f64 = 100.0;
 
 /// The diets as rule keys name them, in the order of every `DIET_*` table (H/O/S/C).
 pub const DIETS: [&str; 4] = ["herbivore", "omnivore", "scavenger", "carnivore"];
@@ -393,7 +398,7 @@ impl Rules {
                 return Err(format!("правило {key}: нужно {need}, а не {value}"));
             }
             *r.diets[d].slot(edge).expect("ребро разобрано split_diet_key") = value;
-            return Ok(r);
+            return r.fits(key, value);
         }
         if let Some((along, param)) = flora::split_key(key) {
             FoodAxis::check(param, value)
@@ -463,6 +468,9 @@ impl Rules {
             "min_mutability" => (0.0..=MAX_MUTABILITY).contains(&value),
             "corpse_fresh" | "corpse_bones" | "corpse_decay" => value >= 1.0 && value.fract() == 0.0,
             "corpse_sink" | "corpse_bones_sink" => value > 0.0,
+            "size_power" | "speed_power" | "sight_power" | "speed_mass_power" | "melee_size_power" => {
+                (0.0..=MAX_POWER).contains(&value)
+            }
             _ => value >= 0.0,
         };
         if !allowed {
@@ -482,12 +490,33 @@ impl Rules {
                 "min_mutability" => "число от 0 до 10",
                 "corpse_fresh" | "corpse_bones" | "corpse_decay" => "целое число тиков не меньше 1",
                 "corpse_sink" | "corpse_bones_sink" => "число больше 0",
+                "size_power" | "speed_power" | "sight_power" | "speed_mass_power" | "melee_size_power" => {
+                    "число от 0 до 10"
+                }
                 _ => "число не меньше 0",
             };
             return Err(format!("правило {key}: нужно {need}, а не {value}"));
         }
         r.renormalize();
-        Ok(r)
+        r.fits(key, value)
+    }
+
+    /// A finite input can still overflow the upkeep (a price of 1e300): infinity minus infinity is
+    /// NaN, and a creature with NaN energy never starves. Checked for every diet on a body far past
+    /// any grown one.
+    fn fits(self, key: &str, value: f64) -> Result<Rules, String> {
+        let finite = self.diets.iter().all(|d| {
+            let far = self.upkeep_parts(
+                BASE_SIZE * FAR_STAT,
+                BASE_VISION * FAR_STAT,
+                [d.size_upkeep, d.speed_upkeep],
+            );
+            far.at(BASE_SPEED * FAR_STAT).is_finite()
+        });
+        if !finite {
+            return Err(format!("правило {key}: при {value} расход тела выходит за пределы чисел"));
+        }
+        Ok(self)
     }
 
     /// Like `with`, but the value is text: a number, and for a food profile also a name
@@ -678,6 +707,27 @@ mod tests {
             ("diet_leap_scavenger", -0.1),
         ] {
             assert!(rules.with(key, value).is_err(), "{key}={value}");
+        }
+    }
+
+    /// A finite rule whose upkeep leaves f64 is refused: infinity minus infinity would give a
+    /// creature NaN energy, and a NaN body never starves.
+    #[test]
+    fn a_rule_that_overflows_the_upkeep_is_refused() {
+        let rules = Rules::default();
+        for (key, value) in [
+            ("size_power", 200.0),
+            ("sight_power", MAX_POWER + 0.5),
+            ("melee_size_power", 200.0),
+            ("cost_scale", 1e307),
+            ("carnivore_size_upkeep", 1e307),
+        ] {
+            assert!(rules.with(key, value).is_err(), "{key}={value}");
+        }
+        for key in ["size_power", "speed_power", "sight_power", "speed_mass_power", "melee_size_power"] {
+            let r = rules.with(key, MAX_POWER).unwrap_or_else(|e| panic!("{key}: {e}"));
+            let far = r.upkeep_parts(BASE_SIZE * FAR_STAT, BASE_VISION * FAR_STAT, [1.0, 1.0]);
+            assert!(far.at(BASE_SPEED * FAR_STAT).is_finite(), "{key}");
         }
     }
 

@@ -81,10 +81,10 @@ pub struct LifeApp {
     pub stats_tab: StatsTab,
     /// The last summary of the dragged region; None — there is no region.
     pub region: Option<RegionStats>,
-    /// The «Внутри видов» tab: the last census, the (world, tick) it was asked for, the group
-    /// looked at (0 everybody, then the diets) and the two characteristics of its scatter.
+    /// The «Внутри видов» tab: the last census, the (world, tick, edits) it was asked for, the
+    /// group looked at (0 everybody, then the diets) and the two characteristics of its scatter.
     pub census: Option<Census>,
-    pub census_asked: Option<(u64, u64)>,
+    pub census_asked: Option<(u64, u64, u64)>,
     pub census_group: usize,
     pub census_axes: [usize; 2],
     pub tool: Tool,

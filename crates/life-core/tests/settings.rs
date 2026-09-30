@@ -130,6 +130,23 @@ fn a_layer_setting_moves_the_band_and_a_conditional_one_switches_it() {
     assert_eq!(v.mind.stance.layer, (0.2, 0.7));
 }
 
+/// A wander target left in the old layer is dropped the tick the layer changes: the creature turns
+/// back to its new layer at once instead of first walking to the old target.
+#[test]
+fn a_new_layer_drops_the_wander_target_of_the_old_one() {
+    let mut v = creature(1000.0, 100.0);
+    living_by(&mut v, &[Block::does(Action::Layer).with(0, 0).with(1, 40), Block::does(Action::Wander)]);
+    v.step(&Blind);
+    // walking up within its old layer, 0–40% of the depth
+    v.mind.target = Some((1000.0, 500.0));
+    living_by(&mut v, &[Block::does(Action::Layer).with(0, 60).with(1, 100), Block::does(Action::Wander)]);
+    let y = v.y;
+    v.step(&Blind);
+    let (lo, _) = v.pheno.band((0.6, 1.0));
+    assert!(v.y > y, "it turned down to its new layer: {y} → {}", v.y);
+    assert_eq!(v.mind.target, Some((v.x, lo)), "the new target is the nearest point of the new layer");
+}
+
 /// A parent defends its young child that met a hunter: its template goes for the hunter; a child
 /// it no longer knows, it leaves.
 #[test]

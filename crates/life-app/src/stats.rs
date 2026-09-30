@@ -134,11 +134,11 @@ impl LifeApp {
     }
 
     fn species_tab(&mut self, ui: &mut egui::Ui) {
-        let Some((world_gen, tick, still)) = self
+        let Some((world_gen, tick, edits, still)) = self
             .view
             .frame
             .as_ref()
-            .map(|f| (f.world_gen, f.tick, f.status.paused || f.status.ended.is_some()))
+            .map(|f| (f.world_gen, f.tick, f.edits, f.status.paused || f.status.ended.is_some()))
         else {
             return;
         };
@@ -153,8 +153,9 @@ impl LifeApp {
             }
             return;
         }
-        let key = (world_gen, tick);
-        let Some(census) = self.census.as_ref().filter(|c| (c.world_gen, c.tick) == key) else {
+        // a creature planted or new rules on pause change the world without a tick: counted again
+        let key = (world_gen, tick, edits);
+        let Some(census) = self.census.as_ref().filter(|c| (c.world_gen, c.tick, c.edits) == key) else {
             if self.census_asked != Some(key) {
                 self.census_asked = Some(key);
                 self.sim.send(Command::Census);

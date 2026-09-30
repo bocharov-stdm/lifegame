@@ -178,6 +178,8 @@ struct Sim {
     cfg: WorldConfig,
     world: World,
     world_gen: u64,
+    /// `Frame::edits`.
+    edits: u64,
     rx: Receiver<Command>,
     recycled: Receiver<Vec<Instance>>,
     slot: Arc<Mutex<Option<Frame>>>,
@@ -252,6 +254,7 @@ impl Sim {
         let mut sim = Sim {
             world: World::new(&cfg),
             world_gen: 0,
+            edits: 0,
             cfg,
             rx,
             recycled,
@@ -446,17 +449,19 @@ impl Sim {
             Command::Census => {
                 // a running world is never counted: the census would take time from the ticks
                 if !self.running() {
-                    self.pending.census = Some(Census::of(&self.world, self.world_gen));
+                    self.pending.census = Some(Census::of(&self.world, self.world_gen, self.edits));
                     self.dirty = true;
                 }
             }
             Command::SetRules { rules, note } => {
                 self.world.set_rules(rules);
+                self.edits += 1;
                 self.patches_due = true;
                 self.log(None, note);
             }
             Command::Spawn { x, y } => {
                 self.world.spawn(CreatureGenome::BASE, x, y, None);
+                self.edits += 1;
                 self.log(None, "подсажено существо".into());
                 // Planting into an extinct world revives it.
                 if self.ended == Some(Ending::Extinct) {
@@ -792,6 +797,7 @@ impl Sim {
         };
         Frame {
             world_gen: self.world_gen,
+            edits: self.edits,
             seed: self.cfg.seed,
             scale: self.cfg.scale,
             rules: w.rules.clone(),
@@ -940,6 +946,24 @@ mod tests {
         h.send(Command::Census);
         let running = frames_until(&h, |f| f.tick >= c.tick + 60);
         assert!(running.iter().all(|f| f.census.is_none()), "идущий мир не переписывают");
+    }
+
+    /// A creature planted on pause changes the world without a tick: the frame says so, and the
+    /// census taken after it counts the new one.
+    #[test]
+    fn подсадка_на_паузе_требует_новой_переписи() {
+        let h = paused(cfg());
+        h.send(Command::Census);
+        let before = wait_frame(&h, |f| f.census.is_some());
+        let old = before.census.as_ref().unwrap();
+        h.send(Command::Spawn { x: 1000.0, y: 1000.0 });
+        let after = wait_frame(&h, |f| f.edits > before.edits);
+        assert_eq!((after.tick, after.creatures), (before.tick, before.creatures + 1));
+        h.send(Command::Census);
+        let f = wait_frame(&h, |f| f.census.is_some());
+        let c = f.census.as_ref().unwrap();
+        assert_eq!((c.tick, c.edits), (old.tick, after.edits));
+        assert_eq!(c.rows.len(), old.rows.len() + 1);
     }
 
     #[test]

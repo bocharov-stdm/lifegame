@@ -259,6 +259,9 @@ pub struct Frame {
     /// The world's number: grows at «Заново» and at a new world. By it the window understands that
     /// the history and the chronicle should start from a clean sheet.
     pub world_gen: u64,
+    /// Edits of the world between ticks — a creature planted, new rules: they change it without
+    /// a tick, so what was taken of the world at this tick (the census) is taken again.
+    pub edits: u64,
     pub seed: u64,
     pub scale: f64,
     /// The rules the world runs by now.

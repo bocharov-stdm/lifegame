@@ -389,9 +389,12 @@ fn metrics_of(json: &Value, text: &str, seed: u64, late: f64) -> Option<RunMetri
     let run = &json["runs"][0];
     let snaps = run["snapshots"].as_array()?;
     let ticks = run["ticks_done"].as_u64()?;
+    // the exact count; a report older than it gives only a share rounded to three decimals
     let count = |s: &Value, d: usize| {
-        s["creatures"].as_f64().unwrap_or(0.0)
-            * s["genes"]["diet"]["shares"][DIETS[d]].as_f64().unwrap_or(0.0)
+        s["diet_creatures"][DIETS[d]].as_f64().unwrap_or_else(|| {
+            s["creatures"].as_f64().unwrap_or(0.0)
+                * s["genes"]["diet"]["shares"][DIETS[d]].as_f64().unwrap_or(0.0)
+        })
     };
     let from = ticks as f64 * (1.0 - late);
     let late_snaps: Vec<&Value> =
@@ -1247,6 +1250,23 @@ mod tests {
         assert_ne!(build_stamp(&exe), first, "rebuilt");
         assert_eq!(build_stamp(&dir.join("gone.exe")), "unknown build");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 99 carnivores of 10 000 are under 1%: the exact count decides, not the share the report
+    /// rounded to 0.010.
+    #[test]
+    fn a_diet_just_under_the_threshold_does_not_hold() {
+        let json = serde_json::json!({ "runs": [{
+            "stop": "done", "ticks_done": 100,
+            "snapshots": [{
+                "tick": 100, "creatures": 10000.0,
+                "diet_creatures": { "herbivore": 9901, "omnivore": 0, "scavenger": 0, "carnivore": 99 },
+                "genes": { "diet": { "shares": { "herbivore": 0.99, "omnivore": 0.0, "scavenger": 0.0, "carnivore": 0.01 } } }
+            }],
+        }]});
+        let m = metrics_of(&json, "", 1, 0.25).unwrap();
+        assert_eq!(m.diet_late[3], 99.0);
+        assert!(!m.holds(3) && m.holds(0));
     }
 
     #[test]

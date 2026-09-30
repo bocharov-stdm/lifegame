@@ -327,12 +327,12 @@ fn to_layer_edge(me: &Me, mind: &mut Mind, edge: f64, pace: f64) -> Option<(Inte
     Some((go(me.x, edge, pace), Mode::Wander))
 }
 
-/// The wander target, a new one once reached (within one `step`); a new one lies at most `reach`
-/// away in its home band `band`.
+/// The wander target, a new one once reached (within one `step`) or once out of its home band
+/// `band` (the layer changed); a new one lies at most `reach` away in the band.
 fn wander(me: &Me, mind: &mut Mind, rng: &mut Rng, step: f64, reach: f64, band: (f64, f64)) -> (f64, f64) {
     let stale = mind.target.is_none_or(|(tx, ty)| {
         let (dx, dy) = (me.x - tx, me.y - ty);
-        dx * dx + dy * dy < step * step
+        dx * dx + dy * dy < step * step || ty < band.0 || ty > band.1
     });
     if stale {
         pick_random_target(me, mind, rng, reach, band);

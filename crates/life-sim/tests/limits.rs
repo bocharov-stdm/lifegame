@@ -52,6 +52,11 @@ fn every_guard_stops_a_run_and_says_which() {
         busy.total_work
     );
 
+    // a budget that is not a number stops the run, it does not switch the budget off
+    let nan = run(&Limits { max_total_work: f64::NAN, ..limits.clone() });
+    stopped(&nan, StopReason::Overload);
+    assert_eq!(nan.ticks_done, 1);
+
     let empty = simulate(&WorldConfig { n_creatures: Some(0), ..cfg.clone() }, &limits, |_| {});
     stopped(&empty, StopReason::Extinct);
     assert_eq!(empty.ticks_done, 1);

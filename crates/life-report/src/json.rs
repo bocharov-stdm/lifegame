@@ -114,6 +114,10 @@ fn snapshot(s: &Snapshot) -> Value {
         "corpses": s.corpses,
         "plant_cap": s.plant_cap,
         "creatures": s.creatures,
+        // exact, not creatures × a rounded share: 99 of 10 000 must not read as 1%
+        "diet_creatures": Value::Object(
+            DIETS.iter().zip(&s.diets).map(|(d, stat)| (d.to_string(), json!(stat.creatures))).collect()
+        ),
         "juveniles": s.juveniles,
         "activities": life_core::creature::Activity::ALL.iter().enumerate().map(|(i,a)| json!({"name":a.label(),"count":s.activities[i],"share": if s.creatures>0 {s.activities[i] as f64/s.creatures as f64} else {0.0}})).collect::<Vec<_>>(),
         "counters": counters(&s.counters),
@@ -220,6 +224,8 @@ mod tests {
             assert!(run["totals"]["by_diet"]["kills"]["carnivore"][diet].as_u64().is_some());
             assert!(snap["counters"]["by_diet"]["deaths"][diet]["starved"].as_u64().is_some());
         }
+        let by_diet: u64 = DIETS.iter().map(|d| snap["diet_creatures"][d].as_u64().unwrap()).sum();
+        assert_eq!(Some(by_diet), snap["creatures"].as_u64(), "every creature counted by its diet");
         assert_eq!(snap["corpses"], 1);
     }
 }
