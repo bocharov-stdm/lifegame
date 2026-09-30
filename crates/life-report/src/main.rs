@@ -271,7 +271,7 @@ fn main() {
             // Stepped on several threads, the driving thread keeps to the fast cores (`cores.rs`);
             // on one (a sweep's run beside fifteen others) it goes where the system puts it.
             if rayon::current_num_threads() > 1 {
-                life_sim::cores::pin_to_fast_cores();
+                life_sim::cores::keep_on_fast_cores(true);
             }
             let mut world = World::new(&cfg);
             world.set_profiling(args.phases);

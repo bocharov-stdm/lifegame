@@ -337,10 +337,45 @@ fn справка_и_настройки_помещаются_в_окно() {
         h.state_mut().help_open = false;
         h.state_mut().prefs_open = true;
         settle(h);
-        for node in h.query_all_by_role(Role::CheckBox) {
-            assert!(window.contains_rect(node.rect()), "настройки, {tag}: флажок за окном");
-        }
+        let inside = |h: &Harness<'static, LifeApp>, what: &str| {
+            for role in [Role::CheckBox, Role::RadioButton, Role::Slider, Role::Button, Role::ComboBox] {
+                for node in h.query_all_by_role(role) {
+                    let label = node.accesskit_node().label().unwrap_or_default();
+                    assert!(window.contains_rect(node.rect()), "{what}, {tag}: {role:?} «{label}» за окном");
+                }
+            }
+        };
+        inside(h, "настройки");
         shot(h, &format!("настройки-{tag}"));
+        // by hand: a slider within the processor's threads; back to the defaults with one button
+        h.get_by_label("Вручную").click();
+        settle(h);
+        let (cpu, auto) = (crate::settings::cpu_threads(), crate::settings::auto_threads());
+        assert_eq!(h.state().settings.threads, auto.clamp(2, cpu), "вручную начинается с авто");
+        assert_eq!(h.query_all_by_role(Role::Slider).count(), 1, "вручную — ползунок");
+        inside(h, "настройки вручную");
+        shot(h, &format!("настройки-вручную-{tag}"));
+        // every thread to the world: a warning, and the window still fits
+        h.state_mut().settings.threads = cpu;
+        settle(h);
+        assert!(h.query_by_label_contains("Окну почти не остаётся").is_some(), "предупреждение");
+        inside(h, "настройки, все потоки");
+        shot(h, &format!("настройки-все-потоки-{tag}"));
+        h.get_by_label("Как по умолчанию").click();
+        settle(h);
+        assert_eq!(h.state().settings.threads, 0, "снова авто");
+        assert_eq!(h.query_all_by_role(Role::Slider).count(), 0, "в авто ползунка нет");
+        // the simulation takes what the settings say
+        h.get_by_label("Один поток: медленнее, зато процессор свободен").click();
+        for _ in 0..200 {
+            h.step();
+            if h.state().view.frame.as_ref().is_some_and(|f| f.threads == 1) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(h.state().view.frame.as_ref().map(|f| f.threads), Some(1), "мир считается одним потоком");
+        h.state_mut().prefs_open = false;
     });
 }
 

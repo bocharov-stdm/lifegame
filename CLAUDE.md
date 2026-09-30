@@ -279,9 +279,13 @@ differ. Re-take with `--save-reference reference/fingerprint.json` (calm: `--rul
   (`par::for_each_mut`, `par::map_into`; one thread under `PARALLEL_MIN` 512 creatures, pieces of
   `PARALLEL_CHUNK` 32). Only work that reads the snapshot and writes its own creature goes there,
   so any thread count gives the same world (`tests/parallel.rs`, golden). Eating, combat and
-  division stay sequential: the order of IDs decides who gets a portion. The game's pool is the
-  cores − 2; `life-report` uses `--threads` (a sweep passes 1). The driving thread keeps to the
-  fast cores (`life_sim::cores`): on the user's i7-13650HX Windows moved it onto an efficiency core
+  division stay sequential: the order of IDs decides who gets a portion. Where they run is
+  `par::Threads` (`World::set_threads`): rayon's global pool (default; `life-report --threads`, a
+  sweep passes 1), `One`, or a `Pool` of the caller's — the game's own, sized by the settings'
+  «Скорость расчёта» (auto = the cores − 2, one thread, or 2…all by hand; `Command::Threads`
+  rebuilds it on the fly). The driving thread keeps to the
+  fast cores (`life_sim::cores`, the settings' «Держать расчёт на быстрых ядрах», greyed out on a
+  processor with one kind of core): on the user's i7-13650HX Windows moved it onto an efficiency core
   and the one-thread phases went half as slow (×100: 12.5 → 9.7 ms a tick with it, 20.5 on one
   thread).
 - `Creature::step` is the hot path: values precomputed in `Phenotype::of`, squared distances, block

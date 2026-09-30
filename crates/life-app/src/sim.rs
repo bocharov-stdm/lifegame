@@ -13,6 +13,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use life_core::config::DIVIDE_PERIOD;
+use life_core::par::Threads;
 use life_core::profile::{Phase, PhaseTimes};
 use life_core::{CreatureGenome, Rules, World, WorldConfig};
 use life_sim::observe::{EventTracker, Snapshot};
@@ -87,6 +88,12 @@ pub enum Command {
     SetRegion(Option<Area>),
     /// A census of the creatures (the «Внутри видов» tab) — taken only while the world stands.
     Census,
+    /// Threads for the creatures' decisions (1 — none but its own) and whether the simulation
+    /// thread keeps to the fast cores. The world goes the same either way.
+    Threads {
+        threads: usize,
+        fast_cores: bool,
+    },
     /// New rules in the middle of a game; `note` — what has changed, for the chronicle.
     SetRules {
         rules: Rules,
@@ -123,11 +130,7 @@ impl SimHandle {
         let shared = slot.clone();
         let thread = std::thread::Builder::new()
             .name("симуляция".into())
-            .spawn(move || {
-                // the tick's one-thread phases on a fast core, the decisions on every core
-                life_sim::cores::pin_to_fast_cores();
-                Sim::new(cfg, rx, recycled, shared, waker).run()
-            })
+            .spawn(move || Sim::new(cfg, rx, recycled, shared, waker).run())
             .expect("поток симуляции не запустился");
         SimHandle { tx, slot, recycle, thread: Some(thread) }
     }
@@ -212,6 +215,11 @@ struct Sim {
     /// read at.
     phases: [f64; Phase::N],
     phases_seen: PhaseTimes,
+    /// Where the decisions run (`Command::Threads`), how many threads that is, and whether this
+    /// thread keeps to the fast cores.
+    pool: Threads,
+    threads: usize,
+    fast_cores: bool,
     /// The price of the last observer snapshot, ms.
     snapshot_ms: f64,
 
@@ -272,6 +280,9 @@ impl Sim {
             tick_ms: 0.0,
             phases: [0.0; Phase::N],
             phases_seen: PhaseTimes::default(),
+            pool: Threads::One,
+            threads: 1,
+            fast_cores: false,
             snapshot_ms: 0.0,
             dirty: true,
             last_frame: now - MIN_FRAME_INTERVAL,
@@ -283,8 +294,31 @@ impl Sim {
             last_frame_tick: 0,
             patches_due: true,
         };
+        // the settings' defaults until the window sends its own
+        sim.set_threads(crate::settings::auto_threads(), true);
         sim.observe_start();
         sim
+    }
+
+    /// A pool of `threads` for the decisions (1: none), and this thread on the fast cores or
+    /// anywhere. Runs on the simulation thread itself, so it is the one held.
+    fn set_threads(&mut self, threads: usize, fast_cores: bool) {
+        let threads = threads.clamp(1, crate::settings::cpu_threads());
+        if threads != self.threads {
+            let pool = (threads > 1).then(|| {
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .thread_name(|i| format!("расчёт {i}"))
+                    .build()
+            });
+            (self.pool, self.threads) = match pool {
+                Some(Ok(pool)) => (Threads::Pool(Arc::new(pool)), threads),
+                // no pool (one thread asked, or the system gave none): the decisions go on here
+                _ => (Threads::One, 1),
+            };
+        }
+        self.fast_cores = life_sim::cores::keep_on_fast_cores(fast_cores) && fast_cores;
+        self.dirty = true;
     }
 
     fn running(&self) -> bool {
@@ -408,6 +442,7 @@ impl Sim {
                 self.pending.region = area.map(|a| RegionStats::of(&self.world, a, None));
                 self.dirty = true;
             }
+            Command::Threads { threads, fast_cores } => self.set_threads(threads, fast_cores),
             Command::Census => {
                 // a running world is never counted: the census would take time from the ticks
                 if !self.running() {
@@ -497,6 +532,7 @@ impl Sim {
     fn tick(&mut self) {
         // the phases are measured always: a dozen clock reads a tick, and the world goes the same
         self.world.set_profiling(true);
+        self.world.set_threads(self.pool.clone());
         let start = Instant::now();
         self.world.step();
         let engine_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -791,6 +827,8 @@ impl Sim {
             tick_ms: self.tick_ms,
             snapshot_ms: self.snapshot_ms,
             phases: self.phases,
+            threads: self.threads,
+            fast_cores: self.fast_cores,
         }
     }
 }

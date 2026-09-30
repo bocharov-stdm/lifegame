@@ -16,6 +16,7 @@ use crate::creature::{Creature, Diet, Food, Meal, Morsel};
 use crate::flora::Flora;
 use crate::genome::{CreatureGenome, creature, variant_for};
 use crate::grid::Grid;
+use crate::par::Threads;
 use crate::plant::Plant;
 use crate::profile::{Phase, PhaseTimes, Stopwatch};
 use crate::rng::{Rng, mix};
@@ -193,6 +194,8 @@ pub struct World {
     bitten_plants: Vec<bool>,
     /// Time by phase since profiling was switched on (`set_profiling`); None: not measured.
     profile: Option<PhaseTimes>,
+    /// Where the per-creature phases run (`set_threads`).
+    threads: Threads,
 }
 
 impl World {
@@ -222,6 +225,7 @@ impl World {
             corpse_grid: Grid::new(GRID_CELL),
             bitten_plants: Vec::new(),
             profile: None,
+            threads: Threads::default(),
         };
         let variants = creature_strategy::VARIANTS.len();
         let diet_ranks = crate::genome::spread_ranks(n_start);
@@ -305,6 +309,12 @@ impl World {
         }
     }
 
+    /// Where the per-creature phases (decisions, the herd's snapshot) run from now on. The world
+    /// goes the same on any threads.
+    pub fn set_threads(&mut self, threads: Threads) {
+        self.threads = threads;
+    }
+
     /// Time by phase since profiling was switched on; None while it is off.
     pub fn phase_times(&self) -> Option<&PhaseTimes> {
         self.profile.as_ref()
@@ -369,6 +379,7 @@ impl World {
             counters,
             shots,
             plant_cells,
+            threads,
             ..
         } = self;
         food_grid.rebuild(space, plants.iter().map(|p| (p.x, p.y)));
@@ -378,7 +389,7 @@ impl World {
         clock.lap(Phase::Grids);
         // Relatives are seen as they were at the start of the phase: the outcome does not depend on
         // the order of moves.
-        herd.rebuild(space, creatures);
+        herd.rebuild_on(space, creatures, threads);
         clock.lap(Phase::Herd);
 
         let mut offspring = Vec::new();
@@ -392,7 +403,7 @@ impl World {
             now,
             herd: Some(&*herd),
         };
-        crate::par::for_each_mut(creatures, |v| v.step(&senses));
+        crate::par::for_each_mut(threads, creatures, |v| v.step(&senses));
         for v in creatures.iter() {
             if !v.alive {
                 let death = v.death.unwrap_or(crate::creature::Death::Starved);

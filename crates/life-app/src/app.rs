@@ -96,6 +96,8 @@ pub struct LifeApp {
     pub toast: Option<(String, f64)>,
     fps: f64,
     applied: (bool, f64),
+    /// The threads and fast cores the simulation was last told (`Command::Threads`).
+    applied_threads: Option<(usize, bool)>,
 }
 
 impl LifeApp {
@@ -155,6 +157,7 @@ impl LifeApp {
             toast: None,
             fps: 0.0,
             applied: (false, -1.0),
+            applied_threads: None,
         }
     }
 
@@ -255,6 +258,15 @@ impl LifeApp {
         self.applied = want;
     }
 
+    /// The settings' threads and fast cores to the simulation — when they have changed.
+    fn apply_threads(&mut self) {
+        let want = (self.settings.threads_in_use(), self.settings.fast_cores);
+        if self.applied_threads != Some(want) {
+            self.sim.send(Command::Threads { threads: want.0, fast_cores: want.1 });
+            self.applied_threads = Some(want);
+        }
+    }
+
     pub fn fps(&self) -> f64 {
         self.fps
     }
@@ -271,6 +283,7 @@ impl eframe::App for LifeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.apply_display(&ctx);
+        self.apply_threads();
         self.receive(&ctx);
         let dt = ctx.input(|i| i.stable_dt).min(0.1) as f64;
         if dt > 0.0 {

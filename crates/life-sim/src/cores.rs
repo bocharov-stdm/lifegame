@@ -5,9 +5,15 @@
 //! the fast cores. Only the driving thread is held: the pool keeps every core. Elsewhere, and on a
 //! processor with one kind of core, nothing happens.
 
-/// Keep the calling thread on the processor's fastest cores; whether it was done.
-pub fn pin_to_fast_cores() -> bool {
-    imp::pin()
+/// Keep the calling thread on the processor's fastest cores, or (`on` false) let it go anywhere
+/// again; whether it was done.
+pub fn keep_on_fast_cores(on: bool) -> bool {
+    imp::keep(on)
+}
+
+/// The processor has cores of more than one kind, so keeping to the fast ones means something.
+pub fn has_fast_cores() -> bool {
+    imp::has_fast_cores()
 }
 
 #[cfg(windows)]
@@ -17,10 +23,19 @@ mod imp {
     };
     use windows::Win32::System::Threading::{GetCurrentThread, SetThreadSelectedCpuSets};
 
-    pub fn pin() -> bool {
+    pub fn keep(on: bool) -> bool {
         let fast = fast_cores();
+        if fast.is_empty() {
+            return false;
+        }
+        // no ids: the thread's own choice of cores is dropped and it goes wherever the process may
+        let ids: &[u32] = if on { &fast } else { &[] };
         // SAFETY: the pseudo-handle of the calling thread is always valid; the ids come from the system
-        !fast.is_empty() && unsafe { SetThreadSelectedCpuSets(GetCurrentThread(), &fast) }.as_bool()
+        unsafe { SetThreadSelectedCpuSets(GetCurrentThread(), ids) }.as_bool()
+    }
+
+    pub fn has_fast_cores() -> bool {
+        !fast_cores().is_empty()
     }
 
     /// The CPU sets of the highest efficiency class (the fastest cores); none when all are alike.
@@ -66,7 +81,36 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
-    pub fn pin() -> bool {
+    pub fn keep(_: bool) -> bool {
         false
+    }
+
+    pub fn has_fast_cores() -> bool {
+        false
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use windows::Win32::System::Threading::{GetCurrentThread, GetThreadSelectedCpuSets};
+
+    /// How many CPU sets the calling thread keeps to (0: none of its own).
+    fn held() -> u32 {
+        let mut count = 0u32;
+        // SAFETY: an empty buffer only asks for the count
+        let _ = unsafe { GetThreadSelectedCpuSets(GetCurrentThread(), None, &mut count) };
+        count
+    }
+
+    /// Held, the thread keeps to the fast cores; let go, to none of its own.
+    #[test]
+    fn a_thread_keeps_to_the_fast_cores_and_lets_go() {
+        if !super::has_fast_cores() {
+            return; // one kind of core: nothing to keep to
+        }
+        assert!(super::keep_on_fast_cores(true));
+        assert!(held() > 0, "held on the fast cores");
+        assert!(super::keep_on_fast_cores(false));
+        assert_eq!(held(), 0, "let go");
     }
 }

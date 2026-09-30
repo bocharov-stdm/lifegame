@@ -1257,6 +1257,22 @@ pub struct Settings {
     pub fullscreen: bool,
     pub ui_scale: f64,
     pub show_fps: bool,
+    // ── the world's computation ──────────────────────────────────────────────
+    /// Threads for the creatures' decisions: 0 — auto (`auto_threads`), 1 — no parallelism.
+    pub threads: usize,
+    /// Keep the thread that steps the world on a hybrid processor's fast cores.
+    pub fast_cores: bool,
+}
+
+/// The processor's threads.
+pub fn cpu_threads() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
+/// Auto: every thread but two — one for the window and the drawing, one for the simulation thread,
+/// which waits while the pool works.
+pub fn auto_threads() -> usize {
+    cpu_threads().saturating_sub(2).max(1)
 }
 
 impl Default for Settings {
@@ -1286,6 +1302,8 @@ impl Default for Settings {
             fullscreen: false,
             ui_scale: 0.0,
             show_fps: false,
+            threads: 0,
+            fast_cores: true,
         }
     }
 }
@@ -1390,6 +1408,8 @@ impl Settings {
         m.insert("fullscreen".into(), self.fullscreen.into());
         m.insert("ui_scale".into(), self.ui_scale.into());
         m.insert("show_fps".into(), self.show_fps.into());
+        m.insert("threads".into(), self.threads.into());
+        m.insert("fast_cores".into(), self.fast_cores.into());
         Value::Object(m)
     }
 
@@ -1434,7 +1454,19 @@ impl Settings {
         if let Some(v) = flag("show_fps") {
             s.show_fps = v;
         }
+        // more threads than the processor has (a file from another computer) — as many as it has
+        if let Some(v) = m.get("threads").and_then(Value::as_u64) {
+            s.threads = (v as usize).min(cpu_threads());
+        }
+        if let Some(v) = flag("fast_cores") {
+            s.fast_cores = v;
+        }
         s
+    }
+
+    /// The threads the decisions get: the chosen number, or auto.
+    pub fn threads_in_use(&self) -> usize {
+        if self.threads == 0 { auto_threads() } else { self.threads }
     }
 
     /// Settings from a file; no file or a broken one — the defaults.
@@ -1565,6 +1597,20 @@ mod tests {
         assert_eq!(f.snap(0.3000001), 0.3);
         assert_eq!(f.snap(99.0), 2.0);
         assert_eq!(f.snap(-5.0), 0.05);
+    }
+
+    /// The threads survive a file: saved and read back as they were; a file from a bigger computer
+    /// asks for no more threads than this one has, garbage leaves the defaults (auto, fast cores).
+    #[test]
+    fn потоки_сохраняются_и_не_выходят_за_процессор() {
+        let s = Settings { threads: 1, fast_cores: false, ..Default::default() };
+        assert_eq!(Settings::from_json(&s.to_json()), s);
+        let big = Settings::from_json(&serde_json::json!({ "threads": 999, "fast_cores": true }));
+        assert_eq!(big.threads, cpu_threads());
+        let junk = Settings::from_json(&serde_json::json!({ "threads": -3, "fast_cores": "да" }));
+        assert_eq!((junk.threads, junk.fast_cores), (0, true));
+        assert_eq!(Settings::default().threads_in_use(), auto_threads());
+        assert!(auto_threads() >= 1 && auto_threads() <= cpu_threads());
     }
 
     #[test]

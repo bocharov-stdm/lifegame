@@ -523,9 +523,15 @@ impl Herd {
     /// the dead are swept at the end of the previous one. The ones looking into the snapshot are
     /// the ones in it: children are born after the moves. Whom one may eat, how it fights back and
     /// whether it covers its children is what its blocks did on its last move (`Creature::menace`).
+    #[cfg(test)]
     pub fn rebuild(&mut self, space: &Space, creatures: &[Creature]) {
+        self.rebuild_on(space, creatures, &crate::par::Threads::One);
+    }
+
+    /// The snapshot, each creature's entry on `threads`.
+    pub fn rebuild_on(&mut self, space: &Space, creatures: &[Creature], threads: &crate::par::Threads) {
         debug_assert!(creatures.iter().all(|v| v.alive), "в снимке стада мёртвые");
-        crate::par::map_into(creatures, &mut self.seen, |v| {
+        crate::par::map_into(threads, creatures, &mut self.seen, |v| {
             let menace = v.menace();
             let (fights_below, fights_share) =
                 menace.fight().map_or((0.0, 0.0), |(ratio, health)| (v.pheno.half * ratio, 1.0 - health));

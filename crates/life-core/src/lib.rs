@@ -28,5 +28,5 @@ pub use space::{Shape, Space};
 pub use world::{Counters, DietCounters, Stats, World, WorldConfig};
 
 mod combat;
-mod par;
+pub mod par;
 pub use combat::Shot;

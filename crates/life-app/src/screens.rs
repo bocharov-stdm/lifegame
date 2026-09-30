@@ -10,7 +10,10 @@ use life_core::{Rules, Shape, Space};
 
 use crate::app::{LifeApp, Screen};
 use crate::frame::PLANT_COLOR;
-use crate::settings::{DIET_ROWS, FIELDS, Field, Key, PRESETS, SEED_MAX, Settings, Tab, UI_SCALES, field};
+use crate::settings::{
+    DIET_ROWS, FIELDS, Field, Key, PRESETS, SEED_MAX, Settings, Tab, UI_SCALES, auto_threads, cpu_threads,
+    field,
+};
 use crate::theme::{self, ACCENT, BG, DANGER, GOOD, MUTED, VEIL, spaced};
 
 /// An estimate of a big world: how many creatures at the start and how fast a tick will go.
@@ -224,24 +227,27 @@ impl LifeApp {
         }
         let mut open = true;
         let before = self.settings.clone();
-        egui::Window::new("Настройки экрана").open(&mut open).collapsible(false).resizable(false).show(
-            ctx,
-            |ui| {
-                let s = &mut self.settings;
-                ui.checkbox(&mut s.fullscreen, "Во весь экран");
-                ui.horizontal(|ui| {
-                    ui.label("Масштаб интерфейса");
-                    egui::ComboBox::from_id_salt("масштаб интерфейса")
-                        .selected_text(ui_scale_label(s.ui_scale))
-                        .show_ui(ui, |ui| {
-                            for v in UI_SCALES {
-                                ui.selectable_value(&mut s.ui_scale, v, ui_scale_label(v));
-                            }
-                        });
-                });
-                ui.checkbox(&mut s.show_fps, "Показывать кадры в секунду и цену тика");
-            },
-        );
+        // what the simulation really runs on now (the last frame tells)
+        let now = self.view.frame.as_ref().map(|f| (f.threads, f.fast_cores));
+        egui::Window::new("Настройки").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+            let s = &mut self.settings;
+            ui.label(RichText::new("Экран").strong());
+            ui.checkbox(&mut s.fullscreen, "Во весь экран");
+            ui.horizontal(|ui| {
+                ui.label("Масштаб интерфейса");
+                egui::ComboBox::from_id_salt("масштаб интерфейса")
+                    .selected_text(ui_scale_label(s.ui_scale))
+                    .show_ui(ui, |ui| {
+                        for v in UI_SCALES {
+                            ui.selectable_value(&mut s.ui_scale, v, ui_scale_label(v));
+                        }
+                    });
+            });
+            ui.checkbox(&mut s.show_fps, "Показывать кадры в секунду и цену тика");
+            ui.add_space(6.0);
+            ui.separator();
+            computation(ui, s, now);
+        });
         self.prefs_open = open;
         if self.settings != before {
             self.save_settings();
@@ -324,6 +330,92 @@ impl LifeApp {
         });
         self.help_open = open;
     }
+}
+
+/// «Скорость расчёта»: how many threads compute the world and whether it keeps to the fast cores.
+/// Nothing here can spoil a game: the world goes the same on any threads, only faster or slower.
+fn computation(ui: &mut egui::Ui, s: &mut Settings, now: Option<(usize, bool)>) {
+    let (cpu, auto) = (cpu_threads(), auto_threads());
+    ui.label(RichText::new("Скорость расчёта").strong());
+    ui.colored_label(
+        MUTED,
+        "Сколько потоков процессора считает мир. На сам мир это не влияет: партия идёт точно так же, \
+         меняется только скорость.",
+    );
+    // 0 — auto, 1 — one thread, 2 — by hand
+    let mut mode = s.threads.min(2);
+    ui.radio_value(&mut mode, 0, format!("Авто: {auto} из {cpu} (рекомендуется)")).on_hover_text(
+        "Все потоки процессора, кроме двух: одним рисуется окно, другим ведётся мир. \
+         Самый быстрый выбор для игры.",
+    );
+    ui.radio_value(&mut mode, 1, "Один поток: медленнее, зато процессор свободен").on_hover_text(
+        "Мир считается одним потоком, как раньше. Пригодится, если параллельно работает что-то тяжёлое \
+         или ноутбук сильно греется.",
+    );
+    // with two threads or fewer there is nothing to choose by hand
+    if cpu > 2 {
+        ui.radio_value(&mut mode, 2, "Вручную").on_hover_text("Сколько потоков отдать миру — от 2 до всех.");
+    }
+    s.threads = match mode {
+        0 => 0,
+        1 => 1,
+        // just switched to by hand: start from what auto gave, not from a sudden slowdown
+        _ if s.threads < 2 => auto.clamp(2, cpu),
+        _ => s.threads.min(cpu),
+    };
+    if mode == 2 {
+        ui.horizontal(|ui| {
+            ui.add_space(22.0);
+            let word = threads_word(s.threads);
+            ui.add(egui::Slider::new(&mut s.threads, 2..=cpu).text(word));
+        });
+        if s.threads + 1 >= cpu {
+            ui.colored_label(DANGER, "Окну почти не остаётся ядер: картинка может подтормаживать.");
+        }
+    }
+    ui.add_space(4.0);
+    let hybrid = fast_cores_exist();
+    ui.add_enabled(
+        hybrid,
+        egui::Checkbox::new(&mut s.fast_cores, "Держать расчёт на быстрых ядрах (рекомендуется)"),
+    )
+    .on_hover_text(
+        "У процессора есть быстрые и экономичные ядра. Без этого Windows иногда уводит расчёт мира \
+         на медленное ядро, и тик идёт до полутора раз дольше.",
+    );
+    if !hybrid {
+        ui.colored_label(MUTED, "У этого процессора все ядра одинаковые: эта галочка ничего не меняет.");
+    }
+    ui.horizontal(|ui| {
+        let default = Settings::default();
+        let is_default = s.threads == default.threads && s.fast_cores == default.fast_cores;
+        if ui.add_enabled(!is_default, egui::Button::new("Как по умолчанию")).clicked() {
+            (s.threads, s.fast_cores) = (default.threads, default.fast_cores);
+        }
+        if let Some((threads, fast)) = now {
+            let place = if fast {
+                "на быстрых ядрах"
+            } else {
+                "ядра выбирает система"
+            };
+            ui.colored_label(MUTED, format!("Сейчас: {threads} {} · {place}", threads_word(threads)));
+        }
+    });
+}
+
+/// «поток», «потока», «потоков» by the number.
+fn threads_word(n: usize) -> &'static str {
+    match (n % 10, n % 100) {
+        (1, h) if h != 11 => "поток",
+        (2..=4, h) if !(12..=14).contains(&h) => "потока",
+        _ => "потоков",
+    }
+}
+
+/// The processor has fast and economical cores; asked of the system once.
+fn fast_cores_exist() -> bool {
+    static HYBRID: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *HYBRID.get_or_init(life_sim::cores::has_fast_cores)
 }
 
 fn ui_scale_label(v: f64) -> String {
@@ -653,5 +745,25 @@ mod tests {
         assert_ne!(ca, cb);
         let (c, _) = estimate(&small, None);
         assert!(c.contains("оценим"));
+    }
+
+    #[test]
+    fn слово_поток_склоняется_по_числу() {
+        let words: Vec<&str> = [1, 2, 4, 5, 11, 12, 18, 21, 22, 25].map(threads_word).to_vec();
+        assert_eq!(
+            words,
+            [
+                "поток",
+                "потока",
+                "потока",
+                "потоков",
+                "потоков",
+                "потоков",
+                "потоков",
+                "поток",
+                "потока",
+                "потоков"
+            ]
+        );
     }
 }
