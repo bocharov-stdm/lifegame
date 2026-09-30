@@ -1514,10 +1514,23 @@ fn json_key(key: Key) -> &'static str {
     }
 }
 
-/// Where the settings file lies: `%APPDATA%\TinyLife\settings.json` and its analogues.
-/// A new name, not the Python version's `user_settings.json`: the formats differ.
+/// Where the settings file lies: `%APPDATA%\lifegame\settings.json` and its analogues.
+/// A new name, not the Python version's `user_settings.json`: the formats differ. The game used to
+/// be called TinyLife: a file left in that folder is copied over once, so the settings survive.
 pub fn default_path() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "TinyLife").map(|d| d.config_dir().join("settings.json"))
+    let path =
+        directories::ProjectDirs::from("", "", "lifegame").map(|d| d.config_dir().join("settings.json"))?;
+    if !path.exists()
+        && let Some(old) = directories::ProjectDirs::from("", "", "TinyLife")
+            .map(|d| d.config_dir().join("settings.json"))
+            .filter(|old| old.exists())
+    {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::copy(old, &path);
+    }
+    Some(path)
 }
 
 /// What has changed in the rules — a line for the chronicle: «энергия растения 50 → 80».
@@ -1633,7 +1646,7 @@ mod tests {
 
     #[test]
     fn запись_атомарна_и_читается_обратно() {
-        let dir = std::env::temp_dir().join(format!("tinylife-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("lifegame-test-{}", std::process::id()));
         let path = dir.join("settings.json");
         let mut s = Settings { seed: 777, scale: 100.0, shape: Shape::Square, ..Default::default() };
         s.set(Key::PlantEnergy, 80.0);

@@ -4,7 +4,7 @@
 //! whole inside the window and not overlapping one another. An interface scale of ×2 on a window
 //! twice the size gives the same layout in points, so it is not checked separately.
 //!
-//! With the variable TINYLIFE_SHOTS=folder the tests also save pictures of the screens — to look
+//! With the variable LIFEGAME_SHOTS=folder the tests also save pictures of the screens — to look
 //! at them with one's own eyes.
 
 use eframe::egui::accesskit::Role;
@@ -109,7 +109,7 @@ fn check_layout(h: &Harness<'static, LifeApp>, size: Vec2, what: &str, scrolled:
 }
 
 fn shot(h: &mut Harness<'static, LifeApp>, name: &str) {
-    let Ok(dir) = std::env::var("TINYLIFE_SHOTS") else { return };
+    let Ok(dir) = std::env::var("LIFEGAME_SHOTS") else { return };
     let image = h.render().expect("картинка экрана");
     std::fs::create_dir_all(&dir).expect("папка для картинок");
     image.save(format!("{dir}/{name}.png")).expect("картинка сохранилась");
@@ -196,7 +196,7 @@ fn игра_помещается_в_окно() {
 }
 
 /// A close-up: near, creatures have a rim, a fullness core and an eye (`creatures.wgsl`). The
-/// shader compiles and draws — the rest is visible in the picture with TINYLIFE_SHOTS.
+/// shader compiles and draws — the rest is visible in the picture with LIFEGAME_SHOTS.
 #[test]
 fn крупный_план_рисуется() {
     let _gpu = gpu();
@@ -571,7 +571,7 @@ fn следы_залпа_и_труп_рисуются_без_окна() {
 /// Near, an eater stretches its proboscis to the food: a herbivore to a plant, a scavenger to a
 /// rotten corpse on the bottom, a carnivore to a fresh one. The rim is the diet's colour. The
 /// frame carries this in `meta` (the «eats» bit, the direction and the length); the picture
-/// itself is visible in the image with TINYLIFE_SHOTS.
+/// itself is visible in the image with LIFEGAME_SHOTS.
 #[test]
 fn хоботок_тянется_к_еде_вблизи() {
     use life_core::{CreatureGenome, Rules, World, corpse::Corpse, genome::creature::Gene, plant::Plant};

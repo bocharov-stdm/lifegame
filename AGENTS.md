@@ -27,7 +27,7 @@ cargo run -p life-app --release
 ```
 
 `play.bat` and `play.sh` build and run the game. Don't open the GUI for automated checks:
-use `ui_tests` and `TINYLIFE_SHOTS`, check images at 960×600 and 1600×900.
+use `ui_tests` and `LIFEGAME_SHOTS`, check images at 960×600 and 1600×900.
 Settings tests write files only to temporary directories. In a cloud (Linux) container run no
 simulations and no tests: the user's machine is Windows, where golden digests are recorded.
 

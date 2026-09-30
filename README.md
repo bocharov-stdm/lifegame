@@ -79,7 +79,7 @@ cargo run -p life-app --release -- --scale 100 --seed 7  # straight into a world
   be switched off while statistics and the card keep working.
 - **For research**: «Повторить без окна» gives the `life-report` command that repeats the game.
 
-Settings live in `%APPDATA%\TinyLife\settings.json` (the user's config folder on Linux and macOS).
+Settings live in `%APPDATA%\lifegame\settings.json` (the user's config folder on Linux and macOS).
 A broken file does not matter: the game takes the defaults.
 
 ## Headless runs
@@ -123,7 +123,7 @@ cargo fmt --all
 
 Every run in the tests is bounded by a tick count. `tests/golden.rs` pins a digest of the whole
 world (asserted on Windows only, where it is recorded). The screen tests draw without a window
-(egui_kittest) at 960×600 and 1600×900; with `TINYLIFE_SHOTS=dir` they save pictures of every
+(egui_kittest) at 960×600 and 1600×900; with `LIFEGAME_SHOTS=dir` they save pictures of every
 screen.
 
 ## Layout

@@ -816,7 +816,7 @@ mod tests {
 
     /// The window at its default size, running, paused, asking to stop and finished, each with its
     /// own buttons and no others; a press on «Пауза» asks for a pause, and the «+» in a card's corner
-    /// unfolds its seeds. With TINYLIFE_SHOTS=dir also as PNGs.
+    /// unfolds its seeds. With LIFEGAME_SHOTS=dir also as PNGs.
     #[test]
     fn the_window_draws_a_sweep() {
         let mut paused = running_sweep();
@@ -859,7 +859,7 @@ mod tests {
                         });
                 });
             h.run_steps(4);
-            if let Ok(dir) = std::env::var("TINYLIFE_SHOTS") {
+            if let Ok(dir) = std::env::var("LIFEGAME_SHOTS") {
                 std::fs::create_dir_all(&dir).expect("a folder for the pictures");
                 h.render().expect("a picture").save(format!("{dir}/{name}.png")).expect("saved");
             }
@@ -877,7 +877,7 @@ mod tests {
                 h.get_by_label("+").click();
                 h.run_steps(2);
                 assert!(h.query_by_label(SEED).is_some(), "unfolded");
-                if let Ok(dir) = std::env::var("TINYLIFE_SHOTS") {
+                if let Ok(dir) = std::env::var("LIFEGAME_SHOTS") {
                     h.render().expect("a picture").save(format!("{dir}/progress-seeds.png")).expect("saved");
                 }
                 h.get_by_label("−").click();

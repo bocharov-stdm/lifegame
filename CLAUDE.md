@@ -200,7 +200,7 @@ templates: `standard`, `lurker`.
 
 - Adding a gene: a variant at the end of `enum Gene` and a row at the end of `GENES`; effect only in
   `Phenotype::of`, any cost at the end of the upkeep sum; a test; check the genome panel and card at
-  960×600 with `TINYLIFE_SHOTS`; re-record golden and references in a separate commit.
+  960×600 with `LIFEGAME_SHOTS`; re-record golden and references in a separate commit.
 - Adding a test or action: a variant at the end of `Cond`/`Action` and their `ALL`, a `ParamSpec`
   table (a new sense = trait method + query + brute-force check), its `Scene::test` or
   `actions::act` arm, window labels, tests in `strategy.rs`, re-record golden.
@@ -320,12 +320,12 @@ depth steepness 5. Settings show common factors per 100 (price of life 100 = ×2
   flowcharts), `diets.rs`, `stats.rs`, `census.rs` (the «Внутри видов» census: histograms, a
   scatter and behaviour groups per diet, taken by `Command::Census` only while the world stands),
   `screens.rs`, `charts.rs` (own painter), `settings.rs`
-  (`FIELDS` — the single spec of every field; file in `%APPDATA%\TinyLife`, atomic, clamped, unknown
+  (`FIELDS` — the single spec of every field; file in `%APPDATA%\lifegame`, atomic, clamped, unknown
   keys ignored).
 - `ui_tests.rs` — kittest at 960×600 and 1600×900 under one GPU lock; CI renders through WARP.
 - `bin/life-progress.rs` — the sweep's progress window.
 - Looking at the game from an agent: never screenshot the desktop or inject input; render headless
-  with `TINYLIFE_SHOTS` and drive state through `LifeApp` fields / `sim::Command`.
+  with `LIFEGAME_SHOTS` and drive state through `LifeApp` fields / `sim::Command`.
 
 ## Commands
 
@@ -345,7 +345,7 @@ cargo run -p life-report --release -- --compare reference/fingerprint.json
 
 play.bat / sh play.sh                                    # build + run the game
 cargo run -p life-app --release -- --scale 100 --seed 7  # straight into a world
-TINYLIFE_SHOTS=some/dir cargo test -p life-app ui_tests  # screen tests + PNGs
+LIFEGAME_SHOTS=some/dir cargo test -p life-app ui_tests  # screen tests + PNGs
 ```
 
 CI (`.github/workflows/ci.yml`, Windows): fmt, clippy, tests (`--no-fail-fast`: one failing binary
