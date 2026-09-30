@@ -36,8 +36,9 @@ pub(super) struct Scene {
     pub chasing: Option<Chase>,
     /// What the settings applied so far set for this tick.
     pub stance: Stance,
-    /// The nearest plant in sight, whatever its reach (the preamble's query).
-    nearest_plant: Option<(f64, f64)>,
+    /// The nearest plant in sight, whatever its reach, once asked (`nearest_plant`): a creature
+    /// that goes to its kept plant, or decides before any block needs food, never looks.
+    nearest_plant: Option<Option<(f64, f64)>>,
     /// The plant it went to when the tick began (`Mind::personal_food`).
     kept_plant: Option<(f64, f64)>,
     /// How far the first threat query looks: the farthest threat test of its program.
@@ -57,9 +58,6 @@ pub(super) struct Scene {
 
 impl Scene {
     pub fn perceive(me: &Me, mind: &mut Mind, senses: &impl Senses, program: &Program) -> Scene {
-        // A creature that does not digest plants does not look for them.
-        let plant =
-            if me.pheno.eats_plants() { senses.nearest_plant(me.x, me.y, me.pheno.vision2) } else { None };
         let struck = mind
             .hit
             .filter(|h| mind.tick.saturating_sub(h.tick) <= 1)
@@ -69,7 +67,7 @@ impl Scene {
             // A chase goes on only while it hunts that prey tick after tick.
             chasing: mind.chase.take(),
             stance: Stance::default(),
-            nearest_plant: plant,
+            nearest_plant: None,
             kept_plant: mind.personal_food,
             threat_range: program.threat_range() * me.pheno.vision,
             hunt_ratio: program.hunt_ratio(),
@@ -80,6 +78,14 @@ impl Scene {
             prey: None,
             plant_score: None,
         }
+    }
+
+    /// The nearest plant in sight, whatever its reach; none for one that digests no plants. Plants
+    /// stand still through the moves, so asking late finds what asking first would.
+    fn nearest_plant(&mut self, me: &Me, senses: &impl Senses) -> Option<(f64, f64)> {
+        *self.nearest_plant.get_or_insert_with(|| {
+            if me.pheno.eats_plants() { senses.nearest_plant(me.x, me.y, me.pheno.vision2) } else { None }
+        })
     }
 
     /// A setting changed what it takes for food: what was found for the old one goes.
@@ -161,7 +167,7 @@ impl Scene {
                 && inside((x, y))
                 && senses.nearest_plant(x, y, 1e-8).is_some()
         });
-        let plant = old.or_else(|| match self.nearest_plant {
+        let plant = old.or_else(|| match self.nearest_plant(me, senses) {
             // no plant in sight, or it eats none
             None => None,
             Some(_) if how.best => senses.best_plant(me, taste),

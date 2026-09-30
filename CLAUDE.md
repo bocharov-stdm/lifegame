@@ -260,7 +260,10 @@ differ. Re-take with `--save-reference reference/fingerprint.json` (calm: `--rul
 
 - Creatures never see the grid: `Creature::step` takes *senses* (`GridSenses`; tests pass
   `senses_from(..)` or `Blind`). Queries are `#[inline(always)]`. Fixed cell `GRID_CELL`;
-  `for_each_near` returns a superset, callers check distance. The grid copies coordinates, valid
+  `for_each_near` returns a superset, callers check distance; `Grid::nearest` searches rings out
+  from the point's cell with the square scan's tie order. The herd keeps a grid of hunters only
+  (threat queries) and children by parent; queries that cannot find anything return before the
+  grid (a diet with no corpse food, a creature with no target, defence or rival in combat). The grid copies coordinates, valid
   only because queried entities don't move within the phase. Keep the brute-force checks.
 - `Creature::step` is the hot path: values precomputed in `Phenotype::of`, squared distances, block
   dispatch is a `match`, never `Box<dyn>`, the scene asks only what a block needs. The eating phase

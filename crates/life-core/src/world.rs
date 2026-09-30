@@ -408,7 +408,8 @@ impl World {
             // Only what the diet digests is eaten at all: a meat-eater does not take a plant from
             // a herbivore for nothing, a herbivore does not touch a corpse. Sated, only its own.
             let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.stage(now), foreign[i]) > 0.0;
-            let corpse = if takes(v, Food::Corpse) {
+            // one that eats no corpse at all would refuse every one it touches
+            let corpse = if v.pheno.eats_corpses() && takes(v, Food::Corpse) {
                 crate::corpse::contact_by(
                     corpse_grid,
                     |j| shadow(&claimed, lying, j),
@@ -464,7 +465,7 @@ impl World {
         shots.extend(result);
         // The previous tick's corpses are shared among the survivors in the order of ID.
         for (i, v) in creatures.iter_mut().enumerate() {
-            if !v.alive || fed[i] || v.torpid || !takes(v, Food::Corpse) {
+            if !v.alive || fed[i] || v.torpid || !v.pheno.eats_corpses() || !takes(v, Food::Corpse) {
                 continue;
             }
             let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.stage(now), foreign[i]) > 0.0;

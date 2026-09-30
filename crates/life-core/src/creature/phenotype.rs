@@ -289,6 +289,12 @@ impl Phenotype {
         self.plant_efficiency > 0.0
     }
 
+    /// Eats a corpse at any stage at all: one that does not never looks for one.
+    #[inline]
+    pub fn eats_corpses(&self) -> bool {
+        self.meat_efficiency > 0.0 || self.rot_efficiency > 0.0 || self.bones_efficiency > 0.0
+    }
+
     /// Its melee damage: a share of its size, times its diet's bonus and its vigour. The energy a
     /// strike costs is the share without them (`strike_cost`).
     pub fn strike(&self) -> f64 {

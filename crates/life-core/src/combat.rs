@@ -85,7 +85,9 @@ pub(crate) fn resolve_with(
         }
         // At its food, if its program says so, it strikes a smaller stranger eating the same food.
         let rival = v.mind.stance.rival > 0.0 && feeds(i) != Feeding::Nothing;
-        if v.energy > cost {
+        // with no target, no defence and no rival there is nobody it would strike: no looking
+        let aims = v.mind.attack.is_some() || v.mind.stance.defending.is_some() || rival;
+        if aims && v.energy > cost {
             let mut target = None;
             grid.for_each_near(v.x, v.y, v.pheno.half + max_half, |j, _, _| {
                 let u = &creatures[j];

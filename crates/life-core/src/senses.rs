@@ -229,6 +229,9 @@ pub(crate) struct GridSenses<'a> {
 impl Senses for GridSenses<'_> {
     #[inline(always)]
     fn best_corpse(&self, me: &Me, taste: Taste) -> Option<CorpseFood> {
+        if !me.pheno.eats_corpses() {
+            return None; // every corpse would be worth nothing to it
+        }
         let mut best: Option<CorpseFood> = None;
         // what it can still take in: a corpse bigger than the empty part of its tank is worth no more
         let room = (me.pheno.max_energy - me.energy).max(0.0);
@@ -276,6 +279,11 @@ impl Senses for GridSenses<'_> {
         // (kept first, distance², id, index): the order in which a full buffer keeps candidates
         let mut candidates = [(false, 0.0_f64, 0_u64, 0_usize); SEEN_PREY];
         let mut n_candidates = 0;
+        let order = |a: &(bool, f64, u64, usize), b: &(bool, f64, u64, usize)| {
+            a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2))
+        };
+        // the one a full buffer gives up next: found again only when it has been replaced
+        let mut worst = 0;
         herd.grid.for_each_near(me.x, me.y, range, |j, _, _| {
             let s = &herd.seen[j];
             let d2 = (s.x - me.x).powi(2) + (s.y - me.y).powi(2);
@@ -294,19 +302,15 @@ impl Senses for GridSenses<'_> {
             if n_candidates < SEEN_PREY {
                 candidates[n_candidates] = key;
                 n_candidates += 1;
-            } else {
-                let rank = |c: &(bool, f64, u64, usize)| (c.0, c.1, c.2);
-                let worst = (0..SEEN_PREY)
-                    .max_by(|&a, &b| {
-                        let (x, y) = (rank(&candidates[a]), rank(&candidates[b]));
-                        x.0.cmp(&y.0).then(x.1.total_cmp(&y.1)).then(x.2.cmp(&y.2))
-                    })
-                    .unwrap();
-                let (x, y) = (rank(&key), rank(&candidates[worst]));
-                if x.0.cmp(&y.0).then(x.1.total_cmp(&y.1)).then(x.2.cmp(&y.2)).is_lt() {
-                    candidates[worst] = key;
+                if n_candidates < SEEN_PREY {
+                    return;
                 }
+            } else if order(&key, &candidates[worst]).is_lt() {
+                candidates[worst] = key;
+            } else {
+                return;
             }
+            worst = (0..SEEN_PREY).max_by(|&a, &b| order(&candidates[a], &candidates[b])).unwrap();
         });
         let mut best: Option<Prey> = None;
         for &(_, _, _, j) in &candidates[..n_candidates] {
@@ -485,16 +489,34 @@ impl Seen {
 pub(crate) struct Herd {
     grid: Grid,
     seen: Vec<Seen>,
+    /// Only those that could eat somebody (`Seen::eats_up_to` > 0), for the threat queries: in a
+    /// crowd of grazers a threat query looks at the few hunters, not at every neighbour. The grid's
+    /// indices are into `hunters`, which holds indices into `seen`, in `seen`'s order.
+    hunter_grid: Grid,
+    hunters: Vec<usize>,
+    /// Indices into `seen` ordered by parent: a parent looks only at its own children.
+    by_parent: Vec<usize>,
     /// The biggest body anyone can eat. One bigger has nothing to fear, and does not look
     /// into the grid.
     max_eats: f64,
     /// The biggest body radius in the snapshot: the query is wider by it.
     max_half: f64,
+    /// The biggest body radius among the hunters: the threat query is wider by it.
+    max_hunter_half: f64,
 }
 
 impl Herd {
     pub fn new() -> Self {
-        Herd { grid: Grid::new(GRID_CELL), seen: Vec::new(), max_eats: 0.0, max_half: 0.0 }
+        Herd {
+            grid: Grid::new(GRID_CELL),
+            seen: Vec::new(),
+            hunter_grid: Grid::new(GRID_CELL),
+            hunters: Vec::new(),
+            by_parent: Vec::new(),
+            max_eats: 0.0,
+            max_half: 0.0,
+            max_hunter_half: 0.0,
+        }
     }
 
     /// A snapshot of the creatures as they stand now. At the start of the phase all are alive:
@@ -529,12 +551,29 @@ impl Herd {
             }
         }));
         self.grid.rebuild(space, self.seen.iter().map(|s| (s.x, s.y)));
-        let (mut max_eats, mut max_half) = (0.0_f64, 0.0_f64);
-        for s in &self.seen {
+        let (mut max_eats, mut max_half, mut max_hunter_half) = (0.0_f64, 0.0_f64, 0.0_f64);
+        self.hunters.clear();
+        for (i, s) in self.seen.iter().enumerate() {
             max_eats = max_eats.max(s.eats_up_to);
             max_half = max_half.max(s.half);
+            if s.eats_up_to > 0.0 {
+                self.hunters.push(i);
+                max_hunter_half = max_hunter_half.max(s.half);
+            }
         }
-        (self.max_eats, self.max_half) = (max_eats, max_half);
+        (self.max_eats, self.max_half, self.max_hunter_half) = (max_eats, max_half, max_hunter_half);
+        let seen = &self.seen;
+        self.hunter_grid.rebuild(space, self.hunters.iter().map(|&i| (seen[i].x, seen[i].y)));
+        self.by_parent.clear();
+        self.by_parent.extend(0..seen.len());
+        self.by_parent.sort_unstable_by_key(|&i| (seen[i].kinship.parent, i));
+    }
+
+    /// The indices into `seen` of `parent`'s children.
+    fn children_of(&self, parent: u64) -> &[usize] {
+        let from = self.by_parent.partition_point(|&i| self.seen[i].kinship.parent < parent);
+        let to = self.by_parent.partition_point(|&i| self.seen[i].kinship.parent <= parent);
+        &self.by_parent[from..to]
     }
 }
 
@@ -560,8 +599,10 @@ pub(crate) fn nearest_threats(
         return (None, None); // nobody in the world can eat such a body
     }
     let (mut best, mut hunter): (Option<Threat>, Option<Threat>) = (None, None);
-    herd.grid.for_each_near(x, y, within + herd.max_half, |j, sx, sy| {
-        let s = &herd.seen[j];
+    // only those that eat anybody: the rest could not be threats (`eats_up_to` 0), and the order
+    // among the hunters is the whole herd's order
+    herd.hunter_grid.for_each_near(x, y, within + herd.max_hunter_half, |h, sx, sy| {
+        let s = &herd.seen[herd.hunters[h]];
         if size > s.eats_up_to || who.kin(s.kinship) {
             return;
         }
@@ -622,30 +663,32 @@ pub(crate) fn child_in_need(
     prefer: Option<u64>,
 ) -> Option<(u64, Threat)> {
     let mut best: Option<(bool, f64, u64, Threat)> = None;
-    herd.grid.for_each_near(me.x, me.y, within, |j, sx, sy| {
+    // only its own children: the choice below is by a full order, so no scan order matters
+    for &j in herd.children_of(me.kinship.id) {
         let s = &herd.seen[j];
-        if s.kinship.parent != me.kinship.id || s.kinship.id == me.kinship.id || !me.kinship.kin(s.kinship) {
-            return;
+        let (sx, sy) = (s.x, s.y);
+        if s.kinship.id == me.kinship.id || !me.kinship.kin(s.kinship) {
+            continue;
         }
         let d = (sx - me.x).hypot(sy - me.y);
         if d > within {
-            return;
+            continue;
         }
         let struck = s.hit.filter(|h| tick.saturating_sub(h.tick) <= window);
         let frightened = s.alarm.filter(|a| tick.saturating_sub(a.tick) <= 1);
-        let Some(need) = [struck, frightened].into_iter().flatten().max_by_key(|e| e.tick) else { return };
-        let Ok(k) = herd.seen.binary_search_by_key(&need.enemy, |u| u.kinship.id) else { return };
+        let Some(need) = [struck, frightened].into_iter().flatten().max_by_key(|e| e.tick) else { continue };
+        let Ok(k) = herd.seen.binary_search_by_key(&need.enemy, |u| u.kinship.id) else { continue };
         let e = &herd.seen[k];
         let distance = (e.x - me.x).hypot(e.y - me.y);
         if distance > me.pheno.vision || me.kinship.kin(e.kinship) {
-            return;
+            continue;
         }
         let enemy = Threat { id: need.enemy, x: e.x, y: e.y, gap: distance - e.half, half: e.half };
         let key = (Some(s.kinship.id) != prefer, d, s.kinship.id);
         if best.is_none_or(|b| key.0.cmp(&b.0).then(key.1.total_cmp(&b.1)).then(key.2.cmp(&b.2)).is_lt()) {
             best = Some((key.0, key.1, key.2, enemy));
         }
-    });
+    }
     best.map(|(_, _, id, enemy)| (id, enemy))
 }
 
@@ -670,18 +713,8 @@ pub(crate) fn best_plant(grid: &Grid, plants: &[Plant], me: &Me, taste: Taste) -
 /// The nearest live plant strictly closer than √r2.
 #[inline(always)]
 pub(crate) fn nearest_plant(grid: &Grid, plants: &[Plant], x: f64, y: f64, r2: f64) -> Option<(f64, f64)> {
-    let mut best: Option<(f64, f64, f64)> = None;
-    grid.for_each_near(x, y, r2.sqrt(), |j, px, py| {
-        if !plants[j].alive() {
-            return; // eaten earlier in this same tick
-        }
-        let (dx, dy) = (px - x, py - y);
-        let d2 = dx * dx + dy * dy;
-        if d2 < best.map_or(r2, |b| b.2) {
-            best = Some((px, py, d2));
-        }
-    });
-    best.map(|(px, py, _)| (px, py))
+    // an eaten one is still in the grid until the tick's end
+    grid.nearest(x, y, r2, |j, _, _| plants[j].alive()).map(|(_, px, py)| (px, py))
 }
 
 /// The nearest live plant strictly closer than √r2 whose position `keep` accepts.
@@ -694,18 +727,7 @@ pub(crate) fn nearest_plant_where(
     r2: f64,
     keep: impl Fn(f64, f64) -> bool,
 ) -> Option<(f64, f64)> {
-    let mut best: Option<(f64, f64, f64)> = None;
-    grid.for_each_near(x, y, r2.sqrt(), |j, px, py| {
-        if !plants[j].alive() || !keep(px, py) {
-            return;
-        }
-        let (dx, dy) = (px - x, py - y);
-        let d2 = dx * dx + dy * dy;
-        if d2 < best.map_or(r2, |b| b.2) {
-            best = Some((px, py, d2));
-        }
-    });
-    best.map(|(px, py, _)| (px, py))
+    grid.nearest(x, y, r2, |j, px, py| plants[j].alive() && keep(px, py)).map(|(_, px, py)| (px, py))
 }
 
 /// Take one portion of the nearest plant within the feeding radius.
