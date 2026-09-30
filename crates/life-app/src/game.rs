@@ -631,7 +631,8 @@ impl LifeApp {
                     if ui.add_enabled(change.is_some(), theme::primary("Применить")).clicked()
                         && let Some(note) = change.clone()
                     {
-                        self.sim.send(Command::SetRules { rules: self.lab.rules(), note });
+                        let rules = self.lab.rules_over(&current, &now);
+                        self.sim.send(Command::SetRules { rules, note });
                         if let Some(g) = &mut self.game {
                             g.rules_changed = true;
                         }

@@ -438,6 +438,10 @@ impl World {
         // (`Stance::eats`: what its block went for, and on the move).
         let foreign: Vec<bool> = creatures.iter().map(|v| v.mind.stance.foreign).collect();
         let takes = |v: &Creature, food| v.mind.stance.eats(food, v.energy / v.pheno.max_energy);
+        // Whether it takes corpses is read once, by its fullness before the fight: a strike's cost
+        // must not open corpses to one that claimed none, and take the portion an eater with a
+        // later ID gave up its plant for.
+        let takes_corpses: Vec<bool> = creatures.iter().map(|v| takes(v, Food::Corpse)).collect();
         // What each one eats this tick: rivals fight only over the same food.
         let mut feeding = vec![crate::combat::Feeding::Nothing; creatures.len()];
         let plant_bite = rules.plant_energy * rules.plant_bite_yield / f64::from(crate::plant::PORTIONS);
@@ -447,7 +451,7 @@ impl World {
             // a herbivore for nothing, a herbivore does not touch a corpse. Sated, only its own.
             let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.stage(now), foreign[i]) > 0.0;
             // one that eats no corpse at all would refuse every one it touches
-            let corpse = if v.pheno.eats_corpses() && takes(v, Food::Corpse) {
+            let corpse = if v.pheno.eats_corpses() && takes_corpses[i] {
                 crate::corpse::contact_by(
                     corpse_grid,
                     |j| shadow(&claimed, lying, j),
@@ -505,7 +509,7 @@ impl World {
         clock.lap(Phase::Combat);
         // The previous tick's corpses are shared among the survivors in the order of ID.
         for (i, v) in creatures.iter_mut().enumerate() {
-            if !v.alive || fed[i] || v.torpid || !v.pheno.eats_corpses() || !takes(v, Food::Corpse) {
+            if !v.alive || fed[i] || v.torpid || !v.pheno.eats_corpses() || !takes_corpses[i] {
                 continue;
             }
             let eats = |c: &crate::corpse::Corpse| v.pheno.corpse_efficiency(c.stage(now), foreign[i]) > 0.0;

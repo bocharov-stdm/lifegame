@@ -1224,6 +1224,7 @@ impl Program {
     }
 
     /// Blocks that never act (`live`).
+    #[cfg(test)]
     fn dead(&self) -> usize {
         usize::from(self.len) - self.summary.live.count_ones() as usize
     }
@@ -1402,10 +1403,8 @@ impl Program {
                 break;
             }
         }
-        let adds = matches!(
-            MUTATIONS[op].0,
-            Mutation::Duplicate | Mutation::Insert | Mutation::Pair | Mutation::Transfer
-        );
+        // where an adding mutation (a copy, a new block, a pair, a transfer) put its block
+        let mut added = None;
         match MUTATIONS[op].0 {
             Mutation::Nudge => {
                 // any number of the program: the tests' thresholds (slots 0‒2) and the action's (3‒)
@@ -1450,6 +1449,7 @@ impl Program {
                 {
                     let at = place(rng, &block);
                     self.insert(at, block);
+                    added = Some(at);
                 }
             }
             Mutation::Delete => {
@@ -1469,6 +1469,7 @@ impl Program {
                     let block = Block::when(test, action);
                     let at = place(rng, &block);
                     self.insert(at, block);
+                    added = Some(at);
                 }
             }
             Mutation::Pair => {
@@ -1496,6 +1497,7 @@ impl Program {
                             let b = &mut self.blocks[i];
                             let slot = b.when.iter().position(|t| t.always()).expect("a free slot");
                             b.when[slot] = Test::at(Cond::Mode, mode);
+                            added = Some(at);
                         }
                         None => *self = before,
                     }
@@ -1510,6 +1512,7 @@ impl Program {
                 {
                     let at = place(rng, &block);
                     self.insert(at, block);
+                    added = Some(at);
                 }
             }
             Mutation::Toggle => {
@@ -1532,12 +1535,25 @@ impl Program {
             return;
         }
         self.summary = Summary::of(&self.blocks, usize::from(self.len));
-        if adds && self.dead() > before.dead() {
+        if added.is_some_and(|at| self.kills(&before, at)) {
             // the added block would be born dead, or would kill one: not added
             *self = before;
             return;
         }
         self.changes = self.changes.saturating_add(1);
+    }
+
+    /// With a block added at `at` to `before`: whether it was born dead or left dead a block that
+    /// lived before. Block by block, not by their count: a pair that kills one block while its
+    /// reader brings another back to life still kills one.
+    fn kills(&self, before: &Program, at: usize) -> bool {
+        let was = |j: usize| match j.cmp(&at) {
+            std::cmp::Ordering::Less => Some(j),
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Greater => Some(j - 1),
+        };
+        !self.live(at)
+            || (0..usize::from(self.len)).any(|j| was(j).is_some_and(|i| before.live(i) && !self.live(j)))
     }
 
     fn insert(&mut self, at: usize, block: Block) {
@@ -1953,6 +1969,40 @@ mod tests {
         assert_eq!(m.hunt_ratio(), Some(1.5));
         assert_eq!(Program::median(&[group[0], Program::of(&[Block::does(Action::Hunt)])]), None);
         assert_eq!(Program::median(&[]), None);
+    }
+
+    /// A pair that kills one block while its reader revives another leaves as many dead blocks as
+    /// before, yet it killed one: it is no junk-free addition. The count alone let it through.
+    #[test]
+    fn an_addition_that_kills_one_block_and_revives_another_still_kills() {
+        let conditional_mode = Block::when(Test::at(Cond::Fullness, 50), Action::Mode).with(0, 1);
+        let before = Program::of(&[
+            conditional_mode,
+            Block::does(Action::Divide),
+            Block::does(Action::Divide).with(0, 90),
+            Block::does(Action::Wander),
+        ]);
+        assert!(before.live(0) && before.live(1) && !before.live(2), "the second division hidden");
+        // the pair: an unconditional mode 1 on top, the first division its reader
+        let after = Program::of(&[
+            Block::does(Action::Mode).with(0, 1),
+            conditional_mode,
+            Block::when(Test::at(Cond::Mode, 1), Action::Divide),
+            Block::does(Action::Divide).with(0, 90),
+            Block::does(Action::Wander),
+        ]);
+        assert_eq!(after.dead(), before.dead(), "as many dead as before");
+        assert!(!after.live(1) && after.live(3), "one killed, one revived");
+        assert!(after.kills(&before, 0));
+        // an addition that kills nothing passes
+        let harmless = Program::of(&[
+            conditional_mode,
+            Block::does(Action::Divide),
+            Block::does(Action::Divide).with(0, 90),
+            Block::when(Test::at(Cond::Fullness, 20), Action::Rest),
+            Block::does(Action::Wander),
+        ]);
+        assert!(!harmless.kills(&before, 3));
     }
 
     /// Structure: no block added (a copy, a new one, a pair, a transfer) is born dead or kills

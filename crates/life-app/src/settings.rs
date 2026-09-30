@@ -1341,6 +1341,19 @@ impl Settings {
         rules
     }
 
+    /// The world's `current` rules with only the sliders moved since `taken` read them from it (the
+    /// lab's «Применить»): a rule nobody touched keeps its exact value, even one off the sliders' grid
+    /// or past their range (`life-app --rule cost_scale=20`), which the sliders would clamp.
+    pub fn rules_over(&self, current: &Rules, taken: &Settings) -> Rules {
+        let mut rules = current.clone();
+        for f in FIELDS.iter().filter(|f| f.live() && self.get(f.key) != taken.get(f.key)) {
+            let v = self.get(f.key);
+            let v = if f.key == Key::PlantGrowth { Rules::default().plant_rate * v } else { v };
+            rules = rules.with(f.rule.expect("правило"), v).expect("значение ползунка допустимо");
+        }
+        rules
+    }
+
     /// The rules' sliders from the world's current rules (for the lab on the fly).
     pub fn take_rules(&mut self, rules: &Rules) {
         for f in FIELDS.iter().filter(|f| f.live()) {
@@ -1736,6 +1749,22 @@ mod tests {
         new.set(Key::Creatures, 50.0); // a starting condition is not a rule
         assert_eq!(describe_change(&old, &new).as_deref(), Some("правила: энергия растения 50 → 80"));
         assert_eq!(describe_change(&old, &old), None);
+    }
+
+    /// The lab's «Применить» sends only what the player moved: a rule the world got past the
+    /// sliders' range or off their grid (`life-app --rule cost_scale=20`) keeps its exact value, as
+    /// the chronicle's note, which names only the moved slider, says.
+    #[test]
+    fn applying_the_lab_keeps_the_rules_nobody_touched() {
+        let current = Rules::default().with("cost_scale", 20.0).unwrap().with("size_power", 2.537).unwrap();
+        let mut taken = Settings::default();
+        taken.take_rules(&current);
+        assert_ne!(taken.rules(), current, "the sliders alone clamp and round them");
+        let mut lab = taken.clone();
+        lab.set(Key::PlantEnergy, 80.0);
+        assert_eq!(describe_change(&taken, &lab).as_deref(), Some("правила: энергия растения 50 → 80"));
+        assert_eq!(lab.rules_over(&current, &taken), current.with("plant_energy", 80.0).unwrap());
+        assert_eq!(taken.rules_over(&current, &taken), current, "nothing moved, nothing changes");
     }
 
     /// An old file (with predator keys, «n_vegetarians», the removed `cannibal_ratio` rule and

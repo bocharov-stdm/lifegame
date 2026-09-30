@@ -52,6 +52,8 @@ pub struct Reference {
     pub genes: Vec<String>,
     /// Founders' diets (`WorldConfig::diets`).
     pub diets: Vec<f64>,
+    /// How much bigger the meat-eating founders start (`WorldConfig::meat_founder_size`).
+    meat_founder_size: f64,
 }
 
 impl Reference {
@@ -121,6 +123,8 @@ impl Reference {
                 Value::Null => world.diets.clone(),
                 saved => mix(saved)?,
             },
+            // references from before it was kept took the default
+            meat_founder_size: num(&start["meat_founder_size"], world.meat_founder_size),
             genes: data
                 .get("genes")
                 .and_then(Value::as_array)
@@ -159,6 +163,12 @@ impl Reference {
         if cfg.diets != self.diets {
             diff.push(format!("смесь диет {:?} (в эталоне {:?})", cfg.diets, self.diets));
         }
+        if cfg.meat_founder_size != self.meat_founder_size {
+            diff.push(format!(
+                "размер мясных основателей x{} (в эталоне x{})",
+                cfg.meat_founder_size, self.meat_founder_size
+            ));
+        }
         if diff.is_empty() { Ok(()) } else { Err(diff.join(", ")) }
     }
 
@@ -189,6 +199,17 @@ fn mix(v: &Value) -> Result<Vec<f64>, String> {
         }
         _ => Err("смесь стратегий — не список".into()),
     }
+}
+
+/// A seed a guard cut short (the deadline, the population ceiling, the work budget) went fewer ticks
+/// than the reference's whole runs: its shortened series is no evidence either way, so the
+/// comparison is refused. An extinct world is an outcome and is compared (the reference counts its
+/// extinctions too).
+pub fn cut_short(results: &[(u64, SimResult)], ticks: u64) -> Option<String> {
+    results
+        .iter()
+        .find(|(_, r)| r.stop != StopReason::Extinct && (!r.ok() || r.ticks_done != ticks))
+        .map(|(seed, r)| format!("сид {seed} остановился ({}) на тике {} из {ticks}", r.stop, r.ticks_done))
 }
 
 /// Write a reference from the current runs — in the format that `Reference::load` reads.
@@ -246,6 +267,7 @@ pub fn save_reference(
             "creatures": cfg.creatures_at_start(),
             "strategies": cfg.strategies,
             "diets": cfg.diets,
+            "meat_founder_size": cfg.meat_founder_size,
         },
         "runs": runs,
     });
@@ -377,6 +399,47 @@ mod tests {
         std::fs::write(&path, reference(r#""cannibalism":1"#)).unwrap();
         assert!(Reference::load(&path).err().unwrap().contains("нет такого правила"));
         std::fs::remove_file(path).unwrap();
+    }
+
+    /// The meat founders' size is a world condition: a reference taken at another one is refused;
+    /// one from before it was kept took the default.
+    #[test]
+    fn the_meat_founders_size_is_part_of_the_world() {
+        let path = std::env::temp_dir().join(format!("life-founders-reference-{}.json", std::process::id()));
+        let reference = |start: &str| {
+            format!(
+                r#"{{"model":"life-behavior/15","ticks":1,"sample_every":1,"shape":"3:2","runs":[],"start":{{{start}}}}}"#
+            )
+        };
+        let cfg = WorldConfig::default();
+        std::fs::write(&path, reference("")).unwrap();
+        assert_eq!(Reference::load(&path).unwrap().check_same_world(&cfg), Ok(()), "no field: the default");
+        std::fs::write(&path, reference(r#""meat_founder_size":1"#)).unwrap();
+        let other = Reference::load(&path).unwrap();
+        assert!(other.check_same_world(&cfg).unwrap_err().contains("мясных основателей"));
+        assert_eq!(other.check_same_world(&WorldConfig { meat_founder_size: 1.0, ..cfg }), Ok(()));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    /// A run cut by a guard is no evidence against whole reference runs; a whole run and an
+    /// extinct world are compared.
+    #[test]
+    fn a_cut_run_is_not_compared_but_an_extinct_one_is() {
+        let run_with =
+            |cfg: WorldConfig, limits: Limits| (cfg.seed, run(World::new(&cfg), &limits, &mut |_| {}));
+        let limits =
+            Limits { ticks: 20, deadline: std::time::Duration::from_secs(600), ..Default::default() };
+        let whole = run_with(WorldConfig::default(), limits.clone());
+        let extinct = run_with(WorldConfig { n_creatures: Some(0), ..Default::default() }, limits.clone());
+        assert_eq!(extinct.1.stop, StopReason::Extinct);
+        assert_eq!(cut_short(&[whole, extinct], 20), None);
+        let late = run_with(
+            WorldConfig { seed: 3, ..Default::default() },
+            Limits { deadline: std::time::Duration::ZERO, ..limits },
+        );
+        assert_eq!(late.1.stop, StopReason::Deadline);
+        let why = cut_short(&[late], 20).expect("a cut run is refused");
+        assert!(why.contains("сид 3") && why.contains("из 20"), "{why}");
     }
 
     #[test]

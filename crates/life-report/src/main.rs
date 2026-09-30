@@ -340,6 +340,9 @@ fn main() {
     if args.phases {
         print_phases(&results);
     }
+    if let Some(cut) = reference.as_ref().and_then(|_| metrics::cut_short(&results, ticks)) {
+        fail(format!("сверка невозможна: {cut}; оборванный прогон не сравнивают с целыми"));
+    }
     let agrees = reference.as_ref().is_none_or(|r| metrics::print_comparison(r, &results));
     if let Some(path) = &args.json {
         println!("\nJSON: {}", path.display());
