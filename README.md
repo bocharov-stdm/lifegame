@@ -109,10 +109,9 @@ cargo run -p life-report --release -- --compare reference/fingerprint.json
 cargo run -p life-report --release -- --save-reference reference/fingerprint.json
 ```
 
-`reference/*.json` are balance fingerprints (8 seeds × 20 000 ticks). The comparison repeats the
-same seeds and checks the statistics; a reference of another model is refused. The references in
-the repository are still `life-behavior/9` and wait to be re-taken once the current balance is
-accepted.
+`reference/*.json` are balance fingerprints (8 seeds × 20 000 ticks) of `life-behavior/15`. The
+comparison repeats the same seeds and checks the statistics; a reference of another model is
+refused.
 
 ## Tests
 

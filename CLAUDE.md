@@ -251,11 +251,14 @@ Results depend on the seed only, not on iteration order or thread count. Any cha
 numbers are drawn, or their order, shifts every seed — re-validate balance instead of diffing
 numbers. The plant spawner draws even when capped.
 
-`tests/golden.rs` pins an FNV digest of the world at checkpoints for eight configs, asserted on
-Windows only. A refactor must keep it; a deliberate behaviour change re-records it (the test prints
-the table) in its own commit with `--save-reference`. Bit-for-bit identity is proven by comparing
-golden output of two builds (`git worktree`). Currently golden is not re-recorded for `/15` and the
-references are `/9`, so both fail by design until re-taken.
+`tests/golden.rs` pins an FNV digest of the world at checkpoints for nine configs (the ninth is the
+player's world in small with every diet), asserted on Windows only. Minds, corpses and shots enter
+as debug prints without their type and field names, so a rename keeps the digest. A refactor must
+keep it; a deliberate behaviour change re-records it (the test prints the table) in its own commit
+with `--save-reference`. Bit-for-bit identity is proven by comparing golden output of two builds
+(`git worktree`). The energy rule is a test too: `energy_is_never_made_from_nothing`
+(`tests/engine.rs`) checks tick by tick that the living and the corpses gain no more than the
+plant bites gave.
 
 `reference/*.json` — balance fingerprints (8 seeds × 20 000). `--compare` checks each metric's
 mean against the reference's per-seed range (exit 1) and refuses (exit 2) when world conditions

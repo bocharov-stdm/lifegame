@@ -3,10 +3,11 @@
 //! Needed for reorganisations without a change of behaviour (the genome as a table, the senses,
 //! the strategies): they must not shift a single random number or a single formula. The world's
 //! fingerprint at the checkpoint ticks is FNV-1a over the bits of what survives any refactoring:
-//! coordinates, energy, numbers, genes and a probe of each creature's generator (an extra or a
-//! missing draw changes the probe at once, not a hundred ticks later). The fingerprint also
-//! includes the behaviour's memory and the temporary protection of «parent — child of another
-//! way of life» pairs.
+//! coordinates, energy, numbers, genes, the programs, a probe of each creature's generator (an
+//! extra or a missing draw changes the probe at once, not a hundred ticks later), and the
+//! behaviour's memory, the corpses and the shots as their debug prints without the names of their
+//! types and fields (`debug`): renaming a type or a field changes no behaviour, so it keeps the
+//! fingerprint; reordering fields or renaming a unit variant of an enum does not.
 //!
 //! A deliberate change of behaviour (a new gene, a new strategy) breaks the test by definition:
 //! then the constants are rewritten in a commit of their own, together with `--save-reference`.
@@ -41,6 +42,30 @@ impl Fnv {
     fn f64(&mut self, v: f64) {
         self.u64(v.to_bits());
     }
+
+    /// A value's debug print less the names of its types and fields (a word followed by `:` or `{`):
+    /// every number, flag and enum variant, in order.
+    fn debug(&mut self, v: &impl std::fmt::Debug) {
+        let text = format!("{v:?}");
+        let bytes = text.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if !(bytes[i].is_ascii_alphabetic() || bytes[i] == b'_') {
+                self.u64(u64::from(bytes[i]));
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            let next = text[i..].trim_start();
+            let name = next.starts_with('{') || (next.starts_with(':') && !next.starts_with("::"));
+            if !name {
+                bytes[start..i].iter().for_each(|&b| self.u64(u64::from(b)));
+            }
+        }
+    }
 }
 
 /// The world's fingerprint. Only what is public and only what survives a refactoring; the only
@@ -73,22 +98,16 @@ fn digest(w: &World) -> u64 {
     }
     h.u64(w.corpses.len() as u64);
     for c in &w.corpses {
-        for byte in format!("{c:?}").bytes() {
-            h.u64(byte as u64);
-        }
+        h.debug(c);
     }
     h.u64(w.shots.len() as u64);
     for shot in &w.shots {
-        for byte in format!("{shot:?}").bytes() {
-            h.u64(byte as u64);
-        }
+        h.debug(shot);
     }
     h.u64(w.creatures.len() as u64);
     for v in &w.creatures {
         h.u64(v.id);
-        for byte in format!("{:?}", v.mind).bytes() {
-            h.u64(byte as u64);
-        }
+        h.debug(&v.mind);
         h.u64(v.parent);
         h.f64(v.birth_size);
         h.f64(v.pheno.size);
@@ -130,12 +149,12 @@ fn digest(w: &World) -> u64 {
     let mut probe = w.clone();
     let id = probe.spawn(CreatureGenome::BASE, 100.0, 100.0, None);
     h.u64(id);
-    h.u64(probe.creature(id).expect("подсаженное существо").rng.clone().next_u64());
+    h.u64(probe.creature(id).expect("the probe is in the world").rng.clone().next_u64());
     h.0
 }
 
 fn rules(pairs: &[(&str, f64)]) -> Rules {
-    pairs.iter().fold(Rules::default(), |r, &(k, v)| r.with(k, v).expect("правило"))
+    pairs.iter().fold(Rules::default(), |r, &(k, v)| r.with(k, v).expect("a rule"))
 }
 
 /// What is checked in the configuration: without it the fingerprint might miss a branch.
@@ -157,13 +176,13 @@ struct Case {
 fn cases() -> Vec<Case> {
     vec![
         Case {
-            name: "A: сид 1, по умолчанию",
+            name: "A: seed 1, default",
             cfg: WorldConfig { seed: 1, ..Default::default() },
             ticks: 3000,
             before: |_| {},
         },
         Case {
-            name: "B: сид 3, гиганты",
+            name: "B: seed 3, giants",
             cfg: WorldConfig {
                 seed: 3,
                 rules: rules(&[("size_power", 1.0), ("plant_energy", 120.0)]),
@@ -173,7 +192,7 @@ fn cases() -> Vec<Case> {
             before: |_| {},
         },
         Case {
-            name: "C: сид 7, лаборатория",
+            name: "C: seed 7, lab",
             cfg: WorldConfig {
                 seed: 7,
                 rules: rules(&[("mutation_sigma", 1.0), ("plant_energy", 80.0)]),
@@ -184,33 +203,33 @@ fn cases() -> Vec<Case> {
         },
         // The strip explicitly: it was recorded before the shapes, and the default is now 3:2.
         Case {
-            name: "D: сид 2, масштаб 10",
+            name: "D: seed 2, scale 10",
             cfg: WorldConfig { seed: 2, scale: 10.0, shape: Shape::Strip, ..Default::default() },
             ticks: 500,
             before: |_| {},
         },
         Case {
-            name: "E: сид 3, правила на ходу и подсадка",
+            name: "E: seed 3, rules on the fly and a probe",
             cfg: WorldConfig { seed: 3, ..Default::default() },
             ticks: 1000,
             before: |w| match w.tick {
                 400 => w.set_rules(rules(&[("cost_scale", 2.0), ("size_power", 2.0)])),
                 600 => {
-                    let g = w.creatures.first().map(|v| v.genome).expect("существа живы");
+                    let g = w.creatures.first().map(|v| v.genome).expect("creatures alive");
                     w.spawn(g, 3000.0, 500.0, None);
                 }
                 _ => {}
             },
         },
         Case {
-            name: "F: сид 5, смесь стратегий",
+            name: "F: seed 5, a mix of strategies",
             cfg: WorldConfig { seed: 5, strategies: vec![1.0, 1.0], ..Default::default() },
             ticks: 2000,
             before: |_| {},
         },
         // The shape and the tabular food profiles: another path of plant sampling.
         Case {
-            name: "G: сид 6, квадрат x10, еда линейно и волнами",
+            name: "G: seed 6, a x10 square, food linear and in waves",
             cfg: WorldConfig {
                 seed: 6,
                 scale: 10.0,
@@ -226,9 +245,31 @@ fn cases() -> Vec<Case> {
         },
         // Another seed of the default world: combat is always on.
         Case {
-            name: "H: сид 8, бои",
+            name: "H: seed 8, fights",
             cfg: WorldConfig { seed: 8, ..Default::default() },
             ticks: 2000,
+            before: |_| {},
+        },
+        // The player's world in small (`CLAUDE.md`, baseline conditions): the game's prices and
+        // food, 2:1, half lurkers and every diet among the founders — the hunters, the scavengers,
+        // rot and bones, which the default world meets only through rare mutants.
+        Case {
+            name: "I: seed 1, the game's world x3, every diet",
+            cfg: WorldConfig {
+                seed: 1,
+                scale: 3.0,
+                shape: Shape::R2x1,
+                rules: rules(&[
+                    ("cost_scale", 2.0),
+                    ("speed_cost", 0.5),
+                    ("plant_rate", 0.5),
+                    ("plant_depth_steepness", 5.0),
+                ]),
+                strategies: vec![1.0, 1.0],
+                diets: vec![55.0, 25.0, 10.0, 10.0],
+                ..Default::default()
+            },
+            ticks: 3000,
             before: |_| {},
         },
     ]
@@ -259,21 +300,23 @@ fn run(case: &Case) -> (Vec<(u64, u64)>, World, Seen) {
 #[rustfmt::skip]
 const GOLDEN: &[&[(u64, u64)]] = &[
     // A: seed 1, default
-    &[(1, 0x5e19ba4f3dfc3315), (2, 0x1a59056a3304b2d0), (10, 0x9314b5d49241748c), (31, 0x90a18df8c1e9ca51), (100, 0x8a607b31a03557ef), (250, 0x22153b0e2e609be4), (500, 0xd875e3e42e3e64a8), (1000, 0x8cf627f4abee340c), (2000, 0x4adc2e4ce65913db), (3000, 0x95f5f71144761c40), ],
+    &[(1, 0x1b812182cd9cf41d), (2, 0x3f924334a4e42455), (10, 0xe699a7d4e467cea0), (31, 0x418f4b51aead4a67), (100, 0x44287e7112879f8d), (250, 0x39ee7fc04e441e1a), (500, 0x7bdb2292a1145e45), (1000, 0xa62a0dac622e78b2), (2000, 0xcb488c238c60fa07), (3000, 0x1f70af8a4f2e602e), ],
     // B: seed 3, giants
-    &[(1, 0x6411f5c331fa53e4), (2, 0xc2b333c94b0c4dad), (10, 0x0d18286e8bd4bf39), (31, 0x653c57bf6864d1c1), (100, 0x01a13d5ccc896a9b), (250, 0x1c3f5cefccf7f4c9), (500, 0x52deebf3198e17ae), (1000, 0x69f6ed334dd1f305), (2000, 0xcd44020c9e1413c3), ],
+    &[(1, 0xf4806a419ca33db0), (2, 0xbc0a1572a88655be), (10, 0xa66db673cffe6f29), (31, 0x96af395beaed6eea), (100, 0xbdd64144c3b1ed0c), (250, 0x9ce0d7b60833740a), (500, 0xdc402bf062923425), (1000, 0xb2dd5e0ce18492c3), (2000, 0xba848f99d22ef624), ],
     // C: seed 7, lab
-    &[(1, 0xd34b6099dcaec19a), (2, 0xb509ce0e769adf3b), (10, 0x7ad1f2e501739cd2), (31, 0x699fa3d6cc4b5777), (100, 0xe1fed2f794cba630), (250, 0x2a48b33649697f37), (500, 0x5b4b7e884df4af10), (1000, 0x53671ba9d7bc7e89), (2000, 0x3ab9865e82a0cae6), (3000, 0x8bf6a27c1d367a7e), ],
+    &[(1, 0xa69d49ea222ea1e4), (2, 0xa2cdbd5446cc6401), (10, 0x7ef1094917d517ce), (31, 0xb47e7276dad84ccc), (100, 0x094a1baffa6e4161), (250, 0xeab0fa3e614cf9a4), (500, 0xba495a3a0ecd1fa8), (1000, 0xfd29e9e6dddbae7f), (2000, 0x7a9fd8c9f6f81c29), (3000, 0x1985e270602f13ba), ],
     // D: seed 2, scale 10
-    &[(1, 0x060fcc7182def373), (2, 0x2f694834705d912a), (10, 0x39e9d92e15bfbb64), (31, 0x16c2e3d8977a91e0), (100, 0xfd8c705862ed6b39), (250, 0xb9eaf24c810ec12e), (500, 0x7684fe81fc6ed1cb), ],
+    &[(1, 0x9d54bf386949114d), (2, 0x8be84678a2e4c5d7), (10, 0x6294bfe1a87f9827), (31, 0xae92fe95e5b30219), (100, 0xe9d986bddda8bc3d), (250, 0x31df830f970ab46b), (500, 0xcc433893ff45d2f1), ],
     // E: seed 3, rules on the fly and a probe
-    &[(1, 0x3296835985831824), (2, 0x4551e9badfdef199), (10, 0x404e48936cfbdb82), (31, 0xbb88766a73890091), (100, 0x0194f8582c1ed67d), (250, 0x64d8a18ad0af7a44), (500, 0xace1b0af644afb77), (1000, 0x1c6102cda5b03618), ],
+    &[(1, 0xf4806a419ca33db0), (2, 0xbc0a1572a88655be), (10, 0x0000706bd16575bc), (31, 0x167f792c5cbd44c7), (100, 0xaa75e1c2a05e6f7a), (250, 0x9117e84b1776558e), (500, 0x50a6951c17b943b9), (1000, 0xd7f9a6ac35245b8f), ],
     // F: seed 5, a mix of strategies
-    &[(1, 0x5f930a716b3d0745), (2, 0xff3a3a5a5d2cc4d9), (10, 0xf912cfa932f7bc23), (31, 0x05caf8e72aeb9e2a), (100, 0x4845e8b0039084ab), (250, 0x2d4fda62dfa6942a), (500, 0xc11480137b1b1012), (1000, 0x688d582f4133e4ff), (2000, 0x80e405312385cda4), ],
+    &[(1, 0x51d2989b59a6df01), (2, 0x678e35bc45fdc669), (10, 0x4351c0694406ca12), (31, 0x475ab509e8f818fb), (100, 0xd8798d17082bad86), (250, 0xb6fc98d284475db9), (500, 0x5beaf16756bcf04f), (1000, 0x0be9d97cf4b51527), (2000, 0xcd4171432c78ff80), ],
     // G: seed 6, a x10 square, food linear and in waves
-    &[(1, 0x316a0050afabb123), (2, 0x0f129ee645c9d467), (10, 0xf4a2e8105bafc532), (31, 0xd0446a37e08f9540), (100, 0x71bbe321a2a07776), (250, 0xe541871ec174e7b7), (500, 0xf92d4fb9b3d20329), (1000, 0xe703957a1704c94f), ],
+    &[(1, 0x904cd92d7df3e8cb), (2, 0x526037d8323551eb), (10, 0x3edbdc347e09b275), (31, 0x551b9f4606cd343e), (100, 0xbc25dcb76f7db1b0), (250, 0xe116a4a071475999), (500, 0x5704eb09106c7fee), (1000, 0xf36ae4de229be759), ],
     // H: seed 8, fights
-    &[(1, 0x2b4fc30cc50b28c0), (2, 0x3222278f776584ea), (10, 0xf0d011b1cfd9b4d7), (31, 0x5042718eae962a97), (100, 0x4003f3d635ba9389), (250, 0x0cee5e8b28caa804), (500, 0x81dd0bbc5f6b7d9b), (1000, 0xceb536b27130ae94), (2000, 0xbb6ffb0026c8b299), ],
+    &[(1, 0x8744383951113cd2), (2, 0x2a8a11dc62bd989c), (10, 0x75ca474b7b572489), (31, 0xbe7a0670df352f50), (100, 0xe0b156e5ff3e3c7b), (250, 0x410ebfee9ac5434f), (500, 0x37dc309ecbdd4f5a), (1000, 0x0688fa7e593d8fa0), (2000, 0xfadb506fc139985b), ],
+    // I: seed 1, the game's world x3, every diet
+    &[(1, 0x7c263d1f084fc7ba), (2, 0xb120c61deb20d62d), (10, 0x4258deab7151b946), (31, 0xd624c5c88ecc8568), (100, 0xfdee06f4c9a40af4), (250, 0xa967dedd9f66b0ff), (500, 0x715fbb2f6444bc5c), (1000, 0x1d57304e79e646e0), (2000, 0x6a67b1b7e76319e0), (3000, 0x7910127cf4de64bb), ],
 ];
 
 #[cfg(not(windows))]
@@ -285,26 +328,36 @@ fn мир_ведёт_себя_как_при_записи() {
     let cases = cases();
     // a new case without recorded fingerprints must not pass silently
     let mut first_mismatch = (!GOLDEN.is_empty() && GOLDEN.len() != cases.len())
-        .then(|| format!("отпечатков записано для {} случаев из {}", GOLDEN.len(), cases.len()));
+        .then(|| format!("fingerprints recorded for {} cases of {}", GOLDEN.len(), cases.len()));
     for (i, case) in cases.iter().enumerate() {
         let (got, w, seen) = run(case);
 
         // The configuration must touch what it exists for.
         let c = w.counters;
         match i {
-            1 => assert!(seen.giant > 100.0, "{}: гиганты выросли ({:.0})", case.name, seen.giant),
+            1 => assert!(seen.giant > 100.0, "{}: giants grew ({:.0})", case.name, seen.giant),
             5 => assert!(
                 seen.both_strategies >= case.ticks / 2,
-                "{}: обе стратегии живут вместе хотя бы полпрогона ({} тиков)",
+                "{}: both strategies live together at least half the run ({} ticks)",
                 case.name,
                 seen.both_strategies
             ),
             0 | 2 | 3 | 4 | 6 => assert!(
                 !w.creatures.is_empty() && c.plants_eaten > 0 && c.born > 0,
-                "{}: жизнь идёт — существа едят и делятся",
+                "{}: life goes on — creatures eat and divide",
                 case.name
             ),
-            7 => assert!(c.combat > 0, "{}: сородичей едят", case.name),
+            7 => assert!(c.combat > 0, "{}: creatures die in fights", case.name),
+            8 => assert!(
+                !w.creatures.is_empty()
+                    && c.combat > 0
+                    && c.ranged_shots > 0
+                    && c.meat_bites > c.rot_bites
+                    && c.rot_bites > 0
+                    && c.bone_bites > 0,
+                "{}: the whole food chain lives — hunts, shots, fresh meat, rot and bones: {c:?}",
+                case.name
+            ),
             _ => {}
         }
 
@@ -321,20 +374,56 @@ fn мир_ведёт_себя_как_при_записи() {
                 .iter()
                 .zip(&got)
                 .find(|(e, g)| e != g)
-                .map(|(_, g)| format!("{}: первое расхождение на тике {}", case.name, g.0))
+                .map(|(_, g)| format!("{}: the first difference at tick {}", case.name, g.0))
                 .or_else(|| {
                     (expected.len() != got.len())
-                        .then(|| format!("{}: другое число контрольных тиков", case.name))
+                        .then(|| format!("{}: another number of checkpoints", case.name))
                 });
         }
     }
     if GOLDEN.is_empty() {
-        eprintln!("Отпечатков для этой системы нет. Таблица для вставки:\n{table}");
+        eprintln!("No fingerprints for this system. The table to paste:\n{table}");
         return;
     }
     if let Some(m) = first_mismatch {
-        panic!("Поведение мира изменилось. {m}.\nЕсли так и задумано — новая таблица:\n{table}");
+        panic!("The world's behaviour changed. {m}.\nIf that is meant, the new table:\n{table}");
     }
+}
+
+/// The names in a debug print are no part of the fingerprint: a renamed field or type keeps it,
+/// another number, flag or variant does not.
+#[test]
+fn a_renamed_field_or_type_keeps_the_fingerprint() {
+    #[derive(Debug)]
+    enum Kind {
+        Rot,
+        Bones,
+    }
+    #[allow(dead_code)]
+    #[derive(Debug)]
+    struct Old {
+        flee_ticks: u32,
+        target: Option<(f64, f64)>,
+        kind: Kind,
+    }
+    #[allow(dead_code)]
+    #[derive(Debug)]
+    struct Renamed {
+        flee_for: u32,
+        goal: Option<(f64, f64)>,
+        kind: Kind,
+    }
+    fn of(v: &impl std::fmt::Debug) -> u64 {
+        let mut h = Fnv::new();
+        h.debug(v);
+        h.0
+    }
+    let old = of(&Old { flee_ticks: 3, target: Some((1.5, -2e-7)), kind: Kind::Rot });
+    assert_eq!(old, of(&Renamed { flee_for: 3, goal: Some((1.5, -2e-7)), kind: Kind::Rot }));
+    assert_ne!(old, of(&Old { flee_ticks: 3, target: Some((1.5, -2e-7)), kind: Kind::Bones }));
+    assert_ne!(old, of(&Old { flee_ticks: 3, target: None, kind: Kind::Rot }));
+    assert_ne!(old, of(&Old { flee_ticks: 30, target: Some((1.5, -2e-7)), kind: Kind::Rot }));
+    assert_ne!(old, of(&Old { flee_ticks: 3, target: Some((1.5, 2e-7)), kind: Kind::Rot }));
 }
 
 /// A wide check: the fingerprint at the end of a run over 50 seeds of two worlds.

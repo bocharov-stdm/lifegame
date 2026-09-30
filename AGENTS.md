@@ -12,7 +12,7 @@ full set of working rules; this file is the short version.
 - `crates/life-sim`: bounded runs, statistics snapshots and the chronicle.
 - `crates/life-report`: CLI, JSON reports (`life-report/12`), balance comparison and `life-sweep`.
 - `crates/life-app`: window, rendering, settings, the simulation thread, the sweep's progress window.
-- `reference/*.json`: balance references (still `life-behavior/9`, to be re-taken).
+- `reference/*.json`: balance references (`life-behavior/15`).
 - `Relict/`: frozen archive; never change anything in it.
 
 ## Commands
