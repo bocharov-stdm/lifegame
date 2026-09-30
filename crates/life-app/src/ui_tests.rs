@@ -180,6 +180,18 @@ fn игра_помещается_в_окно() {
                 assert_eq!(h.state().view.highlight, 0);
             }
         }
+        // the price of a tick and, below it, where its time goes
+        h.state_mut().settings.show_fps = true;
+        settle(h);
+        let top = h.get_by_label("Графики").rect();
+        let bottom = h.get_by_label("Выбор").rect().top();
+        let panel = Rect::from_min_max(Pos2::new(top.left() - 12.0, top.top()), Pos2::new(size.x, bottom));
+        check_layout(h, size, &format!("игра, цена тика, {tag}"), Some(panel));
+        let phases = h.get_by_label_contains("фазы тика:").rect();
+        let window = Rect::from_min_size(Pos2::ZERO, size).expand(0.5);
+        assert!(window.contains_rect(phases), "фазы тика выходят за окно {size:?}: {phases:?}");
+        shot(h, &format!("игра-цена-тика-{tag}"));
+        h.state_mut().settings.show_fps = false;
     });
 }
 

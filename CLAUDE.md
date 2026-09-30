@@ -209,8 +209,9 @@ templates: `standard`, `lurker`.
 ## Architecture
 
 **Logic is separated from rendering**, enforced by crate boundaries: `life-core` depends on nothing
-graphical (not even threads or I/O), `life-sim` adds the bounded runner and observer, `life-app`
-alone knows the screen.
+graphical and does no I/O; its only threads are rayon's under the `parallel` feature (`par.rs`,
+off by default; `life-app` and `life-report` turn it on). `life-sim` adds the bounded runner and
+observer, `life-app` alone knows the screen.
 
 `crates/life-core/src/`:
 - `config.rs` — every tunable constant with a comment on *why* that value.
@@ -226,9 +227,12 @@ alone knows the screen.
   `plant.rs`, `flora.rs`.
 - `senses.rs` — what a creature can learn (grid-backed queries + brute-force tests); `grid.rs` —
   counting-sort spatial grid; `rng.rs`, `space.rs`, `units.rs`.
+- `profile.rs` — the tick's phases timed (`World::set_profiling`, `phase_times`); `par.rs` — the
+  per-creature phases on rayon's pool.
 - `combat.rs` (simultaneous strikes and shots, a parent's defence), `corpse.rs`.
 
-`life-sim`: `simulate()`/`run()` under limits; `observe.rs` — snapshots, chronicle, ASCII maps.
+`life-sim`: `simulate()`/`run()` under limits; `observe.rs` — snapshots, chronicle, ASCII maps;
+`cores.rs` — holds the thread driving the tick on a hybrid processor's fast cores (Windows).
 `life-report`: `main.rs`, `story.rs`, `json.rs` (format `life-report/12`), `metrics.rs`
 (`--compare`), `bin/life-sweep.rs`.
 
@@ -264,8 +268,22 @@ differ. Re-take with `--save-reference reference/fingerprint.json` (calm: `--rul
   `for_each_near` returns a superset, callers check distance; `Grid::nearest` searches rings out
   from the point's cell with the square scan's tie order. The herd keeps a grid of hunters only
   (threat queries) and children by parent; queries that cannot find anything return before the
-  grid (a diet with no corpse food, a creature with no target, defence or rival in combat). The grid copies coordinates, valid
-  only because queried entities don't move within the phase. Keep the brute-force checks.
+  grid (a diet with no corpse food, a creature with no target, defence or rival in combat). The
+  grid copies coordinates, valid only because queried entities don't move within the phase. Keep
+  the brute-force checks.
+- **Where the time goes**: `life-report --phases` prints ms a tick and the share of each phase
+  (`profile::Phase`); the game shows the dearest phases under «к/с» (setting «Показывать кадры»).
+  On ×100 (~4700 creatures, one thread) the decisions are ~60%, eating ~12%, the herd's snapshot
+  ~7%, grids and combat ~5% each.
+- **Threads**: with `parallel`, the decisions and the herd's snapshot run on rayon's global pool
+  (`par::for_each_mut`, `par::map_into`; one thread under `PARALLEL_MIN` 512 creatures, pieces of
+  `PARALLEL_CHUNK` 32). Only work that reads the snapshot and writes its own creature goes there,
+  so any thread count gives the same world (`tests/parallel.rs`, golden). Eating, combat and
+  division stay sequential: the order of IDs decides who gets a portion. The game's pool is the
+  cores − 2; `life-report` uses `--threads` (a sweep passes 1). The driving thread keeps to the
+  fast cores (`life_sim::cores`): on the user's i7-13650HX Windows moved it onto an efficiency core
+  and the one-thread phases went half as slow (×100: 12.5 → 9.7 ms a tick with it, 20.5 on one
+  thread).
 - `Creature::step` is the hot path: values precomputed in `Phenotype::of`, squared distances, block
   dispatch is a `match`, never `Box<dyn>`, the scene asks only what a block needs. The eating phase
   copies only the corpses claimed that tick. For refactors compare ms/tick against the previous
@@ -315,6 +333,7 @@ cargo run -p life-report --release                  # seed 1, 600 ticks: story +
 cargo run -p life-report --release -- --seeds 1 2 3 --ticks 3000 --rule plant_energy=80 --scale 10
 cargo run -p life-report --release -- --mix 1 1 --diet-mix 50 0 0 50
 cargo run -p life-report --release -- --ticks 20000 --maps 3 --json run.json
+cargo run -p life-report --release -- --scale 100 --ticks 3000 --seeds 1 2 --phases  # time by phase
 cargo run -p life-report --release -- --compare reference/fingerprint.json
 
 play.bat / sh play.sh                                    # build + run the game

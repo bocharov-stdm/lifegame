@@ -31,10 +31,11 @@ use clap::Parser;
 use life_core::creature::strategy as creature_strategy;
 use life_core::genome::Variant;
 use life_core::genome::creature::Gene;
+use life_core::profile::{Phase, PhaseTimes};
 use life_core::space::{MAX_SCALE, MIN_SCALE};
-use life_core::{Rules, Shape, WorldConfig};
+use life_core::{Rules, Shape, World, WorldConfig};
 use life_sim::observe::{self, Event, ascii_map};
-use life_sim::{Limits, SimResult, simulate};
+use life_sim::{Limits, SimResult, run};
 use rayon::prelude::*;
 
 /// The «creatures x plants» budget per tick — like WORK_PER_TICK in Python.
@@ -118,6 +119,10 @@ struct Args {
     /// Write «tick of ticks» to this file about once a second (one seed; `life-sweep` shows it).
     #[arg(long, value_name = "ФАЙЛ")]
     progress: Option<PathBuf>,
+    /// Where each tick's time goes: a table of the tick's phases (ms a tick and share) per seed and
+    /// on average. The world goes the same measured or not.
+    #[arg(long)]
+    phases: bool,
 }
 
 fn parse_scale(s: &str) -> Result<f64, String> {
@@ -263,7 +268,14 @@ fn main() {
             // the tick rate, measured every PACE_EVERY ticks: (tick, ms a tick over the lap)
             let mut pace: Pace = Vec::new();
             let mut lap = (0, Instant::now());
-            let res = simulate(&cfg, &limits, |w| {
+            // Stepped on several threads, the driving thread keeps to the fast cores (`cores.rs`);
+            // on one (a sweep's run beside fifteen others) it goes where the system puts it.
+            if rayon::current_num_threads() > 1 {
+                life_sim::cores::pin_to_fast_cores();
+            }
+            let mut world = World::new(&cfg);
+            world.set_profiling(args.phases);
+            let res = run(world, &limits, &mut |w: &World| {
                 if w.tick.is_multiple_of(map_every) {
                     maps.push((w.tick, ascii_map(w, args.map_width)));
                 }
@@ -325,6 +337,9 @@ fn main() {
         }
     }
     print_summary(&results);
+    if args.phases {
+        print_phases(&results);
+    }
     let agrees = reference.as_ref().is_none_or(|r| metrics::print_comparison(r, &results));
     if let Some(path) = &args.json {
         println!("\nJSON: {}", path.display());
@@ -340,6 +355,37 @@ fn main() {
         eprintln!("ошибка: баланс разошёлся с эталоном");
         std::process::exit(1);
     }
+}
+
+/// The tick's phases, ms a tick and share of the measured time: per seed and over all of them.
+fn print_phases(results: &[(u64, SimResult)]) {
+    let times: Vec<(String, PhaseTimes)> = results
+        .iter()
+        .filter_map(|(seed, r)| r.world.phase_times().map(|t| (format!("сид {seed}"), t.clone())))
+        .collect();
+    let mut all = PhaseTimes::default();
+    times.iter().for_each(|(_, t)| all.add(t));
+    let mut columns = times;
+    if columns.len() > 1 {
+        columns.push(("все".into(), all));
+    }
+    print!("\n{:<12}", "фаза, мс/тик");
+    for (name, _) in &columns {
+        print!(" {name:>16}");
+    }
+    println!();
+    for phase in Phase::ALL {
+        print!("{:<12}", phase.label());
+        for (_, t) in &columns {
+            print!(" {:>9.3} {:>5.1}%", t.ms_per_tick(phase), t.share(phase) * 100.0);
+        }
+        println!();
+    }
+    print!("{:<12}", "итого");
+    for (_, t) in &columns {
+        print!(" {:>9.3} {:>6}", t.total_nanos() as f64 / 1e6 / t.ticks.max(1) as f64, "");
+    }
+    println!();
 }
 
 fn print_summary(results: &[(u64, SimResult)]) {

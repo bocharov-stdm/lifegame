@@ -525,8 +525,7 @@ impl Herd {
     /// whether it covers its children is what its blocks did on its last move (`Creature::menace`).
     pub fn rebuild(&mut self, space: &Space, creatures: &[Creature]) {
         debug_assert!(creatures.iter().all(|v| v.alive), "в снимке стада мёртвые");
-        self.seen.clear();
-        self.seen.extend(creatures.iter().map(|v| {
+        crate::par::map_into(creatures, &mut self.seen, |v| {
             let menace = v.menace();
             let (fights_below, fights_share) =
                 menace.fight().map_or((0.0, 0.0), |(ratio, health)| (v.pheno.half * ratio, 1.0 - health));
@@ -549,7 +548,7 @@ impl Herd {
                 hit: v.mind.hit,
                 alarm: if v.adult() { None } else { v.mind.alarm },
             }
-        }));
+        });
         self.grid.rebuild(space, self.seen.iter().map(|s| (s.x, s.y)));
         let (mut max_eats, mut max_half, mut max_hunter_half) = (0.0_f64, 0.0_f64, 0.0_f64);
         self.hunters.clear();

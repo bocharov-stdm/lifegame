@@ -121,6 +121,10 @@ fn main() -> eframe::Result {
         attach_parent_console();
     }
     let args = Args::parse();
+    // The world's per-creature phases take every thread but two: one for the window and the
+    // drawing, one for the simulation thread, which waits for them.
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).saturating_sub(2).max(1);
+    rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().expect("пул потоков");
     let rules = parse_rules(&args.rules).unwrap_or_else(|e| {
         eprintln!("ошибка: {e}");
         std::process::exit(2);

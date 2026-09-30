@@ -5,6 +5,7 @@
 //! computation budget (guarantees completion, about the same on different machines) and a
 //! wall-clock deadline (insurance on a very slow machine).
 
+pub mod cores;
 pub mod observe;
 
 use std::fmt;

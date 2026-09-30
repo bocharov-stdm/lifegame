@@ -14,6 +14,7 @@ pub mod flora;
 pub mod genome;
 pub mod grid;
 pub mod plant;
+pub mod profile;
 pub mod rng;
 pub mod rules;
 pub mod senses;
@@ -27,4 +28,5 @@ pub use space::{Shape, Space};
 pub use world::{Counters, DietCounters, Stats, World, WorldConfig};
 
 mod combat;
+mod par;
 pub use combat::Shot;

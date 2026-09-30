@@ -13,6 +13,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use life_core::config::DIVIDE_PERIOD;
+use life_core::profile::{Phase, PhaseTimes};
 use life_core::{CreatureGenome, Rules, World, WorldConfig};
 use life_sim::observe::{EventTracker, Snapshot};
 
@@ -122,7 +123,11 @@ impl SimHandle {
         let shared = slot.clone();
         let thread = std::thread::Builder::new()
             .name("симуляция".into())
-            .spawn(move || Sim::new(cfg, rx, recycled, shared, waker).run())
+            .spawn(move || {
+                // the tick's one-thread phases on a fast core, the decisions on every core
+                life_sim::cores::pin_to_fast_cores();
+                Sim::new(cfg, rx, recycled, shared, waker).run()
+            })
             .expect("поток симуляции не запустился");
         SimHandle { tx, slot, recycle, thread: Some(thread) }
     }
@@ -203,6 +208,10 @@ struct Sim {
     lagging: bool,
     /// The mean price of a tick, ms (a moving average).
     tick_ms: f64,
+    /// Each phase's share of a tick, smoothed like `tick_ms`, and the world's times it was last
+    /// read at.
+    phases: [f64; Phase::N],
+    phases_seen: PhaseTimes,
     /// The price of the last observer snapshot, ms.
     snapshot_ms: f64,
 
@@ -261,6 +270,8 @@ impl Sim {
             tps_since: now,
             lagging: false,
             tick_ms: 0.0,
+            phases: [0.0; Phase::N],
+            phases_seen: PhaseTimes::default(),
             snapshot_ms: 0.0,
             dirty: true,
             last_frame: now - MIN_FRAME_INTERVAL,
@@ -466,6 +477,7 @@ impl Sim {
         self.motion = Motion::default();
         self.recent_shots.clear();
         self.tick_ms = 0.0;
+        self.phases = [0.0; Phase::N];
         self.snapshot_ms = 0.0;
         self.reset_tps();
         self.pending = Pending::default();
@@ -483,9 +495,12 @@ impl Sim {
     }
 
     fn tick(&mut self) {
+        // the phases are measured always: a dozen clock reads a tick, and the world goes the same
+        self.world.set_profiling(true);
         let start = Instant::now();
         self.world.step();
         let engine_ms = start.elapsed().as_secs_f64() * 1000.0;
+        self.measure_phases();
         let now = Instant::now();
         if self.render_world {
             for shot in self.world.shots.iter().filter(|shot| shot.tick == self.world.tick) {
@@ -517,6 +532,25 @@ impl Sim {
         } else if self.watch_explosion && n > self.world.space.per_area(EXPLOSION_LIMIT) {
             self.ended = Some(Ending::Explosion);
         }
+    }
+
+    /// This tick's phases into their smoothed shares. A new world starts its times anew.
+    fn measure_phases(&mut self) {
+        let Some(now) = self.world.phase_times() else { return };
+        if now.ticks < self.phases_seen.ticks {
+            self.phases_seen = PhaseTimes::default();
+        }
+        let spent = |t: &PhaseTimes, p: Phase| t.nanos[p as usize];
+        let total = now.total_nanos().saturating_sub(self.phases_seen.total_nanos());
+        if total > 0 {
+            let fresh = self.phases.iter().all(|&s| s == 0.0);
+            for p in Phase::ALL {
+                let share = spent(now, p).saturating_sub(spent(&self.phases_seen, p)) as f64 / total as f64;
+                let s = &mut self.phases[p as usize];
+                *s = if fresh { share } else { *s * 0.95 + share * 0.05 };
+            }
+        }
+        self.phases_seen = now.clone();
     }
 
     /// Every tick — the counts into the smoothing window; once in `GRAPH_EVERY` — a chart point.
@@ -756,6 +790,7 @@ impl Sim {
             build_ms: start.elapsed().as_secs_f64() * 1000.0,
             tick_ms: self.tick_ms,
             snapshot_ms: self.snapshot_ms,
+            phases: self.phases,
         }
     }
 }

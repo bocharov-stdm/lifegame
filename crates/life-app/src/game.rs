@@ -16,9 +16,21 @@ use crate::settings::{self, FIELDS, Tab};
 use crate::sim::{Command, SPEEDS};
 use crate::theme::{self, ACCENT, DANGER, GOOD, MUTED, TEXT, rgb, spaced};
 use crate::view::Click;
+use life_core::profile::Phase;
 
 /// The speed of panning with the keys, screen points a second.
 const PAN_SPEED: f64 = 900.0;
+
+/// The tick's dearest phases by share: «фазы тика: решения 62% · стадо 12% · …», the rest as one.
+fn phases_line(shares: &[f64; Phase::N]) -> String {
+    let mut order: Vec<Phase> = Phase::ALL.to_vec();
+    order.sort_by(|a, b| shares[*b as usize].total_cmp(&shares[*a as usize]));
+    let (top, rest) = order.split_at(5);
+    let mut parts: Vec<String> =
+        top.iter().map(|&p| format!("{} {:.0}%", p.label(), shares[p as usize] * 100.0)).collect();
+    parts.push(format!("прочее {:.0}%", rest.iter().map(|&p| shares[p as usize]).sum::<f64>() * 100.0));
+    format!("фазы тика: {}", parts.join(" · "))
+}
 
 fn speed_label(index: usize) -> String {
     match SPEEDS[index] {
@@ -249,6 +261,7 @@ impl LifeApp {
         let (seed, scale) = (f.seed, f.scale);
         let (tick_ms, snapshot_ms, build_ms, draw_ms) =
             (f.tick_ms, f.snapshot_ms, f.build_ms, self.view.draw_ms);
+        let phases = f.phases;
         ui.horizontal(|ui| {
             let (icon, hint) = if st.paused {
                 ("▶", "Пуск (Пробел)")
@@ -310,6 +323,11 @@ impl LifeApp {
                 }
             });
         });
+        if self.settings.show_fps && phases.iter().any(|&s| s > 0.0) {
+            ui.colored_label(MUTED, phases_line(&phases)).on_hover_text(
+                "Куда уходит время тика, по фазам: решения существ, снимок стада, сетки, еда, бой. \n                 Сглажено, как цена тика.",
+            );
+        }
     }
 
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {

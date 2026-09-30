@@ -72,7 +72,8 @@ cargo run -p life-app --release -- --scale 100 --seed 7  # straight into a world
   (fullness, where creatures live, an area's genome, and on pause how every characteristic and
   the adults' behaviour spread within each diet). Esc opens the menu.
 - **No freezes at any scale**: the simulation runs in its own thread and the window draws the
-  last finished frame. Far away the world turns into two-pixel dots or a density map; rendering can
+  last finished frame. The creatures' decisions use every processor core, and the world stays the
+  same on any number of them; «Показывать кадры» also shows where a tick's time goes. Far away the world turns into two-pixel dots or a density map; rendering can
   be switched off while statistics and the card keep working.
 - **For research**: «Повторить без окна» gives the `life-report` command that repeats the game.
 

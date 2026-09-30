@@ -307,6 +307,8 @@ pub struct Frame {
     pub tick_ms: f64,
     /// The price of the last statistics sample, ms.
     pub snapshot_ms: f64,
+    /// Each phase's share of a tick (`life_core::profile::Phase`), smoothed like `tick_ms`.
+    pub phases: [f64; life_core::profile::Phase::N],
 }
 
 /// Light instances for a far scale: no matching of frames, ghosts, headings and sorting.

@@ -1773,6 +1773,7 @@ dependencies = [
  "life-core",
  "life-sim",
  "raw-window-handle",
+ "rayon",
  "serde_json",
  "windows",
 ]
@@ -1780,6 +1781,9 @@ dependencies = [
 [[package]]
 name = "life-core"
 version = "0.1.0"
+dependencies = [
+ "rayon",
+]
 
 [[package]]
 name = "life-report"
@@ -1797,6 +1801,7 @@ name = "life-sim"
 version = "0.1.0"
 dependencies = [
  "life-core",
+ "windows",
 ]
 
 [[package]]

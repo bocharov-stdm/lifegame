@@ -7,7 +7,8 @@ full set of working rules; this file is the short version.
 ## Structure
 
 - `crates/life-core`: creatures, genome, behaviour programs, life cycle, diets, corpses, combat,
-  plants, spatial queries. No graphics, threads or I/O.
+  plants, spatial queries. No graphics or I/O; threads only through rayon under the `parallel`
+  feature (per-creature phases, same world on any thread count).
 - `crates/life-sim`: bounded runs, statistics snapshots and the chronicle.
 - `crates/life-report`: CLI, JSON reports (`life-report/12`), balance comparison and `life-sweep`.
 - `crates/life-app`: window, rendering, settings, the simulation thread, the sweep's progress window.

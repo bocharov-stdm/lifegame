@@ -161,6 +161,14 @@ pub const CLONE_CHANCE: f64 = 0.5;
 /// looks at 4x4‒5x5 cells, and there are few empty cells.
 pub const GRID_CELL: f64 = 256.0;
 
+// ── Threads (the `parallel` feature, `par.rs`) ───────────────────────────────
+/// With fewer creatures than this the per-creature phases (decisions, the herd's snapshot) run on
+/// one thread: handing the work out would cost more than it saves.
+pub const PARALLEL_MIN: usize = 512;
+/// Creatures in one piece of a thread's work: a creature's move is a few microseconds, and a
+/// smaller piece costs more to hand out than to do.
+pub const PARALLEL_CHUNK: usize = 32;
+
 // ── Strategies ──────────────────────────────────────────────────────────────
 /// Chance that a child gets another strategy — the template its founders' program started from.
 /// None: behaviour is inherited and mutates as the program (`Program::mutate`); the gene keeps its

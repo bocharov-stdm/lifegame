@@ -17,6 +17,7 @@ use crate::flora::Flora;
 use crate::genome::{CreatureGenome, creature, variant_for};
 use crate::grid::Grid;
 use crate::plant::Plant;
+use crate::profile::{Phase, PhaseTimes, Stopwatch};
 use crate::rng::{Rng, mix};
 use crate::rules::Rules;
 use crate::senses::{GridSenses, Herd, bite_plant};
@@ -190,6 +191,8 @@ pub struct World {
     food_grid: Grid,
     corpse_grid: Grid,
     bitten_plants: Vec<bool>,
+    /// Time by phase since profiling was switched on (`set_profiling`); None: not measured.
+    profile: Option<PhaseTimes>,
 }
 
 impl World {
@@ -218,6 +221,7 @@ impl World {
             food_grid: Grid::new(GRID_CELL),
             corpse_grid: Grid::new(GRID_CELL),
             bitten_plants: Vec::new(),
+            profile: None,
         };
         let variants = creature_strategy::VARIANTS.len();
         let diet_ranks = crate::genome::spread_ranks(n_start);
@@ -285,9 +289,25 @@ impl World {
 
     // ── one logical tick ────────────────────────────────────────────────────
     pub fn step(&mut self) {
+        let mut clock = Stopwatch::start(self.profile.is_some());
         self.spawn_plants();
-        self.update_creatures();
+        clock.lap(Phase::Plants);
+        self.update_creatures(&mut clock);
         self.tick += 1;
+        clock.finish(&mut self.profile);
+    }
+
+    /// Measure where each tick's time goes, from now on (`phase_times`); off drops the times.
+    /// The world goes the same either way.
+    pub fn set_profiling(&mut self, on: bool) {
+        if on != self.profile.is_some() {
+            self.profile = on.then(PhaseTimes::default);
+        }
+    }
+
+    /// Time by phase since profiling was switched on; None while it is off.
+    pub fn phase_times(&self) -> Option<&PhaseTimes> {
+        self.profile.as_ref()
     }
 
     /// Plants per tick are an expected number (not a probability): the whole part is always
@@ -314,7 +334,7 @@ impl World {
         }
     }
 
-    fn update_creatures(&mut self) {
+    fn update_creatures(&mut self, clock: &mut Stopwatch) {
         let now = self.tick + 1;
         self.shots.retain(|s| now.saturating_sub(s.tick) <= 8);
         let counters = &mut self.counters;
@@ -334,6 +354,7 @@ impl World {
             // its step counts it on to this tick
             v.mind.tick = self.tick;
         }
+        clock.lap(Phase::Ageing);
         let World {
             space,
             rules,
@@ -354,20 +375,25 @@ impl World {
         corpse_grid.rebuild(space, corpses.iter().map(|c| (c.x, c.y)));
         bitten_plants.clear();
         bitten_plants.resize(plants.len(), false);
+        clock.lap(Phase::Grids);
         // Relatives are seen as they were at the start of the phase: the outcome does not depend on
         // the order of moves.
         herd.rebuild(space, creatures);
+        clock.lap(Phase::Herd);
 
         let mut offspring = Vec::new();
-        for v in creatures.iter_mut() {
-            v.step(&GridSenses {
-                food: food_grid,
-                plants,
-                corpse_grid: Some(&*corpse_grid),
-                corpses,
-                now,
-                herd: Some(&*herd),
-            });
+        // Each creature moves by the same snapshot and writes only itself: any number of threads
+        // gives the same world (`par.rs`).
+        let senses = GridSenses {
+            food: food_grid,
+            plants,
+            corpse_grid: Some(&*corpse_grid),
+            corpses,
+            now,
+            herd: Some(&*herd),
+        };
+        crate::par::for_each_mut(creatures, |v| v.step(&senses));
+        for v in creatures.iter() {
             if !v.alive {
                 let death = v.death.unwrap_or(crate::creature::Death::Starved);
                 if death == crate::creature::Death::OldAge {
@@ -379,6 +405,7 @@ impl World {
                 continue; // starved to death on this move: neither eats nor divides
             }
         }
+        clock.lap(Phase::Decisions);
         // One bite per creature and no more than one portion from a plant per tick.
         let mut fed = vec![false; creatures.len()];
         let max_corpse_half = corpses.iter().fold(0.0_f64, |m, c| m.max(c.size * 0.5));
@@ -451,6 +478,7 @@ impl World {
                 c.bite(now, rules.plant_energy);
             }
         }
+        clock.lap(Phase::EatPlants);
         // Everyone has already moved; there are no newborns yet. The strikes are simultaneous.
         let result = crate::combat::resolve_with(
             space,
@@ -463,6 +491,7 @@ impl World {
         );
         counters.ranged_shots += result.len() as u64;
         shots.extend(result);
+        clock.lap(Phase::Combat);
         // The previous tick's corpses are shared among the survivors in the order of ID.
         for (i, v) in creatures.iter_mut().enumerate() {
             if !v.alive || fed[i] || v.torpid || !v.pheno.eats_corpses() || !takes(v, Food::Corpse) {
@@ -492,11 +521,13 @@ impl World {
                 fed[i] = true;
             }
         }
+        clock.lap(Phase::EatCorpses);
         for v in creatures.iter_mut().filter(|v| v.alive) {
             if let Some(child) = v.maybe_divide(space, rules) {
                 offspring.push(child);
             }
         }
+        clock.lap(Phase::Division);
         let before = corpses.len();
         // One that never grew and died with an empty tank leaves no meat, so no corpse: it would
         // only count as a corpse gone the next tick and pull the corpses' mean lifetime down.
@@ -520,6 +551,7 @@ impl World {
         for child in offspring {
             self.add_creature(child);
         }
+        clock.lap(Phase::Sweep);
     }
 
     // ── statistics ──────────────────────────────────────────────────────────

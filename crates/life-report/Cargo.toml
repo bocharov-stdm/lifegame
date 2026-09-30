@@ -6,7 +6,7 @@ version.workspace = true
 license.workspace = true
 
 [dependencies]
-life-core.workspace = true
+life-core = { workspace = true, features = ["parallel"] }
 life-sim.workspace  = true
 clap       = { version = "4", features = ["derive"] }
 rayon      = "1"
