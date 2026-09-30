@@ -332,10 +332,12 @@ mod tests {
     /// strikes in proportion to its size, no weaker.
     #[test]
     fn a_bigger_body_strikes_disproportionately_harder() {
-        // the numbers of `MELEE_SIZE_POWER`'s comment, at the carnivore's former strike ×1.5
+        // the numbers of `MELEE_SIZE_POWER`'s comment, at the carnivore's former strike ×1.5 and
+        // the herbivore's and the omnivore's former health ×1.5 and ×1
         let strikes_to_kill = |attacker: CreatureGenome, target: CreatureGenome| {
             let mut w = world();
-            w.set_rules(w.rules.with("carnivore_strike", 1.5).unwrap());
+            let rules = w.rules.with("carnivore_strike", 1.5).unwrap();
+            w.set_rules(rules.with("herbivore_health", 1.5).unwrap().with("omnivore_health", 1.0).unwrap());
             w.spawn(attacker, 1000.0, 1000.0, Some(500.0));
             let prey = w.spawn(target, 1000.0, 1000.0, Some(50.0));
             aim(&mut w.creatures[0], prey);

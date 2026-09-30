@@ -177,9 +177,9 @@ fn раны_лечатся_за_энергию_после_паузы() {
     // warm-blooded, it pays the same at any depth
     let cheaper = v.pheno.temper(v.y).1;
     assert_eq!(cheaper, 1.0);
-    // 0.2% of its health a tick: 60 for a hardy herbivore of size 40
+    // 0.2% of its health a tick: 44 for a herbivore of size 40 (health ×1.1)
     let heal = v.max_health() * 0.002;
-    assert!((heal - 0.12).abs() < 1e-12);
+    assert!((heal - 0.088).abs() < 1e-12);
     v.step(&life_core::senses::Blind);
     assert!((v.health - 20.0 - heal).abs() < 1e-9);
     // it pays for the step it took
@@ -194,7 +194,7 @@ fn диеты_усваивают_по_таблице() {
     let r = Rules::default();
     let plant_bite = r.plant_energy * r.plant_bite_yield / 5.0;
     for (diet, plants, fresh, rot, bones) in [
-        (Diet::Herbivore, 1.0, 0.0, 0.0, 0.0),
+        (Diet::Herbivore, 1.0, 0.1, 0.0, 0.0),
         (Diet::Omnivore, 0.8, 0.6, 0.2, 0.0),
         (Diet::Carnivore, 0.2, 1.0, 0.3, 0.0),
         (Diet::Scavenger, 0.15, 1.0, 0.9, 0.9),
@@ -354,10 +354,10 @@ fn бонусы_диет() {
     let (h, o, s, c) = (of(Diet::Herbivore), of(Diet::Omnivore), of(Diet::Scavenger), of(Diet::Carnivore));
     let (size, speed, vision) = (o.pheno.size, o.pheno.speed, o.pheno.vision);
     assert_eq!(o.pheno.upkeep, r.upkeep(size, speed, vision), "the omnivore pays the base");
-    assert_eq!(h.max_health(), 1.5 * o.max_health(), "hardy herbivore");
-    assert_eq!(c.max_health(), o.max_health());
-    let size_term = r.upkeep(size, speed, vision) - r.upkeep_diet(size, speed, vision, [0.0, 1.0]);
-    assert!((o.pheno.upkeep - h.pheno.upkeep - 0.15 * size_term).abs() < 1e-12);
+    assert!((h.max_health() / o.max_health() - 1.1 / 1.05).abs() < 1e-12, "a little hardier herbivore");
+    assert_eq!(c.max_health(), s.max_health());
+    assert!((o.max_health() / c.max_health() - 1.05).abs() < 1e-12, "the omnivore barely hardier");
+    assert_eq!(h.pheno.upkeep, o.pheno.upkeep, "the herbivore pays the base");
     let speed_term = r.upkeep(size, speed, vision) - r.upkeep_diet(size, speed, vision, [1.0, 0.0]);
     let saved = 1.0 - life_core::config::DIET_SPEED_COST[3];
     assert!((o.pheno.upkeep - c.pheno.upkeep - saved * speed_term).abs() < 1e-12);

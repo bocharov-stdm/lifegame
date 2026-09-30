@@ -180,10 +180,11 @@ const NUMBER: Field = Field {
 /// `CHANGED_DEFAULTS` changed after the file's version as the new default, the rest as saved. 1 — the
 /// ocean reform (2026-09-27): the «океаническое» profile, the corpse stages' times; 2 — the price of
 /// life 3 → 2 (2026-09-29); 3 — the price of speed 1 → 0.5 (2026-09-29); 4 — the diet edges
-/// calibrated by the user (2026-09-29).
-const DEFAULTS_VERSION: u64 = 4;
+/// calibrated by the user (2026-09-29); 5 — the herbivore's and the omnivore's health, the
+/// herbivore's size price and fresh meat (2026-09-29).
+const DEFAULTS_VERSION: u64 = 5;
 /// A key whose default changed and the version that changed it.
-const CHANGED_DEFAULTS: [(Key, u64); 15] = [
+const CHANGED_DEFAULTS: [(Key, u64); 19] = [
     (Key::PlantDepthProfile, 1),
     (Key::CorpseFresh, 1),
     (Key::CorpseDecay, 1),
@@ -200,6 +201,10 @@ const CHANGED_DEFAULTS: [(Key, u64); 15] = [
     (Key::Diet(2, 6), 4),
     (Key::Diet(2, 9), 4),
     (Key::Diet(3, 7), 4),
+    (Key::Diet(0, 1), 5),
+    (Key::Diet(0, 2), 5),
+    (Key::Diet(0, 6), 5),
+    (Key::Diet(1, 1), 5),
 ];
 
 /// The food profiles' labels — in the order of `Profile::ALL` (checked by a test).

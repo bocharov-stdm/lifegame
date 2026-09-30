@@ -986,7 +986,8 @@ mod tests {
 
     /// Each diet smells corpses as far as its `DIET_SMELL` edge says, and no farther, through the
     /// corpse grid itself: the scavenger at 3× its vision, the carnivore at 1.5×, the omnivore at
-    /// 1.2×; the herbivore, eating no meat, never goes for one. Hungry, so any corpse will do.
+    /// 1.2×. Hungry, so any corpse will do: even the herbivore goes for fresh meat (10%, not its own
+    /// food) — only with its program's «foreign food», and never for rot.
     #[test]
     fn each_diet_smells_as_far_as_its_edge() {
         use crate::config::DIET_SMELL;
@@ -999,7 +1000,9 @@ mod tests {
             );
         }
         assert_eq!(DIET_SMELL, [1.0, 1.2, 3.0, 1.5], "the ranges the user calibrated");
-        assert!(!finds_corpse(0.0, true, 990, 0.5), "a herbivore does not go for meat");
+        assert!(finds_corpse(0.0, true, 990, 0.5), "a hungry herbivore takes fresh meat");
+        assert!(!finds_corpse(0.0, false, 990, 0.5), "not its own food");
+        assert!(!finds_corpse(0.0, true, 300, 0.5), "a herbivore does not go for rot");
     }
 
     /// Every query of the tick is checked against a brute-force search of all creatures — on the
@@ -1436,8 +1439,9 @@ mod tests {
     }
 
     /// Whom a stranger fears: anyone whose program hunts bodies of its size (the threat), and of
-    /// them the ones hunting somebody now (the hunter). A herbivore eats no one, and a carnivore
-    /// whose program has no hunt block threatens no one either.
+    /// them the ones hunting somebody now (the hunter). A carnivore whose program has no hunt block
+    /// threatens no one. The herbivore digests a little fresh meat (10%): before its first move its
+    /// hunt block makes it feared like any hunter; a diet with no fresh meat eats no one.
     #[test]
     fn a_threat_is_whoever_could_hunt_it_a_hunter_whoever_does() {
         use crate::creature::{Action, Block, Program};
@@ -1446,9 +1450,17 @@ mod tests {
             (SCAVENGER, true, false, true, false),
             (CARNIVORE, true, true, true, true),
             (CARNIVORE, false, true, false, false),
-            (0.0, true, true, false, false),
+            (0.0, true, true, true, true),
+            (-1.0, true, true, false, false),
         ] {
             let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
+            // -1: a herbivore that digests no fresh meat
+            let diet = if diet < 0.0 {
+                w.set_rules(w.rules.with("herbivore_meat", 0.0).unwrap());
+                0.0
+            } else {
+                diet
+            };
             w.spawn(
                 crate::CreatureGenome::BASE.with(Gene::Size, 80.0).with(Gene::Diet, diet),
                 1000.0,

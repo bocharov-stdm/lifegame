@@ -154,13 +154,13 @@ fn hunter_world(small: f64, dx: f64) -> World {
     w
 }
 
-/// A hunter strikes the small one beside it: 2.5 times smaller it survives the first strike,
+/// A hunter strikes the small one beside it: twice smaller it survives the first strike,
 /// 6.7 times smaller it dies of it (`MELEE_SIZE_POWER`) and leaves a corpse.
 #[test]
 fn a_hunter_strikes_the_small_one_beside_it() {
-    let mut w = hunter_world(40.0, 10.0);
+    let mut w = hunter_world(50.0, 10.0);
     w.step();
-    assert_eq!(w.creatures.len(), 2, "2.5 times smaller, full health survives one strike");
+    assert_eq!(w.creatures.len(), 2, "twice smaller, full health survives one strike");
     assert!(w.creatures[1].health < w.creatures[1].max_health());
     assert_eq!(w.counters.combat, 0);
     let mut w = hunter_world(15.0, 10.0);

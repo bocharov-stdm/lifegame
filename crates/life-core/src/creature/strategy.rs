@@ -501,7 +501,7 @@ mod tests {
     use crate::{CreatureGenome, Rules, Space};
 
     /// A plant 100 to the east and a corpse (radius 10) 100 to the west; like the world's senses,
-    /// a corpse or prey only for those that eat meat.
+    /// a corpse or prey only for those that eat meat at the terms asked (own or foreign food).
     struct FoodSense {
         prey: Option<Prey>,
     }
@@ -511,8 +511,11 @@ mod tests {
             Some((1100.0, 1000.0))
         }
 
-        fn best_corpse(&self, me: &Me, _: Taste) -> Option<CorpseFood> {
-            let eats_corpses = me.pheno.meat_efficiency > 0.0 || me.pheno.rot_efficiency > 0.0;
+        fn best_corpse(&self, me: &Me, taste: Taste) -> Option<CorpseFood> {
+            use crate::corpse::Stage;
+            let eats_corpses = [Stage::Fresh, Stage::Rot]
+                .into_iter()
+                .any(|stage| me.pheno.corpse_efficiency(stage, taste.foreign) > 0.0);
             eats_corpses.then_some(CorpseFood { owner: 2, x: 900.0, y: 1000.0, half: 10.0, score: 3.0 })
         }
 
@@ -520,8 +523,8 @@ mod tests {
             None
         }
 
-        fn prey(&self, me: &Me, _: Option<u64>, _: Option<u64>, _: Hunting) -> Option<Prey> {
-            self.prey.filter(|_| me.pheno.hunts())
+        fn prey(&self, me: &Me, _: Option<u64>, _: Option<u64>, hunt: Hunting) -> Option<Prey> {
+            self.prey.filter(|_| me.pheno.hunts_now(hunt.taste.foreign))
         }
     }
 
@@ -569,11 +572,12 @@ mod tests {
                 &mut rng,
                 &FoodSense { prey: Some(Prey { id: 9, x: 1020.0, y: 1000.0, half: 10.0, score: 0.1 }) },
             );
-            let hunts = diet != Diet::Herbivore;
+            // fed, only the carnivore has fresh meat for its own food
+            let hunts = diet == Diet::Carnivore;
             assert_eq!(
                 fight.attack.is_some(),
                 hunts,
-                "{diet:?}: a started hunt goes on, a herbivore has none"
+                "{diet:?}: a started hunt goes on only on its own food"
             );
         }
     }
@@ -965,16 +969,19 @@ mod tests {
             fn nearest_plant(&self, x: f64, y: f64, r2: f64) -> Option<(f64, f64)> {
                 (100.0 * 100.0 < r2).then_some((x + 100.0, y))
             }
-            fn best_corpse(&self, me: &Me, _: Taste) -> Option<CorpseFood> {
-                let eats = me.pheno.meat_efficiency > 0.0 || me.pheno.rot_efficiency > 0.0;
+            fn best_corpse(&self, me: &Me, taste: Taste) -> Option<CorpseFood> {
+                use crate::corpse::Stage;
+                let eats = [Stage::Fresh, Stage::Rot]
+                    .into_iter()
+                    .any(|stage| me.pheno.corpse_efficiency(stage, taste.foreign) > 0.0);
                 eats.then_some(CorpseFood { owner: 2, x: me.x - 120.0, y: me.y, half: 10.0, score: 1.0 })
             }
             fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
                 None
             }
-            fn nearest_prey(&self, me: &Me, ratio: f64, _: Taste, within: f64) -> Option<Threat> {
+            fn nearest_prey(&self, me: &Me, ratio: f64, taste: Taste, within: f64) -> Option<Threat> {
                 let t = Threat { id: 4, x: me.x + 50.0, y: me.y, gap: self.prey_gap, half: 5.0 };
-                (me.pheno.hunts() && ratio == 1.5 && t.gap < within).then_some(t)
+                (me.pheno.hunts_now(taste.foreign) && ratio == 1.5 && t.gap < within).then_some(t)
             }
         }
         let fires = |v: &Creature, test: Test, hunts: bool, gap: f64| {
@@ -1362,8 +1369,14 @@ mod tests {
             (self.threat && t.gap < within).then_some(t)
         }
 
-        fn prey(&self, me: &Me, _: Option<u64>, _: Option<u64>, _: Hunting) -> Option<Prey> {
-            me.pheno.hunts().then_some(Prey { id: 4, x: me.x, y: me.y + 80.0, half: 8.0, score: 2.0 })
+        fn prey(&self, me: &Me, _: Option<u64>, _: Option<u64>, hunt: Hunting) -> Option<Prey> {
+            me.pheno.hunts_now(hunt.taste.foreign).then_some(Prey {
+                id: 4,
+                x: me.x,
+                y: me.y + 80.0,
+                half: 8.0,
+                score: 2.0,
+            })
         }
     }
 

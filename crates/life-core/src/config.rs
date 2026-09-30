@@ -249,13 +249,13 @@ pub const DIET_JUMP_CHANCE: f64 = 0.0001;
 /// carnivore could hold only the newborns it caught, and hunting did not pay (user's choice,
 /// 2026-09-27). The energy a strike costs does not change.
 pub const DIET_STRIKE: [f64; 4] = [1.0, 1.5, 1.3, 3.0];
-/// Health by diet, times the body size: the herbivore is hardy. It cannot strike like a meat
-/// eater, so it outlasts one — a hunter needs half as many strikes again, and weighs that.
-pub const DIET_HEALTH: [f64; 4] = [1.5, 1.0, 1.0, 1.0];
-/// The size term of upkeep by diet: plants are a steady, bulky food, so a herbivore carries a
-/// big body cheaper — a little, so that size still has a price and selection, not the table,
-/// makes it bigger.
-pub const DIET_SIZE_COST: [f64; 4] = [0.85, 1.0, 1.0, 1.0];
+/// Health by diet, times the body size: the herbivore is a little hardy, the omnivore barely (the
+/// user's calibration of 2026-09-29; the herbivore had ×1.5 and the omnivore ×1 until then). It
+/// cannot strike like a meat eater, so it outlasts one a little — a hunter weighs that.
+pub const DIET_HEALTH: [f64; 4] = [1.1, 1.05, 1.0, 1.0];
+/// The size term of upkeep by diet. Every diet pays the same (the user's calibration of
+/// 2026-09-29; the herbivore's big body was ×0.85 until then); the lab can give one a discount.
+pub const DIET_SIZE_COST: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
 /// The speed term of upkeep by diet: the carnivore is a runner built to chase — it moves cheaper.
 /// Without an edge of its own it died out everywhere once the herbivore grew hardy and the
 /// scavenger learned to smell (16 of 16 worlds, 2026-09-26); at ×0.8 it still spent more on the
@@ -317,9 +317,10 @@ pub const MEAT_FOUNDER_SIZE: f64 = 2.0;
 /// Bones only the scavenger digests (the user's choice, 2026-09-27): the long-lying remains on the
 /// bottom are its own food, which nobody else can take.
 /// The user's calibration of 2026-09-29: the omnivore 0.7/0.3/0.05 → 0.8/0.6/0.2, the scavenger's
-/// fresh meat 0.8 → 1.0, the carnivore's rot 0.1 → 0.3.
+/// fresh meat 0.8 → 1.0, the carnivore's rot 0.1 → 0.3; then the herbivore's fresh meat 0 → 0.1 —
+/// not its own food (`DIET_OWN`), so it takes it only when its program eats foreign food.
 pub const DIET_DIGESTION: [[f64; 4]; 4] = [
-    [1.0, 0.0, 0.0, 0.0],  // herbivore
+    [1.0, 0.1, 0.0, 0.0],  // herbivore
     [0.8, 0.6, 0.2, 0.0],  // omnivore
     [0.15, 1.0, 0.9, 0.9], // scavenger
     [0.2, 1.0, 0.3, 0.0],  // carnivore

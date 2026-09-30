@@ -136,15 +136,16 @@ the edges are world rules (`Rules::diets`, keys `{diet}_{edge}`, lab tab «Пи�
 
 | | strike | health | size cost | speed cost | smell | plants | fresh | rot | bones | young plants |
 |---|---|---|---|---|---|---|---|---|---|---|
-| herbivore | 1 | 1.5 | 0.85 | 1 | 1 | 100% | 0 | 0 | 0 | 100% |
-| omnivore | 1.5 | 1 | 1 | 1 | 1.2 | 80% | 60% | 20% | 0 | 100% |
+| herbivore | 1 | 1.1 | 1 | 1 | 1 | 100% | 10% | 0 | 0 | 100% |
+| omnivore | 1.5 | 1.05 | 1 | 1 | 1.2 | 80% | 60% | 20% | 0 | 100% |
 | scavenger | 1.3 | 1 | 1 | 1 | 3 | 15% | 100% | 90% | 90% | 70% |
 | carnivore | 3 | 1 | 1 | 0.5 | 1.5 | 20% | 100% | 30% | 0 | 70% |
 
 - Smell = how far corpses are sensed, × vision, free. Juvenile gut: until grown, plants at
   `max(plants, young_plants)` (0 = as grown). Only the grown divide.
-- **Own niche** (`DIET_OWN`): without «есть и чужую пищу» a scavenger skips fresh meat and does not
-  hunt, a carnivore skips rot and bones; the omnivore has no foreign food.
+- **Own niche** (`DIET_OWN`): without «есть и чужую пищу» a herbivore or a scavenger skips fresh
+  meat and does not hunt, a carnivore skips rot and bones; the omnivore has no foreign food. So a
+  hungry herbivore (the template's mode 3) eats fresh meat and hunts, and is feared then.
 - Founders: `DIET_START_MIX` 70/30/0/0 — meat diets arise from mutants. Meat founders set in a mix
   start `meat_founder_size` ×2; scavenger founders start deep and fully cold-blooded.
 
@@ -329,7 +330,7 @@ Dev builds use `opt-level = 2`.
 ```bash
 cargo run -p life-report --release -- --seeds 1 2 3 4 5 6 7 8 --ticks 20000 --max-work 1e15 \
   --scale 20 --shape 2:1 --rule plant_rate=0.5 --rule cost_scale=2 --rule speed_cost=0.5 \
-  --rule plant_depth_steepness=5 --mix 1 1
+  --rule plant_depth_steepness=5 --mix 1 1 --diet-mix 55 25 10 10
 ```
 
 **Validating a model change**: seeds 1–8 × 20 000 for the base and calm (`cost_scale=3`) profiles

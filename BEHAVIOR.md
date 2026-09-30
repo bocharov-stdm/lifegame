@@ -9,6 +9,11 @@ section describes earlier models and is kept as a record (flocks, cannibalism as
 
 Model `life-behavior/15`, format `life-report/12`.
 
+**The herbivore recalibrated by the user** (2026-09-29, the lab's «Питание» tab again): health
+×1.1 (was 1.5) and the omnivore's ×1.05 (was 1); the herbivore's size costs the base (was ×0.85);
+it digests fresh meat at 10% (was 0) — foreign food, so only a hungry one (the template's mode 3)
+eats a fresh corpse or hunts, and then others fear it. Unmeasured.
+
 **The diet edges calibrated by the user** (2026-09-29, from the lab's «Питание» tab): the
 omnivore strikes ×1.5 (was 1.15), smells corpses at 1.2× vision (was 1) and digests plants,
 fresh meat and rot at 80/60/20% (was 70/30/5%); the scavenger digests fresh meat at 100% (was
