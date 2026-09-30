@@ -1552,10 +1552,10 @@ mod tests {
         assert!(hint(Key::PlantEnergy).contains(&format!("существа — {tank:.0}")));
     }
 
-    /// The game's default is the player's own world: a dearer life (fewer creatures), a fifth of the
-    /// food, a softer food slope; ×20, 2:1, half lurkers.
+    /// The game's default is the player's own world: a dearer life (×2, fewer creatures; the calm
+    /// profile «Спокойнее» is ×3), a fifth of the food, a softer food slope; ×20, 2:1, half lurkers.
     #[test]
-    fn по_умолчанию_спокойный_игровой_профиль() {
+    fn the_default_is_the_players_own_world() {
         let want = Rules::default()
             .with("cost_scale", 2.0)
             .and_then(|r| r.with("speed_cost", 0.5))

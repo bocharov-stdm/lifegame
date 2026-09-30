@@ -11,12 +11,10 @@ use life_core::{CreatureGenome, Rules, Space, World, WorldConfig};
 
 const BASE: CreatureGenome = CreatureGenome::BASE;
 
-/// A world without creatures, where no plant grows by itself.
+/// A world without creatures, where no plant grows by itself (a world starts without plants).
 fn world() -> World {
     let rules = Rules::default().with("plant_rate", 0.0).unwrap();
-    let mut w = World::new(&WorldConfig { n_creatures: Some(0), rules, ..Default::default() });
-    w.plants.clear();
-    w
+    World::new(&WorldConfig { n_creatures: Some(0), rules, ..Default::default() })
 }
 
 /// A base creature (size 40, a store of 100) at (1000, y) with `energy`.

@@ -730,7 +730,7 @@ mod trait_tests {
     use crate::creature::ADULT;
 
     /// The diet split adds up to the totals: every birth and death is counted once, under its
-    /// diet; combat deaths never outnumber the kills plus the deaths nobody struck hardest.
+    /// diet; every combat death has its killer, and there were at least as many strikes.
     #[test]
     fn diet_counters_add_up_to_the_totals() {
         let cfg = WorldConfig { seed: 3, diets: vec![25.0; 4], ..Default::default() };

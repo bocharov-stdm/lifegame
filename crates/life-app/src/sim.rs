@@ -1043,4 +1043,33 @@ mod tests {
         let log: Vec<&str> = frames.iter().flat_map(|f| f.log.iter().map(|e| e.text.as_str())).collect();
         assert!(log.contains(&"энергия растения 50 → 80") && log.contains(&"подсажено существо"), "{log:?}");
     }
+
+    /// «Скорость расчёта» on the fly: the pool is rebuilt to the threads asked, never more than the
+    /// processor has, and one thread is no pool at all; the world, split among however many and
+    /// timed every tick, goes bit for bit as one thread steps it.
+    #[test]
+    fn threads_change_on_the_fly_and_the_world_goes_the_same() {
+        let cfg = WorldConfig { seed: 3, scale: 10.0, shape: life_core::Shape::R2x1, ..Default::default() };
+        let (_tx, rx) = mpsc::channel();
+        let (_recycle_tx, recycled) = mpsc::channel();
+        let mut sim = Sim::new(cfg.clone(), rx, recycled, Arc::new(Mutex::new(None)), Box::new(|| {}));
+        let mut plain = World::new(&cfg);
+        plain.set_threads(Threads::One);
+        let cpus = crate::settings::cpu_threads();
+        let mut most = 0;
+        for (threads, expected) in [(3, 3.min(cpus)), (1, 1), (1000, cpus), (2, 2.min(cpus))] {
+            sim.apply(Command::Threads { threads, fast_cores: false });
+            assert_eq!(sim.threads, expected, "{threads} asked");
+            assert_eq!(matches!(sim.pool, Threads::One), expected == 1, "{threads} asked");
+            for _ in 0..75 {
+                sim.tick();
+                plain.step();
+                most = most.max(sim.world.creatures.len());
+            }
+        }
+        assert!(most > life_core::config::PARALLEL_MIN, "big enough to be split among the threads: {most}");
+        assert!(sim.phases.iter().sum::<f64>() > 0.0, "the phases were timed");
+        let state = |w: &World| format!("{} {:?} {:?} {:?}", w.tick, w.creatures, w.plants, w.corpses);
+        assert!(state(&sim.world) == state(&plain), "the world differs from one thread's");
+    }
 }

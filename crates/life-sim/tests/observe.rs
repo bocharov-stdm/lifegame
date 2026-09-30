@@ -129,7 +129,6 @@ fn хроника_видит_растения_у_потолка() {
 #[test]
 fn карта_ставит_существо_на_место() {
     let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
-    w.plants.clear();
     w.spawn(life_core::CreatureGenome::BASE, 0.0, 0.0, None);
     let map = ascii_map(&w, 60);
     let rows = &map[1..map.len() - 1];
@@ -138,11 +137,20 @@ fn карта_ставит_существо_на_место() {
     assert_eq!(map.iter().filter(|r| r.contains('o')).count(), 1);
 }
 
-/// Samples come at the same moments as the history, and the chronicle in the order of ticks.
+/// Samples come at the same moments as the history, and the chronicle in the order of ticks. The
+/// run must go its whole length: one cut by a guard would check less and still pass.
 #[test]
 fn прогон_снимает_срезы_вместе_с_историей() {
-    let limits = Limits { ticks: 3000, sample_every: 100, ..Default::default() };
+    // the default work budget cut this run at tick 1468, unnoticed, until the stop was checked
+    let limits = Limits {
+        ticks: 3000,
+        sample_every: 100,
+        max_total_work: 1e12,
+        deadline: std::time::Duration::from_secs(600),
+        ..Default::default()
+    };
     let res = simulate(&WorldConfig { seed: 1, ..Default::default() }, &limits, |_| {});
+    assert!(res.ok() && res.ticks_done == 3000, "stopped at tick {}: {}", res.ticks_done, res.stop);
     assert_eq!(res.snapshots.len(), res.history.len());
     for (s, h) in res.snapshots.iter().zip(&res.history) {
         assert_eq!((s.tick, s.creatures, s.plants), (h.tick, h.creatures, h.plants));

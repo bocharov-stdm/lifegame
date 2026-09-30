@@ -582,7 +582,6 @@ fn хоботок_тянется_к_еде_вблизи() {
         rules: Rules::default().with("plant_rate", 0.0).unwrap(),
         ..Default::default()
     });
-    w.plants.clear();
     w.tick = 700;
     let eaters = [(0.0, 1000.0), (SCAVENGER, 1300.0), (CARNIVORE, 1600.0)];
     for (diet, y) in eaters {

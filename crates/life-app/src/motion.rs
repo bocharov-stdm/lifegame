@@ -409,10 +409,9 @@ mod tests {
     use life_core::genome::creature::Gene;
     use life_core::{CreatureGenome, WorldConfig};
 
+    /// Neither creatures nor plants: a world starts without plants.
     fn empty_world() -> World {
-        let mut w = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
-        w.plants.clear();
-        w
+        World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() })
     }
 
     const ALL: (f64, f64, f64, f64) = (0.0, 0.0, 6000.0, 4000.0);

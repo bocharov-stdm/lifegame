@@ -17,16 +17,34 @@ fn genom(size: f64) -> CreatureGenome {
     BASE.with(Gene::Size, size)
 }
 
-/// A meat-eater: the base genome is a herbivore, which neither hunts nor frightens anyone.
+/// A carnivore: fresh meat is its own food, so it hunts whatever its fullness. The base genome is a
+/// herbivore, which takes fresh meat (10%) only under its template's hunger, as foreign food.
 fn hunter(size: f64) -> CreatureGenome {
     genom(size).with(Gene::Diet, life_core::creature::Diet::Carnivore as usize as f64)
 }
 
-/// An empty world: neither creatures nor plants.
+/// An empty world: neither creatures nor plants (a world starts without plants).
 fn empty_world(rules: Rules) -> World {
-    let mut w = World::new(&WorldConfig { seed: 3, rules, n_creatures: Some(0), ..Default::default() });
-    w.plants.clear();
-    w
+    World::new(&WorldConfig { seed: 3, rules, n_creatures: Some(0), ..Default::default() })
+}
+
+/// The player's world in small (`CLAUDE.md`, baseline conditions): the game's prices and food, 2:1,
+/// half lurkers and every diet among the founders, so the hunt, corpses, rot and bones all happen
+/// within a short run. ×3 keeps it quick.
+fn game_world(seed: u64) -> WorldConfig {
+    let rules =
+        [("cost_scale", 2.0), ("speed_cost", 0.5), ("plant_rate", 0.5), ("plant_depth_steepness", 5.0)]
+            .iter()
+            .fold(Rules::default(), |r, &(k, v)| r.with(k, v).unwrap());
+    WorldConfig {
+        seed,
+        scale: 3.0,
+        shape: Shape::R2x1,
+        rules,
+        strategies: vec![1.0, 1.0],
+        diets: vec![55.0, 25.0, 10.0, 10.0],
+        ..Default::default()
+    }
 }
 
 fn creature(x: f64, y: f64, g: CreatureGenome) -> Creature {
@@ -825,10 +843,18 @@ fn цена_статов_масштабирует_всё() {
 
 // ── invariants and reproducibility ─────────────────────────────────────────
 
+/// In the default world and in the player's, with every diet: bodies inside the world, tanks
+/// within their store, every gene within its table, no eaten plant left, no id twice.
 #[test]
 fn инварианты_держатся_со_временем() {
-    let mut w = World::new(&WorldConfig { seed: 1, ..Default::default() });
-    for _ in 0..600 {
+    for cfg in [WorldConfig { seed: 1, ..Default::default() }, game_world(1)] {
+        invariants_hold(&cfg, 600);
+    }
+}
+
+fn invariants_hold(cfg: &WorldConfig, ticks: u64) {
+    let mut w = World::new(cfg);
+    for _ in 0..ticks {
         w.step();
         for v in &w.creatures {
             assert!(v.alive && v.energy > 0.0 && v.energy <= v.pheno.max_energy + 1e-9);
@@ -856,6 +882,42 @@ fn инварианты_держатся_со_временем() {
         ids.dedup();
         assert_eq!(ids.len(), w.creatures.len(), "номера существ повторяются");
     }
+}
+
+/// Energy is never made from nothing (the user's first rule): it enters only in plants and then
+/// only passes along the chain, losing some. So each tick what the living hold (their tanks and the
+/// bodies they grew — a body got for free at birth is nobody's) and what the corpses hold grows by
+/// no more than the raw energy of the plant bites taken that tick. In the player's world with every
+/// diet, so hunting, fresh meat, rot, bones and division all take part; a new mechanic that
+/// makes energy breaks this at once.
+#[test]
+fn energy_is_never_made_from_nothing() {
+    let held = |w: &World| {
+        let living: f64 = w
+            .creatures
+            .iter()
+            .map(|v| v.energy + (v.pheno.size - v.birth_size) * GROWTH_ENERGY_PER_SIZE)
+            .sum();
+        living + w.corpses.iter().map(|c| c.remaining).sum::<f64>()
+    };
+    let mut w = World::new(&game_world(1));
+    let bite = w.rules.plant_energy * w.rules.plant_bite_yield / f64::from(life_core::plant::PORTIONS);
+    for _ in 0..3000 {
+        let (before, bites) = (held(&w), w.counters.plant_bites);
+        w.step();
+        let (after, eaten) = (held(&w), (w.counters.plant_bites - bites) as f64 * bite);
+        assert!(
+            after - before <= eaten + 1e-9 * before.max(1.0),
+            "tick {}: the living and the corpses gained {:.6}, the plants gave {eaten:.6}",
+            w.tick,
+            after - before
+        );
+    }
+    let c = w.counters;
+    assert!(
+        c.born > 0 && c.combat > 0 && c.meat_bites > c.rot_bites && c.rot_bites > 0 && c.bone_bites > 0,
+        "the whole chain took part: {c:?}"
+    );
 }
 
 #[test]
@@ -983,6 +1045,8 @@ fn стартовые_численности_известны_до_постро�
 /// working and everything became O(n²)», not the machine's speed: absolute milliseconds on a
 /// slow CI wandered by more than a factor of two. The measurements alternate, the best of each
 /// world is taken (noise only slows). Plants are topped up every tick so that the load does not melt.
+/// Both worlds step on one thread: the pool's spread over however many cores are free while the
+/// other tests run is no part of the algorithm's growth.
 #[test]
 fn тик_растёт_линейно_с_численностью() {
     fn world(n: usize) -> World {
@@ -992,6 +1056,7 @@ fn тик_растёт_линейно_с_численностью() {
             n_creatures: Some(n),
             ..Default::default()
         });
+        w.set_threads(life_core::par::Threads::One);
         let packs = n / 50;
         let cols = ((packs as f64 * w.space.width / w.space.height).sqrt().ceil() as usize).max(1);
         let rows = packs.div_ceil(cols);
@@ -1061,7 +1126,7 @@ fn выбор_кликом_совпадает_с_перебором_в_живо�
             hits += best.is_some() as usize;
         }
     }
-    // a few dozen creatures in a world of 2400 click points: some clicks hit (10 on seed 1)
+    // a few dozen creatures in a world of 2400 click points: some clicks hit
     assert!(hits >= 5, "клики хоть куда-то попали ({hits})");
 }
 

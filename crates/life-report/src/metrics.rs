@@ -348,9 +348,11 @@ mod tests {
         for value in [
             "{}",
             r#"{"model":"life-behavior/1"}"#,
+            r#"{"model":"life-behavior/9"}"#,
             r#"{"model":"life-behavior/10"}"#,
             r#"{"model":"life-behavior/12"}"#,
             r#"{"model":"life-behavior/13"}"#,
+            r#"{"model":"life-behavior/14"}"#,
         ] {
             std::fs::write(&path, value).unwrap();
             assert!(Reference::load(&path).err().unwrap().contains("другой модели поведения"));

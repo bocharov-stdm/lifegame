@@ -17,7 +17,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      # every test binary runs even after one fails: a failure must not hide the others
+      - run: cargo test --workspace --no-fail-fast
       - name: Balance vs the reference
         run: cargo run -p life-report --release -- --compare reference/fingerprint.json
       - name: Balance vs the calm reference

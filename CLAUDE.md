@@ -345,7 +345,8 @@ cargo run -p life-app --release -- --scale 100 --seed 7  # straight into a world
 TINYLIFE_SHOTS=some/dir cargo test -p life-app ui_tests  # screen tests + PNGs
 ```
 
-CI (`.github/workflows/ci.yml`, Windows): fmt, clippy, tests, `--compare` against both references.
+CI (`.github/workflows/ci.yml`, Windows): fmt, clippy, tests (`--no-fail-fast`: one failing binary
+hides no others), `--compare` against both references.
 Dev builds use `opt-level = 2`.
 
 **Baseline conditions** — the user's own game; judge balance here, not on ×1 defaults:

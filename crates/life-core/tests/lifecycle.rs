@@ -308,39 +308,73 @@ fn a_young_carnivore_grows_on_plants() {
 }
 
 /// Without its program's «eat foreign food» setting (the template's, below 30% of the store) a
-/// creature eats and goes only for its own food: the scavenger leaves fresh corpses to the hunters
-/// and does not hunt, the carnivore leaves rot and bones to the scavengers. With it, anything it
-/// digests. The omnivore has no foreign food (and cannot digest bones at all).
+/// creature eats and goes only for its own food: the herbivore and the scavenger leave fresh
+/// corpses to the hunters and do not hunt, the carnivore leaves rot and bones to the scavengers.
+/// With it, anything it digests. The omnivore has no foreign food (and cannot digest bones at all).
 #[test]
 fn only_its_own_food_without_the_foreign_setting() {
     let r = Rules::default();
-    for (diet, own_fresh, own_rot, bones) in [
-        (Diet::Omnivore, true, true, false),
-        (Diet::Scavenger, false, true, true),
-        (Diet::Carnivore, true, false, false),
+    // fresh, rot, bones: its own food, and what it takes with foreign food allowed
+    for (diet, own, foreign) in [
+        (Diet::Herbivore, [false, false, false], [true, false, false]),
+        (Diet::Omnivore, [true, true, false], [true, true, false]),
+        (Diet::Scavenger, [false, true, true], [true, true, true]),
+        (Diet::Carnivore, [true, false, false], [true, true, false]),
     ] {
         let mut v = parent();
         v.genome = with_diet(v.genome, diet);
         v.apply_rules(&r, &Space::default());
-        for (stage, own) in [(Stage::Fresh, own_fresh), (Stage::Rot, own_rot), (Stage::Bones, bones)] {
-            assert_eq!(v.pheno.corpse_efficiency(stage, false) > 0.0, own, "{diet:?} on its own {stage:?}");
+        for (k, stage) in [Stage::Fresh, Stage::Rot, Stage::Bones].into_iter().enumerate() {
+            assert_eq!(
+                v.pheno.corpse_efficiency(stage, false) > 0.0,
+                own[k],
+                "{diet:?} on its own {stage:?}"
+            );
+            assert_eq!(
+                v.pheno.corpse_efficiency(stage, true) > 0.0,
+                foreign[k],
+                "{diet:?} hungry on {stage:?}"
+            );
         }
-        assert!(v.pheno.corpse_efficiency(Stage::Fresh, true) > 0.0, "{diet:?} hungry on fresh");
-        assert!(v.pheno.corpse_efficiency(Stage::Rot, true) > 0.0, "{diet:?} hungry on rot");
-        assert_eq!(
-            v.pheno.corpse_efficiency(Stage::Bones, true) > 0.0,
-            bones,
-            "{diet:?}: only one digests bones"
-        );
-        assert_eq!(v.pheno.hunts_now(false), own_fresh, "{diet:?}: hunts on its own food");
+        assert_eq!(v.pheno.hunts_now(false), own[0], "{diet:?}: hunts on its own food");
         assert!(v.pheno.hunts_now(true), "{diet:?}: hunts when foreign food is allowed");
-        assert!(v.pheno.hunts(), "{diet:?}: feared either way");
+        assert!(v.pheno.hunts(), "{diet:?}: fresh meat is some of its food, so it may be feared");
     }
 }
 
-/// Each diet has an edge of its own besides the strike: the herbivore is hardy and carries its
-/// size cheaper, the carnivore runs cheaper and smells corpses half as far again as it sees, the
-/// scavenger smells them from three times as far. Only the named term of upkeep changes.
+/// The template's hunger opens a herbivore's foreign food the very tick it comes: below 30% of its
+/// store its mode 3 lets it eat foreign food, so it bites the fresh corpse it touches, and its hunt
+/// block makes it feared. Fed, it leaves the corpse and frightens nobody.
+#[test]
+fn a_hungry_herbivore_takes_fresh_meat_a_fed_one_leaves_it() {
+    use life_core::{World, WorldConfig, corpse::Corpse};
+    for (fullness, hungry) in [(0.2, true), (0.6, false)] {
+        let mut w = World::new(&WorldConfig {
+            n_creatures: Some(0),
+            rules: Rules::default().with("plant_rate", 0.0).unwrap(),
+            ..Default::default()
+        });
+        w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, None);
+        let v = &mut w.creatures[0];
+        v.energy = v.pheno.max_energy * fullness;
+        v.reproduction_wait = 1000;
+        let mut corpse = Corpse::from_creature(&w.creatures[0], 0);
+        corpse.owner = 99;
+        (corpse.initial, corpse.remaining) = (40.0, 40.0);
+        w.corpses.push(corpse);
+        w.step();
+        let v = &w.creatures[0];
+        assert_eq!(v.pheno.diet, Diet::Herbivore);
+        assert_eq!(v.mind.stance.foreign, hungry, "foreign food at {fullness}");
+        assert_eq!(w.counters.meat_bites, hungry as u64, "a bite of the fresh corpse at {fullness}");
+        assert_eq!(v.menace().hunt(), hungry.then_some(1.5), "feared at {fullness}");
+    }
+}
+
+/// Each diet has an edge of its own besides the strike: the herbivore is a little hardier, the
+/// carnivore runs cheaper and smells corpses half as far again as it sees, the scavenger smells
+/// them from three times as far. Every diet carries its size at the same price; only the named term
+/// of upkeep changes.
 #[test]
 fn бонусы_диет() {
     let r = Rules::default();
