@@ -4,6 +4,8 @@ description = "Отчёт о балансе lifegame без окна: прого
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+# `cargo run -p life-report` runs the report, not the sweep (`src/bin/life-sweep.rs`)
+default-run = "life-report"
 
 [dependencies]
 life-core = { workspace = true, features = ["parallel"] }
