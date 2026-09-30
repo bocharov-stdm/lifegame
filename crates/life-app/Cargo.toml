@@ -12,7 +12,7 @@ eframe   = { version = "0.36", default-features = false, features = ["default_fo
 bytemuck = { version = "1", features = ["derive"] }
 clap     = { version = "4", features = ["derive"] }
 directories = "6"
-serde_json  = "1"
+serde_json.workspace = true
 rayon       = "1"
 
 [dev-dependencies]

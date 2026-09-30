@@ -10,4 +10,4 @@ life-core = { workspace = true, features = ["parallel"] }
 life-sim.workspace  = true
 clap       = { version = "4", features = ["derive"] }
 rayon      = "1"
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json.workspace = true

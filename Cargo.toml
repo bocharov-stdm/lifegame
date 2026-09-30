@@ -12,11 +12,20 @@ license = "MIT"
 [workspace.dependencies]
 life-core = { path = "crates/life-core" }
 life-sim  = { path = "crates/life-sim" }
+# One feature set wherever it is used: with `preserve_order` only in the report, `-p life-app` and
+# `--workspace` built serde_json and everything above it twice, and the game ran unlike its tests.
+serde_json = { version = "1", features = ["preserve_order"] }
 
 # The tests run real simulations of thousands of ticks: without optimisations they are tens of
-# times slower, so even the debug build is optimised.
+# times slower, so even the debug build is optimised. Line tables only, which panics and backtraces
+# need: full debug info made the build cache gigabytes (a 200 MB .pdb for each game binary).
 [profile.dev]
 opt-level = 2
+debug     = "line-tables-only"
+
+# The dependencies carry no debug info at all.
+[profile.dev.package."*"]
+debug = false
 
 [profile.release]
 lto           = "thin"

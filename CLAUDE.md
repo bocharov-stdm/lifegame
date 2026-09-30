@@ -350,7 +350,13 @@ TINYLIFE_SHOTS=some/dir cargo test -p life-app ui_tests  # screen tests + PNGs
 
 CI (`.github/workflows/ci.yml`, Windows): fmt, clippy, tests (`--no-fail-fast`: one failing binary
 hides no others), `--compare` against both references.
-Dev builds use `opt-level = 2`.
+Dev builds use `opt-level = 2` with line tables only, the dependencies without debug info.
+
+**The build cache.** Cargo never deletes old builds, and every feature set of a dependency is a
+build of its own: keep a dependency two crates share in `[workspace.dependencies]` with one feature
+list (as `serde_json`), so `-p` builds and `--workspace` share it. `play.bat`/`play.sh` drop
+`target/debug` and `target/release` past 8 GB (`target/sweeps` stays). rust-analyzer holds its
+proc-macro DLLs in `target/debug/deps`, so `cargo clean` stops on them: remove the folders instead.
 
 **Baseline conditions** — the user's own game; judge balance here, not on ×1 defaults:
 
