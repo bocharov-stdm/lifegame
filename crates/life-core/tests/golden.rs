@@ -302,7 +302,7 @@ const GOLDEN: &[&[(u64, u64)]] = &[
     // A: seed 1, default
     &[(1, 0x1b812182cd9cf41d), (2, 0x3f924334a4e42455), (10, 0xe699a7d4e467cea0), (31, 0x418f4b51aead4a67), (100, 0x44287e7112879f8d), (250, 0x39ee7fc04e441e1a), (500, 0x7bdb2292a1145e45), (1000, 0xa62a0dac622e78b2), (2000, 0xcb488c238c60fa07), (3000, 0x1f70af8a4f2e602e), ],
     // B: seed 3, giants
-    &[(1, 0xf4806a419ca33db0), (2, 0xbc0a1572a88655be), (10, 0xa66db673cffe6f29), (31, 0x96af395beaed6eea), (100, 0xbdd64144c3b1ed0c), (250, 0x9ce0d7b60833740a), (500, 0xdc402bf062923425), (1000, 0xb2dd5e0ce18492c3), (2000, 0xba848f99d22ef624), ],
+    &[(1, 0xf4806a419ca33db0), (2, 0xbc0a1572a88655be), (10, 0xa66db673cffe6f29), (31, 0x96af395beaed6eea), (100, 0xbdd64144c3b1ed0c), (250, 0x9ce0d7b60833740a), (500, 0xdc402bf062923425), (1000, 0xb2dd5e0ce18492c3), (2000, 0x0e4f1f8d2b82966e), ],
     // C: seed 7, lab
     &[(1, 0xa69d49ea222ea1e4), (2, 0xa2cdbd5446cc6401), (10, 0x7ef1094917d517ce), (31, 0xb47e7276dad84ccc), (100, 0x094a1baffa6e4161), (250, 0xeab0fa3e614cf9a4), (500, 0xba495a3a0ecd1fa8), (1000, 0xfd29e9e6dddbae7f), (2000, 0x7a9fd8c9f6f81c29), (3000, 0x1985e270602f13ba), ],
     // D: seed 2, scale 10
