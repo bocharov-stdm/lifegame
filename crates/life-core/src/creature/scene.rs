@@ -161,8 +161,11 @@ impl Scene {
         }
         let taste = self.taste(me);
         let inside = |(_, y): (f64, f64)| taste.admits(y);
+        // a diet that digests no plants neither eats nor goes for one, the plant it went to while
+        // young included
         let old = self.kept_plant.filter(|&(x, y)| {
             how.keep
+                && me.pheno.eats_plants()
                 && (x - me.x).hypot(y - me.y) <= me.pheno.vision
                 && inside((x, y))
                 && senses.nearest_plant(x, y, 1e-8).is_some()

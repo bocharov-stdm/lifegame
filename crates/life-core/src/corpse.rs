@@ -205,7 +205,7 @@ impl Corpse {
         self.y = self.y_at(self.last_decay);
         if self.remaining > 0.0
             && self.skeleton.is_none()
-            && self.last_decay > self.born + self.clock.fresh
+            && self.last_decay > self.born.saturating_add(self.clock.fresh)
             && self.y >= self.bottom
         {
             self.settled = true;

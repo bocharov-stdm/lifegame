@@ -328,7 +328,8 @@ impl World {
         let rate = self.rules.plant_rate * self.space.area_ratio();
         let mut count = rate as usize;
         if self.rng.random() < rate - count as f64 {
-            count += 1;
+            // a rate past usize (`--rule plant_rate=1e20`) saturates the cast: the cap below decides
+            count = count.saturating_add(1);
         }
         let cap = self.space.per_area(PLANT_MAX);
         let count = count.min(cap.saturating_sub(self.plants.len()));

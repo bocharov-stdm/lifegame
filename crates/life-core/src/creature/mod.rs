@@ -277,7 +277,7 @@ impl Creature {
             // a sleep is a tick without a burst: it gets its breath back as standing does
             self.burst(false);
             self.energy -= self.pheno.still_upkeep * TORPOR_UPKEEP * cheaper;
-            if self.energy <= 0.0 {
+            if self.out_of_energy() {
                 self.alive = false;
                 self.death = Some(Death::Starved);
             }
@@ -318,10 +318,17 @@ impl Creature {
         // the speed term is paid for the step actually taken: standing, resting or eating costs
         // only the body and the eyes
         self.energy -= self.pheno.step_cost(step) * cheaper;
-        if self.energy <= 0.0 {
+        if self.out_of_energy() {
             self.alive = false;
             self.death = Some(Death::Starved);
         }
+    }
+
+    /// No energy left — or not a number, from some overflow upstream: a NaN body that never
+    /// starved would live for ever on nothing.
+    #[inline(always)]
+    fn out_of_energy(&self) -> bool {
+        self.energy <= 0.0 || self.energy.is_nan()
     }
 
     /// The speed factor of a burst this tick (`BURST_*`): `wanted` in a chase or in flight with the
