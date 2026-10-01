@@ -254,9 +254,9 @@ fn cases() -> Vec<Case> {
         // food, 2:1, half lurkers and every diet among the founders — the hunters, the scavengers,
         // rot and bones, which the default world meets only through rare mutants.
         Case {
-            name: "I: seed 1, the game's world x3, every diet",
+            name: "I: seed 3, the game's world x3, every diet",
             cfg: WorldConfig {
-                seed: 1,
+                seed: 3,
                 scale: 3.0,
                 shape: Shape::R2x1,
                 rules: rules(&[
