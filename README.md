@@ -7,9 +7,10 @@ Python and pygame version is kept under the tag `python-final`.
 
 The current model is `life-behavior/15` (every behaviour in evolving programs with a memory,
 each creature read by the others by its last move, on the ocean reform).
-[CLAUDE.md](CLAUDE.md) is its exact
-description and the project's working rules; [BEHAVIOR.md](BEHAVIOR.md) records how the model got
-here and how each stage was checked.
+[CLAUDE.md](CLAUDE.md) holds the
+project's working rules and the model in brief (its exact numbers live in the code, `config.rs`
+above all); [BEHAVIOR.md](BEHAVIOR.md) records how the model got here and how each stage was
+checked.
 
 ## The world in short
 

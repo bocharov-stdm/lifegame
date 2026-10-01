@@ -1,7 +1,8 @@
 # Реформа поведения lifegame
 
 This file is the history of the behaviour model, newest stage first: what changed at each stage
-and how it was checked. The exact current model is in `CLAUDE.md`; everything below the first
+and how it was checked. The current model is in `CLAUDE.md` in brief and in the code exactly
+(`config.rs`, the program templates); everything below the first
 section describes earlier models and is kept as a record (flocks, cannibalism as a rule and the
 `--rule cannibalism` commands no longer exist).
 
