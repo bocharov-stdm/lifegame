@@ -225,11 +225,10 @@ pub fn save_reference(
     if results.is_empty() {
         return Err("эталон нельзя снять без прогонов".into());
     }
-    if let Some((seed, run)) = results.iter().find(|(_, run)| !run.ok() || run.ticks_done != ticks) {
-        return Err(format!(
-            "эталон не записан: сид {seed} остановился ({}) на тике {} из {ticks}",
-            run.stop, run.ticks_done
-        ));
+    // a seed a guard cut short is no evidence, as for `--compare`; a world that died out is an
+    // outcome, and the reference keeps it (the validation allows one of eight)
+    if let Some(why) = cut_short(results, ticks) {
+        return Err(format!("эталон не записан: {why}"));
     }
     let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(cfg.rules.get(k)))).collect();
     let runs: Vec<Value> = results
@@ -446,14 +445,27 @@ mod tests {
 
     #[test]
     fn оборванный_прогон_не_становится_эталоном() {
-        let cfg = WorldConfig { n_creatures: Some(0), ..Default::default() };
-        let world = World::new(&cfg);
-        let result = run(world, &Limits { ticks: 1, ..Default::default() }, &mut |_| {});
-        assert_eq!(result.stop, StopReason::Extinct);
+        let cfg = WorldConfig::default();
+        let limits = Limits { ticks: 20, deadline: std::time::Duration::ZERO, ..Default::default() };
+        let result = run(World::new(&cfg), &limits, &mut |_| {});
+        assert_eq!(result.stop, StopReason::Deadline);
         let path =
             std::env::temp_dir().join(format!("life-incomplete-reference-{}.json", std::process::id()));
-        let error = save_reference(&path, &cfg, 20_000, REFERENCE_SAMPLE, &[(cfg.seed, result)]).unwrap_err();
+        let error = save_reference(&path, &cfg, 20, REFERENCE_SAMPLE, &[(cfg.seed, result)]).unwrap_err();
         assert!(error.contains("эталон не записан") && error.contains("сид"), "{error}");
         assert!(!path.exists());
+    }
+
+    /// A world that died out is an outcome, not a cut run: the reference keeps it.
+    #[test]
+    fn an_extinct_world_goes_into_the_reference() {
+        let cfg = WorldConfig { n_creatures: Some(0), ..Default::default() };
+        let result = run(World::new(&cfg), &Limits { ticks: 20, ..Default::default() }, &mut |_| {});
+        assert_eq!(result.stop, StopReason::Extinct);
+        let path = std::env::temp_dir().join(format!("life-extinct-reference-{}.json", std::process::id()));
+        save_reference(&path, &cfg, 20, REFERENCE_SAMPLE, &[(cfg.seed, result)]).unwrap();
+        let loaded = Reference::load(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(loaded.is_ok(), "{:?}", loaded.err());
     }
 }

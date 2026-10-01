@@ -123,6 +123,8 @@ fn parse_plan(text: &str) -> Result<Plan, String> {
     // the comment block being read, and the one describing the variants below it
     let (mut block, mut about, mut in_block, mut seen_any) =
         (Vec::<String>::new(), String::new(), false, false);
+    // a second seeds: or args: line would silently replace the first
+    let (mut seeds_given, mut args_given) = (false, false);
     for (n, raw) in text.lines().enumerate() {
         let (code, comment) = raw.split_once('#').map_or((raw, None), |(c, k)| (c, Some(k.trim())));
         let line = code.trim();
@@ -154,12 +156,24 @@ fn parse_plan(text: &str) -> Result<Plan, String> {
         };
         if let Some(rest) = line.strip_prefix("seeds:") {
             about.clear();
+            if std::mem::replace(&mut seeds_given, true) {
+                return Err(at("seeds: twice; give every seed on one line".into()));
+            }
             plan.seeds = rest
                 .split_whitespace()
                 .map(|s| s.parse().map_err(|_| at(format!("«{s}» is not a seed"))))
                 .collect::<Result<_, _>>()?;
+            // two runs of one seed would write the same files and count as two worlds
+            if let Some(s) =
+                plan.seeds.iter().enumerate().find_map(|(i, s)| plan.seeds[..i].contains(s).then_some(s))
+            {
+                return Err(at(format!("seed {s} twice")));
+            }
         } else if let Some(rest) = line.strip_prefix("args:") {
             about.clear();
+            if std::mem::replace(&mut args_given, true) {
+                return Err(at("args: twice; give the shared arguments on one line".into()));
+            }
             plan.args = tokens(rest)?;
         } else if let Some(rest) = line.strip_prefix("variant ") {
             let (name, rest) = rest.split_once(':').ok_or_else(|| at("variant NAME: ARGS".into()))?;
@@ -167,8 +181,11 @@ fn parse_plan(text: &str) -> Result<Plan, String> {
             if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
                 return Err(at(format!("variant name «{name}»: letters, digits, _ and - only")));
             }
-            if plan.variants.iter().any(|v| v.name == name) {
-                return Err(at(format!("variant «{name}» twice")));
+            // a variant's runs lie in a folder of its name, and Windows does not tell case apart
+            if plan.variants.iter().any(|v| v.name.eq_ignore_ascii_case(&name)) {
+                return Err(at(format!(
+                    "variant «{name}» twice (names that differ only in case share a folder)"
+                )));
             }
             let (env, args): (Vec<String>, Vec<String>) = tokens(rest)?.into_iter().partition(|t| is_env(t));
             let env = env
@@ -294,15 +311,27 @@ fn build_stamp(exe: &Path) -> String {
     format!("build {} bytes, modified {modified}", meta.len())
 }
 
+/// The key a result is reused by: the command line and the build that ran it.
+fn run_key(line: &[String], exe: &Path) -> String {
+    format!("{}\n{}", line.join(" "), build_stamp(exe))
+}
+
+/// Whether the result in `--out` stands for this run of the sweep: the same command line and build,
+/// and a run that ended on its own or by a guard of its world — not one the wall clock cut, which
+/// depends on how loaded the machine was and is run again.
+fn reusable(exe: &Path, plan: &Plan, job: &Job, args: &Args) -> bool {
+    let (json, _, cmd) = job_paths(&args.out, job);
+    let key = run_key(&command_line(exe, plan, job, args.seconds, &json), exe);
+    !args.fresh
+        && fs::read_to_string(&cmd).is_ok_and(|c| c == key)
+        && read_json(&json).is_some_and(|v| v["runs"][0]["stop"].as_str().is_some_and(|s| s != "deadline"))
+}
+
 fn run_job(exe: &Path, plan: &Plan, job: &Job, args: &Args, control: &AtomicU8) -> Outcome {
     let (json, txt, cmd) = job_paths(&args.out, job);
     let line = command_line(exe, plan, job, args.seconds, &json);
-    // the key a result is reused by: the command line and the build that ran it
-    let joined = format!("{}\n{}", line.join(" "), build_stamp(exe));
-    if !args.fresh
-        && fs::read_to_string(&cmd).is_ok_and(|c| c == joined)
-        && read_json(&json).is_some_and(|v| v["runs"][0]["stop"].is_string())
-    {
+    let joined = run_key(&line, exe);
+    if reusable(exe, plan, job, args) {
         return Outcome::Reused;
     }
     let _ = fs::remove_file(&json);
@@ -396,7 +425,11 @@ fn metrics_of(json: &Value, text: &str, seed: u64, late: f64) -> Option<RunMetri
                 * s["genes"]["diet"]["shares"][DIETS[d]].as_f64().unwrap_or(0.0)
         })
     };
-    let from = ticks as f64 * (1.0 - late);
+    // The late window: of the planned run for a world that died out — nothing lives in it, whatever
+    // lived before the collapse; of the ticks done for a run a guard cut, which the medians leave
+    // out (a report older than the field gives only the ticks done).
+    let span = if run["stop"] == "extinct" { json["ticks"].as_u64().unwrap_or(ticks) } else { ticks };
+    let from = span as f64 * (1.0 - late);
     let late_snaps: Vec<&Value> =
         snaps.iter().filter(|s| s["tick"].as_f64().unwrap_or(0.0) >= from).collect();
     let mean = |f: &dyn Fn(&Value) -> f64| {
@@ -437,6 +470,8 @@ fn metrics_of(json: &Value, text: &str, seed: u64, late: f64) -> Option<RunMetri
         if parts.next() == Some("METRIC")
             && let (Some(name), Some(value)) = (parts.next(), parts.next())
             && let Ok(v) = value.parse::<f64>()
+            // a median over nothing prints NaN, which would sort last and shift the column
+            && v.is_finite()
         {
             m.extra.insert(name.to_string(), v);
         }
@@ -884,6 +919,14 @@ fn main() {
         .iter()
         .flat_map(|v| plan.seeds.iter().map(|&seed| Job { variant: v.clone(), seed }))
         .collect();
+    // a result this sweep will not reuse goes at once, not when its run's turn comes: a sweep
+    // stopped early must not summarise an older build's or command line's results as its own
+    for job in queue.iter().filter(|job| !reusable(&exe, &plan, job, &args)) {
+        let (json, txt, cmd) = job_paths(&args.out, job);
+        for file in [json, txt, cmd] {
+            let _ = fs::remove_file(file);
+        }
+    }
     let total = queue.len();
     let worst_case = Duration::from_secs(total.div_ceil(jobs_at_once) as u64 * (args.seconds + args.grace));
     println!(
@@ -1212,7 +1255,15 @@ mod tests {
             let err = parse_plan(&format!("seeds: 1\n{bad}\nvariant ok:\n")).unwrap_err();
             assert!(err.contains("set by the sweep"), "{bad}: {err}");
         }
-        assert!(parse_plan("seeds: 1\nvariant a:\nvariant a:\n").unwrap_err().contains("twice"));
+        for twice in [
+            "seeds: 1\nvariant a:\nvariant a:\n",
+            "seeds: 1\nvariant Smell:\nvariant smell:\n",
+            "seeds: 1 2 1\nvariant a:\n",
+            "seeds: 1\nseeds: 2\nvariant a:\n",
+            "seeds: 1\nargs: --scale 20\nargs: --ticks 100\nvariant a:\n",
+        ] {
+            assert!(parse_plan(twice).unwrap_err().contains("twice"), "{twice}");
+        }
         assert!(parse_plan("variant a:\n").unwrap_err().contains("seeds"));
     }
 
@@ -1269,6 +1320,26 @@ mod tests {
         assert!(!m.holds(3) && m.holds(0));
     }
 
+    /// The late window is the planned run's: a world dead at tick 900 of 2000 holds nothing late,
+    /// whatever lived just before its collapse.
+    #[test]
+    fn a_world_dead_before_the_late_window_holds_nothing() {
+        let snap = |tick: u64, n: f64| {
+            serde_json::json!({
+                "tick": tick, "creatures": n,
+                "diet_creatures": { "herbivore": n / 2.0, "omnivore": 0, "scavenger": 0, "carnivore": n / 2.0 }
+            })
+        };
+        let json = serde_json::json!({ "ticks": 2000, "runs": [{
+            "stop": "extinct", "ticks_done": 900,
+            "snapshots": [snap(0, 100.0), snap(700, 400.0), snap(800, 200.0), snap(900, 0.0)],
+        }]});
+        let m = metrics_of(&json, "", 1, 0.25).unwrap();
+        assert!(m.complete());
+        assert_eq!(m.pop_late, 0.0);
+        assert!(!m.holds(0) && !m.holds(3));
+    }
+
     #[test]
     fn metrics_read_late_means_holds_and_extra_lines() {
         let snap = |tick: u64, n: f64, c: f64| {
@@ -1283,7 +1354,9 @@ mod tests {
             "totals": { "by_diet": { "born": { "carnivore": 40 }, "kills": { "carnivore": { "herbivore": 7, "carnivore": 1 } } } },
             "snapshots": [snap(0, 100.0, 0.0), snap(500, 50.0, 0.0), snap(800, 1000.0, 0.05), snap(1000, 3000.0, 0.01)],
         }]});
-        let m = metrics_of(&json, "noise\nMETRIC carnivore_adults 12\nMETRIC bad x\n", 4, 0.25).unwrap();
+        let m =
+            metrics_of(&json, "noise\nMETRIC carnivore_adults 12\nMETRIC bad x\nMETRIC empty NaN\n", 4, 0.25)
+                .unwrap();
         assert!(m.complete());
         assert_eq!(m.pop_late, 2000.0);
         assert_eq!(m.pop_min, 50.0);

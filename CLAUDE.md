@@ -265,7 +265,8 @@ plant bites gave.
 
 `reference/*.json` — balance fingerprints (8 seeds × 20 000). `--compare` checks each metric's
 mean against the reference's per-seed range (exit 1) and refuses (exit 2) when world conditions
-differ. Re-take with `--save-reference reference/fingerprint.json` (calm: `--rule cost_scale=3`).
+differ. Re-take with `--save-reference reference/fingerprint.json` (calm: `--rule cost_scale=3`);
+a seed a guard cut short refuses it, an extinct one is kept.
 
 ### Performance
 
@@ -287,9 +288,12 @@ differ. Re-take with `--save-reference reference/fingerprint.json` (calm: `--rul
   so any thread count gives the same world (`tests/parallel.rs`, golden). Eating, combat and
   division stay sequential: the order of IDs decides who gets a portion. Where they run is
   `par::Threads` (`World::set_threads`): rayon's global pool (default; `life-report --threads`, a
-  sweep passes 1), `One`, or a `Pool` of the caller's — the game's own, sized by the settings'
-  «Скорость расчёта» (auto = the cores − 2, one thread, or 2…all by hand; `Command::Threads`
-  rebuilds it on the fly). The driving thread keeps to the
+  sweep passes 1, and its worlds then run `One`), `One`, or a `Pool` of the caller's — the game's
+  own, sized by the settings' «Скорость расчёта» (auto = the cores − 2, one thread, or 2…all by
+  hand; `Command::Threads` rebuilds it on the fly). `life-report` drives each seed on a thread of
+  its own outside the pool (`by_seed`): a pool thread driving one would take up another seed's
+  whole run while it waited for its decisions, and its deadline clock would count it. The driving
+  thread keeps to the
   fast cores (`life_sim::cores`, the settings' «Держать расчёт на быстрых ядрах», greyed out on a
   processor with one kind of core): on the user's i7-13650HX Windows moved it onto an efficiency core
   and the one-thread phases went half as slow (×100: 12.5 → 9.7 ms a tick with it, 20.5 on one
@@ -386,14 +390,18 @@ target/release/life-sweep plan.txt --out sweeps/hunt --summary-only
 - A plan: `seeds:`, shared `args:`, `variant NAME: ARGS` (a capitalised `NAME=VALUE` token is an env
   var for experiment builds); the top comment block describes the plan, a block the variants below
   it, a trailing comment one variant. Flags the sweep sets itself (`--seed`, `--seconds`,
-  `--threads`, `--json`, `--progress`, …) are rejected.
+  `--threads`, `--json`, `--progress`, …) are rejected, and so are a second `seeds:` or `args:`
+  line, a repeated seed and variant names that differ only in case (one folder on Windows).
 - Each variant × seed is its own `life-report` process, guarded by `--seconds` (a cut run is left
   out of medians) and a watchdog kill `--grace` later.
 - Summary (`summary.md/csv`, `runs.csv`): ended, survived, carnivores/scavengers *hold* (≥ 10
-  creatures and 1% over the last `--late` share), coexistence, late diet shares, late and minimum
+  creatures and 1% over the last `--late` share — of the planned run for a world that died out),
+  coexistence, late diet shares, late and minimum
   population, carnivore births and kills, `ms/tick`, `slowdown` (⚠ from 3×), `METRIC` lines.
   Parallel big worlds slow each other: use fewer `--jobs` for ×20.
-- A run is reused when its JSON and `.cmd` (command line + report build size and time) match.
+- A run is reused when its JSON and `.cmd` (command line + report build size and time) match and
+  the wall clock did not cut it. A result the sweep will not reuse is removed when it starts, so a
+  stopped sweep summarises only its own runs.
 - Progress: `OUT/progress.json` every second; the `life-progress` window shows it with pause /
   resume / stop writing `OUT/control.txt` (a pause requeues running runs); presses are logged to
   `OUT/events.log`.

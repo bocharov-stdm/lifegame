@@ -25,18 +25,19 @@ mod metrics;
 mod story;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
 use life_core::creature::strategy as creature_strategy;
 use life_core::genome::Variant;
 use life_core::genome::creature::Gene;
+use life_core::par::Threads;
 use life_core::profile::{Phase, PhaseTimes};
 use life_core::space::{MAX_SCALE, MIN_SCALE};
 use life_core::{Rules, Shape, World, WorldConfig};
 use life_sim::observe::{self, Event, ascii_map};
 use life_sim::{Limits, SimResult, run};
-use rayon::prelude::*;
 
 /// The «creatures x plants» budget per tick — like WORK_PER_TICK in Python.
 const WORK_PER_TICK: f64 = 60_000.0;
@@ -132,6 +133,31 @@ fn parse_scale(s: &str) -> Result<f64, String> {
     } else {
         Err(format!("масштаб должен быть от {MIN_SCALE} до {MAX_SCALE}"))
     }
+}
+
+/// Each seed's run on a thread of its own, as many at once as rayon's pool has threads; the results
+/// in the seeds' order. Not on the pool itself, which the worlds' decisions use: a pool thread
+/// driving a seed takes up other jobs while it waits for its decisions, a whole other seed's run
+/// among them, and its own deadline clock would count all of it.
+fn by_seed<T: Send>(seeds: &[u64], run_seed: impl Fn(u64) -> T + Sync) -> Vec<T> {
+    let next = AtomicUsize::new(0);
+    let drivers = rayon::current_num_threads().min(seeds.len());
+    let mut done: Vec<(usize, T)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..drivers)
+            .map(|_| {
+                scope.spawn(|| {
+                    std::iter::from_fn(|| {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        seeds.get(i).map(|&seed| (i, run_seed(seed)))
+                    })
+                    .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers.into_iter().flat_map(|w| w.join().expect("a seed's run")).collect()
+    });
+    done.sort_by_key(|d| d.0);
+    done.into_iter().map(|d| d.1).collect()
 }
 
 /// The largest work budget. The run multiplies it by the area squared (up to `MAX_SCALE` ** 2 =
@@ -278,52 +304,54 @@ fn main() {
     let started = Instant::now();
     let map_every = if args.maps > 0 { (ticks / args.maps as u64).max(1) } else { u64::MAX };
     // per seed: its result, its maps and its tick rate
-    let done: Vec<(u64, SimResult, Vec<story::Map>, Pace)> = seeds
-        .par_iter()
-        .map(|&seed| {
-            let cfg = WorldConfig { seed, ..base_cfg.clone() };
-            let mut maps = Vec::new();
-            let mut written = Instant::now();
-            // the tick rate, measured every PACE_EVERY ticks: (tick, ms a tick over the lap)
-            let mut pace: Pace = Vec::new();
-            let mut lap = (0, Instant::now());
-            // Stepped on several threads, the driving thread keeps to the fast cores (`cores.rs`);
-            // on one (a sweep's run beside fifteen others) it goes where the system puts it.
-            if rayon::current_num_threads() > 1 {
-                life_sim::cores::keep_on_fast_cores(true);
+    let done: Vec<(u64, SimResult, Vec<story::Map>, Pace)> = by_seed(&seeds, |seed| {
+        let cfg = WorldConfig { seed, ..base_cfg.clone() };
+        let mut maps = Vec::new();
+        let mut written = Instant::now();
+        // the tick rate, measured every PACE_EVERY ticks: (tick, ms a tick over the lap)
+        let mut pace: Pace = Vec::new();
+        let mut lap = (0, Instant::now());
+        // Stepped on several threads, the driving thread (its own, `by_seed`) keeps to the fast
+        // cores (`cores.rs`); on one (a sweep's run beside fifteen others) it goes where the
+        // system puts it.
+        let mut world = World::new(&cfg);
+        if rayon::current_num_threads() > 1 {
+            life_sim::cores::keep_on_fast_cores(true);
+        } else {
+            // a pool of one would only take the decisions over from the driving thread and hand
+            // them back each tick; the world goes the same on any number of threads
+            world.set_threads(Threads::One);
+        }
+        world.set_profiling(args.phases);
+        let res = run(world, &limits, &mut |w: &World| {
+            if w.tick.is_multiple_of(map_every) {
+                maps.push((w.tick, ascii_map(w, args.map_width)));
             }
-            let mut world = World::new(&cfg);
-            world.set_profiling(args.phases);
-            let res = run(world, &limits, &mut |w: &World| {
-                if w.tick.is_multiple_of(map_every) {
-                    maps.push((w.tick, ascii_map(w, args.map_width)));
-                }
-                if w.tick >= lap.0 + PACE_EVERY {
-                    let ms = lap.1.elapsed().as_secs_f64() * 1000.0 / (w.tick - lap.0) as f64;
-                    pace.push((w.tick, ms));
-                    lap = (w.tick, Instant::now());
-                }
-                if let Some(path) = &args.progress
-                    && w.tick.is_multiple_of(50)
-                    && written.elapsed() >= Duration::from_secs(1)
-                {
-                    // aside and renamed over: the sweep reads it several times a second and must
-                    // never see half a line (a total of 2 would put the run at its end)
-                    let tmp = path.with_extension("tick.tmp");
-                    let ms = pace.last().map_or(0.0, |p| p.1);
-                    if std::fs::write(&tmp, format!("{} {ticks} {ms:.3}", w.tick)).is_ok() {
-                        let _ = std::fs::rename(&tmp, path);
-                    }
-                    written = Instant::now();
-                }
-            });
-            // the last map is always the final state, even if the run was cut off
-            if args.maps > 0 && maps.last().map(|m| m.0) != Some(res.world.tick) {
-                maps.push((res.world.tick, ascii_map(&res.world, args.map_width)));
+            if w.tick >= lap.0 + PACE_EVERY {
+                let ms = lap.1.elapsed().as_secs_f64() * 1000.0 / (w.tick - lap.0) as f64;
+                pace.push((w.tick, ms));
+                lap = (w.tick, Instant::now());
             }
-            (seed, res, maps, pace)
-        })
-        .collect();
+            if let Some(path) = &args.progress
+                && w.tick.is_multiple_of(50)
+                && written.elapsed() >= Duration::from_secs(1)
+            {
+                // aside and renamed over: the sweep reads it several times a second and must
+                // never see half a line (a total of 2 would put the run at its end)
+                let tmp = path.with_extension("tick.tmp");
+                let ms = pace.last().map_or(0.0, |p| p.1);
+                if std::fs::write(&tmp, format!("{} {ticks} {ms:.3}", w.tick)).is_ok() {
+                    let _ = std::fs::rename(&tmp, path);
+                }
+                written = Instant::now();
+            }
+        });
+        // the last map is always the final state, even if the run was cut off
+        if args.maps > 0 && maps.last().map(|m| m.0) != Some(res.world.tick) {
+            maps.push((res.world.tick, ascii_map(&res.world, args.map_width)));
+        }
+        (seed, res, maps, pace)
+    });
     let (mut results, mut maps, mut paces) = (Vec::new(), Vec::new(), Vec::new());
     for (seed, res, m, pace) in done {
         results.push((seed, res));
