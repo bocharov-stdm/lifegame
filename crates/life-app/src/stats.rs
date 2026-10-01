@@ -250,7 +250,8 @@ impl LifeApp {
         self.view.area = None;
         self.view.cancel_area_drag();
         self.tool = Tool::Select;
-        self.sim.send(Command::SetRegion(None));
+        let world_gen = self.view.frame.as_ref().map_or(0, |f| f.world_gen);
+        self.sim.send(Command::SetRegion { area: None, world_gen });
     }
 
     /// A new region has been dragged: the thread will compute the summary, the window opens on it.
@@ -258,7 +259,8 @@ impl LifeApp {
         self.view.area = Some(area);
         self.region = None;
         self.tool = Tool::Select;
-        self.sim.send(Command::SetRegion(Some(area)));
+        let world_gen = self.view.frame.as_ref().map_or(0, |f| f.world_gen);
+        self.sim.send(Command::SetRegion { area: Some(area), world_gen });
         self.stats_open = true;
         self.stats_tab = StatsTab::Region;
     }

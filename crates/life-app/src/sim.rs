@@ -84,8 +84,12 @@ pub enum Command {
     },
     /// Select a creature by number.
     Select(Option<u64>),
-    /// A region for the genes' summary (the «Область» tool); None — clear.
-    SetRegion(Option<Area>),
+    /// A region for the genes' summary (the «Область» tool); None — clear. `world_gen`: the
+    /// frame's it was drawn on.
+    SetRegion {
+        area: Option<Area>,
+        world_gen: u64,
+    },
     /// A census of the creatures (the «Внутри видов» tab) — taken only while the world stands.
     Census,
     /// Threads for the creatures' decisions (1 — none but its own) and whether the simulation
@@ -94,10 +98,12 @@ pub enum Command {
         threads: usize,
         fast_cores: bool,
     },
-    /// New rules in the middle of a game; `note` — what has changed, for the chronicle.
+    /// New rules in the middle of a game; `note` — what has changed, for the chronicle;
+    /// `world_gen` — the frame's they were built from (the whole set, from that world's rules).
     SetRules {
         rules: Rules,
         note: String,
+        world_gen: u64,
     },
     /// Plant a base creature at a world point.
     Spawn {
@@ -191,6 +197,9 @@ struct Sim {
     watch_explosion: bool,
     view: Option<ViewRequest>,
     selected: Option<u64>,
+    /// The selected creature's stage when it last decided, with its id and the tick after:
+    /// `Selected::of`'s `decided_by`.
+    decided: Option<(u64, u64, usize)>,
     region: Option<Area>,
     render_world: bool,
     dots: bool,
@@ -266,6 +275,7 @@ impl Sim {
             watch_explosion: true,
             view: None,
             selected: None,
+            decided: None,
             region: None,
             render_world: true,
             dots: false,
@@ -439,7 +449,11 @@ impl Sim {
                 self.selected = c;
                 self.dirty = true;
             }
-            Command::SetRegion(area) => {
+            // Built from the frame of a world replaced since («Заново» pressed and the old frame
+            // still on screen while the new world was built): not for this one.
+            Command::SetRegion { world_gen, .. } | Command::SetRules { world_gen, .. }
+                if world_gen != self.world_gen => {}
+            Command::SetRegion { area, .. } => {
                 self.region = area;
                 // at once, not at the next sample: there are no samples on pause
                 self.pending.region = area.map(|a| RegionStats::of(&self.world, a, None));
@@ -453,7 +467,7 @@ impl Sim {
                     self.dirty = true;
                 }
             }
-            Command::SetRules { rules, note } => {
+            Command::SetRules { rules, note, .. } => {
                 self.world.set_rules(rules);
                 self.edits += 1;
                 self.patches_due = true;
@@ -510,6 +524,7 @@ impl Sim {
         self.ended = None;
         self.watch_explosion = true;
         self.selected = None;
+        self.decided = None;
         self.region = None;
         self.due = 0.0;
         self.last_time = Instant::now();
@@ -538,8 +553,10 @@ impl Sim {
         // the phases are measured always: a dozen clock reads a tick, and the world goes the same
         self.world.set_profiling(true);
         self.world.set_threads(self.pool.clone());
+        let stage = self.selected.and_then(|id| self.world.creature(id).map(|v| (id, v.stage())));
         let start = Instant::now();
         self.world.step();
+        self.decided = stage.map(|(id, stage)| (id, self.world.tick, stage));
         let engine_ms = start.elapsed().as_secs_f64() * 1000.0;
         self.measure_phases();
         let now = Instant::now();
@@ -561,7 +578,7 @@ impl Sim {
             self.snapshot();
         }
         if let Some(id) = self.selected
-            && Selected::of(&self.world, id).is_none()
+            && self.world.creature(id).is_none()
         {
             self.selected = None;
             self.log(None, "выбранное существо погибло".into());
@@ -822,7 +839,10 @@ impl Sim {
             shots,
             density,
             minimap,
-            selected: self.selected.and_then(|id| Selected::of(w, id)),
+            selected: self.selected.and_then(|id| {
+                let decided = self.decided.filter(|d| d.0 == id && d.1 == w.tick).map(|d| d.2);
+                Selected::of(w, id, decided)
+            }),
             samples: pending.samples,
             snapshots: pending.snapshots,
             region: pending.region,
@@ -1058,7 +1078,9 @@ mod tests {
         wait_frame(&h, |f| f.world_gen == 1);
         let rules = Rules::default().with("plant_energy", 80.0).unwrap();
         h.send(Command::SetRules {
-            rules: rules.clone(), note: "энергия растения 50 → 80".into()
+            rules: rules.clone(),
+            note: "энергия растения 50 → 80".into(),
+            world_gen: 1,
         });
         h.send(Command::Spawn { x: 3000.0, y: 2000.0 });
         let frames = frames_until(&h, |f| f.creatures == 21);

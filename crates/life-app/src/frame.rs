@@ -168,44 +168,53 @@ pub struct Selected {
 }
 
 impl Selected {
-    pub fn of(world: &World, id: u64) -> Option<Selected> {
-        world.creature(id).map(|v| Selected {
-            age: v.age,
-            health: v.health,
-            max_health: v.max_health(),
-            state: if v.fleeing() {
-                "убегает"
-            } else if v.torpid {
-                "в оцепенении"
-            } else if v.mind.fired.and_then(|i| v.program().blocks().get(usize::from(i))).map(|b| b.action)
-                == Some(life_core::creature::Action::Ambush)
-            {
-                "в засаде"
-            } else if v.mind.attack.is_some() {
-                "охотится / защищается"
-            } else if !v.adult() {
-                "растёт"
-            } else {
-                v.mind.activity.label()
-            },
-            id,
-            x: v.x,
-            y: v.y,
-            half: v.pheno.half,
-            vision: v.pheno.vision,
-            speed: v.pheno.speed,
-            energy: v.energy,
-            max_energy: v.pheno.max_energy,
-            upkeep: v.pheno.upkeep,
-            genome: v.genome.to_values(),
-            layer: v.pheno.layer(v.mind.stance.layer),
-            eating: v.meal.filter(|m| m.tick + 1 >= world.tick).map(|m| m.food),
-            programs: *v.programs,
-            stage: v.stage(),
-            modes: v.mind.modes.map(|until| until.saturating_sub(v.mind.tick)),
-            fired: v.mind.fired,
-            applied: v.mind.applied,
-            tried: v.mind.tried,
+    /// `decided_by`: the stage its last decision came from, when known — on the tick it grows up it
+    /// decided by its juvenile program, and `fired`, `applied` and `tried` are that program's.
+    pub fn of(world: &World, id: u64, decided_by: Option<usize>) -> Option<Selected> {
+        world.creature(id).map(|v| {
+            let stage = decided_by.unwrap_or(v.stage());
+            Selected {
+                age: v.age,
+                health: v.health,
+                max_health: v.max_health(),
+                state: if v.fleeing() {
+                    "убегает"
+                } else if v.torpid {
+                    "в оцепенении"
+                } else if v
+                    .mind
+                    .fired
+                    .and_then(|i| v.programs[stage].blocks().get(usize::from(i)))
+                    .map(|b| b.action)
+                    == Some(life_core::creature::Action::Ambush)
+                {
+                    "в засаде"
+                } else if v.mind.attack.is_some() {
+                    "охотится / защищается"
+                } else if !v.adult() {
+                    "растёт"
+                } else {
+                    v.mind.activity.label()
+                },
+                id,
+                x: v.x,
+                y: v.y,
+                half: v.pheno.half,
+                vision: v.pheno.vision,
+                speed: v.pheno.speed,
+                energy: v.energy,
+                max_energy: v.pheno.max_energy,
+                upkeep: v.pheno.upkeep,
+                genome: v.genome.to_values(),
+                layer: v.pheno.layer(v.mind.stance.layer),
+                eating: v.meal.filter(|m| m.tick + 1 >= world.tick).map(|m| m.food),
+                programs: *v.programs,
+                stage,
+                modes: v.mind.modes.map(|until| until.saturating_sub(v.mind.tick)),
+                fired: v.mind.fired,
+                applied: v.mind.applied,
+                tried: v.mind.tried,
+            }
         })
     }
 }

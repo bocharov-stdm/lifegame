@@ -94,6 +94,7 @@ impl LifeApp {
     /// The calm profile is available to an existing game with old settings too.
     pub fn calm_world(&mut self) {
         let Some(f) = &self.view.frame else { return };
+        let world_gen = f.world_gen;
         // a price set far past the sliders' range (`--rule size_cost=...`) can overflow the upkeep at ×3
         let rules = match f.rules.with("cost_scale", 3.0) {
             Ok(rules) => rules,
@@ -103,11 +104,13 @@ impl LifeApp {
         self.settings.set(settings::Key::CostScale, 3.0);
         self.save_settings();
         self.sim.send(Command::SetRules {
-            rules, note: "спокойный профиль: цена жизни 150".into()
+            rules,
+            note: "спокойный профиль: цена жизни 150".into(),
+            world_gen,
         });
         self.sim.send(Command::SetSpeed(crate::sim::DEFAULT_SPEED));
         if let Some(g) = &mut self.game {
-            g.rules_changed = true;
+            g.edited = true;
         }
         self.toast("30 т/с · цена жизни 150; численность изменится постепенно".into());
     }
@@ -134,7 +137,13 @@ impl LifeApp {
                         self.side_tab = SideTab::Creature;
                         self.side_open = true;
                     }
-                    Tool::Spawn => self.sim.send(Command::Spawn { x, y }),
+                    Tool::Spawn => {
+                        self.sim.send(Command::Spawn { x, y });
+                        // the planted creature forks the world's stream: a repeat parts from here
+                        if let Some(g) = &mut self.game {
+                            g.edited = true;
+                        }
+                    }
                     Tool::Area => {}
                 },
                 Some(Click::Area(area)) => self.set_region(area),
@@ -449,10 +458,10 @@ impl LifeApp {
         ui.collapsing("Повторить без окна", |ui| {
             let cmd = report_command(&game.start, f.tick);
             ui.label(RichText::new(&cmd).monospace().size(11.5));
-            if game.rules_changed {
+            if game.edited {
                 ui.colored_label(
                     DANGER,
-                    "Правила меняли на ходу: повтор совпадёт только до первого изменения.",
+                    "Мир меняли на ходу (правила, подсадка): повтор совпадёт только до первого изменения.",
                 );
             }
             if ui.button("Скопировать команду").clicked() {
@@ -525,12 +534,9 @@ impl LifeApp {
     }
 
     fn lab_window(&mut self, ctx: &egui::Context) {
-        let Some((current, space, seed)) = self
-            .view
-            .frame
-            .as_ref()
-            .map(|f| (f.rules.clone(), life_core::Space { width: f.world_w, height: f.world_h }, f.seed))
-        else {
+        let Some((current, space, seed, world_gen)) = self.view.frame.as_ref().map(|f| {
+            (f.rules.clone(), life_core::Space { width: f.world_w, height: f.world_h }, f.seed, f.world_gen)
+        }) else {
             return;
         };
         let mut open = true;
@@ -637,9 +643,9 @@ impl LifeApp {
                     {
                         match self.lab.rules_over(&current, &now) {
                             Ok(rules) => {
-                                self.sim.send(Command::SetRules { rules, note });
+                                self.sim.send(Command::SetRules { rules, note, world_gen });
                                 if let Some(g) = &mut self.game {
-                                    g.rules_changed = true;
+                                    g.edited = true;
                                 }
                             }
                             Err(e) => self.toast(format!("правила не применены: {e}")),

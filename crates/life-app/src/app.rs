@@ -46,8 +46,9 @@ pub enum Tool {
 pub struct Game {
     /// What the game began with: «Заново» repeats exactly that.
     pub start: WorldConfig,
-    /// The rules were changed on the fly: a repeat without a window matches only up to the change.
-    pub rules_changed: bool,
+    /// The world was changed on the fly (rules, a planted creature): a repeat without a window
+    /// matches only up to the change.
+    pub edited: bool,
 }
 
 pub struct LifeApp {
@@ -116,7 +117,7 @@ impl LifeApp {
         let settings = settings_path.as_deref().map(Settings::load).unwrap_or_default();
 
         let (cfg, screen, game) = match start {
-            Some(cfg) => (cfg.clone(), Screen::Game, Some(Game { start: cfg, rules_changed: false })),
+            Some(cfg) => (cfg.clone(), Screen::Game, Some(Game { start: cfg, edited: false })),
             None => {
                 let demo = Settings { scale: 1.0, ..settings.clone() };
                 (demo.world_config(random_seed()), Screen::Menu, None)
@@ -215,7 +216,7 @@ impl LifeApp {
         self.save_settings();
         self.sim.send(Command::NewWorld(cfg.clone()));
         self.sim.send(Command::SetPaused(false));
-        self.game = Some(Game { start: cfg, rules_changed: false });
+        self.game = Some(Game { start: cfg, edited: false });
         self.lab = self.settings.clone();
         self.tool = Tool::Select;
         self.screen = Screen::Game;
@@ -224,7 +225,7 @@ impl LifeApp {
     pub fn restart(&mut self) {
         self.sim.send(Command::Restart);
         if let Some(g) = &mut self.game {
-            g.rules_changed = false;
+            g.edited = false;
         }
     }
 
@@ -284,6 +285,11 @@ impl eframe::App for LifeApp {
         let ctx = ui.ctx().clone();
         self.apply_display(&ctx);
         self.apply_threads();
+        // the window's ✕ ends the program past «Назад» and «Начать»: what was changed on the
+        // «Новый мир» screen is kept as they keep it
+        if ctx.input(|i| i.viewport().close_requested()) {
+            self.save_settings();
+        }
         self.receive(&ctx);
         let dt = ctx.input(|i| i.stable_dt).min(0.1) as f64;
         if dt > 0.0 {

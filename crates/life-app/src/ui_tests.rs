@@ -516,7 +516,7 @@ fn спокойный_профиль_работает_на_паузе() {
         assert_eq!(f.rules.cost_scale, 3.0);
         assert_eq!(crate::sim::SPEEDS[f.status.speed_index], Some(30.0));
         assert_eq!(f.tick, tick);
-        assert!(h.state().game.as_ref().unwrap().rules_changed);
+        assert!(h.state().game.as_ref().unwrap().edited);
     });
 }
 
