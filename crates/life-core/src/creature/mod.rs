@@ -98,6 +98,8 @@ pub struct Creature {
     pub alive: bool,
     pub age: f64,
     pub health: f64,
+    /// Ticks since it was last struck or shot (its own strikes do not count): healing waits for
+    /// this calm (`Action::Heal`).
     pub peaceful_ticks: u32,
     pub reproduction_wait: u64,
     pub death: Option<Death>,

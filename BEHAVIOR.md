@@ -10,6 +10,16 @@ section describes earlier models and is kept as a record (flocks, cannibalism as
 
 Model `life-behavior/15`, format `life-report/12`.
 
+**Healing waits for a calm since it was struck** (2026-10-01, the user's choice: «не били»). A
+strike used to break the striker's calm as well as the victim's, so a hunter whom nobody struck back
+never healed while it hunted — against the setting's own words, «его столько тиков не били». Now
+only being struck or shot breaks it; the victims heal as before. Golden and the references are to
+be re-recorded on Windows. Unmeasured.
+
+**Wander and torpor fixed** (2026-09-30): a wander target out of a changed layer is dropped at once
+instead of walked to first; torpor gets the breath back like standing, so «winded → torpor» no
+longer sleeps for ever. Golden and the references re-recorded. Unmeasured.
+
 **The herbivore recalibrated by the user** (2026-09-29, the lab's «Питание» tab again): health
 ×1.1 (was 1.5) and the omnivore's ×1.05 (was 1); the herbivore's size costs the base (was ×0.85);
 it digests fresh meat at 10% (was 0) — foreign food, so only a hungry one (the template's mode 3)

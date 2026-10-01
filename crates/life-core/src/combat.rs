@@ -188,7 +188,8 @@ pub(crate) fn resolve_with(
                 tick,
             });
         }
-        creatures[i].peaceful_ticks = 0;
+        // the calm healing waits for is broken by being struck, not by striking: a hunter whom
+        // nobody strikes back heals between its strikes (`Action::Heal`)
         creatures[j].peaceful_ticks = 0;
         damage[j] += d;
         let diets = (creatures[i].pheno.diet as usize, creatures[j].pheno.diet as usize);
@@ -297,6 +298,22 @@ mod tests {
         assert_eq!(by.deaths[h][Death::Combat as usize], 1);
         assert_eq!(by.strikes.iter().flatten().sum::<u64>(), 2);
     }
+    /// Healing waits for a calm since it was last struck: a strike starts the victim's over, not the
+    /// striker's.
+    #[test]
+    fn a_strike_breaks_the_victims_calm_not_the_strikers() {
+        let mut w = world();
+        w.spawn(CreatureGenome::BASE.with(Gene::Size, 100.0), 1000.0, 1000.0, Some(20.0));
+        let prey = w.spawn(CreatureGenome::BASE.with(Gene::Size, 30.0), 1000.0, 1000.0, Some(50.0));
+        for v in &mut w.creatures {
+            v.peaceful_ticks = 100;
+        }
+        aim(&mut w.creatures[0], prey);
+        hit(&mut w);
+        assert!(w.creatures[1].health < w.creatures[1].max_health(), "struck");
+        assert_eq!((w.creatures[0].peaceful_ticks, w.creatures[1].peaceful_ticks), (100, 0));
+    }
+
     #[test]
     fn a_hungry_creature_does_not_bite_whoever_it_bumps_into() {
         let mut w = world();
