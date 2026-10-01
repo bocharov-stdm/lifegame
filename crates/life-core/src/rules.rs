@@ -378,8 +378,32 @@ fn unknown(key: &str) -> String {
 impl Rules {
     /// A copy with another value of one rule. An unknown name and a non-finite number are an
     /// error, not silence: NaN breaks not arithmetic but loops (the mutation waits for
-    /// gauss >= -0.9, and with a NaN sigma it never will).
+    /// gauss >= -0.9, and with a NaN sigma it never will). So is a value whose upkeep leaves f64
+    /// with the other rules as they are (`fits`).
     pub fn with(&self, key: &str, value: f64) -> Result<Rules, String> {
+        self.with_all([(key, value)])
+    }
+
+    /// A copy with several rules changed at once (the `--rule` flags, a reference's rules, the
+    /// lab's «Применить»): each value is checked as `with` checks it, the upkeep only for the
+    /// whole set, so their order does not matter — a price that a later scale brings back into
+    /// the numbers is not refused on the way.
+    pub fn with_all<K: AsRef<str>>(
+        &self,
+        changes: impl IntoIterator<Item = (K, f64)>,
+    ) -> Result<Rules, String> {
+        let mut r = self.clone();
+        let mut named = Vec::new();
+        for (key, value) in changes {
+            let key = key.as_ref();
+            r = r.put(key, value)?;
+            named.push(format!("{key}={value}"));
+        }
+        r.fits(&named.join(", "))
+    }
+
+    /// One rule's value checked by its own limits, the upkeep not yet (`with_all`).
+    fn put(&self, key: &str, value: f64) -> Result<Rules, String> {
         if !value.is_finite() {
             return Err(format!("правило {key}: нужно конечное число, а не {value}"));
         }
@@ -398,7 +422,7 @@ impl Rules {
                 return Err(format!("правило {key}: нужно {need}, а не {value}"));
             }
             *r.diets[d].slot(edge).expect("ребро разобрано split_diet_key") = value;
-            return r.fits(key, value);
+            return Ok(r);
         }
         if let Some((along, param)) = flora::split_key(key) {
             FoodAxis::check(param, value)
@@ -498,13 +522,13 @@ impl Rules {
             return Err(format!("правило {key}: нужно {need}, а не {value}"));
         }
         r.renormalize();
-        r.fits(key, value)
+        Ok(r)
     }
 
     /// A finite input can still overflow the upkeep (a price of 1e300): infinity minus infinity is
     /// NaN, and a creature with NaN energy never starves. Checked for every diet on a body far past
-    /// any grown one.
-    fn fits(self, key: &str, value: f64) -> Result<Rules, String> {
+    /// any grown one; `changes` names the rules just set, for the error.
+    fn fits(self, changes: &str) -> Result<Rules, String> {
         let finite = self.diets.iter().all(|d| {
             let far = self.upkeep_parts(
                 BASE_SIZE * FAR_STAT,
@@ -514,23 +538,40 @@ impl Rules {
             far.at(BASE_SPEED * FAR_STAT).is_finite()
         });
         if !finite {
-            return Err(format!("правило {key}: при {value} расход тела выходит за пределы чисел"));
+            return Err(format!("при {changes} расход тела выходит за пределы чисел"));
         }
         Ok(self)
     }
 
     /// Like `with`, but the value is text: a number, and for a food profile also a name
-    /// (`plant_width_profile=waves`). For the `--rule` flags of the report and the game.
+    /// (`plant_width_profile=waves`).
     pub fn with_text(&self, key: &str, text: &str) -> Result<Rules, String> {
+        self.with_texts([(key, text)])
+    }
+
+    /// `with_all` with text values, for the `--rule` flags of the report and the game.
+    pub fn with_texts<'a>(
+        &self,
+        changes: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Result<Rules, String> {
+        let values = changes
+            .into_iter()
+            .map(|(key, text)| Ok((key, Self::value_of(key, text)?)))
+            .collect::<Result<Vec<_>, String>>()?;
+        self.with_all(values)
+    }
+
+    /// A rule's value from text: a number, and for a food profile also a name.
+    fn value_of(key: &str, text: &str) -> Result<f64, String> {
         let text = text.trim();
         if !RULE_KEYS.contains(&key) {
             return Err(unknown(key));
         }
         if let Ok(value) = text.parse::<f64>() {
-            return self.with(key, value);
+            return Ok(value);
         }
         match (flora::split_key(key), Profile::parse(text)) {
-            (Some((_, "profile")), Some(p)) => self.with(key, p.index()),
+            (Some((_, "profile")), Some(p)) => Ok(p.index()),
             (Some((_, "profile")), None) => Err(format!(
                 "правило {key}: нет профиля «{text}»; есть {}",
                 Profile::ALL.map(|p| p.key()).join(", ")
@@ -729,6 +770,24 @@ mod tests {
             let far = r.upkeep_parts(BASE_SIZE * FAR_STAT, BASE_VISION * FAR_STAT, [1.0, 1.0]);
             assert!(far.at(BASE_SPEED * FAR_STAT).is_finite(), "{key}");
         }
+    }
+
+    /// Several rules are checked as a whole: a price that overflows alone is taken with a scale that
+    /// brings it back, in either order.
+    #[test]
+    fn a_set_of_rules_is_checked_whole_in_any_order() {
+        let rules = Rules::default();
+        assert!(rules.with("size_cost", 1e306).is_err(), "alone it overflows");
+        let price_first = rules.with_all([("size_cost", 1e306), ("cost_scale", 1e-3)]);
+        let scale_first = rules.with_all([("cost_scale", 1e-3), ("size_cost", 1e306)]);
+        assert!(price_first.is_ok(), "{price_first:?}");
+        assert_eq!(price_first, scale_first);
+        assert_eq!(
+            rules.with_texts([("size_cost", "1e306"), ("cost_scale", "1e-3")]),
+            scale_first,
+            "the flags' text the same"
+        );
+        assert!(rules.with_all([("cost_scale", 1e-3), ("size_cost", 1e306), ("cost_scale", 1.0)]).is_err());
     }
 
     #[test]

@@ -219,8 +219,10 @@ observer, `life-app` alone knows the screen.
 - `rules.rs` — `Rules`, the lab's world rules (`World::set_rules`, `apply_rules` recomputes
   phenotypes). `Rules::default()` is `config.rs` bit for bit. Changing an exponent renormalises its
   coefficient. `with()` rejects unknown keys, non-finite and senseless values (an exponent over 10,
-  an upkeep that leaves f64), never merely unbalanced ones. A new rule: `RULE_KEYS` + `with`/`get` + a `FIELDS` entry in
-  `life-app/src/settings.rs`.
+  an upkeep that leaves f64), never merely unbalanced ones. Several rules at once (`--rule` flags, a
+  reference's rules, the lab's «Применить») go through `with_all`/`with_texts`: the upkeep is checked
+  for the whole set, so their order does not matter; the game shows a refusal, never panics. A new
+  rule: `RULE_KEYS` + `with`/`get` + a `FIELDS` entry in `life-app/src/settings.rs`.
 - `world.rs` — `WorldConfig`, `World::step()` (phase order only), counters, `spawn_*`.
 - `genome/` — gene table, `CreatureGenome`, mutation.
 - `creature/` — `mod.rs` (`act`, feeding, division, `grow_old`), `phenotype.rs`, `program.rs`,

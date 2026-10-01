@@ -94,7 +94,11 @@ impl LifeApp {
     /// The calm profile is available to an existing game with old settings too.
     pub fn calm_world(&mut self) {
         let Some(f) = &self.view.frame else { return };
-        let rules = f.rules.with("cost_scale", 3.0).expect("допустимая стоимость содержания");
+        // a price set far past the sliders' range (`--rule size_cost=...`) can overflow the upkeep at ×3
+        let rules = match f.rules.with("cost_scale", 3.0) {
+            Ok(rules) => rules,
+            Err(e) => return self.toast(format!("спокойный профиль не применён: {e}")),
+        };
         self.lab.take_rules(&rules);
         self.settings.set(settings::Key::CostScale, 3.0);
         self.save_settings();
@@ -631,10 +635,14 @@ impl LifeApp {
                     if ui.add_enabled(change.is_some(), theme::primary("Применить")).clicked()
                         && let Some(note) = change.clone()
                     {
-                        let rules = self.lab.rules_over(&current, &now);
-                        self.sim.send(Command::SetRules { rules, note });
-                        if let Some(g) = &mut self.game {
-                            g.rules_changed = true;
+                        match self.lab.rules_over(&current, &now) {
+                            Ok(rules) => {
+                                self.sim.send(Command::SetRules { rules, note });
+                                if let Some(g) = &mut self.game {
+                                    g.rules_changed = true;
+                                }
+                            }
+                            Err(e) => self.toast(format!("правила не применены: {e}")),
                         }
                     }
                     if ui.add_enabled(change.is_some(), egui::Button::new("Отменить")).clicked() {

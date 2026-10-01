@@ -116,6 +116,9 @@ pub fn run(mut world: World, limits: &Limits, on_tick: &mut dyn FnMut(&World)) -
     let max_creatures = (limits.max_creatures as f64 * area) as usize;
     // the work ~ creatures x plants, both quantities grow with the area
     let max_work = limits.max_total_work * area * area;
+    // a budget that is not a finite number — NaN, infinity, or one that overflowed over the area —
+    // would switch the budget off: such a run stops after its first tick instead
+    let unbounded = !max_work.is_finite();
 
     // a step of 0 means «sample as often as possible», not a division by zero
     let sample_every = limits.sample_every.max(1);
@@ -138,8 +141,7 @@ pub fn run(mut world: World, limits: &Limits, on_tick: &mut dyn FnMut(&World)) -
             stop = StopReason::Explosion;
             break;
         }
-        // a NaN budget stops the run instead of switching the budget off
-        if total_work > max_work || max_work.is_nan() {
+        if unbounded || total_work > max_work {
             stop = StopReason::Overload;
             break;
         }

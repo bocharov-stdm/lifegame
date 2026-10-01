@@ -134,24 +134,32 @@ fn parse_scale(s: &str) -> Result<f64, String> {
     }
 }
 
+/// The largest work budget. The run multiplies it by the area squared (up to `MAX_SCALE` ** 2 =
+/// 1e8), and f64 ends at 1.8e308: a larger one would overflow there into infinity.
+const MAX_BUDGET: f64 = 1e300;
+const _: () = assert!(MAX_BUDGET * MAX_SCALE * MAX_SCALE < f64::MAX);
+
 /// A work budget is a finite number: NaN or infinity would switch the budget off, and every run
 /// must be capped.
 fn parse_budget(s: &str) -> Result<f64, String> {
     let budget: f64 = s.trim().parse().map_err(|_| format!("«{s}» — не число"))?;
-    if budget.is_finite() && budget >= 0.0 {
+    if (0.0..=MAX_BUDGET).contains(&budget) {
         Ok(budget)
     } else {
-        Err("бюджет работы — конечное число не меньше нуля".into())
+        Err(format!("бюджет работы — число от 0 до {MAX_BUDGET:e}"))
     }
 }
 
 fn parse_rules(pairs: &[String]) -> Result<Rules, String> {
-    let mut rules = Rules::default();
-    for pair in pairs {
-        let (key, value) = pair.split_once('=').ok_or(format!("правило «{pair}»: нужно имя=число"))?;
-        rules = rules.with_text(key.trim(), value)?;
-    }
-    Ok(rules)
+    let changes = pairs
+        .iter()
+        .map(|pair| {
+            let (key, value) = pair.split_once('=').ok_or(format!("правило «{pair}»: нужно имя=число"))?;
+            Ok((key.trim(), value))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    // checked as a whole: the order of the flags does not matter
+    Rules::default().with_texts(changes)
 }
 
 /// A mix of strategies: the shares are non-negative, sum to more than zero, and there are no

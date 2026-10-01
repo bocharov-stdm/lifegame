@@ -65,12 +65,15 @@ fn parse_scale(s: &str) -> Result<f64, String> {
 }
 
 fn parse_rules(pairs: &[String]) -> Result<Rules, String> {
-    let mut rules = Rules::default();
-    for pair in pairs {
-        let (key, value) = pair.split_once('=').ok_or(format!("правило «{pair}»: нужно имя=число"))?;
-        rules = rules.with_text(key.trim(), value)?;
-    }
-    Ok(rules)
+    let changes = pairs
+        .iter()
+        .map(|pair| {
+            let (key, value) = pair.split_once('=').ok_or(format!("правило «{pair}»: нужно имя=число"))?;
+            Ok((key.trim(), value))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    // checked as a whole: the order of the flags does not matter
+    Rules::default().with_texts(changes)
 }
 
 /// Without a console of its own (a release build on Windows) the errors of the flags and `--help`

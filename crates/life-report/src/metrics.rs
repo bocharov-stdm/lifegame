@@ -97,10 +97,12 @@ impl Reference {
         let world = WorldConfig::default();
         let mut rules = Rules::default();
         if let Some(saved) = data.get("rules").and_then(Value::as_object) {
-            for (key, value) in saved {
-                let value = value.as_f64().ok_or(format!("правило {key} — не число"))?;
-                rules = rules.with(key, value)?;
-            }
+            let changes = saved
+                .iter()
+                .map(|(key, value)| Ok((key, value.as_f64().ok_or(format!("правило {key} — не число"))?)))
+                .collect::<Result<Vec<_>, String>>()?;
+            // checked as a whole: the order of the saved keys does not matter
+            rules = rules.with_all(changes)?;
         }
         let start = &data["start"];
         let num = |v: &Value, default: f64| v.as_f64().unwrap_or(default);

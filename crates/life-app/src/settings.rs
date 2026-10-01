@@ -1343,15 +1343,14 @@ impl Settings {
 
     /// The world's `current` rules with only the sliders moved since `taken` read them from it (the
     /// lab's «Применить»): a rule nobody touched keeps its exact value, even one off the sliders' grid
-    /// or past their range (`life-app --rule cost_scale=20`), which the sliders would clamp.
-    pub fn rules_over(&self, current: &Rules, taken: &Settings) -> Rules {
-        let mut rules = current.clone();
-        for f in FIELDS.iter().filter(|f| f.live() && self.get(f.key) != taken.get(f.key)) {
+    /// or past their range (`life-app --rule cost_scale=20`), which the sliders would clamp. So a
+    /// slider's value can still be refused: with such a rule its upkeep may leave the numbers.
+    pub fn rules_over(&self, current: &Rules, taken: &Settings) -> Result<Rules, String> {
+        current.with_all(FIELDS.iter().filter(|f| f.live() && self.get(f.key) != taken.get(f.key)).map(|f| {
             let v = self.get(f.key);
             let v = if f.key == Key::PlantGrowth { Rules::default().plant_rate * v } else { v };
-            rules = rules.with(f.rule.expect("правило"), v).expect("значение ползунка допустимо");
-        }
-        rules
+            (f.rule.expect("правило"), v)
+        }))
     }
 
     /// The rules' sliders from the world's current rules (for the lab on the fly).
@@ -1763,8 +1762,16 @@ mod tests {
         let mut lab = taken.clone();
         lab.set(Key::PlantEnergy, 80.0);
         assert_eq!(describe_change(&taken, &lab).as_deref(), Some("правила: энергия растения 50 → 80"));
-        assert_eq!(lab.rules_over(&current, &taken), current.with("plant_energy", 80.0).unwrap());
-        assert_eq!(taken.rules_over(&current, &taken), current, "nothing moved, nothing changes");
+        assert_eq!(lab.rules_over(&current, &taken), current.with("plant_energy", 80.0));
+        assert_eq!(taken.rules_over(&current, &taken), Ok(current), "nothing moved, nothing changes");
+
+        // past the sliders' range a slider's own value can overflow the upkeep: refused, not a panic
+        let costly = Rules::default().with("cost_scale", 1e303).unwrap();
+        let mut taken = Settings::default();
+        taken.take_rules(&costly);
+        let mut lab = taken.clone();
+        lab.set(Key::SpeedCost, 10.0);
+        assert!(lab.rules_over(&costly, &taken).is_err());
     }
 
     /// An old file (with predator keys, «n_vegetarians», the removed `cannibal_ratio` rule and
