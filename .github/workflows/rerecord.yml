@@ -1,0 +1,60 @@
+# Records on Windows what a cloud session cannot (it runs no tests or simulations: Linux maths
+# differs in the last bit): golden and both balance references, after a deliberate change of
+# behaviour. Runs by hand (Actions → Re-record) or on a push whose commit message holds
+# «[re-record]». It prints which seeds of the player's world take the whole food chain in (for the
+# energy test and golden's case I), records golden and the references, runs every test and the
+# balance against them, and only then commits them to the branch in a commit of their own.
+name: Re-record
+
+on:
+  workflow_dispatch:
+  push:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rerecord-${{ github.ref }}
+
+jobs:
+  rerecord:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[re-record]')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: The food chain by seed
+        run: cargo test -p life-core --test engine -- --ignored --nocapture the_chain_by_seed
+      - name: Golden
+        run: cargo test -p life-core --test golden -- --nocapture
+        env:
+          GOLDEN_RECORD: "1"
+      - name: The reference
+        run: cargo run -p life-report --release -- --save-reference reference/fingerprint.json
+      - name: The calm reference
+        run: >-
+          cargo run -p life-report --release --
+          --save-reference reference/calm-fingerprint.json --rule cost_scale=3
+      # what CI checks, against what was just recorded
+      - name: Every test
+        run: cargo test --workspace --no-fail-fast
+      - name: Balance vs the new references
+        run: |
+          cargo run -p life-report --release -- --compare reference/fingerprint.json
+          cargo run -p life-report --release -- --compare reference/calm-fingerprint.json --rule cost_scale=3
+      - name: Commit
+        shell: bash
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/life-core/tests/golden.rs reference/
+          if git diff --cached --quiet; then
+            echo "golden and the references are as recorded: nothing to commit"
+            exit 0
+          fi
+          git commit -m "Re-record golden and the references on Windows" \
+            -m "Recorded by the Re-record workflow from $GITHUB_SHA."
+          git push origin "HEAD:refs/heads/$BRANCH"

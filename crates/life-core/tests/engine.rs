@@ -884,6 +884,38 @@ fn invariants_hold(cfg: &WorldConfig, ticks: u64) {
     }
 }
 
+/// Hunting, fresh meat, rot, bones and division all took part.
+fn whole_chain(c: &life_core::world::Counters) -> bool {
+    c.born > 0 && c.combat > 0 && c.meat_bites > c.rot_bites && c.rot_bites > 0 && c.bone_bites > 0
+}
+
+/// Which seeds of the player's world take the whole food chain in within 3000 ticks, as the energy
+/// test and golden's case I need: for picking another seed when a change of behaviour leaves theirs
+/// without it (the Re-record workflow prints it).
+/// `cargo test -p life-core --test engine -- --ignored --nocapture the_chain_by_seed`
+#[test]
+#[ignore]
+fn the_chain_by_seed() {
+    for seed in 1..=16 {
+        let mut w = World::new(&game_world(seed));
+        for _ in 0..3000 {
+            w.step();
+        }
+        let c = w.counters;
+        println!(
+            "seed {seed:>2}: whole chain {:<5} alive {:>4}, born {}, combat {}, shots {}, meat {}, rot {}, bones {}",
+            whole_chain(&c),
+            w.creatures.len(),
+            c.born,
+            c.combat,
+            c.ranged_shots,
+            c.meat_bites,
+            c.rot_bites,
+            c.bone_bites
+        );
+    }
+}
+
 /// Energy is never made from nothing (the user's first rule): it enters only in plants and then
 /// only passes along the chain, losing some. So each tick what the living hold (their tanks and the
 /// bodies they grew — a body got for free at birth is nobody's) and what the corpses hold grows by
@@ -914,10 +946,7 @@ fn energy_is_never_made_from_nothing() {
         );
     }
     let c = w.counters;
-    assert!(
-        c.born > 0 && c.combat > 0 && c.meat_bites > c.rot_bites && c.rot_bites > 0 && c.bone_bites > 0,
-        "the whole chain took part: {c:?}"
-    );
+    assert!(whole_chain(&c), "the whole chain took part: {c:?}");
 }
 
 #[test]

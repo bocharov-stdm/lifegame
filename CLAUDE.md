@@ -127,6 +127,12 @@ I/O; `life-app` alone knows the screen.
   (the test prints the table) in its own commit.
   Bit-for-bit identity is proven by comparing golden output of two builds (`git worktree`).
   `energy_is_never_made_from_nothing` (`tests/engine.rs`) checks the energy rule tick by tick.
+- **Re-recording** happens on Windows only, so from a cloud session through CI: push the change
+  with «[re-record]» in the commit message (or run Actions → Re-record). The workflow
+  (`rerecord.yml`) prints which seeds of the player's world take the whole food chain in (the
+  energy test and golden's case I need it; pick another seed if theirs lost it), records golden
+  (`GOLDEN_RECORD`) and both references, runs every test and the balance against them, and commits
+  them to the branch. Read its log through the GitHub tools.
 - **References** (`reference/*.json`, 8 seeds × 20 000): `--compare` checks each metric's mean
   against the reference's per-seed range (exit 1) and refuses differing world conditions (exit 2).
   Re-take with `--save-reference reference/fingerprint.json` (calm: `--rule cost_scale=3`); a seed

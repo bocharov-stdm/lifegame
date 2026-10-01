@@ -381,6 +381,11 @@ fn мир_ведёт_себя_как_при_записи() {
                 });
         }
     }
+    // the Re-record workflow (`.github/workflows/rerecord.yml`): the table goes into this file
+    // instead of being compared — a deliberate change of behaviour, recorded in a commit of its own
+    if std::env::var_os("GOLDEN_RECORD").is_some() {
+        return record(&table);
+    }
     if GOLDEN.is_empty() {
         eprintln!("No fingerprints for this system. The table to paste:\n{table}");
         return;
@@ -388,6 +393,24 @@ fn мир_ведёт_себя_как_при_записи() {
     if let Some(m) = first_mismatch {
         panic!("The world's behaviour changed. {m}.\nIf that is meant, the new table:\n{table}");
     }
+}
+
+/// Writes `table` over the recorded one in this file (`GOLDEN_RECORD`). Only on Windows, where the
+/// fingerprints are checked: another system's maths may differ in the last bit.
+fn record(table: &str) {
+    if !cfg!(windows) {
+        panic!("golden is recorded on Windows only");
+    }
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden.rs");
+    let source = std::fs::read_to_string(path).expect("golden.rs is read");
+    // a Windows checkout may hold the file with CRLF
+    let nl = if source.contains("\r\n") { "\r\n" } else { "\n" };
+    let head = ["#[cfg(windows)]", "#[rustfmt::skip]", "const GOLDEN: &[&[(u64, u64)]] = &[", ""].join(nl);
+    let start = source.find(&head).expect("the recorded table") + head.len();
+    let end = start + source[start..].find(&format!("];{nl}")).expect("the end of the recorded table");
+    let recorded = format!("{}{}{}", &source[..start], table.replace('\n', nl), &source[end..]);
+    std::fs::write(path, recorded).expect("golden.rs is written");
+    eprintln!("Recorded the table:\n{table}");
 }
 
 /// The names in a debug print are no part of the fingerprint: a renamed field or type keeps it,
