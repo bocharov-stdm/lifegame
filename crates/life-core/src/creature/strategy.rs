@@ -655,6 +655,39 @@ mod tests {
         }
     }
 
+    /// A prey given up between two asks at the same terms is not handed out again: the second ask
+    /// looks anew, past it.
+    #[test]
+    fn prey_given_up_is_not_found_again_within_the_tick() {
+        let v = Creature::new(
+            &Space::default(),
+            &Rules::default(),
+            CreatureGenome::BASE.with(Gene::Diet, Diet::Carnivore as usize as f64),
+            Some(1000.0),
+            Some(1000.0),
+            Some(30.0),
+            Rng::new(1),
+        );
+        let me = Me {
+            age: 0.0,
+            winded: false,
+            x: v.x,
+            y: v.y,
+            energy: v.energy,
+            kinship: v.kinship(),
+            pheno: &v.pheno,
+            health_share: 1.0,
+            health: v.pheno.size,
+        };
+        let senses = Ahead { gap: 100.0 };
+        let mut mind = Mind::default();
+        let mut scene = Scene::perceive(&me, &mut mind, &senses, &Program::STANDARD);
+        let terms = Hunting { ratio: 1.5, caution: 0.0, taste: scene.taste(&me), range: me.pheno.vision };
+        assert_eq!(scene.prey(&me, &mind, &senses, terms).map(|p| p.id), Some(9));
+        mind.given_up = Some((9, mind.tick + CHASE_GIVE_UP_TICKS));
+        assert_eq!(scene.prey(&me, &mind, &senses, terms).map(|p| p.id), None);
+    }
+
     /// Food within the stop distance: it stays and eats, beside the food, not on it.
     #[test]
     fn у_еды_стоит_а_не_залезает_на_неё() {

@@ -52,7 +52,9 @@ pub(super) struct Scene {
     /// Its plant by each way of choosing (`PlantChoice::index`).
     plants: [Option<Option<(f64, f64)>>; 4],
     corpse: Option<Option<CorpseFood>>,
-    prey: Option<(Hunting, Option<Prey>)>,
+    /// The prey found: the terms, the prey given up at the time (a hunt block may give one up
+    /// between two asks) and what was found.
+    prey: Option<(Hunting, Option<u64>, Option<Prey>)>,
     plant_score: Option<f64>,
 }
 
@@ -193,18 +195,19 @@ impl Scene {
     /// strikes (`Prey::of`); a full tank takes nothing. The one it gave up chasing is no candidate
     /// for a while.
     pub fn prey(&mut self, me: &Me, mind: &Mind, senses: &impl Senses, hunting: Hunting) -> Option<Prey> {
-        if let Some((terms, found)) = self.prey
+        let avoid = mind.given_up.filter(|&(_, until)| mind.tick < until).map(|(id, _)| id);
+        if let Some((terms, avoided, found)) = self.prey
             && terms == hunting
+            && avoided == avoid
         {
             return found;
         }
-        let avoid = mind.given_up.filter(|&(_, until)| mind.tick < until).map(|(id, _)| id);
         let found = if me.energy < me.pheno.max_energy {
             senses.prey(me, mind.attack, avoid, hunting).filter(|p| p.score > 0.0)
         } else {
             None
         };
-        self.prey = Some((hunting, found));
+        self.prey = Some((hunting, avoid, found));
         found
     }
 

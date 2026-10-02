@@ -38,7 +38,7 @@ const TURN: f32 = 0.5;
 // starved 19 | dot 20 | direction to the food 21–27 | proboscis length 28–31 (`creatures.wgsl`).
 pub const KIND_PLANT: u32 = 0;
 pub const KIND_CREATURE: u32 = 1;
-const DIET_SHIFT: u32 = 12;
+pub const DIET_SHIFT: u32 = 12;
 /// A `meta` bit: the creature eats at the frame's tick (or a tick before) — the proboscis is extended.
 pub const FEEDING: u32 = 1 << 14;
 /// A `meta` bit: it ate in the previous frame — an extended proboscis is not extended anew,

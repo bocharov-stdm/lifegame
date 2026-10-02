@@ -18,7 +18,7 @@ use crate::theme;
 use crate::view::WorldView;
 
 /// We keep no more chronicle entries: the old ones go.
-const LOG_LIMIT: usize = 5000;
+pub const LOG_LIMIT: usize = 5000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {

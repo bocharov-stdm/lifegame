@@ -131,6 +131,7 @@ fn игра_помещается_в_окно() {
             if tab == SideTab::Creature {
                 // the biggest creature in the frame (a big meat-eating founder's corpse is not one)
                 let f = h.state().view.frame.as_ref().expect("кадр");
+                let world_gen = f.world_gen;
                 let (x, y) = {
                     let i = h
                         .state()
@@ -142,7 +143,7 @@ fn игра_помещается_в_окно() {
                         .expect("кружки");
                     (f.origin.0 + i.x as f64, f.origin.1 + i.y as f64)
                 };
-                h.state_mut().sim.send(Command::Pick { x, y, radius: 1.0 });
+                h.state_mut().sim.send(Command::Pick { x, y, radius: 1.0, world_gen });
                 for _ in 0..100 {
                     h.step();
                     if h.state().view.frame.as_ref().is_some_and(|f| f.selected.is_some()) {
@@ -732,7 +733,8 @@ fn режимы_рендера_и_размер_трупа_без_окна() {
         assert!(without_selection[0] < 80, "{tag}: массового кольца контакта нет");
         shot(&mut h, &format!("рендер-тело-и-труп-{tag}"));
 
-        h.state_mut().sim.send(Command::Pick { x: 29_900.0, y: 20_000.0, radius: 0.0 });
+        let world_gen = h.state().view.frame.as_ref().unwrap().world_gen;
+        h.state_mut().sim.send(Command::Pick { x: 29_900.0, y: 20_000.0, radius: 0.0, world_gen });
         for _ in 0..100 {
             h.step();
             if h.state().view.frame.as_ref().and_then(|f| f.selected).is_some_and(|s| s.id == live) {

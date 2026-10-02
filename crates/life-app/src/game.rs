@@ -130,15 +130,18 @@ impl LifeApp {
         egui::CentralPanel::no_frame().show(ui, |ui| {
             let rect = ui.max_rect();
             self.view.area_mode = self.tool == Tool::Area;
-            match self.view.show(ui, rect, &self.sim, true) {
+            let click = self.view.show(ui, rect, &self.sim, true);
+            // the world the click was aimed at: one replaced since takes no clicks
+            let world_gen = self.view.frame.as_ref().map_or(0, |f| f.world_gen);
+            match click {
                 Some(Click::World { x, y, radius }) => match self.tool {
                     Tool::Select => {
-                        self.sim.send(Command::Pick { x, y, radius });
+                        self.sim.send(Command::Pick { x, y, radius, world_gen });
                         self.side_tab = SideTab::Creature;
                         self.side_open = true;
                     }
                     Tool::Spawn => {
-                        self.sim.send(Command::Spawn { x, y });
+                        self.sim.send(Command::Spawn { x, y, world_gen });
                         // the planted creature forks the world's stream: a repeat parts from here
                         if let Some(g) = &mut self.game {
                             g.edited = true;

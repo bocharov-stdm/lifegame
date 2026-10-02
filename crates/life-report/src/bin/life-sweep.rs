@@ -356,10 +356,14 @@ fn run_job(exe: &Path, plan: &Plan, job: &Job, args: &Args, control: &AtomicU8) 
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let _ = fs::write(&cmd, &joined);
+                // only a run that succeeded is reused: a failed one may have written its JSON
+                // before failing, and is run again
                 return if status.success() {
+                    let _ = fs::write(&cmd, &joined);
                     Outcome::Exited(started.elapsed())
                 } else {
+                    let _ = fs::remove_file(&cmd);
+                    let _ = fs::remove_file(&json);
                     Outcome::Failed(format!("exit {status}"))
                 };
             }

@@ -18,12 +18,13 @@ use life_core::profile::{Phase, PhaseTimes};
 use life_core::{CreatureGenome, Rules, World, WorldConfig};
 use life_sim::observe::{EventTracker, Snapshot};
 
+use crate::app::LOG_LIMIT;
 use crate::census::Census;
 use crate::frame::{
     self, Area, CorpseMark, Ending, Frame, Instance, LogEntry, Raster, RegionStats, Selected, ShotTrail,
     Status, ViewRequest,
 };
-use crate::history::Sample;
+use crate::history::{Sample, WINDOW_TICKS};
 use crate::motion::Motion;
 
 /// The speeds, ticks a second; None — «maximum», as many as the processor manages.
@@ -76,11 +77,13 @@ pub enum Command {
     RenderWorld(bool),
     View(ViewRequest),
     /// Pick a creature at a world point (a click): the nearest one, no farther than `radius` from
-    /// the edge of its body. A miss — the selection is dropped.
+    /// the edge of its body. A miss — the selection is dropped. `world_gen`: the frame's it was
+    /// clicked on.
     Pick {
         x: f64,
         y: f64,
         radius: f64,
+        world_gen: u64,
     },
     /// Select a creature by number.
     Select(Option<u64>),
@@ -105,10 +108,11 @@ pub enum Command {
         note: String,
         world_gen: u64,
     },
-    /// Plant a base creature at a world point.
+    /// Plant a base creature at a world point. `world_gen`: the frame's it was clicked on.
     Spawn {
         x: f64,
         y: f64,
+        world_gen: u64,
     },
     /// The same game from the start: the same seed and the same starting rules.
     Restart,
@@ -178,6 +182,14 @@ struct Pending {
     region: Option<RegionStats>,
     census: Option<Census>,
     log: Vec<LogEntry>,
+}
+
+/// Drops the points the window's history would drop on taking them (`history::Series::push`):
+/// while the window takes no frames (minimised), the increments do not grow without end.
+fn drop_beyond_window<T>(points: &mut Vec<T>, tick: u64, at: impl Fn(&T) -> u64) {
+    let oldest = tick.saturating_sub(WINDOW_TICKS);
+    let old = points.partition_point(|p| at(p) < oldest);
+    points.drain(..old);
 }
 
 struct Sim {
@@ -441,7 +453,14 @@ impl Sim {
                     self.dirty = true;
                 }
             }
-            Command::Pick { x, y, radius } => {
+            // Built from the frame of a world replaced since («Заново» pressed and the old frame
+            // still on screen while the new world was built): not for this one.
+            Command::Pick { world_gen, .. }
+            | Command::Spawn { world_gen, .. }
+            | Command::SetRegion { world_gen, .. }
+            | Command::SetRules { world_gen, .. }
+                if world_gen != self.world_gen => {}
+            Command::Pick { x, y, radius, .. } => {
                 self.selected = self.world.pick(x, y, 0.0).or_else(|| self.world.pick(x, y, radius));
                 self.dirty = true;
             }
@@ -449,10 +468,6 @@ impl Sim {
                 self.selected = c;
                 self.dirty = true;
             }
-            // Built from the frame of a world replaced since («Заново» pressed and the old frame
-            // still on screen while the new world was built): not for this one.
-            Command::SetRegion { world_gen, .. } | Command::SetRules { world_gen, .. }
-                if world_gen != self.world_gen => {}
             Command::SetRegion { area, .. } => {
                 self.region = area;
                 // at once, not at the next sample: there are no samples on pause
@@ -473,7 +488,7 @@ impl Sim {
                 self.patches_due = true;
                 self.log(None, note);
             }
-            Command::Spawn { x, y } => {
+            Command::Spawn { x, y, .. } => {
                 self.world.spawn(CreatureGenome::BASE, x, y, None);
                 self.edits += 1;
                 self.log(None, "подсажено существо".into());
@@ -497,7 +512,12 @@ impl Sim {
     }
 
     fn log(&mut self, kind: Option<life_sim::observe::EventKind>, text: String) {
-        self.pending.log.push(LogEntry { tick: self.world.tick, kind, text });
+        let log = &mut self.pending.log;
+        log.push(LogEntry { tick: self.world.tick, kind, text });
+        // the window would drop the older ones anyway
+        if log.len() > LOG_LIMIT {
+            log.drain(..log.len() - LOG_LIMIT);
+        }
         self.dirty = true;
     }
 
@@ -636,6 +656,7 @@ impl Sim {
             shots: w.counters.ranged_shots,
             genom: stats.avg_genom,
         });
+        drop_beyond_window(&mut self.pending.samples, w.tick, |s| s.tick);
     }
 
     /// A sample of the world: the chronicle and the genome chart. On a big world a sample is dear,
@@ -660,6 +681,7 @@ impl Sim {
             self.pending.region = Some(RegionStats::of(&self.world, area, Some(snap.genes)));
         }
         self.pending.snapshots.push(snap);
+        drop_beyond_window(&mut self.pending.snapshots, self.world.tick, |s| s.tick);
     }
 
     /// Ticks on schedule: no more than the speed is owed, and no longer than `SLICE`.
@@ -976,7 +998,7 @@ mod tests {
         h.send(Command::Census);
         let before = wait_frame(&h, |f| f.census.is_some());
         let old = before.census.as_ref().unwrap();
-        h.send(Command::Spawn { x: 1000.0, y: 1000.0 });
+        h.send(Command::Spawn { x: 1000.0, y: 1000.0, world_gen: 1 });
         let after = wait_frame(&h, |f| f.edits > before.edits);
         assert_eq!((after.tick, after.creatures), (before.tick, before.creatures + 1));
         h.send(Command::Census);
@@ -984,6 +1006,36 @@ mod tests {
         let c = f.census.as_ref().unwrap();
         assert_eq!((c.tick, c.edits), (old.tick, after.edits));
         assert_eq!(c.rows.len(), old.rows.len() + 1);
+    }
+
+    /// Increments a minimised window has not taken keep what its history would keep, no more.
+    #[test]
+    fn increments_keep_only_the_window() {
+        let mut series = crate::history::Series::default();
+        let mut pending = Vec::new();
+        for tick in (0..3 * WINDOW_TICKS).step_by(GRAPH_EVERY as usize) {
+            series.push(tick, tick);
+            pending.push(tick);
+            drop_beyond_window(&mut pending, tick, |&t| t);
+        }
+        let kept: Vec<u64> = series.points().into_iter().copied().collect();
+        assert_eq!(pending, kept);
+    }
+
+    /// Clicks made on the frame of a world replaced since plant and pick nothing in the new one.
+    #[test]
+    fn клик_по_кадру_старого_мира_не_трогает_новый() {
+        let h = paused(cfg());
+        h.send(Command::Select(Some(1)));
+        let f = wait_frame(&h, |f| f.world_gen == 1 && f.selected.is_some());
+        let s = f.selected.unwrap();
+        h.send(Command::Select(None));
+        h.send(Command::Spawn { x: 1000.0, y: 1000.0, world_gen: 0 });
+        h.send(Command::Pick { x: s.x, y: s.y, radius: 1.0, world_gen: 0 });
+        // the commands apply in order: the census is taken after both
+        h.send(Command::Census);
+        let f = wait_frame(&h, |f| f.census.is_some());
+        assert_eq!((f.edits, f.creatures, f.selected), (0, 20, None));
     }
 
     #[test]
@@ -1064,10 +1116,10 @@ mod tests {
         let s = f.selected.unwrap();
         assert_eq!(s.id, 1);
         // a click into the void drops the selection
-        h.send(Command::Pick { x: -1e6, y: -1e6, radius: 1.0 });
+        h.send(Command::Pick { x: -1e6, y: -1e6, radius: 1.0, world_gen: 1 });
         wait_frame(&h, |f| f.selected.is_none());
         // a click exactly in the centre selects
-        h.send(Command::Pick { x: s.x, y: s.y, radius: 1.0 });
+        h.send(Command::Pick { x: s.x, y: s.y, radius: 1.0, world_gen: 1 });
         let f = wait_frame(&h, |f| f.selected.is_some());
         assert_eq!(f.selected.unwrap().id, 1);
     }
@@ -1082,7 +1134,7 @@ mod tests {
             note: "энергия растения 50 → 80".into(),
             world_gen: 1,
         });
-        h.send(Command::Spawn { x: 3000.0, y: 2000.0 });
+        h.send(Command::Spawn { x: 3000.0, y: 2000.0, world_gen: 1 });
         let frames = frames_until(&h, |f| f.creatures == 21);
         let f = frames.last().unwrap();
         assert_eq!(f.rules, rules);

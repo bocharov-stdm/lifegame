@@ -310,7 +310,6 @@ fn main() {
         let mut written = Instant::now();
         // the tick rate, measured every PACE_EVERY ticks: (tick, ms a tick over the lap)
         let mut pace: Pace = Vec::new();
-        let mut lap = (0, Instant::now());
         // Stepped on several threads, the driving thread (its own, `by_seed`) keeps to the fast
         // cores (`cores.rs`); on one (a sweep's run beside fifteen others) it goes where the
         // system puts it.
@@ -323,6 +322,8 @@ fn main() {
             world.set_threads(Threads::One);
         }
         world.set_profiling(args.phases);
+        // the first lap starts once the world is built and its threads are set: building is no tick
+        let mut lap = (0, Instant::now());
         let res = run(world, &limits, &mut |w: &World| {
             if w.tick.is_multiple_of(map_every) {
                 maps.push((w.tick, ascii_map(w, args.map_width)));

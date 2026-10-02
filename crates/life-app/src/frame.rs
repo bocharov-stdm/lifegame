@@ -329,11 +329,12 @@ pub struct Frame {
 /// Light instances for a far scale: no matching of frames, ghosts, headings and sorting.
 /// Bodies and plants keep their colours.
 pub fn dots(world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) -> bool {
-    use crate::motion::{DOT_BIT, KIND_CREATURE, KIND_PLANT, OLD};
+    use crate::motion::{DIET_SHIFT, DOT_BIT, KIND_CREATURE, KIND_PLANT, OLD};
 
     let (x0, y0, x1, y1) = rect;
     out.clear();
-    let mut add = |x: f64, y: f64, color: u32, kind: u32| {
+    // `bits`: the diet for a creature (the shader's highlight reads it), nothing for a plant
+    let mut add = |x: f64, y: f64, color: u32, kind: u32, bits: u32| {
         if x < x0 || x > x1 || y < y0 || y > y1 {
             return true;
         }
@@ -345,20 +346,21 @@ pub fn dots(world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) 
             r: 1.0,
             color,
             age: OLD,
-            meta: (kind << 16) | DOT_BIT,
+            meta: (kind << 16) | DOT_BIT | bits,
         });
         out.len() <= MAX_INSTANCES
     };
     let plant = rgba(plant_color(), 255);
     for p in &world.plants {
-        if !add(p.x, p.y, plant, KIND_PLANT) {
+        if !add(p.x, p.y, plant, KIND_PLANT, 0) {
             out.clear();
             return false;
         }
     }
     let color = rgba(CREATURE_COLOR, 255);
     for v in &world.creatures {
-        if !add(v.x, v.y, color, KIND_CREATURE) {
+        let diet = ((v.pheno.diet as u32) & 3) << DIET_SHIFT;
+        if !add(v.x, v.y, color, KIND_CREATURE, diet) {
             out.clear();
             return false;
         }
@@ -502,5 +504,23 @@ mod tests {
         assert_eq!(r.rgba.len(), w * h * 4);
         let lit = r.rgba.chunks(4).filter(|p| p[3] > 0).count();
         assert!(lit >= 1, "стартовые существа видны на миникарте");
+    }
+
+    /// Far dots carry each creature's diet: the shader's diet highlight reads it at any zoom.
+    #[test]
+    fn far_dots_carry_the_diet() {
+        use crate::motion::{DIET_SHIFT, KIND_CREATURE};
+
+        let world = World::new(&WorldConfig { diets: vec![1.0; 4], ..Default::default() });
+        let mut out = Vec::new();
+        assert!(dots(&world, (0.0, 0.0, world.space.width, world.space.height), &mut out));
+        let diets: Vec<u32> = out
+            .iter()
+            .filter(|i| (i.meta >> 16) & 3 == KIND_CREATURE)
+            .map(|i| (i.meta >> DIET_SHIFT) & 3)
+            .collect();
+        let expected: Vec<u32> = world.creatures.iter().map(|v| v.pheno.diet as u32).collect();
+        assert_eq!(diets, expected);
+        assert!(expected.iter().any(|&d| d != 0), "the founders are of several diets");
     }
 }
