@@ -203,9 +203,10 @@ cargo run -p life-report --release -- --seeds 1 2 3 4 5 6 7 8 --ticks 20000 --ma
   --rule plant_depth_steepness=5 --mix 1 1 --diet-mix 55 25 10 10
 ```
 
-**Validating a model change**: seeds 1–8 × 20 000 for the base and calm (`cost_scale=3`) profiles
-at ×1 (≥ 7 of 8 worlds survive in each), then the baseline conditions. Runs must end on their own
-(`--max-work 1e15`).
+**Balance checks are the user's call.** Survival criteria (seeds 1–8 × 20 000 for the base and calm
+`cost_scale=3` profiles at ×1, ≥ 7 of 8 worlds surviving in each), the baseline conditions and any
+other measurement run only when the user asks: a change is done without them, and an unchecked
+balance is no open item to report. Runs that are made must end on their own (`--max-work 1e15`).
 
 **Run every measurement series as a `life-sweep`** (the user wants to see it): say the minutes up
 front, keep a run ≤ 5 minutes, a Russian description above each variant, run in the background

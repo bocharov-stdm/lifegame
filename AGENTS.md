@@ -50,13 +50,11 @@ The window never waits for the engine.
 ## Checking changes
 
 Add regressions for changed behaviour with fixed seeds and a finite tick count. Don't weaken
-checks to make them pass: changing golden requires explaining the mechanic change and checking
-the balance; re-record golden and the references in a separate commit.
+checks to make them pass: changing golden requires explaining the mechanic change; re-record
+golden and the references in a separate commit.
 
-For a model change, run seeds 1–8 for 20 000 ticks (`--max-work 1e15`) for the base and the calm
-(`--rule cost_scale=3`) profiles at ×1, and check that runs end on their own; at least seven
-surviving worlds in each. Then the user's baseline conditions (in `CLAUDE.md`). Measurement series
-run as `life-sweep` plans. When the JSON structure or the model changes, version the format and
+Balance checks (survival criteria, the user's baseline conditions in `CLAUDE.md`) are the user's
+call: run them only when asked. Measurement series run as `life-sweep` plans. When the JSON structure or the model changes, version the format and
 check that incompatible references are refused.
 
 Commits: short imperative English subjects, only files relevant to the task, straight to `main`.
