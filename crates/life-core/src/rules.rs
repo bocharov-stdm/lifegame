@@ -474,13 +474,17 @@ impl Rules {
         // The limits are only those past which a rule loses meaning, not «reasonable» ones: the lab
         // exists precisely to break the balance. A negative price of the stats would feed the
         // creatures for living.
-        let allowed = match key {
-            "shot_period" => value >= 1.0 && value.fract() == 0.0,
-            "plant_bite_yield" => (0.0..=1.0).contains(&value),
-            "plant_patches" => value.fract() == 0.0 && (0.0..=MAX_PATCHES).contains(&value),
-            "plant_patch_size" => value >= PLANT_RADIUS,
+        let shares = |range: f64| (0.0..=range).contains(&value);
+        let whole = value.fract() == 0.0;
+        let (allowed, need) = match key {
+            "shot_period" => (value >= 1.0 && whole, "целое число не меньше 1".to_string()),
+            "plant_bite_yield" => (shares(1.0), "число от 0 до 1".into()),
+            "plant_patches" => (whole && shares(MAX_PATCHES), format!("целое число от 0 до {MAX_PATCHES}")),
+            "plant_patch_size" => {
+                (value >= PLANT_RADIUS, format!("число не меньше радиуса растения ({PLANT_RADIUS})"))
+            }
             "plant_patch_share" | "corpse_rest" | "thermo_top" | "thermo_bottom" => {
-                (0.0..=100.0).contains(&value)
+                (shares(100.0), "число от 0 до 100".into())
             }
             "clone_share"
             | "diet_step"
@@ -488,37 +492,18 @@ impl Rules {
             | "diet_meat_step"
             | "diet_leap_carnivore"
             | "diet_leap_scavenger"
-            | "program_mutation" => (0.0..=1.0).contains(&value),
-            "min_mutability" => (0.0..=MAX_MUTABILITY).contains(&value),
-            "corpse_fresh" | "corpse_bones" | "corpse_decay" => value >= 1.0 && value.fract() == 0.0,
-            "corpse_sink" | "corpse_bones_sink" => value > 0.0,
-            "size_power" | "speed_power" | "sight_power" | "speed_mass_power" | "melee_size_power" => {
-                (0.0..=MAX_POWER).contains(&value)
+            | "program_mutation" => (shares(1.0), "доля от 0 до 1".into()),
+            "min_mutability" => (shares(MAX_MUTABILITY), format!("число от 0 до {MAX_MUTABILITY}")),
+            "corpse_fresh" | "corpse_bones" | "corpse_decay" => {
+                (value >= 1.0 && whole, "целое число тиков не меньше 1".into())
             }
-            _ => value >= 0.0,
+            "corpse_sink" | "corpse_bones_sink" => (value > 0.0, "число больше 0".into()),
+            "size_power" | "speed_power" | "sight_power" | "speed_mass_power" | "melee_size_power" => {
+                (shares(MAX_POWER), format!("число от 0 до {MAX_POWER}"))
+            }
+            _ => (value >= 0.0, "число не меньше 0".into()),
         };
         if !allowed {
-            let need = match key {
-                "shot_period" => "целое число не меньше 1",
-                "plant_bite_yield" => "число от 0 до 1",
-                "plant_patches" => "целое число от 0 до 300",
-                "plant_patch_size" => "число не меньше радиуса растения (10)",
-                "plant_patch_share" | "corpse_rest" | "thermo_top" | "thermo_bottom" => "число от 0 до 100",
-                "clone_share"
-                | "diet_step"
-                | "diet_jump"
-                | "diet_meat_step"
-                | "diet_leap_carnivore"
-                | "diet_leap_scavenger"
-                | "program_mutation" => "доля от 0 до 1",
-                "min_mutability" => "число от 0 до 10",
-                "corpse_fresh" | "corpse_bones" | "corpse_decay" => "целое число тиков не меньше 1",
-                "corpse_sink" | "corpse_bones_sink" => "число больше 0",
-                "size_power" | "speed_power" | "sight_power" | "speed_mass_power" | "melee_size_power" => {
-                    "число от 0 до 10"
-                }
-                _ => "число не меньше 0",
-            };
             return Err(format!("правило {key}: нужно {need}, а не {value}"));
         }
         r.renormalize();
@@ -765,6 +750,10 @@ mod tests {
         ] {
             assert!(rules.with(key, value).is_err(), "{key}={value}");
         }
+        // a price that fits at the base exponent overflows on the steepest one: refused by the upkeep
+        let pricey = rules.with("size_cost", 1e300).expect("a high price alone fits");
+        assert!(pricey.with("size_power", MAX_POWER).is_err());
+        assert!(rules.with_all([("size_power", MAX_POWER), ("size_cost", 1e300)]).is_err());
         for key in ["size_power", "speed_power", "sight_power", "speed_mass_power", "melee_size_power"] {
             let r = rules.with(key, MAX_POWER).unwrap_or_else(|e| panic!("{key}: {e}"));
             let far = r.upkeep_parts(BASE_SIZE * FAR_STAT, BASE_VISION * FAR_STAT, [1.0, 1.0]);
