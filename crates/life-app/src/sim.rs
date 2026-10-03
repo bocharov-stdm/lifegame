@@ -209,6 +209,9 @@ struct Sim {
     watch_explosion: bool,
     view: Option<ViewRequest>,
     selected: Option<u64>,
+    /// A census asked for while the world ran (the window still showed a paused frame): taken once
+    /// it stands.
+    census_wanted: bool,
     /// The selected creature's stage when it last decided, with its id and the tick after:
     /// `Selected::of`'s `decided_by`.
     decided: Option<(u64, u64, usize)>,
@@ -287,6 +290,7 @@ impl Sim {
             watch_explosion: true,
             view: None,
             selected: None,
+            census_wanted: false,
             decided: None,
             region: None,
             render_world: true,
@@ -376,6 +380,9 @@ impl Sim {
                 if !self.apply(cmd) {
                     return;
                 }
+            }
+            if self.census_wanted && !self.running() {
+                self.take_census();
             }
 
             self.advance();
@@ -475,22 +482,17 @@ impl Sim {
                 self.dirty = true;
             }
             Command::Threads { threads, fast_cores } => self.set_threads(threads, fast_cores),
-            Command::Census => {
-                // a running world is never counted: the census would take time from the ticks
-                if !self.running() {
-                    self.pending.census = Some(Census::of(&self.world, self.world_gen, self.edits));
-                    self.dirty = true;
-                }
-            }
+            // a running world is never counted: the census would take time from the ticks
+            Command::Census => self.census_wanted = true,
             Command::SetRules { rules, note, .. } => {
                 self.world.set_rules(rules);
-                self.edits += 1;
+                self.edited();
                 self.patches_due = true;
                 self.log(None, note);
             }
             Command::Spawn { x, y, .. } => {
                 self.world.spawn(CreatureGenome::BASE, x, y, None);
-                self.edits += 1;
+                self.edited();
                 self.log(None, "подсажено существо".into());
                 // Planting into an extinct world revives it.
                 if self.ended == Some(Ending::Extinct) {
@@ -535,6 +537,22 @@ impl Sim {
         self.lagging = false;
     }
 
+    fn take_census(&mut self) {
+        self.census_wanted = false;
+        self.pending.census = Some(Census::of(&self.world, self.world_gen, self.edits));
+        self.dirty = true;
+    }
+
+    /// The world changed without a tick (new rules, a planted creature): the frame says so, and the
+    /// region's summary is taken again, as the samples would not take it on pause.
+    fn edited(&mut self) {
+        self.edits += 1;
+        if let Some(area) = self.region {
+            self.pending.region = Some(RegionStats::of(&self.world, area, None));
+            self.dirty = true;
+        }
+    }
+
     fn restart(&mut self, cfg: WorldConfig) {
         // A big world takes a noticeable time to build — but in this thread, the window lives.
         self.world = World::new(&cfg);
@@ -544,6 +562,7 @@ impl Sim {
         self.ended = None;
         self.watch_explosion = true;
         self.selected = None;
+        self.census_wanted = false;
         self.decided = None;
         self.region = None;
         self.due = 0.0;
@@ -988,6 +1007,12 @@ mod tests {
         h.send(Command::Census);
         let running = frames_until(&h, |f| f.tick >= c.tick + 60);
         assert!(running.iter().all(|f| f.census.is_none()), "идущий мир не переписывают");
+        // asked while it ran, the census is taken once the world stands, without asking again
+        h.send(Command::SetPaused(true));
+        let f = wait_frame(&h, |f| f.census.is_some());
+        let c = f.census.as_ref().unwrap();
+        assert!(f.status.paused);
+        assert_eq!((c.tick, c.rows.len()), (f.tick, f.creatures));
     }
 
     /// A creature planted on pause changes the world without a tick: the frame says so, and the
