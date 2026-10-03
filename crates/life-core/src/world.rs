@@ -364,8 +364,7 @@ impl World {
             v.grow_old(&self.rules);
             // its step counts it on to this tick
             v.mind.tick = self.tick;
-            // its kin as its last tick knew them, before this tick's settings replace the stance
-            v.mind.knew_until = v.mind.stance.spare;
+            v.remember_kin();
         }
         clock.lap(Phase::Ageing);
         let World {

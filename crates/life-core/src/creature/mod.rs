@@ -204,6 +204,12 @@ impl Creature {
         &self.space
     }
 
+    /// As a tick begins (`World::step`): its kin as its last tick knew them (`Mind::knew_until`),
+    /// before this tick's settings replace the stance.
+    pub fn remember_kin(&mut self) {
+        self.mind.knew_until = self.mind.stance.spare;
+    }
+
     /// Number, parent and growth: by them a parent knows its growing child.
     #[inline(always)]
     pub fn kinship(&self) -> Kinship {

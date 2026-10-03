@@ -264,6 +264,7 @@ fn a_careless_parent_knows_only_its_tiny_children() {
         let v = w.creatures.last_mut().unwrap();
         v.programs = [Program::of(&blocks); 2].into();
         v.step(&Blind);
+        v.remember_kin(); // as the next tick begins
     }
     let parents: Vec<Kinship> = w.creatures.iter().map(|v| v.kinship()).collect();
     assert_eq!(parents.iter().map(|k| k.knows_until).collect::<Vec<_>>(), [0.1, 1.0, 0.0]);
@@ -400,6 +401,7 @@ fn a_hunter_spares_its_growing_child_but_not_a_brother() {
     let as_child = |w: &mut World| {
         growing(w);
         w.creatures[1].parent = w.creatures[0].id;
+        w.creatures[0].mind.stance.spare = 1.0; // its template spared its children last tick
     };
     let mut w = threat_world(100.0, 10.0, as_child);
     w.creatures[0].energy = w.creatures[0].pheno.max_energy * 0.3;
