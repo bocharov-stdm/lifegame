@@ -324,6 +324,13 @@ pub struct Mind {
     /// The wander target. None until the first choice: else a newborn would later walk to its
     /// birthplace.
     pub target: Option<(f64, f64)>,
+    /// The layer (`Stance::layer`) its wander target was kept in: a target out of a changed layer is
+    /// dropped, not one a growing body's narrower band left past its margin.
+    pub target_layer: (f64, f64),
+    /// Until what share of their size it knows its children, as its last tick's «щадить детей» set
+    /// it (`Stance::spare`). Copied as the tick begins (`World::step`), so the herd's snapshot, the
+    /// decisions and combat all read the last tick's, as healing does.
+    pub knew_until: f64,
     /// The hunt it is on: does it close in within its patience?
     pub chase: Option<Chase>,
     /// The prey it gave up chasing, and until what tick it does not choose it again.

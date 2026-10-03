@@ -108,8 +108,8 @@ pub(super) fn act(
         }
         Action::Wander => {
             let pace = b.arg(0).max(MIN_PACE);
-            let band = me.pheno.band(scene.stance.layer);
-            let (tx, ty) = wander(me, mind, rng, me.pheno.speed * pace, b.arg(1) * me.pheno.vision, band);
+            let layer = scene.stance.layer;
+            let (tx, ty) = wander(me, mind, rng, me.pheno.speed * pace, b.arg(1) * me.pheno.vision, layer);
             Some((go(tx, ty, pace), Mode::Wander))
         }
         Action::Ambush => Some((stand(me), Mode::Rest)),
@@ -327,13 +327,17 @@ fn to_layer_edge(me: &Me, mind: &mut Mind, edge: f64, pace: f64) -> Option<(Inte
     Some((go(me.x, edge, pace), Mode::Wander))
 }
 
-/// The wander target, a new one once reached (within one `step`) or once out of its home band
-/// `band` (the layer changed); a new one lies at most `reach` away in the band.
-fn wander(me: &Me, mind: &mut Mind, rng: &mut Rng, step: f64, reach: f64, band: (f64, f64)) -> (f64, f64) {
+/// The wander target, a new one once reached (within one `step`) or once its `layer` changed and
+/// it lies out of the new home band; a new one lies at most `reach` away in the band. A body that
+/// grows narrows its band (the margin is the body) but keeps its layer, and keeps its target.
+fn wander(me: &Me, mind: &mut Mind, rng: &mut Rng, step: f64, reach: f64, layer: (f64, f64)) -> (f64, f64) {
+    let band = me.pheno.band(layer);
+    let moved = mind.target_layer != layer;
     let stale = mind.target.is_none_or(|(tx, ty)| {
         let (dx, dy) = (me.x - tx, me.y - ty);
-        dx * dx + dy * dy < step * step || ty < band.0 || ty > band.1
+        dx * dx + dy * dy < step * step || (moved && (ty < band.0 || ty > band.1))
     });
+    mind.target_layer = layer;
     if stale {
         pick_random_target(me, mind, rng, reach, band);
     }

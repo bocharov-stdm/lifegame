@@ -407,7 +407,7 @@ mod tests {
             if child {
                 w.creatures[1].parent = w.creatures[0].id;
                 w.creatures[1].genome = w.creatures[1].genome.with(Gene::Size, 200.0); // still growing
-                w.creatures[0].mind.stance.spare = 1.0; // the template spares it until grown
+                w.creatures[0].mind.knew_until = 1.0; // the template spares it until grown
             }
             // the template's rival setting: strangers 1.5 times smaller
             for (v, rival) in w.creatures.iter_mut().zip(rivals) {
@@ -528,7 +528,7 @@ mod tests {
         let parent = w.creatures[0].id;
         w.creatures[1].parent = parent;
         w.creatures[1].genome = w.creatures[1].genome.with(Gene::Size, 200.0); // still growing
-        w.creatures[0].mind.stance.spare = 1.0; // the template spares it until grown
+        w.creatures[0].mind.knew_until = 1.0; // the template spares it until grown
         assert!(at(&mut w, 7).is_empty());
     }
 

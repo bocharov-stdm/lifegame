@@ -10,6 +10,21 @@ section describes earlier models and is kept as a record (flocks, cannibalism as
 
 Model `life-behavior/15`, format `life-report/12`.
 
+**Three review fixes** (2026-10-03, the user: «исправляй»). Golden and the references re-recorded
+on Windows by the Re-record workflow. Unmeasured.
+- **A grown body keeps its wander target.** The band's margin is the body, so a juvenile that grew
+  saw its band narrow and dropped a target near its edge, drawing a new one; now only a target out
+  of a *changed layer* is dropped (`Mind::target_layer`).
+- **Combat knows kin as the decisions do.** The herd's snapshot and the decisions read the last
+  tick's «щадить детей», but combat read this tick's: a parent whose setting just switched off
+  struck the child the snapshot still called its own, and the reverse wasted a hunter's tick. Now
+  every reader takes the last tick's (`Mind::knew_until`, copied as the tick begins).
+- **A transfer brings any live block of the other track.** It used the duplicate's filter, which
+  leaves out unconditional settings and the always-firing block (a copy of those beside the
+  original would be dead), so a track that lost its «делиться», «слой» or ending wander could
+  never get it back from the other one. The no-junk check still turns away a copy that would be
+  dead or kill one.
+
 **Healing waits for a calm since it was struck** (2026-10-01, the user's choice: «не били»). A
 strike used to break the striker's calm as well as the victim's, so a hunter whom nobody struck back
 never healed while it hunted — against the setting's own words, «его столько тиков не били». Now

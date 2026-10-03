@@ -1394,6 +1394,12 @@ impl Program {
             };
             pick_where(rng, usize::from(p.len), copyable).map(|i| p.blocks[i])
         };
+        // a live block of the other track: no original stands beside it here, so an unconditional
+        // setting or an always-firing block may come too — the no-junk check below turns away a
+        // copy that would be dead or kill one
+        let transferable = |rng: &mut Rng, p: &Program| {
+            pick_where(rng, usize::from(p.len), |i| p.live(i)).map(|i| p.blocks[i])
+        };
         let mut acc = 0.0;
         let mut op = MUTATIONS.len() - 1;
         for (k, &(_, share)) in MUTATIONS.iter().enumerate() {
@@ -1508,7 +1514,7 @@ impl Program {
                 // copied to where it is reached: what one stage found the other may try
                 if let Some(other) = other
                     && len < MAX_BLOCKS
-                    && let Some(block) = copy_of(rng, other)
+                    && let Some(block) = transferable(rng, other)
                 {
                     let at = place(rng, &block);
                     self.insert(at, block);
@@ -2003,6 +2009,26 @@ mod tests {
             Block::does(Action::Wander),
         ]);
         assert!(!harmless.kills(&before, 3));
+    }
+
+    /// A transfer copies any live block of the other track, an unconditional setting or an
+    /// always-firing block too: a track that lost them can get them back from the other one.
+    #[test]
+    fn a_transfer_brings_a_setting_and_an_ending_the_track_lacks() {
+        let mut rng = Rng::new(5);
+        let juvenile = Program::of(&[Block::when(Test::at(Cond::Fullness, 40).not(), Action::EatPlant)]);
+        // numbers no other mutation would give, so only a transfer brings these blocks
+        let adult =
+            Program::of(&[Block::does(Action::Divide).with(0, 77), Block::does(Action::Wander).with(0, 37)]);
+        let (mut setting, mut ending) = (false, false);
+        for _ in 0..20_000 {
+            let mut p = juvenile;
+            p.mutate_with(1.0, Some(&adult), &mut rng);
+            let b = p.blocks();
+            setting |= b.contains(&adult.blocks()[0]);
+            ending |= b.len() == 2 && b[1] == adult.blocks()[1];
+        }
+        assert!(setting && ending, "transferred: the setting {setting}, the wander {ending}");
     }
 
     /// Structure: no block added (a copy, a new one, a pair, a transfer) is born dead or kills

@@ -213,6 +213,7 @@ fn kinship_is_a_parent_and_its_growing_child() {
     let parent = &mut w.creatures[0];
     dividing(parent, 0.3, 0.4);
     parent.mind.stance.spare = 1.0; // the template's «щадить детей»: until grown
+    parent.mind.knew_until = 1.0; // as its last tick set it
     let stance = parent.mind.stance;
     assert_eq!(parent.parent, 0, "a spawned creature has no parent");
     let mut kids = Vec::new();
@@ -231,6 +232,7 @@ fn kinship_is_a_parent_and_its_growing_child() {
     assert!(!a.kin(b), "siblings are strangers");
     kids[0].nourish(10000.0, &r);
     kids[0].mind.stance = stance;
+    kids[0].mind.knew_until = stance.spare;
     assert!(kids[0].adult());
     assert!(!parent.kin(kids[0].kinship()), "the parent forgets its grown child");
     kids[0].reproduction_wait = 0;

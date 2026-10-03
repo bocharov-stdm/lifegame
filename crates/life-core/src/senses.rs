@@ -1352,7 +1352,7 @@ mod tests {
     fn guarded(w: &mut World, x: f64, size: f64, child_x: f64, child: f64) -> u64 {
         use crate::genome::creature::Gene;
         let parent = w.spawn(crate::CreatureGenome::BASE.with(Gene::Size, size), x, 1000.0, None);
-        w.creatures.last_mut().unwrap().mind.stance.spare = 1.0;
+        w.creatures.last_mut().unwrap().mind.knew_until = 1.0;
         let id = w.spawn(crate::CreatureGenome::BASE.with(Gene::Size, child), child_x, 1000.0, None);
         let v = w.creatures.last_mut().unwrap();
         (v.parent, v.birth_size) = (parent, child / 2.0);
@@ -1403,7 +1403,7 @@ mod tests {
                     w.spawn(crate::CreatureGenome::BASE.with(Gene::Size, 60.0), 1100.0, 1000.0, None);
                 // the old `care` gene was half of how long it knows its children
                 let p = w.creatures.last_mut().unwrap();
-                p.mind.stance.spare = (care / 50.0).min(1.0);
+                p.mind.knew_until = (care / 50.0).min(1.0);
                 if !defends {
                     use crate::creature::{Action, Block, Program, Programs};
                     p.programs = Programs::both(Program::of(&[Block::does(Action::Wander)]));

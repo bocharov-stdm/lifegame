@@ -211,7 +211,7 @@ impl Creature {
             id: self.id,
             parent: self.parent,
             growth: self.pheno.size / self.genome[Gene::Size].max(0.01),
-            knows_until: self.mind.stance.spare,
+            knows_until: self.mind.knew_until,
         }
     }
 

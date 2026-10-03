@@ -147,6 +147,22 @@ fn a_new_layer_drops_the_wander_target_of_the_old_one() {
     assert_eq!(v.mind.target, Some((v.x, lo)), "the new target is the nearest point of the new layer");
 }
 
+/// The band's margin is the body: a creature that grows sees its band narrow, but its layer is the
+/// same, so the wander target it walks to stays.
+#[test]
+fn growing_keeps_the_wander_target() {
+    let mut v = creature(1000.0, 100.0);
+    living_by(&mut v, &[Block::does(Action::Layer).with(0, 0).with(1, 40), Block::does(Action::Wander)]);
+    v.step(&Blind);
+    let (lo, _) = v.pheno.band((0.0, 0.4));
+    v.mind.target = Some((1300.0, lo));
+    let grown = v.pheno.size * 1.5;
+    v.pheno = life_core::creature::Phenotype::at_size(&v.genome, &Rules::default(), &Space::default(), grown);
+    assert!(v.pheno.band((0.0, 0.4)).0 > lo, "the band's top moved down past the target");
+    v.step(&Blind);
+    assert_eq!(v.mind.target, Some((1300.0, lo)));
+}
+
 /// A parent defends its young child that met a hunter: its template goes for the hunter; a child
 /// it no longer knows, it leaves.
 #[test]
