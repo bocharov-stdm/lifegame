@@ -148,19 +148,59 @@ fn a_new_layer_drops_the_wander_target_of_the_old_one() {
 }
 
 /// The band's margin is the body: a creature that grows sees its band narrow, but its layer is the
-/// same, so the wander target it walks to stays.
+/// same, so the wander target it walks to stays — only brought within the band and the bounds the
+/// grown body reaches (their margin is the body too). A calm walk keeps to the band, so a target
+/// left past it would hold the creature standing; with the target in the band it walks on.
 #[test]
 fn growing_keeps_the_wander_target() {
+    for smooth in [false, true] {
+        let mut v = creature(1000.0, 100.0);
+        let mut blocks =
+            vec![Block::does(Action::Layer).with(0, 20).with(1, 60), Block::does(Action::Wander)];
+        if smooth {
+            blocks.insert(0, Block::does(Action::Smooth));
+        }
+        living_by(&mut v, &blocks);
+        v.step(&Blind);
+        let (lo, _) = v.pheno.band((0.2, 0.6));
+        let target = (1000.0, lo);
+        v.mind.target = Some(target);
+        let grown = v.pheno.size * 4.0;
+        v.pheno =
+            life_core::creature::Phenotype::at_size(&v.genome, &Rules::default(), &Space::default(), grown);
+        let (top, _) = v.pheno.band((0.2, 0.6));
+        assert!(top - lo > v.pheno.speed, "the band's top moved down past the target, more than a step");
+        // inside the grown band right under the target, heading for it
+        (v.x, v.y) = (1000.0, top + 1.0);
+        v.mind.heading = Some((0.0, -1.0));
+        let mut reached = false;
+        for _ in 0..60 {
+            v.energy = v.pheno.max_energy;
+            v.step(&Blind);
+            // neither the old target nor it brought to the band's top
+            reached |= v.mind.target.is_some_and(|t| t != target && t != (1000.0, top));
+        }
+        assert!(reached, "smooth {smooth}: it reached its target and drew a new one");
+    }
+}
+
+/// A target the body reached when small may lie past the bounds of the grown one (the margin is the
+/// body): it is brought within them, so the creature does not stand at the wall short of it.
+#[test]
+fn a_grown_body_at_a_wall_does_not_stand_short_of_its_target() {
     let mut v = creature(1000.0, 100.0);
-    living_by(&mut v, &[Block::does(Action::Layer).with(0, 0).with(1, 40), Block::does(Action::Wander)]);
+    living_by(&mut v, &[Block::does(Action::Wander)]);
     v.step(&Blind);
-    let (lo, _) = v.pheno.band((0.0, 0.4));
-    v.mind.target = Some((1300.0, lo));
-    let grown = v.pheno.size * 1.5;
-    v.pheno = life_core::creature::Phenotype::at_size(&v.genome, &Rules::default(), &Space::default(), grown);
-    assert!(v.pheno.band((0.0, 0.4)).0 > lo, "the band's top moved down past the target");
-    v.step(&Blind);
-    assert_eq!(v.mind.target, Some((1300.0, lo)));
+    // a body of 20 reaches x 20 and walked to 25; grown to 40 it stands at the wall, x 40
+    v.pheno = life_core::creature::Phenotype::at_size(&v.genome, &Rules::default(), &Space::default(), 40.0);
+    (v.x, v.y) = (40.0, 1000.0);
+    v.mind.target = Some((25.0, 1000.0));
+    let start = (v.x, v.y);
+    for _ in 0..5 {
+        v.energy = v.pheno.max_energy;
+        v.step(&Blind);
+    }
+    assert_ne!((v.x, v.y), start, "it wandered on");
 }
 
 /// A parent defends its young child that met a hunter: its template goes for the hunter; a child

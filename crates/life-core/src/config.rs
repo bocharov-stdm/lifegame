@@ -296,10 +296,12 @@ pub const COLD_SLOWING: f64 = 0.4;
 pub const COLD_BLOOD_STEP: f64 = 10.0;
 /// Scavenger founders (in a start mix) start this cold-blooded, in the deep with the rot.
 pub const SCAVENGER_START_COLD: f64 = 100.0;
-/// Which food is a diet's own (plants, fresh meat, rot, bones): a creature eats and goes for only
-/// its own, and takes another niche's food only when its program says so this tick
-/// (`Action::EatForeign`; the template, below 30% of its store). The omnivore has no foreign food:
-/// it is the generalist (bones it cannot digest at all).
+/// Which food is a diet's own (plants, fresh meat, rot, bones). Of a corpse's stages a creature eats
+/// and goes for only its own, and takes another niche's only when its program says so this tick
+/// (`Action::EatForeign`; the template, below 30% of its store). Plants are not gated: whoever
+/// digests them eats them (`DIET_DIGESTION`, the young gut `DIET_YOUNG_PLANTS`), so the plants
+/// column only records whose food they are. The omnivore has no foreign food: it is the
+/// generalist (bones it cannot digest at all).
 pub const DIET_OWN: [[bool; 4]; 4] = [
     [true, false, false, false], // herbivore
     [true, true, true, false],   // omnivore
@@ -320,8 +322,8 @@ pub const MEAT_FOUNDER_SIZE: f64 = 2.0;
 /// less for a whole corpse than one plant). 0 means the creature neither eats that food nor
 /// goes for it. A specialist digests its own food fully; the
 /// omnivore takes everything, but worse; rot feeds well only the scavenger, the others barely.
-/// Meat-eaters get a little from plants (not their own food: they eat it only when hungry), so a
-/// line of them is not starved out before it finds meat.
+/// Meat-eaters get a little from plants (not their own food, yet not gated by `DIET_OWN`: their
+/// programs choose when to graze), so a line of them is not starved out before it finds meat.
 /// Bones only the scavenger digests (the user's choice, 2026-09-27): the long-lying remains on the
 /// bottom are its own food, which nobody else can take.
 /// The user's calibration of 2026-09-29: the omnivore 0.7/0.3/0.05 → 0.8/0.6/0.2, the scavenger's

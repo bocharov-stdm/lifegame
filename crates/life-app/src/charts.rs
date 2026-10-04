@@ -314,7 +314,12 @@ fn number_text(now: f64, was: f64, percent: bool) -> (String, String) {
     } else {
         String::new()
     };
-    let value = if percent { format!("{now:.0}%") } else { format!("{now:.0}") };
+    // small values (speed, burst, mutability) with tenths, big ones in whole numbers, as the card
+    let value = match (percent, now < 20.0) {
+        (true, _) => format!("{now:.0}%"),
+        (false, true) => format!("{now:.1}"),
+        (false, false) => format!("{now:.0}"),
+    };
     (value, change)
 }
 
@@ -714,4 +719,19 @@ pub fn bands(ui: &mut egui::Ui, plants: &[usize], creatures: &[usize], edges: (&
         }
     }
     painter.line_segment([Pos2::new(mid, rect.top()), Pos2::new(mid, rect.bottom())], Stroke::new(1.0, LINE));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::number_text;
+
+    /// The genome chart shows a median as the card does: small values with tenths (a burst of
+    /// 1.45 is no «1», a mutability of 0.4 no «0»), big ones whole, percents as percents.
+    #[test]
+    fn the_genome_chart_shows_small_values_with_tenths() {
+        assert_eq!(number_text(1.45, 1.0, false).0, "1.4");
+        assert_eq!(number_text(0.4, 1.0, false).0, "0.4");
+        assert_eq!(number_text(42.4, 40.0, false).0, "42");
+        assert_eq!(number_text(37.6, 30.0, true), ("38%".into(), "+8 п.п.".into()));
+    }
 }

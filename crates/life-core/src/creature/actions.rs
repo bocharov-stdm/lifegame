@@ -329,10 +329,16 @@ fn to_layer_edge(me: &Me, mind: &mut Mind, edge: f64, pace: f64) -> Option<(Inte
 
 /// The wander target, a new one once reached (within one `step`) or once its `layer` changed and
 /// it lies out of the new home band; a new one lies at most `reach` away in the band. A body that
-/// grows narrows its band (the margin is the body) but keeps its layer, and keeps its target.
+/// grows narrows its band (the margin is the body) but keeps its layer, and keeps its target —
+/// brought within the bounds the grown body reaches, or it would stand at a wall short of it.
 fn wander(me: &Me, mind: &mut Mind, rng: &mut Rng, step: f64, reach: f64, layer: (f64, f64)) -> (f64, f64) {
     let band = me.pheno.band(layer);
     let moved = mind.target_layer != layer;
+    // A target kept as the body grew is brought within the bounds and the band the grown body has
+    // (both margins are the body): a calm walk keeps to the band and would stand short of it.
+    let p = &me.pheno;
+    let (y_lo, y_hi) = if moved { (p.y_lo, p.y_hi) } else { band };
+    mind.target = mind.target.map(|(tx, ty)| (tx.clamp(p.x_lo, p.x_hi), ty.clamp(y_lo, y_hi)));
     let stale = mind.target.is_none_or(|(tx, ty)| {
         let (dx, dy) = (me.x - tx, me.y - ty);
         dx * dx + dy * dy < step * step || (moved && (ty < band.0 || ty > band.1))

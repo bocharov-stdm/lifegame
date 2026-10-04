@@ -633,6 +633,21 @@ fn a_slow_step_costs_less() {
     assert!(v.pheno.step_cost(slow) < v.pheno.upkeep);
 }
 
+/// At `speed_power` 0 a step of any length costs the same speed term, and standing none: `0 ** 0`
+/// is 1, yet a body that stands pays only for itself and its eyes.
+#[test]
+fn standing_costs_no_speed_at_a_speed_power_of_zero() {
+    let flat = Rules::default().with("speed_power", 0.0).unwrap();
+    let zero = life_core::creature::Phenotype::of(&BASE, &flat, &Space::default());
+    // the body and eyes alone: at the default exponent a speed of 0 costs nothing
+    let costs = [DIET_SIZE_COST[0], DIET_SPEED_COST[0]];
+    let body_and_eyes = Rules::default().upkeep_diet(40.0, 0.0, zero.vision, costs);
+    assert!(close(zero.still_upkeep, body_and_eyes), "{} vs {body_and_eyes}", zero.still_upkeep);
+    assert!(close(zero.step_cost(0.0), zero.still_upkeep));
+    assert!(zero.step_cost(0.5) > zero.still_upkeep);
+    assert!(close(zero.step_cost(0.5), zero.step_cost(zero.speed)));
+}
+
 /// With no food in sight the lurker wanders at its template's third of its speed and cheaper, the
 /// standard one at full speed, a program wandering at half at half.
 #[test]

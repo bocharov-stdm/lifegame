@@ -1229,9 +1229,10 @@ impl Program {
         usize::from(self.len) - self.summary.live.count_ones() as usize
     }
 
-    /// The first deciding block that always fires, which ends what is reached; None when none does.
-    fn ending(&self) -> Option<usize> {
-        let last = self.reachable() - 1;
+    /// The first deciding block that always fires, which ends what is reached; None when none does
+    /// (nothing deciding is then a way the creature can come to stand).
+    pub fn ending(&self) -> Option<usize> {
+        let last = self.reachable().checked_sub(1)?;
         self.blocks[last].always_fires().then_some(last)
     }
 
@@ -2029,6 +2030,21 @@ mod tests {
             ending |= b.len() == 2 && b[1] == adult.blocks()[1];
         }
         assert!(setting && ending, "transferred: the setting {setting}, the wander {ending}");
+    }
+
+    /// The block that always fires ends a program whether it is the last block or settings follow
+    /// it (the window then draws «стоит» as never reached); a program without one may stand.
+    #[test]
+    fn the_ending_is_the_always_firing_block_wherever_it_stands() {
+        let eat = Block::when(Test::at(Cond::Fullness, 40).not(), Action::EatPlant);
+        let last = Program::of(&[eat, Block::does(Action::Wander)]);
+        let then_setting = Program::of(&[eat, Block::does(Action::Wander), Block::does(Action::Divide)]);
+        let may_stand = Program::of(&[eat, Block::does(Action::Divide)]);
+        assert_eq!((last.ending(), then_setting.ending(), may_stand.ending()), (Some(1), Some(1), None));
+        assert_eq!(
+            Program::STANDARD.ending().map(|i| Program::STANDARD.blocks()[i].action),
+            Some(Action::Wander)
+        );
     }
 
     /// Structure: no block added (a copy, a new one, a pair, a transfer) is born dead or kills

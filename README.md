@@ -22,8 +22,8 @@ checked.
   plus the speed of the step it actually takes.
 - **Diets** are a gene: herbivore, omnivore, scavenger and carnivore. Each has a body of its own
   (the strike, health, the price of size and speed, the sense of smell) and its own foods among
-  plants, fresh meat, rot and bones. There are no meat-eating founders: carnivores and scavengers
-  arise from mutants.
+  plants, fresh meat, rot and bones. By default no founder eats meat and carnivores and
+  scavengers arise from mutants; the founders' diet mix can deal them from the start.
 - **Corpses** stay fresh 300 ticks where the creature died, then rot and sink while the flesh
   decays down to the bones; bones feed only the scavenger.
 - **The deep is cold** below a thermocline. The `cold_blood` gene makes a body cheaper and slower
@@ -80,7 +80,8 @@ cargo run -p life-app --release -- --scale 100 --seed 7  # straight into a world
   be switched off while statistics and the card keep working.
 - **For research**: «Повторить без окна» gives the `life-report` command that repeats the game.
 
-Settings live in `%APPDATA%\lifegame\settings.json` (the user's config folder on Linux and macOS).
+Settings live in `%APPDATA%\lifegame\config\settings.json` (the user's config folder on Linux
+and macOS); a file the game left under its old name, `TinyLife`, is taken over once.
 A broken file does not matter: the game takes the defaults.
 
 ## Headless runs

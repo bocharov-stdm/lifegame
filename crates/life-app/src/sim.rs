@@ -13,6 +13,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use life_core::config::DIVIDE_PERIOD;
+use life_core::creature::JUVENILE;
 use life_core::par::Threads;
 use life_core::profile::{Phase, PhaseTimes};
 use life_core::{CreatureGenome, Rules, World, WorldConfig};
@@ -77,13 +78,17 @@ pub enum Command {
     RenderWorld(bool),
     View(ViewRequest),
     /// Pick a creature at a world point (a click): the nearest one, no farther than `radius` from
-    /// the edge of its body. A miss — the selection is dropped. `world_gen`: the frame's it was
-    /// clicked on.
+    /// the edge of its body. A miss — the selection is dropped. `world_gen` and `frame`
+    /// (`Frame::number`): the frame's it was clicked on — the world has gone on or been edited
+    /// since, so the bodies are looked for where that frame drew them; `k` — the window's
+    /// `View::progress` at the click, how far on their way from the previous frame it drew them.
     Pick {
         x: f64,
         y: f64,
         radius: f64,
         world_gen: u64,
+        frame: u64,
+        k: f64,
     },
     /// Select a creature by number.
     Select(Option<u64>),
@@ -212,9 +217,11 @@ struct Sim {
     /// A census asked for while the world ran (the window still showed a paused frame): taken once
     /// it stands.
     census_wanted: bool,
-    /// The selected creature's stage when it last decided, with its id and the tick after:
-    /// `Selected::of`'s `decided_by`.
-    decided: Option<(u64, u64, usize)>,
+    /// The ids of the creatures that decided by their juvenile program on the last tick (growing
+    /// as it began, in id order), and the tick after it: `Selected::of`'s `decided_by` for
+    /// whichever creature is selected — one that grew up on that tick shows the program it decided
+    /// by, even when picked afterwards.
+    juveniles: (Vec<u64>, u64),
     region: Option<Area>,
     render_world: bool,
     dots: bool,
@@ -264,6 +271,33 @@ struct Sim {
     last_frame_tick: u64,
     /// The food patches changed since the last frame: a new world or new rules.
     patches_due: bool,
+    /// The bodies the last frames drew, by their numbers (`SHOWN_FRAMES`, the newest last): a click
+    /// on the window's frame picks among them (`Command::Pick`).
+    shown: VecDeque<(u64, Vec<Spot>)>,
+    /// Frames built so far: the next one's number less one (`Frame::number`).
+    frames_built: u64,
+}
+
+/// A body as a frame drew it: (id, from x, from y, x, y, half) — on the way from the first point
+/// to the second.
+type Spot = (u64, f64, f64, f64, f64, f64);
+
+/// The frames whose bodies are kept for a click: the window's, the one waiting in the slot, and one
+/// more for a click still on its way while the window took the next frame.
+const SHOWN_FRAMES: usize = 3;
+
+/// The nearest of `spots` to (x, y) where the window drew them, the share `k` of their way on, no
+/// farther than `radius` from the edge of its body (`World::pick`).
+fn pick_among(spots: &[Spot], x: f64, y: f64, k: f64, radius: f64) -> Option<u64> {
+    spots
+        .iter()
+        .map(|&(id, px, py, sx, sy, half)| {
+            let (sx, sy) = (px + (sx - px) * k, py + (sy - py) * k);
+            ((sx - x).hypot(sy - y) - half, id)
+        })
+        .filter(|(d, _)| *d <= radius)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, id)| id)
 }
 
 impl Sim {
@@ -291,7 +325,7 @@ impl Sim {
             view: None,
             selected: None,
             census_wanted: false,
-            decided: None,
+            juveniles: (Vec::new(), 0),
             region: None,
             render_world: true,
             dots: false,
@@ -322,6 +356,8 @@ impl Sim {
             recent_shots: VecDeque::new(),
             last_frame_tick: 0,
             patches_due: true,
+            shown: VecDeque::new(),
+            frames_built: 0,
         };
         // the settings' defaults until the window sends its own
         sim.set_threads(crate::settings::auto_threads(), true);
@@ -467,8 +503,17 @@ impl Sim {
             | Command::SetRegion { world_gen, .. }
             | Command::SetRules { world_gen, .. }
                 if world_gen != self.world_gen => {}
-            Command::Pick { x, y, radius, .. } => {
-                self.selected = self.world.pick(x, y, 0.0).or_else(|| self.world.pick(x, y, radius));
+            Command::Pick { x, y, radius, frame, k, .. } => {
+                let drawn = self.shown.iter().find(|(n, _)| *n == frame);
+                self.selected = match drawn {
+                    // where the clicked frame drew the bodies — the world may have gone on or been
+                    // edited since — of those still alive
+                    Some((_, spots)) => pick_among(spots, x, y, k, 0.0)
+                        .or_else(|| pick_among(spots, x, y, k, radius))
+                        .filter(|&id| self.world.creature(id).is_some()),
+                    // no bodies kept (a density map, the render off): the world as it is now
+                    None => self.world.pick(x, y, 0.0).or_else(|| self.world.pick(x, y, radius)),
+                };
                 self.dirty = true;
             }
             Command::Select(c) => {
@@ -563,13 +608,14 @@ impl Sim {
         self.watch_explosion = true;
         self.selected = None;
         self.census_wanted = false;
-        self.decided = None;
+        self.juveniles.0.clear();
         self.region = None;
         self.due = 0.0;
         self.last_time = Instant::now();
         self.last_minimap = None;
         self.motion = Motion::default();
         self.recent_shots.clear();
+        self.shown.clear();
         self.tick_ms = 0.0;
         self.phases = [0.0; Phase::N];
         self.snapshot_ms = 0.0;
@@ -592,10 +638,12 @@ impl Sim {
         // the phases are measured always: a dozen clock reads a tick, and the world goes the same
         self.world.set_profiling(true);
         self.world.set_threads(self.pool.clone());
-        let stage = self.selected.and_then(|id| self.world.creature(id).map(|v| (id, v.stage())));
+        let juveniles = &mut self.juveniles.0;
+        juveniles.clear();
+        juveniles.extend(self.world.creatures.iter().filter(|v| !v.adult()).map(|v| v.id));
         let start = Instant::now();
         self.world.step();
-        self.decided = stage.map(|(id, stage)| (id, self.world.tick, stage));
+        self.juveniles.1 = self.world.tick;
         let engine_ms = start.elapsed().as_secs_f64() * 1000.0;
         self.measure_phases();
         let now = Instant::now();
@@ -790,13 +838,37 @@ impl Sim {
             } else {
                 self.motion.collect(w, rect, &mut instances)
             };
-            if !collected {
+            if collected {
+                // the bodies it draws, for a click on it once the world has gone on
+                let mut spots = if self.shown.len() >= SHOWN_FRAMES {
+                    self.shown.pop_front().map(|(_, s)| s).unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                spots.clear();
+                if self.dots {
+                    // motionless squares: drawn where they are
+                    let (x0, y0, x1, y1) = rect;
+                    spots.extend(
+                        w.creatures
+                            .iter()
+                            .filter(|v| {
+                                let h = v.pheno.half;
+                                v.x + h >= x0 && v.x - h <= x1 && v.y + h >= y0 && v.y - h <= y1
+                            })
+                            .map(|v| (v.id, v.x, v.y, v.x, v.y, v.pheno.half)),
+                    );
+                } else {
+                    spots.extend(self.motion.drawn());
+                }
+                self.shown.push_back((self.frames_built + 1, spots));
+            } else {
                 instances.clear();
                 // The density map is exactly over the visible area, a cell is a couple of pixels.
                 let (dw, dh) =
                     ((view.px_w as usize / 2).clamp(1, 1024), (view.px_h as usize / 2).clamp(1, 1024));
-                density =
-                    Some(frame::density(w, (view.x0, view.y0, view.x1, view.y1), dw, dh, Raster::default()));
+                let area = (view.x0, view.y0, view.x1, view.y1);
+                density = Some(frame::density(w, area, dw, dh, view.highlight, Raster::default()));
             }
         } else {
             instances.clear();
@@ -805,7 +877,8 @@ impl Sim {
             if self.render_world && self.last_minimap.is_none_or(|t| t.elapsed() >= MINIMAP_INTERVAL) {
                 self.last_minimap = Some(Instant::now());
                 let (mw, mh) = frame::minimap_size(w.space.width, w.space.height);
-                Some(frame::density(w, (0.0, 0.0, w.space.width, w.space.height), mw, mh, Raster::default()))
+                let whole = (0.0, 0.0, w.space.width, w.space.height);
+                Some(frame::density(w, whole, mw, mh, 0, Raster::default()))
             } else {
                 None
             };
@@ -853,8 +926,10 @@ impl Sim {
         } else {
             Vec::new()
         };
+        self.frames_built += 1;
         Frame {
             world_gen: self.world_gen,
+            number: self.frames_built,
             edits: self.edits,
             seed: self.cfg.seed,
             scale: self.cfg.scale,
@@ -881,7 +956,9 @@ impl Sim {
             density,
             minimap,
             selected: self.selected.and_then(|id| {
-                let decided = self.decided.filter(|d| d.0 == id && d.1 == w.tick).map(|d| d.2);
+                // grown or not when its last decision began; one born since decided nothing yet
+                let (juveniles, after) = &self.juveniles;
+                let decided = (*after == w.tick && juveniles.binary_search(&id).is_ok()).then_some(JUVENILE);
                 Selected::of(w, id, decided)
             }),
             samples: pending.samples,
@@ -932,6 +1009,7 @@ mod tests {
             y1: sim.world.space.height,
             px_w: 1600,
             px_h: 900,
+            highlight: 0,
         });
         let start = Instant::now();
         let _snapshot = Snapshot::of(&sim.world);
@@ -950,6 +1028,34 @@ mod tests {
         eprintln!(
             "срез {snapshot_ms:.3} мс · сборка тел {normal_ms:.3} · квадраты {dots_ms:.3} · выкл {off_ms:.3} мс"
         );
+    }
+
+    /// A creature that grew up on the last tick decided by its juvenile program: the card shows
+    /// that program even when the creature is picked only afterwards (on a pause, say).
+    #[test]
+    fn a_creature_picked_after_it_grew_up_shows_the_program_it_decided_by() {
+        use life_core::creature::{ADULT, Action, Block, Phenotype, Program};
+        use life_core::plant::Plant;
+
+        let rules = Rules::default().with("plant_rate", 0.0).unwrap();
+        let cfg = WorldConfig { n_creatures: Some(0), rules, ..Default::default() };
+        let (_tx, rx) = mpsc::channel();
+        let (_recycle_tx, recycled) = mpsc::channel();
+        let mut sim = Sim::new(cfg, rx, recycled, Arc::new(Mutex::new(None)), Box::new(|| {}));
+        let w = &mut sim.world;
+        let id = w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(40.0));
+        let v = &mut w.creatures[0];
+        v.pheno = Phenotype::at_size(&v.genome, &w.rules, &w.space, v.pheno.size - 0.01);
+        v.programs =
+            [Program::of(&[Block::does(Action::EatPlant)]), Program::of(&[Block::does(Action::Ambush)])]
+                .into();
+        w.plants.push(Plant::at(1000.0, 1000.0));
+        sim.tick();
+        assert_eq!(sim.world.creature(id).unwrap().stage(), ADULT, "it grew up on the tick");
+        sim.selected = Some(id);
+        let s = sim.build_frame().selected.unwrap();
+        assert_eq!(s.stage, JUVENILE);
+        assert_ne!(s.state, "в засаде", "the juvenile program went for food");
     }
 
     /// The frames up to the first suitable one; the wait is limited: 500 attempts of 10 ms.
@@ -1056,7 +1162,7 @@ mod tests {
         let s = f.selected.unwrap();
         h.send(Command::Select(None));
         h.send(Command::Spawn { x: 1000.0, y: 1000.0, world_gen: 0 });
-        h.send(Command::Pick { x: s.x, y: s.y, radius: 1.0, world_gen: 0 });
+        h.send(Command::Pick { x: s.x, y: s.y, radius: 1.0, world_gen: 0, frame: f.number, k: 1.0 });
         // the commands apply in order: the census is taken after both
         h.send(Command::Census);
         let f = wait_frame(&h, |f| f.census.is_some());
@@ -1092,7 +1198,15 @@ mod tests {
     #[test]
     fn видимая_область_даёт_кружки_и_миникарту() {
         let h = SimHandle::spawn(cfg(), Box::new(|| {}));
-        h.send(Command::View(ViewRequest { x0: 0.0, y0: 0.0, x1: 6000.0, y1: 4000.0, px_w: 900, px_h: 600 }));
+        h.send(Command::View(ViewRequest {
+            x0: 0.0,
+            y0: 0.0,
+            x1: 6000.0,
+            y1: 4000.0,
+            px_w: 900,
+            px_h: 600,
+            highlight: 0,
+        }));
         let f = wait_frame(&h, |f| !f.instances.is_empty());
         assert!(f.instances.len() >= 20, "20 существ на старте");
         assert!(f.density.is_none());
@@ -1141,12 +1255,86 @@ mod tests {
         let s = f.selected.unwrap();
         assert_eq!(s.id, 1);
         // a click into the void drops the selection
-        h.send(Command::Pick { x: -1e6, y: -1e6, radius: 1.0, world_gen: 1 });
+        h.send(Command::Pick { x: -1e6, y: -1e6, radius: 1.0, world_gen: 1, frame: f.number, k: 1.0 });
         wait_frame(&h, |f| f.selected.is_none());
         // a click exactly in the centre selects
-        h.send(Command::Pick { x: s.x, y: s.y, radius: 1.0, world_gen: 1 });
+        h.send(Command::Pick { x: s.x, y: s.y, radius: 1.0, world_gen: 1, frame: f.number, k: 1.0 });
         let f = wait_frame(&h, |f| f.selected.is_some());
         assert_eq!(f.selected.unwrap().id, 1);
+    }
+
+    /// A click picks the body where the clicked frame drew it, though a running world has gone on
+    /// since and the body has walked away; a body that has died since is not picked.
+    #[test]
+    fn a_click_picks_where_the_frame_drew_the_body() {
+        let (_tx, rx) = mpsc::channel();
+        let (_recycle_tx, recycled) = mpsc::channel();
+        let mut sim = Sim::new(cfg(), rx, recycled, Arc::new(Mutex::new(None)), Box::new(|| {}));
+        let (w, h) = (sim.world.space.width, sim.world.space.height);
+        sim.view = Some(ViewRequest { x0: 0.0, y0: 0.0, x1: w, y1: h, px_w: 900, px_h: 600, highlight: 0 });
+        let frame = sim.build_frame();
+        let v = &sim.world.creatures[0];
+        let (id, x, y) = (v.id, v.x, v.y);
+        // the world goes on; the body walks off the spot the frame drew it at
+        sim.world.step();
+        sim.world.creatures[0].x = if x < w / 2.0 { x + 500.0 } else { x - 500.0 };
+        assert_eq!(sim.world.pick(x, y, 1.0), None, "the world as it is now has nobody there");
+        let pick = |frame| Command::Pick { x, y, radius: 1.0, world_gen: 0, frame, k: 1.0 };
+        sim.apply(pick(frame.number));
+        assert_eq!(sim.selected, Some(id), "picked where the frame drew it");
+        sim.world.creatures[0].alive = false;
+        sim.world.creatures.retain(|v| v.alive);
+        sim.apply(pick(frame.number));
+        assert_eq!(sim.selected, None, "dead since");
+    }
+
+    /// The window draws a body on its way from the previous frame's spot: a click halfway through
+    /// picks it halfway, not at the end of its way.
+    #[test]
+    fn a_click_picks_the_body_where_the_animation_drew_it() {
+        let (_tx, rx) = mpsc::channel();
+        let (_recycle_tx, recycled) = mpsc::channel();
+        let mut sim = Sim::new(cfg(), rx, recycled, Arc::new(Mutex::new(None)), Box::new(|| {}));
+        let (w, h) = (sim.world.space.width, sim.world.space.height);
+        sim.view = Some(ViewRequest { x0: 0.0, y0: 0.0, x1: w, y1: h, px_w: 900, px_h: 600, highlight: 0 });
+        sim.build_frame();
+        let v = &sim.world.creatures[0];
+        let (id, x, y) = (v.id, v.x, v.y);
+        assert!(v.pheno.half < 100.0);
+        let step = if x < w / 2.0 { 500.0 } else { -500.0 };
+        sim.world.creatures[0].x = x + step;
+        let frame = sim.build_frame();
+        let pick =
+            |k| Command::Pick { x: x + step / 2.0, y, radius: 1.0, world_gen: 0, frame: frame.number, k };
+        sim.apply(pick(0.5));
+        assert_eq!(sim.selected, Some(id), "halfway, where it was drawn");
+        sim.apply(pick(1.0));
+        assert_ne!(sim.selected, Some(id), "at the end of its way it is no longer there");
+    }
+
+    /// A pause rebuilds frames at one tick: a click on the frame the window still shows does not pick
+    /// a creature planted since, which that frame did not draw; on the frame that draws it, it does.
+    #[test]
+    fn a_click_on_pause_does_not_pick_a_creature_the_frame_did_not_draw() {
+        let (_tx, rx) = mpsc::channel();
+        let (_recycle_tx, recycled) = mpsc::channel();
+        let mut sim = Sim::new(cfg(), rx, recycled, Arc::new(Mutex::new(None)), Box::new(|| {}));
+        let (w, h) = (sim.world.space.width, sim.world.space.height);
+        sim.view = Some(ViewRequest { x0: 0.0, y0: 0.0, x1: w, y1: h, px_w: 900, px_h: 600, highlight: 0 });
+        let before = sim.build_frame();
+        let (x, y) = (1..10)
+            .flat_map(|i| (1..10).map(move |j| (w * i as f64 / 10.0, h * j as f64 / 10.0)))
+            .find(|&(x, y)| sim.world.pick(x, y, 100.0).is_none())
+            .expect("an empty spot");
+        sim.apply(Command::Spawn { x, y, world_gen: 0 });
+        let planted = sim.world.pick(x, y, 0.0).expect("planted");
+        let after = sim.build_frame();
+        assert_eq!(after.tick, before.tick);
+        let pick = |frame| Command::Pick { x, y, radius: 1.0, world_gen: 0, frame, k: 1.0 };
+        sim.apply(pick(before.number));
+        assert_eq!(sim.selected, None, "the shown frame has nobody there");
+        sim.apply(pick(after.number));
+        assert_eq!(sim.selected, Some(planted));
     }
 
     #[test]

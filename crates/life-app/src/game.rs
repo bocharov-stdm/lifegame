@@ -136,7 +136,9 @@ impl LifeApp {
             match click {
                 Some(Click::World { x, y, radius }) => match self.tool {
                     Tool::Select => {
-                        self.sim.send(Command::Pick { x, y, radius, world_gen });
+                        let frame = self.view.frame.as_ref().map_or(0, |f| f.number);
+                        let k = f64::from(self.view.progress());
+                        self.sim.send(Command::Pick { x, y, radius, world_gen, frame, k });
                         self.side_tab = SideTab::Creature;
                         self.side_open = true;
                     }

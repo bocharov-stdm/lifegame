@@ -279,6 +279,7 @@ impl WorldView {
                 y1,
                 px_w: (rect.width() * ppp) as u32,
                 px_h: (rect.height() * ppp) as u32,
+                highlight: self.highlight,
             };
             if self.last_view != Some(req) {
                 self.last_view = Some(req);
@@ -462,6 +463,7 @@ impl WorldView {
             y1,
             px_w: (rect.width() * ppp) as u32,
             px_h: (rect.height() * ppp) as u32,
+            highlight: self.highlight,
         };
         if self.last_view != Some(req) {
             self.last_view = Some(req);
@@ -522,8 +524,9 @@ impl WorldView {
     }
 
     /// The share of the way from the previous frame to the new one: the window draws creatures
-    /// between them. Without new frames (pause) it reaches 1, and the world freezes.
-    fn progress(&self) -> f32 {
+    /// between them. Without new frames (pause) it reaches 1, and the world freezes. A click carries
+    /// it, to pick a body where it was drawn (`Command::Pick`).
+    pub fn progress(&self) -> f32 {
         match self.arrived {
             Some(a) if self.interval > 0.0 => (a.elapsed().as_secs_f64() / self.interval).min(1.0) as f32,
             _ => 1.0,

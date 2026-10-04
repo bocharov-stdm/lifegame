@@ -78,7 +78,20 @@ impl Reference {
         let mut seeds = Vec::new();
         let mut runs = Vec::new();
         for run in field(&data, "runs")?.as_array().ok_or("runs — не список")? {
-            seeds.push(field(run, "seed")?.as_u64().ok_or("seed — не число")?);
+            let seed = field(run, "seed")?.as_u64().ok_or("seed — не число")?;
+            seeds.push(seed);
+            // the stop reason is saved as its text (`StopReason::Display`)
+            let stop = field(run, "stop")?;
+            let extinct = stop == StopReason::Extinct.to_string().as_str();
+            // as `save_reference` refuses: a seed a guard cut short is no evidence (a file written
+            // by hand or by another build may carry one)
+            let done = field(run, "ticks_done")?.as_u64().ok_or("ticks_done — не число")?;
+            if !extinct && (stop != StopReason::Done.to_string().as_str() || done != ticks) {
+                return Err(format!(
+                    "в эталоне сид {seed} остановился ({}) на тике {done} из {ticks}",
+                    stop.as_str().unwrap_or("?")
+                ));
+            }
             let series = field(run, "series")?
                 .as_array()
                 .ok_or("series — не список")?
@@ -89,9 +102,17 @@ impl Reference {
                     creatures: s["creatures"].as_f64().unwrap_or(0.0),
                     size: s["genom"].get(size_at).and_then(Value::as_f64),
                 })
-                .collect();
-            // the stop reason is saved as its text (`StopReason::Display`)
-            runs.push(Run { extinct: run["stop"] == StopReason::Extinct.to_string().as_str(), series });
+                .collect::<Vec<_>>();
+            // the run's final snapshot always closes its series (`life_sim::run`): a series that
+            // stops short is cut too, and would compare almost vacuously
+            let last = series.last().map(|p| p.tick);
+            if last != Some(done) {
+                return Err(format!(
+                    "в эталоне сид {seed}: серия кончается на тике {} из {done}",
+                    last.map_or("—".to_string(), |t| t.to_string())
+                ));
+            }
+            runs.push(Run { extinct, series });
         }
 
         let world = WorldConfig::default();
@@ -454,6 +475,37 @@ mod tests {
         let error = save_reference(&path, &cfg, 20, REFERENCE_SAMPLE, &[(cfg.seed, result)]).unwrap_err();
         assert!(error.contains("эталон не записан") && error.contains("сид"), "{error}");
         assert!(!path.exists());
+    }
+
+    /// A reference file that carries a cut run anyway (written by hand or by another build) is
+    /// refused on loading, as on saving, and so is a whole run whose series stops short; a whole run
+    /// is read.
+    #[test]
+    fn a_reference_with_a_cut_run_is_not_loaded() {
+        let path = std::env::temp_dir().join(format!("life-cut-reference-{}.json", std::process::id()));
+        let reference = |stop: StopReason, done: u64, last: Option<u64>| {
+            let series = last.map_or(String::new(), |t| format!(r#"{{"tick":0}},{{"tick":{t}}}"#));
+            format!(
+                r#"{{"model":"life-behavior/15","ticks":100,"sample_every":1,"shape":"3:2",
+                    "runs":[{{"seed":7,"stop":"{stop}","ticks_done":{done},"series":[{series}]}}]}}"#
+            )
+        };
+        std::fs::write(&path, reference(StopReason::Done, 100, Some(100))).unwrap();
+        assert!(Reference::load(&path).is_ok());
+        std::fs::write(&path, reference(StopReason::Extinct, 40, Some(40))).unwrap();
+        assert!(Reference::load(&path).is_ok(), "an extinct world's series ends where it died out");
+        for (stop, done, last) in [
+            (StopReason::Deadline, 1, Some(1)),
+            (StopReason::Done, 1, Some(1)),
+            (StopReason::Overload, 100, Some(100)),
+            (StopReason::Done, 100, Some(60)),
+            (StopReason::Done, 100, None),
+        ] {
+            std::fs::write(&path, reference(stop, done, last)).unwrap();
+            let error = Reference::load(&path).err().expect("a cut run is refused");
+            assert!(error.contains("сид 7") && error.contains("из 100"), "{error}");
+        }
+        std::fs::remove_file(path).unwrap();
     }
 
     /// A world that died out is an outcome, not a cut run: the reference keeps it.

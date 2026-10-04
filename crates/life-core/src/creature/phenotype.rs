@@ -253,10 +253,16 @@ impl Phenotype {
     }
 
     /// Upkeep a tick for a step of length `step`: the body and eyes, and the speed term for the
-    /// step actually taken — standing costs no speed.
+    /// step actually taken — standing costs no speed, even at `speed_power` 0 (`0 ** 0` is 1).
     #[inline]
     pub fn step_cost(&self, step: f64) -> f64 {
-        let term = if self.speed_power == 2.0 { step * step } else { step.powf(self.speed_power) };
+        let term = if self.speed_power == 2.0 {
+            step * step
+        } else if step == 0.0 {
+            0.0
+        } else {
+            step.powf(self.speed_power)
+        };
         self.still_upkeep + self.speed_price * term
     }
 

@@ -61,6 +61,9 @@ pub struct ViewRequest {
     pub y1: f64,
     pub px_w: u32,
     pub px_h: u32,
+    /// Diets highlighted, a bit per diet (`View::highlight`): the circles' shader reads it in the
+    /// window, a density map is painted with it here.
+    pub highlight: u32,
 }
 
 impl ViewRequest {
@@ -268,6 +271,9 @@ pub struct Frame {
     /// The world's number: grows at «Заново» and at a new world. By it the window understands that
     /// the history and the chronicle should start from a clean sheet.
     pub world_gen: u64,
+    /// The frame's number from the simulation thread's start: a click names the frame it was aimed
+    /// at (`Command::Pick`), which a tick does not — a pause rebuilds frames at one tick.
+    pub number: u64,
     /// Edits of the world between ticks — a creature planted, new rules: they change it without
     /// a tick, so what was taken of the world at this tick (the census) is taken again.
     pub edits: u64,
@@ -393,37 +399,73 @@ pub fn plant_color() -> [u8; 3] {
     lerp(WORLD_BOTTOM, SPROUT_COLOR, 0.75)
 }
 
+/// How much of a dimmed creature and plant stays visible while some diets are highlighted: as the
+/// circles' shader dims them (`creatures.wgsl`).
+const DIM_CREATURE: f64 = 0.2;
+const DIM_PLANT: f64 = 0.45;
+
 /// The density map: how many plants and creatures are in each cell of the world's rectangle,
 /// in colour. Computed in one pass over the world, so its price does not depend on how many
-/// creatures are visible.
-pub fn density(world: &World, rect: (f64, f64, f64, f64), w: usize, h: usize, out: Raster) -> Raster {
+/// creatures are visible. With diets `highlight`ed (a bit per diet) it paints as the circles'
+/// shader does: their creatures in their diets' colours on top, at full brightness however few,
+/// the other creatures and the plants dimmed.
+pub fn density(
+    world: &World,
+    rect: (f64, f64, f64, f64),
+    w: usize,
+    h: usize,
+    highlight: u32,
+    out: Raster,
+) -> Raster {
+    use crate::theme::DIET_COLORS;
+
     let (x0, y0, x1, y1) = rect;
     let (sx, sy) = (w as f64 / (x1 - x0), h as f64 / (y1 - y0));
-    let mut counts = vec![[0u32; 2]; w * h];
+    // plants, creatures, highlighted creatures
+    let mut counts = vec![[0u32; 3]; w * h];
     let mut hues = vec![[0u64; 3]; w * h];
+    // the highlighted ones' colours, only when there are any
+    let mut lit = if highlight == 0 { Vec::new() } else { vec![[0u64; 3]; w * h] };
     let mut add = |x: f64, y: f64, kind: usize, color: [u8; 3]| {
         let (cx, cy) = ((x - x0) * sx, (y - y0) * sy);
         if cx >= 0.0 && cy >= 0.0 && (cx as usize) < w && (cy as usize) < h {
             let i = cy as usize * w + cx as usize;
             counts[i][kind] += 1;
-            if kind == 1 {
-                for (sum, value) in hues[i].iter_mut().zip(color) {
-                    *sum += value as u64;
-                }
+            let sums = match kind {
+                1 => &mut hues[i],
+                2 => &mut lit[i],
+                _ => return,
+            };
+            for (sum, value) in sums.iter_mut().zip(color) {
+                *sum += value as u64;
             }
         }
     };
     world.plants.iter().for_each(|p| add(p.x, p.y, 0, PLANT_COLOR));
-    world.creatures.iter().for_each(|v| add(v.x, v.y, 1, CREATURE_COLOR));
+    for v in &world.creatures {
+        let diet = v.pheno.diet as usize;
+        if (highlight >> diet) & 1 != 0 {
+            add(v.x, v.y, 2, DIET_COLORS[diet]);
+        } else {
+            add(v.x, v.y, 1, CREATURE_COLOR);
+        }
+    }
+    let dim = if highlight == 0 { [1.0; 3] } else { [DIM_PLANT, DIM_CREATURE, 1.0] };
 
     let mut rgba = out.rgba;
     rgba.clear();
     rgba.reserve(w * h * 4);
-    for (c, hue) in counts.iter().zip(&hues) {
-        let colors = [PLANT_COLOR, hue.map(|sum| (sum / c[1].max(1) as u64) as u8)];
-        // Brightness by the logarithm: a lone creature is visible, and a crowd does not blind.
-        let k = c.map(|n| if n == 0 { 0.0 } else { (0.6 + (n as f64).log2() / 10.0).min(1.0) });
-        // Creatures on top of plants.
+    for (i, (c, hue)) in counts.iter().zip(&hues).enumerate() {
+        let mean = |sums: &[u64; 3], n: u32| sums.map(|sum| (sum / n.max(1) as u64) as u8);
+        let colors = [PLANT_COLOR, mean(hue, c[1]), lit.get(i).map_or([0; 3], |l| mean(l, c[2]))];
+        // Brightness by the logarithm: a lone creature is visible, and a crowd does not blind; a
+        // highlighted one is always at full.
+        let k: [f64; 3] = std::array::from_fn(|kind| match c[kind] {
+            0 => 0.0,
+            _ if kind == 2 => 1.0,
+            n => (0.6 + (n as f64).log2() / 10.0).min(1.0) * dim[kind],
+        });
+        // Creatures on top of plants, the highlighted ones on top of all.
         let mut px = [0.0f64; 3];
         let mut alpha = 0.0f64;
         for (kind, &a) in k.iter().enumerate() {
@@ -489,7 +531,7 @@ mod tests {
         // the whole world: more circles than the ceiling — a density map the size of the screen
         assert!(!motion.collect(&world, (0.0, 0.0, w, h), &mut out));
         let start = std::time::Instant::now();
-        let r = density(&world, (0.0, 0.0, w, h), 960, 300, Raster::default());
+        let r = density(&world, (0.0, 0.0, w, h), 960, 300, 0, Raster::default());
         let ms = start.elapsed().as_secs_f64() * 1000.0;
         eprintln!("  [плотность] {}x{} за {ms:.1} мс", r.w, r.h);
         assert!(r.rgba.len() <= 2 * 1024 * 1024);
@@ -500,10 +542,32 @@ mod tests {
     fn плотность_считает_всех() {
         let world = World::new(&WorldConfig { scale: 10.0, ..Default::default() });
         let (w, h) = minimap_size(world.space.width, world.space.height);
-        let r = density(&world, (0.0, 0.0, world.space.width, world.space.height), w, h, Raster::default());
+        let r =
+            density(&world, (0.0, 0.0, world.space.width, world.space.height), w, h, 0, Raster::default());
         assert_eq!(r.rgba.len(), w * h * 4);
         let lit = r.rgba.chunks(4).filter(|p| p[3] > 0).count();
         assert!(lit >= 1, "стартовые существа видны на миникарте");
+    }
+
+    /// A world too full for circles still shows the diet highlight: the density map paints a
+    /// highlighted herbivore in its diet's colour at full brightness and dims the plants; a
+    /// highlight of another diet only dims.
+    #[test]
+    fn the_density_map_shows_the_diet_highlight() {
+        use crate::theme::DIET_COLORS;
+        use life_core::plant::Plant;
+
+        let mut world = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
+        let (w, h) = (world.space.width, world.space.height);
+        world.plants = (0..250_001).map(|i| Plant::at((i % 1000) as f64 * w / 1000.0, h / 2.0)).collect();
+        world.spawn(life_core::CreatureGenome::BASE, w / 2.0, h / 4.0, None);
+        assert_eq!(world.creatures[0].pheno.diet as usize, 0, "a herbivore");
+        let map = |highlight| density(&world, (0.0, 0.0, w, h), 100, 100, highlight, Raster::default()).rgba;
+        let (plain, herbivores, carnivores) = (map(0), map(1), map(1 << 3));
+        let at = |rgba: &[u8], x: usize, y: usize| rgba[(y * 100 + x) * 4..][..4].to_vec();
+        assert_eq!(at(&herbivores, 50, 25), [DIET_COLORS[0][0], DIET_COLORS[0][1], DIET_COLORS[0][2], 255]);
+        assert!(at(&herbivores, 0, 50)[3] < at(&plain, 0, 50)[3], "the plants dimmed");
+        assert!(at(&carnivores, 50, 25)[3] < at(&plain, 50, 25)[3], "the herbivore dimmed");
     }
 
     /// Far dots carry each creature's diet: the shader's diet highlight reads it at any zoom.

@@ -325,7 +325,7 @@ pub struct Mind {
     /// birthplace.
     pub target: Option<(f64, f64)>,
     /// The layer (`Stance::layer`) its wander target was kept in: a target out of a changed layer is
-    /// dropped, not one a growing body's narrower band left past its margin.
+    /// dropped; one a growing body's narrower band left past its margin is brought within the band.
     pub target_layer: (f64, f64),
     /// Until what share of their size it knows its children, as its last tick's «щадить детей» set
     /// it (`Stance::spare`). Copied as the tick begins (`World::step`), so the herd's snapshot, the
@@ -477,7 +477,9 @@ pub(super) fn plan(
     if action != Some(Action::DefendChild) {
         actions::end_defence(mind);
     }
-    if mode == Mode::Defend || (intent.attack.is_some() && intent.tx == me.x && intent.ty == me.y) {
+    // a fight back, by its block, not by standing: a hunter that reached a prey standing still
+    // stands on it too, and is no defender (`combat::defending`)
+    if mode == Mode::Defend || action == Some(Action::FightBack) {
         mind.activity = Activity::Alarm;
         mind.course = None;
         return (intent, mode);
@@ -1174,6 +1176,34 @@ mod tests {
         let (intent, _) = run(&v, &program, &mut mind, &asks);
         assert!((asks.0.get() - 0.4 * v.pheno.vision).abs() < 1e-9);
         assert_eq!((intent.attack, intent.pace), (Some(9), 0.6));
+    }
+
+    /// A hunter that reached a prey standing still stands on its centre: it feeds, it does not
+    /// fight back (a defence strikes any size, a hunt keeps to its ratio); one that fights back
+    /// standing is in alarm.
+    #[test]
+    fn a_hunter_on_its_prey_feeds_and_one_fighting_back_is_in_alarm() {
+        struct Under;
+        impl Senses for Under {
+            fn nearest_plant(&self, _: f64, _: f64, _: f64) -> Option<(f64, f64)> {
+                None
+            }
+            fn nearest_threat(&self, me: &Me, _: f64) -> Option<Threat> {
+                Some(Threat { id: 9, x: me.x, y: me.y, gap: 0.0, half: 5.0 })
+            }
+            fn prey(&self, me: &Me, _: Option<u64>, _: Option<u64>, _: Hunting) -> Option<Prey> {
+                Some(Prey { id: 9, x: me.x, y: me.y, half: 5.0, score: 1.0 })
+            }
+        }
+        let v =
+            body(CreatureGenome::BASE.with(Gene::Diet, Diet::Carnivore as usize as f64), Some(1000.0), 0.5);
+        for (action, activity) in [(Action::Hunt, Activity::Feeding), (Action::FightBack, Activity::Alarm)] {
+            let program = Program::of(&[Block::does(action), Block::does(Action::Wander)]);
+            let mut mind = Mind::default();
+            let (intent, _) = run(&v, &program, &mut mind, &Under);
+            assert_eq!((intent.attack, intent.tx, intent.ty), (Some(9), v.x, v.y), "{action:?}");
+            assert_eq!(mind.activity, activity, "{action:?}");
+        }
     }
 
     /// The plant choice: the usual keeps the one it goes to and else takes the nearest; without

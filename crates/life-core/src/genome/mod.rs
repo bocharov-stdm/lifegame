@@ -318,7 +318,9 @@ pub fn variant_for(i: usize, n: usize, shares: &[f64], variants: usize) -> usize
             return k.min(variants - 1);
         }
     }
-    (shares.len() - 1).min(variants - 1)
+    // `at` rounded up to the sum (tiny shares): the last variant that has a share, never one without
+    let last = shares.iter().rposition(|s| *s > 0.0).unwrap_or(0);
+    last.min(variants - 1)
 }
 
 /// Order in which `n` founders take a start mix that must not line up with another one: two
@@ -409,6 +411,17 @@ mod tests {
             (0..5).all(|i| variant_for(i, 5, &[0.0, 1.0], 1) == 0),
             "вариантов меньше долей — последний есть"
         );
+    }
+
+    /// With tiny shares the point (i + 0.5) / n · sum rounds up to the sum itself and passes every
+    /// cumulative share: the founder still gets a variant that has a share, not the last one.
+    #[test]
+    fn a_tiny_mix_never_deals_a_variant_without_a_share() {
+        let tiny = f64::from_bits(1); // the smallest subnormal
+        let got: Vec<usize> = (0..20).map(|i| variant_for(i, 20, &[tiny, 0.0, 0.0, 0.0], 4)).collect();
+        assert!(got.iter().all(|&k| k == 0), "{got:?}");
+        let got: Vec<usize> = (0..20).map(|i| variant_for(i, 20, &[0.0, tiny, 0.0], 3)).collect();
+        assert!(got.iter().all(|&k| k == 1), "{got:?}");
     }
 
     /// A chain a — b — c.

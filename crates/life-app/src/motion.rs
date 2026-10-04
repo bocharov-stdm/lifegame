@@ -61,6 +61,9 @@ struct Seen {
     id: u64,
     x: f64,
     y: f64,
+    /// Where the frame draws it from (its previous position, or where it is, if new to the frame).
+    px: f64,
+    py: f64,
     heading: f32,
     r: f32,
     color: u32,
@@ -214,6 +217,12 @@ impl Motion {
         full
     }
 
+    /// The creatures the last full frame drew: (id, from x, from y, x, y, half) — the window draws
+    /// each on the way from the first point to the second.
+    pub fn drawn(&self) -> impl Iterator<Item = (u64, f64, f64, f64, f64, f64)> + '_ {
+        self.creatures.iter().map(|s| (s.id, s.px, s.py, s.x, s.y, f64::from(s.r)))
+    }
+
     fn collect_plants(
         &mut self,
         world: &World,
@@ -355,7 +364,7 @@ impl Motion {
                     | if fed { FED } else { 0 },
             });
             let diet = bits & (3 << DIET_SHIFT);
-            seen.push(Seen { id, x, y, heading, r: half as f32, color, fullness, feeding, diet });
+            seen.push(Seen { id, x, y, px, py, heading, r: half as f32, color, fullness, feeding, diet });
             out.len() <= MAX_INSTANCES
         };
 

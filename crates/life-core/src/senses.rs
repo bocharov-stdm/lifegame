@@ -315,11 +315,15 @@ impl Senses for GridSenses<'_> {
         let mut best: Option<Prey> = None;
         for &(_, _, _, j) in &candidates[..n_candidates] {
             let s = &herd.seen[j];
-            // A parent in sight that still knows it and whose program defends its children.
+            // A parent in sight that still knows it and whose program defends its children — unless
+            // it knows the hunter too: kin strike no kin (`combat`), nor defend a child from them.
             let mut allies = 0.0;
             if let Ok(k) = herd.seen.binary_search_by_key(&s.kinship.parent, |p| p.kinship.id) {
                 let p = &herd.seen[k];
-                if p.defends && p.kinship.kin(s.kinship) && (p.x - me.x).hypot(p.y - me.y) <= me.pheno.vision
+                if p.defends
+                    && p.kinship.kin(s.kinship)
+                    && !me.kinship.kin(p.kinship)
+                    && (p.x - me.x).hypot(p.y - me.y) <= me.pheno.vision
                 {
                     allies += p.strike_on(me);
                 }
@@ -1208,6 +1212,7 @@ mod tests {
                             if let Some(p) = w.creatures.iter().find(|p| p.id == u.parent)
                                 && p.menace().defends
                                 && p.kinship().kin(u.kinship())
+                                && !v.kinship().kin(p.kinship())
                                 && (p.x - v.x).hypot(p.y - v.y) <= v.pheno.vision
                             {
                                 allies += strike(p);
@@ -1421,9 +1426,19 @@ mod tests {
         let covered = best_prey(careful(50.0), 0.3, with_parent(50.0, true)).unwrap();
         let forgotten = best_prey(careful(50.0), 0.3, with_parent(10.0, true)).unwrap();
         let careless = best_prey(careful(50.0), 0.3, with_parent(50.0, false)).unwrap();
+        // the hunter is the parent's growing child too: the parent strikes neither of its own
+        let brother = best_prey(careful(50.0), 0.3, |w: &mut World| {
+            with_parent(50.0, true)(w);
+            let parent = w.creatures[1].id;
+            let hunter = &mut w.creatures[0];
+            hunter.parent = parent;
+            hunter.genome = hunter.genome.with(Gene::Size, hunter.pheno.size * 2.0);
+        })
+        .unwrap();
         assert!(covered.score < alone.score, "a parent in sight did not count");
         assert_eq!(forgotten.score, alone.score, "a parent that forgot its child still covers it");
         assert_eq!(careless.score, alone.score, "a parent whose program does not defend covers it");
+        assert_eq!(brother.score, alone.score, "a parent covers its child from its other child");
     }
 
     /// A full candidate buffer keeps the nearest prey: a crowd in the grid rows above the hunter

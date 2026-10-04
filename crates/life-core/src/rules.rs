@@ -689,12 +689,16 @@ pub struct UpkeepParts {
 
 impl UpkeepParts {
     /// The upkeep a tick at `speed`: the same operations in the same order as the sum of the three
-    /// terms, so bit for bit what `upkeep_diet` gave before the parts.
+    /// terms, so bit for bit what `upkeep_diet` gave before the parts. Standing costs no speed even
+    /// at `speed_power` 0, where `0 ** 0` would be 1.
     #[inline]
     pub fn at(&self, speed: f64) -> f64 {
-        self.size_term
-            + self.speed_coef * speed.powf(self.speed_power) * self.mass * self.speed_cost
-            + self.sight_term
+        let speed_term = if speed == 0.0 {
+            0.0
+        } else {
+            self.speed_coef * speed.powf(self.speed_power) * self.mass * self.speed_cost
+        };
+        self.size_term + speed_term + self.sight_term
     }
 }
 

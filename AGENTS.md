@@ -63,7 +63,8 @@ Commit and push only when the user asks.
 ## Current model specifics
 
 Diets are a gene (herbivore, omnivore, scavenger, carnivore): each has its own body edges and its
-own foods among plants, fresh meat, rot and bones; meat diets arise from mutants. A corpse is
+own foods among plants, fresh meat, rot and bones; by default no founder eats meat (a founders'
+diet mix may deal meat diets), and they arise from mutants. A corpse is
 fresh for 300 ticks, then rot that sinks and decays to bones by 3000, then bones for 5000. The deep
 is cold below a thermocline, where the `cold_blood` gene makes a body cheaper and slower. Upkeep is
 the body and eyes plus the speed of the step actually taken. Eleven genes, the body and life

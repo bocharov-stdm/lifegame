@@ -220,6 +220,24 @@ struct Job {
     seed: u64,
 }
 
+/// Before a sweep starts: a result it will not reuse goes at once, not when its run's turn comes
+/// (a sweep stopped early must not summarise an older build's or command line's results as its
+/// own); the progress file any run of an earlier sweep left when it was killed goes too (a new run
+/// would show its tick until it writes its own).
+fn clean_out<'a>(out: &Path, jobs: impl IntoIterator<Item = &'a Job>, reuse: impl Fn(&Job) -> bool) {
+    for job in jobs {
+        let (json, txt, cmd) = job_paths(out, job);
+        for file in [json.with_extension("tick"), json.with_extension("tick.tmp")] {
+            let _ = fs::remove_file(file);
+        }
+        if !reuse(job) {
+            for file in [json, txt, cmd] {
+                let _ = fs::remove_file(file);
+            }
+        }
+    }
+}
+
 fn job_paths(out: &Path, job: &Job) -> (PathBuf, PathBuf, PathBuf) {
     let dir = out.join(&job.variant.name);
     let s = job.seed;
@@ -412,9 +430,10 @@ impl RunMetrics {
     fn complete(&self) -> bool {
         self.stop == "done" || self.stop == "extinct"
     }
-    /// A diet holds when it keeps at least 10 creatures and 1% of the world over the late window.
+    /// A diet holds when it keeps at least 10 creatures and 1% of the world over the late window; in
+    /// a world that died out none does.
     fn holds(&self, diet: usize) -> bool {
-        self.diet_late[diet] >= 10.0_f64.max(0.01 * self.pop_late)
+        self.stop != "extinct" && self.diet_late[diet] >= 10.0_f64.max(0.01 * self.pop_late)
     }
 }
 
@@ -436,11 +455,15 @@ fn metrics_of(json: &Value, text: &str, seed: u64, late: f64) -> Option<RunMetri
     let from = span as f64 * (1.0 - late);
     let late_snaps: Vec<&Value> =
         snaps.iter().filter(|s| s["tick"].as_f64().unwrap_or(0.0) >= from).collect();
+    // A world that died out within the window has no snapshots after it: nobody lived in the rest of
+    // the window, so the snapshots' mean counts only for the share of the window it lived.
+    let window = span as f64 - from;
+    let lived = if window > 0.0 { ((ticks as f64 - from) / window).clamp(0.0, 1.0) } else { 1.0 };
     let mean = |f: &dyn Fn(&Value) -> f64| {
         if late_snaps.is_empty() {
             0.0
         } else {
-            late_snaps.iter().map(|s| f(s)).sum::<f64>() / late_snaps.len() as f64
+            late_snaps.iter().map(|s| f(s)).sum::<f64>() / late_snaps.len() as f64 * lived
         }
     };
     let last = snaps.last()?;
@@ -589,7 +612,7 @@ fn summarise(plan: &Plan, runs: &BTreeMap<String, Vec<RunMetrics>>, out: &Path) 
     }
     let _ = fs::write(out.join("summary.csv"), &csv);
     let legend = "Medians over the worlds that ended on their own. \"holds\": at least 10 creatures and 1% of the \
-                  world over the late window; \"coexist\": herbivores and carnivores both hold; \"pop min\": the \
+                  world over the late window, never in a world that died out; \"coexist\": herbivores and carnivores both hold; \"pop min\": the \
                   lowest population after the first 10% of the run, over all worlds; \"ms/tick\": the median \
                   run's median lap (500 ticks); \"slowdown\": the worst lap over its run's median lap, of the \
                   slowest run (⚠ from 3×).\n\n";
@@ -923,14 +946,7 @@ fn main() {
         .iter()
         .flat_map(|v| plan.seeds.iter().map(|&seed| Job { variant: v.clone(), seed }))
         .collect();
-    // a result this sweep will not reuse goes at once, not when its run's turn comes: a sweep
-    // stopped early must not summarise an older build's or command line's results as its own
-    for job in queue.iter().filter(|job| !reusable(&exe, &plan, job, &args)) {
-        let (json, txt, cmd) = job_paths(&args.out, job);
-        for file in [json, txt, cmd] {
-            let _ = fs::remove_file(file);
-        }
-    }
+    clean_out(&args.out, &queue, |job| reusable(&exe, &plan, job, &args));
     let total = queue.len();
     let worst_case = Duration::from_secs(total.div_ceil(jobs_at_once) as u64 * (args.seconds + args.grace));
     println!(
@@ -1247,6 +1263,28 @@ mod tests {
         fs::remove_dir_all(&out).unwrap();
     }
 
+    /// A sweep killed mid-run leaves its runs' progress files: the next sweep in the same folder
+    /// clears them before its runs start, reused or not, and keeps only the results it reuses.
+    #[test]
+    fn a_new_sweep_clears_the_progress_a_killed_one_left() {
+        let out = std::env::temp_dir().join(format!("life-sweep-stale-{}", std::process::id()));
+        let plan = parse_plan("seeds: 1 2\nvariant a:\n").unwrap();
+        let jobs: Vec<Job> = [1, 2].map(|seed| Job { variant: plan.variants[0].clone(), seed }).into();
+        fs::create_dir_all(out.join("a")).unwrap();
+        for seed in [1, 2] {
+            for ext in ["json", "txt", "cmd", "tick", "tick.tmp"] {
+                fs::write(out.join("a").join(format!("s{seed}.{ext}")), "15000 20000 4.2").unwrap();
+            }
+        }
+        clean_out(&out, &jobs, |job| job.seed == 1);
+        let left = |seed: u64, ext: &str| out.join("a").join(format!("s{seed}.{ext}")).exists();
+        assert_eq!(tick_of(&out, "a", 1), None);
+        assert!(!left(1, "tick.tmp") && !left(2, "tick") && !left(2, "tick.tmp"));
+        assert!(left(1, "json") && left(1, "txt") && left(1, "cmd"), "a reused run keeps its result");
+        assert!(!left(2, "json") && !left(2, "txt") && !left(2, "cmd"));
+        fs::remove_dir_all(&out).unwrap();
+    }
+
     #[test]
     fn a_plan_may_not_touch_the_guards() {
         for bad in [
@@ -1341,6 +1379,26 @@ mod tests {
         let m = metrics_of(&json, "", 1, 0.25).unwrap();
         assert!(m.complete());
         assert_eq!(m.pop_late, 0.0);
+        assert!(!m.holds(0) && !m.holds(3));
+    }
+
+    /// A world dead at tick 1600 of 2000 lived a fifth of the late window (1500–2000): its late means
+    /// count for that fifth, and no diet of it holds, however many lived before the collapse.
+    #[test]
+    fn a_world_dead_within_the_late_window_holds_nothing() {
+        let snap = |tick: u64, n: f64| {
+            serde_json::json!({
+                "tick": tick, "creatures": n,
+                "diet_creatures": { "herbivore": n / 2.0, "omnivore": 0, "scavenger": 0, "carnivore": n / 2.0 }
+            })
+        };
+        let json = serde_json::json!({ "ticks": 2000, "runs": [{
+            "stop": "extinct", "ticks_done": 1600,
+            "snapshots": [snap(0, 100.0), snap(1500, 3000.0), snap(1550, 3000.0), snap(1600, 0.0)],
+        }]});
+        let m = metrics_of(&json, "", 1, 0.25).unwrap();
+        assert!(m.complete() && m.pop_end == 0.0);
+        assert_eq!(m.pop_late, 2000.0 * 0.2);
         assert!(!m.holds(0) && !m.holds(3));
     }
 

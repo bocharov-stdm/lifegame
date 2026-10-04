@@ -76,7 +76,9 @@ texts, settings labels and hints, gene `label`/`about`, chronicle texts (`life_s
 - **Diets** (`diet` gene, order H/O/S/C in every `DIET_*` table): digestion and body edges are
   world rules (`Rules::diets`, keys `{diet}_{edge}`, the lab's «Питание»), read in
   `Phenotype::of`. Digestion 0 = neither eats nor goes for it. Without «есть и чужую пищу» a diet
-  keeps to its own food (`DIET_OWN`). Meat diets arise from mutants.
+  keeps to its own corpse stages (`DIET_OWN`); plants are never gated, digestion alone decides.
+  By default no founder eats meat (`DIET_START_MIX`); a founders' diet mix may deal meat diets
+  (bigger, `MEAT_FOUNDER_SIZE`), else they arise from mutants.
 - **Space and food**: scale is area (`per_area`), vertical ecology in % of depth, real units only
   for showing (`units.rs`). A layer is a preference, not a wall: physics clamps only to the world —
   never teleport. Plants live in `PLANT_MAX` slots, one each; the occupied slots are a bitset
@@ -120,7 +122,7 @@ I/O; `life-app` alone knows the screen.
 - **Determinism**: no global RNG — each creature owns an `Rng` forked from its parent's, the world
   has its own stream. Results depend on the seed only, never on iteration order or thread count.
   Any change in how many numbers are drawn, or their order, shifts every seed. The plant spawner
-  draws even when capped.
+  draws its fractional chance every tick, capped or not (a capped one plants nothing more).
 - **Golden** (`tests/golden.rs`): an FNV digest of nine configs at checkpoints, asserted on Windows
   only. Minds, corpses and shots enter it as debug prints without type and field names, so a
   rename keeps the digest. A refactor must keep it; a deliberate behaviour change re-records it
@@ -150,17 +152,21 @@ I/O; `life-app` alone knows the screen.
   a thread of its own outside the pool (`by_seed`), and on one thread its worlds run `One`. The
   driving thread keeps to a hybrid processor's fast cores (`life_sim::cores`).
 - **Termination**: every headless run is capped by ticks, population, a work budget and a
-  wall-clock deadline (`life_sim::Limits`). Tests have no `while` loops.
+  wall-clock deadline (`life_sim::Limits`). Tests run worlds only in `for` loops
+  over ticks, never `while` a world reaches some state.
 
 ## The game (`crates/life-app`)
 
 **The window never waits for the simulation.** Defaults are the user's world (×20, 2:1,
-`settings::GAME_*`); settings show common factors per 100. A settings file carries
+`settings::GAME_*`) but for the founders' diet mix, which is the engine's (`DIET_START_MIX`: no
+meat eaters); the user plays ×100 and 55/25/10/10. Settings show common factors per 100. A
+settings file carries
 `DEFAULTS_VERSION`: keys in `CHANGED_DEFAULTS` take the new default.
 
 - `sim.rs` — the simulation thread owns `World`; `Command`s apply between ticks; frames go through
   a one-slot mailbox, never dropped, so history, log and snapshots travel as deltas. Commands built
-  from a frame carry its `world_gen`.
+  from a frame carry its `world_gen`; a click (`Pick`) its `number` and the window's animation
+  progress too, and picks the bodies where that frame drew them at that moment.
 - `frame.rs` (32-byte instances relative to an f64 origin), `motion.rs`, `render.rs` +
   `creatures.wgsl` (one instanced draw), `view.rs`, `game.rs`, `behaviour.rs` (programs as
   flowcharts), `stats.rs`, `census.rs`, `settings.rs` (`FIELDS` — the single spec of every field;
@@ -195,7 +201,8 @@ feature list, or cargo builds it twice; `play.bat`/`play.sh` drop `target/debug`
 
 ## Balance
 
-**Baseline conditions** — the user's own game; judge balance here, not on ×1 defaults:
+**Baseline conditions** — the user's own game, at ×20 standing in for the ×100 they play (the user's
+choice, 2026-10-04: ×100 is five times the work a tick); judge balance here, not on ×1 defaults:
 
 ```bash
 cargo run -p life-report --release -- --seeds 1 2 3 4 5 6 7 8 --ticks 20000 --max-work 1e15 \

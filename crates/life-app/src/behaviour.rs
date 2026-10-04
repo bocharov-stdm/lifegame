@@ -195,6 +195,7 @@ impl ActionText {
 fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
     let blocks = p.blocks();
     let reachable = p.reachable();
+    let ending = p.ending();
     // the settings first, as the engine applies them, then the deciding blocks in order
     let settings: Vec<usize> = (0..blocks.len()).filter(|&i| blocks[i].action.is_setting()).collect();
     let deciders: Vec<usize> = (0..blocks.len()).filter(|&i| !blocks[i].action.is_setting()).collect();
@@ -410,9 +411,11 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
         }
         ui.interact(action, ui.id().with(("действие", i)), Sense::hover()).on_hover_text(action_hint);
 
-        // «нет» («дальше» after a setting, «не вышло» after a failed action) ↓ the next row
+        // «нет» («дальше» after a setting, «не вышло» after a failed action) ↓ the next row; never
+        // taken past an unreached block or the one that always fires
+        let never = unreached || ending == Some(i);
         let down = next - cond.bottom();
-        let no = if unreached {
+        let no = if never {
             faded
         } else if depth.is_some_and(|d| setting || i < d) {
             lit
@@ -432,14 +435,15 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
             Align2::LEFT_CENTER,
             word,
             FontId::proportional(12.0),
-            if unreached { MUTED } else { no.color },
+            if never { MUTED } else { no.color },
         );
     }
 
+    // never reached when a deciding block always fires, wherever it stands
     let end = Rect::from_min_size(Pos2::new(cond_x, end_top), Vec2::new(COND_W, END_H));
     let border = if path.is_some() && fired.is_none() {
         Stroke::new(2.5, ACCENT)
-    } else if reachable < blocks.len() {
+    } else if ending.is_some() {
         Stroke::new(1.0, LINE)
     } else {
         Stroke::new(1.3, MUTED)

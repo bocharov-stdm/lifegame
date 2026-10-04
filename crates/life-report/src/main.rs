@@ -188,17 +188,20 @@ fn parse_rules(pairs: &[String]) -> Result<Rules, String> {
     Rules::default().with_texts(changes)
 }
 
-/// A mix of strategies: the shares are non-negative, sum to more than zero, and there are no
-/// more than there are variants.
+/// A mix of strategies: the shares are non-negative, sum to more than zero and to a finite number
+/// (an infinite sum would turn every share into nothing or NaN), and there are no more than there are
+/// variants.
 fn check_mix(flag: &str, shares: &[f64], variants: &[Variant]) -> Result<(), String> {
     if shares.len() > variants.len() {
         let names: Vec<&str> = variants.iter().map(|v| v.label).collect();
         return Err(format!("{flag}: вариантов всего {} ({})", variants.len(), names.join(", ")));
     }
-    if shares.iter().any(|s| !s.is_finite() || *s < 0.0)
-        || (!shares.is_empty() && shares.iter().sum::<f64>() <= 0.0)
-    {
+    let sum = shares.iter().sum::<f64>();
+    if shares.iter().any(|s| !s.is_finite() || *s < 0.0) || (!shares.is_empty() && sum <= 0.0) {
         return Err(format!("{flag}: доли — числа не меньше нуля, хотя бы одна больше"));
+    }
+    if !sum.is_finite() {
+        return Err(format!("{flag}: сумма долей слишком велика"));
     }
     Ok(())
 }
@@ -475,5 +478,21 @@ fn print_summary(results: &[(u64, SimResult)]) {
         println!("\nвсе прогоны дошли до конца");
     } else {
         println!("\nоборваны: {}", cut.join("; "));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use life_core::genome::creature::DIET_VARIANTS;
+
+    /// Finite shares whose sum overflows are refused: the world would divide by an infinite sum and
+    /// give the whole start to a diet of weight zero.
+    #[test]
+    fn a_mix_whose_sum_overflows_is_refused() {
+        assert_eq!(check_mix("--diet-mix", &[55.0, 25.0, 10.0, 10.0], &DIET_VARIANTS), Ok(()));
+        let error = check_mix("--diet-mix", &[1e308, 1e308, 0.0, 0.0], &DIET_VARIANTS).unwrap_err();
+        assert!(error.contains("сумма"), "{error}");
+        assert!(check_mix("--diet-mix", &[0.0, 0.0], &DIET_VARIANTS).is_err());
     }
 }

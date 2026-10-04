@@ -1282,7 +1282,8 @@ impl Default for Settings {
             seed: 1,
             random_seed: true,
             // the player's own world (2026-09-26): big, wide, hungry, half lurkers, food falls off
-            // softer than the engine's default
+            // softer than the engine's default; the founders' diets are the engine's (no meat
+            // eaters), though the player deals 55/25/10/10
             scale: 20.0,
             shape: Shape::R2x1,
             values: FIELDS.map(|f| match f.key {
@@ -1526,7 +1527,7 @@ fn json_key(key: Key) -> &'static str {
     }
 }
 
-/// Where the settings file lies: `%APPDATA%\lifegame\settings.json` and its analogues.
+/// Where the settings file lies: `%APPDATA%\lifegame\config\settings.json` and its analogues.
 /// A new name, not the Python version's `user_settings.json`: the formats differ. The game used to
 /// be called TinyLife: a file left in that folder is copied over once, so the settings survive.
 pub fn default_path() -> Option<PathBuf> {

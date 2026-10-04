@@ -10,6 +10,49 @@ section describes earlier models and is kept as a record (flocks, cannibalism as
 
 Model `life-behavior/15`, format `life-report/12`.
 
+**Five review fixes** (2026-10-04, the user: «начинай чинить»). Golden and both references
+re-taken locally on Windows for this and the entries below; in both references all 8 worlds live
+to 20 000 ticks. The baseline conditions unmeasured.
+- **A grown calm walker does not stand under its wander target.** The target it kept could lie
+  past the grown body's narrower band, and a calm walk («плавно») keeps to the band: it circled
+  under the target for ever. A kept target is now brought within the band as well as the bounds; a
+  target out of a changed layer is still dropped.
+- **A tiny founders' mix deals no diet without a share.** With shares so small that the founder's
+  point rounded up to their sum, `variant_for` fell through to the last variant, share or none: a
+  mix of only herbivores could deal carnivores. It now falls back to the last variant that has a
+  share.
+- Outside the engine: a click picks a body where the window drew it at that moment, on its way
+  from the previous frame, and among the bodies of the very frame clicked (`Frame::number`), so on
+  pause it never picks a creature planted since; a reference whose series stops short of its run's
+  last tick is refused on loading.
+
+**Six bug-hunt fixes** (2026-10-03, the user: «исправь всё»). Golden and the references
+re-taken with the entry above. Unmeasured.
+- **A hunter on its prey feeds, it does not fight back.** Alarm was told by an attack standing
+  still, so a hunter that reached a prey standing still (on its centre) read as fighting back: its
+  activity was «тревога» and combat let it strike past its hunt's size ratio. Now only a
+  «дать отпор» block or a defence of a child is alarm.
+- **A parent is no ally of its child against its other child.** A hunt counted the prey's
+  defending parent in sight as an ally even when that parent knew the hunter as its child too, and
+  kin never strike kin: a careful juvenile left a younger sibling alone for strikes that never come.
+- Outside the engine: a sweep clears the progress files a killed one left; a click picks the body
+  where the clicked frame drew it, not where a running world has since taken it; the genome chart
+  shows small medians with tenths; the flowchart draws «стоит» as never reached whenever a block
+  always fires. `DIET_OWN` gates only corpse stages, plants never: the docs now say so.
+
+**Seven review fixes** (2026-10-03). Golden unchanged: none of its worlds met the two engine
+cases. Unmeasured.
+- **A grown body does not stand short of its wander target.** The target it kept could lie past
+  the bounds the grown body reaches (their margin is the body too): it walked to the wall and stood
+  there for ever. A kept target is now brought within those bounds.
+- **Standing costs no speed at `speed_power` 0.** `0 ** 0` is 1, so a standing body paid the
+  speed term; the speed term of a speed or step of 0 is 0 at any exponent.
+- Outside the engine: `life-sweep` counts a world that died out within the late window as empty
+  for the rest of it and lets no diet of it «hold»; a reference with a cut run is refused on
+  loading, as on saving; `--mix`/`--diet-mix` refuse shares whose sum overflows; the density map
+  of a crowded view shows the diet highlight; a creature picked after it grew up shows the
+  juvenile program it decided by.
+
 **Three review fixes** (2026-10-03, the user: «исправляй»). Golden and the references re-recorded
 on Windows by the Re-record workflow. Unmeasured.
 - **A grown body keeps its wander target.** The band's margin is the body, so a juvenile that grew
