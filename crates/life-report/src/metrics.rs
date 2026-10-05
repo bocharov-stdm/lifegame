@@ -85,10 +85,10 @@ impl Reference {
             let extinct = stop == StopReason::Extinct.to_string().as_str();
             // as `save_reference` refuses: a seed a guard cut short is no evidence (a file written
             // by hand or by another build may carry one)
-            let done = field(run, "ticks_done")?.as_u64().ok_or("ticks_done — не число")?;
+            let done = field(run, "ticks_done")?.as_u64().ok_or("ticks_done is not a number")?;
             if !extinct && (stop != StopReason::Done.to_string().as_str() || done != ticks) {
                 return Err(format!(
-                    "в эталоне сид {seed} остановился ({}) на тике {done} из {ticks}",
+                    "the reference's seed {seed} stopped ({}) at tick {done} of {ticks}",
                     stop.as_str().unwrap_or("?")
                 ));
             }
@@ -108,7 +108,7 @@ impl Reference {
             let last = series.last().map(|p| p.tick);
             if last != Some(done) {
                 return Err(format!(
-                    "в эталоне сид {seed}: серия кончается на тике {} из {done}",
+                    "the reference's seed {seed}: its series ends at tick {} of {done}",
                     last.map_or("—".to_string(), |t| t.to_string())
                 ));
             }
@@ -503,7 +503,7 @@ mod tests {
         ] {
             std::fs::write(&path, reference(stop, done, last)).unwrap();
             let error = Reference::load(&path).err().expect("a cut run is refused");
-            assert!(error.contains("сид 7") && error.contains("из 100"), "{error}");
+            assert!(error.contains("seed 7") && error.contains("of 100"), "{error}");
         }
         std::fs::remove_file(path).unwrap();
     }

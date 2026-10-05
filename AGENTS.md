@@ -35,7 +35,8 @@ simulations and no tests: the user's machine is Windows, where golden digests ar
 
 Language: code, comments, docs, CLI/report output, test names and commit messages are in
 English. Only the game UI stays Russian (window texts, settings labels, gene labels, chronicle
-texts). Translate existing Russian comments and test names gradually, only where you edit.
+texts). Much is still Russian from before 2026-09-25 (report output, test names, messages):
+translate it gradually, only where you edit; a new message or test is English among Russian ones.
 Rustfmt (width 110), four-space indent, `snake_case` functions, `PascalCase` types. Read genes
 through `Gene`, append new rows only at the end of the table. Don't mix life state into the genome.
 

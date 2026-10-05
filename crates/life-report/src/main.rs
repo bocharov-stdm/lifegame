@@ -201,7 +201,7 @@ fn check_mix(flag: &str, shares: &[f64], variants: &[Variant]) -> Result<(), Str
         return Err(format!("{flag}: доли — числа не меньше нуля, хотя бы одна больше"));
     }
     if !sum.is_finite() {
-        return Err(format!("{flag}: сумма долей слишком велика"));
+        return Err(format!("{flag}: the shares' sum overflows"));
     }
     Ok(())
 }
@@ -492,7 +492,7 @@ mod tests {
     fn a_mix_whose_sum_overflows_is_refused() {
         assert_eq!(check_mix("--diet-mix", &[55.0, 25.0, 10.0, 10.0], &DIET_VARIANTS), Ok(()));
         let error = check_mix("--diet-mix", &[1e308, 1e308, 0.0, 0.0], &DIET_VARIANTS).unwrap_err();
-        assert!(error.contains("сумма"), "{error}");
+        assert!(error.contains("sum overflows"), "{error}");
         assert!(check_mix("--diet-mix", &[0.0, 0.0], &DIET_VARIANTS).is_err());
     }
 }

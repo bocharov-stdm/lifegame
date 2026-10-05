@@ -18,9 +18,12 @@ scripted. Rust only, model `life-behavior/15`:
 Removed things live under tags: `python-final`, `predators-final` (old names still read:
 `--vegetarians`, `--veg-mix`, `n_vegetarians`), `flocks-final`.
 
-**Language.** Code, comments, docs, CLI/report output, test names and commits in **English**;
-translate Russian comments you touch, don't mass-rewrite. Only the **game UI is Russian**: window
-texts, settings labels and hints, gene `label`/`about`, chronicle texts (`life_sim::observe`).
+**Language.** Code, comments, docs, CLI/report output, test names and commits in **English** (the
+user's rule since 2026-09-25; the project was Russian before). Much is still Russian from then —
+`life-report`'s story, tables and refusals, about half the test names and assertion messages:
+translate them only where you edit, never mass-rewrite; a new message or test is English even among
+Russian neighbours. Only the **game UI is Russian**: window texts (the `life-progress` window too),
+settings labels and hints, gene `label`/`about`, chronicle texts (`life_sim::observe`).
 
 ## The user's standing rules
 
@@ -115,7 +118,8 @@ I/O; `life-app` alone knows the screen.
   `genome/`, `creature/` (`mod.rs` act/feed/divide, `phenotype.rs`, `program.rs`, `scene.rs`
   perception, `actions.rs`, `strategy.rs` `plan`, `steer.rs`), `flora.rs`, `combat.rs`,
   `corpse.rs`, `senses.rs` + `grid.rs`, `par.rs`, `profile.rs`, `space.rs`, `rng.rs`.
-- **Tick order**: plants → old age → neighbour snapshot → decisions, healing, ageing, movement →
+- **Tick order**: plants → corpses decay → old age, the last tick's kinship kept
+  (`Creature::remember_kin`) → neighbour snapshot → decisions, healing, ageing, movement →
   eating plants → simultaneous strikes and shots → survivors eat corpses → reproduction → removing
   the dead, adding children → tick number. Strikes are collected before damage (mutual death
   possible); a creature killed gets no prey and does not reproduce.
@@ -129,16 +133,18 @@ I/O; `life-app` alone knows the screen.
   (the test prints the table) in its own commit.
   Bit-for-bit identity is proven by comparing golden output of two builds (`git worktree`).
   `energy_is_never_made_from_nothing` (`tests/engine.rs`) checks the energy rule tick by tick.
-- **Re-recording** happens on Windows only, so from a cloud session through CI: push the change
-  with «[re-record]» in the commit message (or run Actions → Re-record). The workflow
-  (`rerecord.yml`) prints which seeds of the player's world take the whole food chain in (the
-  energy test and golden's case I need it; pick another seed if theirs lost it), records golden
-  (`GOLDEN_RECORD`) and both references, runs every test and the balance against them, and commits
-  them to the branch. Read its log through the GitHub tools.
+- **Re-recording** happens on Windows only: on the user's machine directly (`GOLDEN_RECORD=1` and
+  the two `--save-reference` commands below), from a cloud session through CI — push the change
+  (on the user's word) with «[re-record]» in the commit message, or run Actions → Re-record. The
+  workflow (`rerecord.yml`) prints which seeds of the player's world take the whole food chain in
+  (the energy test and golden's case I need it; pick another seed if theirs lost it), records
+  golden (`GOLDEN_RECORD`) and both references, runs every test and the balance against them, and
+  commits them to the branch. Read its log through the GitHub tools.
 - **References** (`reference/*.json`, 8 seeds × 20 000): `--compare` checks each metric's mean
   against the reference's per-seed range (exit 1) and refuses differing world conditions (exit 2).
-  Re-take with `--save-reference reference/fingerprint.json` (calm: `--rule cost_scale=3`); a seed
-  a guard cut short refuses it, an extinct one is kept.
+  Re-take with `--save-reference reference/fingerprint.json` and `--save-reference
+  reference/calm-fingerprint.json --rule cost_scale=3`; a seed a guard cut short refuses it, an
+  extinct one is kept.
 - **Performance**: creatures never see the grid — `Creature::step` takes *senses* (tests pass
   `senses_from(..)` or `Blind`); `for_each_near` returns a superset, callers check distance; keep
   the brute-force checks. `Creature::step` is the hot path: values precomputed in `Phenotype::of`,
@@ -158,10 +164,10 @@ I/O; `life-app` alone knows the screen.
 ## The game (`crates/life-app`)
 
 **The window never waits for the simulation.** Defaults are the user's world (×20, 2:1,
-`settings::GAME_*`) but for the founders' diet mix, which is the engine's (`DIET_START_MIX`: no
-meat eaters); the user plays ×100 and 55/25/10/10. Settings show common factors per 100. A
-settings file carries
-`DEFAULTS_VERSION`: keys in `CHANGED_DEFAULTS` take the new default.
+`Settings::default`, `settings::GAME_*`) but for the founders' diet mix, which is the engine's
+(`DIET_START_MIX`: no meat eaters); the user plays ×100 and 55/25/10/10. Settings show common
+factors per 100. A settings file carries `DEFAULTS_VERSION`: keys in `CHANGED_DEFAULTS` take the
+new default.
 
 - `sim.rs` — the simulation thread owns `World`; `Command`s apply between ticks; frames go through
   a one-slot mailbox, never dropped, so history, log and snapshots travel as deltas. Commands built
