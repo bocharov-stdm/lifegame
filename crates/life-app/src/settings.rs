@@ -1330,16 +1330,19 @@ impl Settings {
         }))
     }
 
-    /// The world's rules from the sliders.
-    pub fn rules(&self) -> Rules {
-        let mut rules = Rules::default();
-        for f in FIELDS.iter().filter(|f| f.live()) {
-            let v = self.get(f.key);
-            let v = if f.key == Key::PlantGrowth { Rules::default().plant_rate * v } else { v };
-            // FIELDS' limits lie inside what `Rules` allows — checked by a test
-            rules = rules.with(f.rule.expect("правило"), v).expect("значение ползунка допустимо");
-        }
-        rules
+    /// A rule's slider as the rule's value: food growth is shown as a factor of the default.
+    fn rule_value(&self, key: Key) -> f64 {
+        let v = self.get(key);
+        if key == Key::PlantGrowth { Rules::default().plant_rate * v } else { v }
+    }
+
+    /// The world's rules from the sliders, checked as a whole (`Rules::with_all`), so the order of
+    /// the fields does not matter. Each slider's limits lie inside what `Rules` allows (a test);
+    /// a combination whose upkeep left the numbers would be refused, and the window shows that.
+    pub fn rules(&self) -> Result<Rules, String> {
+        Rules::default().with_all(
+            FIELDS.iter().filter(|f| f.live()).map(|f| (f.rule.expect("правило"), self.rule_value(f.key))),
+        )
     }
 
     /// The world's `current` rules with only the sliders moved since `taken` read them from it (the
@@ -1347,11 +1350,12 @@ impl Settings {
     /// or past their range (`life-app --rule cost_scale=20`), which the sliders would clamp. So a
     /// slider's value can still be refused: with such a rule its upkeep may leave the numbers.
     pub fn rules_over(&self, current: &Rules, taken: &Settings) -> Result<Rules, String> {
-        current.with_all(FIELDS.iter().filter(|f| f.live() && self.get(f.key) != taken.get(f.key)).map(|f| {
-            let v = self.get(f.key);
-            let v = if f.key == Key::PlantGrowth { Rules::default().plant_rate * v } else { v };
-            (f.rule.expect("правило"), v)
-        }))
+        current.with_all(
+            FIELDS
+                .iter()
+                .filter(|f| f.live() && self.get(f.key) != taken.get(f.key))
+                .map(|f| (f.rule.expect("правило"), self.rule_value(f.key))),
+        )
     }
 
     /// The rules' sliders from the world's current rules (for the lab on the fly).
@@ -1364,8 +1368,9 @@ impl Settings {
     }
 
     /// The world from the settings. The counts at the start are given for the base area and grow
-    /// with the area — the density, and with it the balance, do not depend on the scale.
-    pub fn world_config(&self, seed: u64) -> WorldConfig {
+    /// with the area — the density, and with it the balance, do not depend on the scale. Refused
+    /// when the rules are (`rules`).
+    pub fn world_config(&self, seed: u64) -> Result<WorldConfig, String> {
         let space = Space::new(self.scale, self.shape);
         let per_area = |key| (self.get(key) * space.area_ratio()).round() as usize;
         // the shares of the variants (standard, the second); zero — an empty mix, as in the default world
@@ -1373,18 +1378,18 @@ impl Settings {
             let p = self.get(key);
             if p > 0.0 { vec![100.0 - p, p] } else { Vec::new() }
         };
-        WorldConfig {
+        Ok(WorldConfig {
             seed,
             scale: self.scale,
             shape: self.shape,
-            rules: self.rules(),
+            rules: self.rules()?,
             n_creatures: Some(per_area(Key::Creatures)),
             strategies: mix(Key::Lurkers),
             diets: [Key::Herbivores, Key::Omnivores, Key::Scavengers, Key::Carnivores]
                 .map(|k| self.get(k))
                 .to_vec(),
             meat_founder_size: self.get(Key::MeatFounders),
-        }
+        })
     }
 
     /// Return the defaults on one tab.
@@ -1589,9 +1594,9 @@ mod tests {
             .and_then(|r| r.with("plant_depth_steepness", 5.0))
             .unwrap();
         let s = Settings::default();
-        assert_eq!(s.rules(), want);
+        assert_eq!(s.rules(), Ok(want));
         assert_eq!((s.scale, s.shape), (20.0, Shape::R2x1));
-        assert_eq!(s.world_config(1).strategies, vec![50.0, 50.0]);
+        assert_eq!(s.world_config(1).unwrap().strategies, vec![50.0, 50.0]);
         let mut s = Settings::default();
         for (key, v) in [
             (Key::CostScale, 1.0),
@@ -1601,18 +1606,18 @@ mod tests {
         ] {
             s.set(key, v);
         }
-        assert_eq!(s.rules(), Rules::default());
+        assert_eq!(s.rules(), Ok(Rules::default()));
     }
 
     #[test]
-    fn пределы_ползунков_допустимы_для_правил() {
-        // both edges of every slider assemble the rules without an error
+    fn every_sliders_edges_make_valid_rules() {
+        // both edges of every slider assemble the rules without a refusal
         for f in &FIELDS {
             for v in [f.lo, f.hi] {
                 let mut s = Settings::default();
                 s.set(f.key, v);
-                let _ = s.rules();
-                let _ = s.world_config(1);
+                s.rules().unwrap_or_else(|e| panic!("{:?} = {v}: {e}", f.key));
+                s.world_config(1).unwrap_or_else(|e| panic!("{:?} = {v}: {e}", f.key));
             }
         }
     }
@@ -1691,9 +1696,9 @@ mod tests {
     #[test]
     fn численности_растут_с_площадью() {
         let s = Settings { scale: 100.0, ..Default::default() };
-        assert_eq!(s.world_config(1).creatures_at_start(), CREATURES_AT_START * 100);
+        assert_eq!(s.world_config(1).unwrap().creatures_at_start(), CREATURES_AT_START * 100);
         let s = Settings { scale: 1.0, ..Default::default() };
-        assert_eq!(s.world_config(1).creatures_at_start(), 20);
+        assert_eq!(s.world_config(1).unwrap().creatures_at_start(), 20);
     }
 
     /// The second strategy's share is the world's mix; zero — an empty mix.
@@ -1701,9 +1706,9 @@ mod tests {
     fn доли_стратегий_становятся_смесью_мира() {
         let mut s = Settings::default();
         s.set(Key::Lurkers, 0.0);
-        assert!(s.world_config(1).strategies.is_empty());
+        assert!(s.world_config(1).unwrap().strategies.is_empty());
         s.set(Key::Lurkers, 30.0);
-        assert_eq!(s.world_config(1).strategies, vec![70.0, 30.0]);
+        assert_eq!(s.world_config(1).unwrap().strategies, vec![70.0, 30.0]);
     }
 
     /// The variants' labels are in the order of the engine's profiles, and every rule of a food
@@ -1736,7 +1741,7 @@ mod tests {
         s.set(Key::PlantWidthProfile, Profile::Waves.index());
         assert!(shown(&s, Key::PlantWidthWaves) && shown(&s, Key::PlantWidthAmplitude));
         assert!(!shown(&s, Key::PlantWidthEnd));
-        assert_eq!(s.rules().plant_width.kind(), Profile::Waves);
+        assert_eq!(s.rules().unwrap().plant_width.kind(), Profile::Waves);
         let old = Settings::default();
         assert_eq!(describe_change(&old, &s).as_deref(), Some("правила: еда по ширине равномерно → волны"));
     }
@@ -1759,7 +1764,7 @@ mod tests {
         let current = Rules::default().with("cost_scale", 20.0).unwrap().with("size_power", 2.537).unwrap();
         let mut taken = Settings::default();
         taken.take_rules(&current);
-        assert_ne!(taken.rules(), current, "the sliders alone clamp and round them");
+        assert_ne!(taken.rules(), Ok(current.clone()), "the sliders alone clamp and round them");
         let mut lab = taken.clone();
         lab.set(Key::PlantEnergy, 80.0);
         assert_eq!(describe_change(&taken, &lab).as_deref(), Some("правила: энергия растения 50 → 80"));
@@ -1785,7 +1790,7 @@ mod tests {
         }));
         assert_eq!(old.get(Key::PlantEnergy), 80.0);
         assert_eq!(old.get(Key::Creatures), 50.0, "старый ключ численности читается");
-        assert_eq!(old.rules(), Settings::default().rules().with("plant_energy", 80.0).unwrap());
+        assert_eq!(old.rules(), Settings::default().rules().unwrap().with("plant_energy", 80.0));
     }
 
     /// A file saved before the ocean reform keeps the player's values but takes the new defaults
@@ -1862,7 +1867,7 @@ mod tests {
         let mut rules_src = Settings::default();
         rules_src.set(Key::PlantGrowth, 2.0);
         rules_src.set(Key::CostScale, 3.0);
-        s.take_rules(&rules_src.rules());
+        s.take_rules(&rules_src.rules().unwrap());
         assert_eq!(s.get(Key::PlantGrowth), 2.0);
         assert_eq!(s.get(Key::CostScale), 3.0);
     }

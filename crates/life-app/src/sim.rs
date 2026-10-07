@@ -13,7 +13,6 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use life_core::config::DIVIDE_PERIOD;
-use life_core::creature::JUVENILE;
 use life_core::par::Threads;
 use life_core::profile::{Phase, PhaseTimes};
 use life_core::{CreatureGenome, Rules, World, WorldConfig};
@@ -182,19 +181,21 @@ impl Drop for SimHandle {
 /// Everything that piles up between frames and goes into a frame as an increment.
 #[derive(Default)]
 struct Pending {
-    samples: Vec<Sample>,
-    snapshots: Vec<Snapshot>,
+    samples: VecDeque<Sample>,
+    snapshots: VecDeque<Snapshot>,
     region: Option<RegionStats>,
     census: Option<Census>,
     log: Vec<LogEntry>,
 }
 
 /// Drops the points the window's history would drop on taking them (`history::Series::push`):
-/// while the window takes no frames (minimised), the increments do not grow without end.
-fn drop_beyond_window<T>(points: &mut Vec<T>, tick: u64, at: impl Fn(&T) -> u64) {
+/// while the window takes no frames (minimised), the increments do not grow without end. From the
+/// front, as the history does: the rest is not shifted on every sample.
+fn drop_beyond_window<T>(points: &mut VecDeque<T>, tick: u64, at: impl Fn(&T) -> u64) {
     let oldest = tick.saturating_sub(WINDOW_TICKS);
-    let old = points.partition_point(|p| at(p) < oldest);
-    points.drain(..old);
+    while points.front().is_some_and(|p| at(p) < oldest) {
+        points.pop_front();
+    }
 }
 
 struct Sim {
@@ -217,11 +218,6 @@ struct Sim {
     /// A census asked for while the world ran (the window still showed a paused frame): taken once
     /// it stands.
     census_wanted: bool,
-    /// The ids of the creatures that decided by their juvenile program on the last tick (growing
-    /// as it began, in id order), and the tick after it: `Selected::of`'s `decided_by` for
-    /// whichever creature is selected — one that grew up on that tick shows the program it decided
-    /// by, even when picked afterwards.
-    juveniles: (Vec<u64>, u64),
     region: Option<Area>,
     render_world: bool,
     dots: bool,
@@ -325,7 +321,6 @@ impl Sim {
             view: None,
             selected: None,
             census_wanted: false,
-            juveniles: (Vec::new(), 0),
             region: None,
             render_world: true,
             dots: false,
@@ -458,6 +453,7 @@ impl Sim {
                         .push_back((ShotTrail { from: shot.from, to: shot.to, age: 0.0 }, Instant::now()));
                 }
                 self.world_gen += 1;
+                self.edits = 0;
                 self.selected = None;
                 self.paused = true;
                 self.ended = None;
@@ -604,11 +600,11 @@ impl Sim {
         self.patches_due = true;
         self.cfg = cfg;
         self.world_gen += 1;
+        self.edits = 0;
         self.ended = None;
         self.watch_explosion = true;
         self.selected = None;
         self.census_wanted = false;
-        self.juveniles.0.clear();
         self.region = None;
         self.due = 0.0;
         self.last_time = Instant::now();
@@ -638,12 +634,8 @@ impl Sim {
         // the phases are measured always: a dozen clock reads a tick, and the world goes the same
         self.world.set_profiling(true);
         self.world.set_threads(self.pool.clone());
-        let juveniles = &mut self.juveniles.0;
-        juveniles.clear();
-        juveniles.extend(self.world.creatures.iter().filter(|v| !v.adult()).map(|v| v.id));
         let start = Instant::now();
         self.world.step();
-        self.juveniles.1 = self.world.tick;
         let engine_ms = start.elapsed().as_secs_f64() * 1000.0;
         self.measure_phases();
         let now = Instant::now();
@@ -715,7 +707,7 @@ impl Sim {
         let n = self.window.len() as f64;
         let avg = |k: usize| self.window.iter().map(|c| c[k] as f64).sum::<f64>() / n;
         let stats = w.stats();
-        self.pending.samples.push(Sample {
+        self.pending.samples.push_back(Sample {
             tick: w.tick,
             plants: avg(0),
             creatures: avg(1),
@@ -747,7 +739,7 @@ impl Sim {
         if let Some(area) = self.region {
             self.pending.region = Some(RegionStats::of(&self.world, area, Some(snap.genes)));
         }
-        self.pending.snapshots.push(snap);
+        self.pending.snapshots.push_back(snap);
         drop_beyond_window(&mut self.pending.snapshots, self.world.tick, |s| s.tick);
     }
 
@@ -955,14 +947,9 @@ impl Sim {
             shots,
             density,
             minimap,
-            selected: self.selected.and_then(|id| {
-                // grown or not when its last decision began; one born since decided nothing yet
-                let (juveniles, after) = &self.juveniles;
-                let decided = (*after == w.tick && juveniles.binary_search(&id).is_ok()).then_some(JUVENILE);
-                Selected::of(w, id, decided)
-            }),
-            samples: pending.samples,
-            snapshots: pending.snapshots,
+            selected: self.selected.and_then(|id| Selected::of(w, id)),
+            samples: pending.samples.into(),
+            snapshots: pending.snapshots.into(),
             region: pending.region,
             census: pending.census,
             log: pending.log,
@@ -1030,11 +1017,12 @@ mod tests {
         );
     }
 
-    /// A creature that grew up on the last tick decided by its juvenile program: the card shows
-    /// that program even when the creature is picked only afterwards (on a pause, say).
+    /// A creature that grew up on the last tick decided by its juvenile program: the flowchart shows
+    /// that program's path even when the creature is picked only afterwards (on a pause, say), and
+    /// the card the adult program it lives by now.
     #[test]
     fn a_creature_picked_after_it_grew_up_shows_the_program_it_decided_by() {
-        use life_core::creature::{ADULT, Action, Block, Phenotype, Program};
+        use life_core::creature::{ADULT, Action, Block, JUVENILE, Phenotype, Program};
         use life_core::plant::Plant;
 
         let rules = Rules::default().with("plant_rate", 0.0).unwrap();
@@ -1054,7 +1042,7 @@ mod tests {
         assert_eq!(sim.world.creature(id).unwrap().stage(), ADULT, "it grew up on the tick");
         sim.selected = Some(id);
         let s = sim.build_frame().selected.unwrap();
-        assert_eq!(s.stage, JUVENILE);
+        assert_eq!((s.stage, s.decided_by), (ADULT, JUVENILE), "lives by the adult, decided by the juvenile");
         assert_ne!(s.state, "в засаде", "the juvenile program went for food");
     }
 
@@ -1143,10 +1131,10 @@ mod tests {
     #[test]
     fn increments_keep_only_the_window() {
         let mut series = crate::history::Series::default();
-        let mut pending = Vec::new();
+        let mut pending = VecDeque::new();
         for tick in (0..3 * WINDOW_TICKS).step_by(GRAPH_EVERY as usize) {
             series.push(tick, tick);
-            pending.push(tick);
+            pending.push_back(tick);
             drop_beyond_window(&mut pending, tick, |&t| t);
         }
         let kept: Vec<u64> = series.points().into_iter().copied().collect();
@@ -1155,7 +1143,7 @@ mod tests {
 
     /// Clicks made on the frame of a world replaced since plant and pick nothing in the new one.
     #[test]
-    fn клик_по_кадру_старого_мира_не_трогает_новый() {
+    fn clicks_on_a_replaced_worlds_frame_leave_the_new_one_alone() {
         let h = paused(cfg());
         h.send(Command::Select(Some(1)));
         let f = wait_frame(&h, |f| f.world_gen == 1 && f.selected.is_some());

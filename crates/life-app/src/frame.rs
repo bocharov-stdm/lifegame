@@ -163,19 +163,20 @@ pub struct Selected {
     pub stage: usize,
     /// How many ticks each of its modes stays on, from its last decision (0: off).
     pub modes: [u64; life_core::creature::program::MODES],
-    /// In the program it lives by: the block that decided this tick (None: none did, it stands),
-    /// the settings that applied, and the deciding blocks whose tests held (bit i: block i).
+    /// The program its last decision came from (`Mind::decided_by`; before its first, the one it
+    /// lives by): on the tick it grows up, the juvenile one while `stage` is adult.
+    pub decided_by: usize,
+    /// In that program: the block that decided this tick (None: none did, it stands), the settings
+    /// that applied, and the deciding blocks whose tests held (bit i: block i).
     pub fired: Option<u8>,
     pub applied: u32,
     pub tried: u32,
 }
 
 impl Selected {
-    /// `decided_by`: the stage its last decision came from, when known — on the tick it grows up it
-    /// decided by its juvenile program, and `fired`, `applied` and `tried` are that program's.
-    pub fn of(world: &World, id: u64, decided_by: Option<usize>) -> Option<Selected> {
+    pub fn of(world: &World, id: u64) -> Option<Selected> {
         world.creature(id).map(|v| {
-            let stage = decided_by.unwrap_or(v.stage());
+            let decided_by = if v.mind.stance.moved { usize::from(v.mind.decided_by) } else { v.stage() };
             Selected {
                 age: v.age,
                 health: v.health,
@@ -187,7 +188,7 @@ impl Selected {
                 } else if v
                     .mind
                     .fired
-                    .and_then(|i| v.programs[stage].blocks().get(usize::from(i)))
+                    .and_then(|i| v.programs[decided_by].blocks().get(usize::from(i)))
                     .map(|b| b.action)
                     == Some(life_core::creature::Action::Ambush)
                 {
@@ -212,8 +213,9 @@ impl Selected {
                 layer: v.pheno.layer(v.mind.stance.layer),
                 eating: v.meal.filter(|m| m.tick + 1 >= world.tick).map(|m| m.food),
                 programs: *v.programs,
-                stage,
+                stage: v.stage(),
                 modes: v.mind.modes.map(|until| until.saturating_sub(v.mind.tick)),
+                decided_by,
                 fired: v.mind.fired,
                 applied: v.mind.applied,
                 tried: v.mind.tried,
@@ -274,8 +276,10 @@ pub struct Frame {
     /// The frame's number from the simulation thread's start: a click names the frame it was aimed
     /// at (`Command::Pick`), which a tick does not — a pause rebuilds frames at one tick.
     pub number: u64,
-    /// Edits of the world between ticks — a creature planted, new rules: they change it without
-    /// a tick, so what was taken of the world at this tick (the census) is taken again.
+    /// Edits of this world between ticks — a creature planted, new rules, counted from its start
+    /// (0 again at «Заново» and at a new world): they change it without a tick, so what was taken
+    /// of the world at this tick (the census) is taken again, and a repeat without the window
+    /// matches only up to the first.
     pub edits: u64,
     pub seed: u64,
     pub scale: f64,

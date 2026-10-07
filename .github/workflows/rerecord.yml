@@ -1,9 +1,10 @@
 # Records on Windows what a cloud session cannot (it runs no tests or simulations: Linux maths
 # differs in the last bit): golden and both balance references, after a deliberate change of
-# behaviour. Runs by hand (Actions → Re-record) or on a push whose commit message holds
-# «[re-record]». It prints which seeds of the player's world take the whole food chain in (for the
-# energy test and golden's case I), records golden and the references, runs every test and the
-# balance against them, and only then commits them to the branch in a commit of their own.
+# behaviour. Runs by hand (Actions → Re-record) or on a push any of whose commits holds «[re-record]»
+# in its message, not only the last one. It prints which seeds of the player's world take the whole
+# food chain in (for the energy test and golden's case I), records golden and the references, runs
+# every test and the balance against them, and only then commits them to the branch in a commit of
+# their own, on top of whatever reached the branch meanwhile.
 name: Re-record
 
 on:
@@ -18,7 +19,9 @@ concurrency:
 
 jobs:
   rerecord:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[re-record]')
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || contains(join(github.event.commits.*.message, ' '), '[re-record]')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -57,4 +60,13 @@ jobs:
           fi
           git commit -m "Re-record golden and the references on Windows" \
             -m "Recorded by the Re-record workflow from $GITHUB_SHA."
-          git push origin "HEAD:refs/heads/$BRANCH"
+          # The run takes an hour or more and the branch moves meanwhile (cloud sessions push to main
+          # too): the record commit goes on top of what is there now. A conflict on golden or a
+          # reference fails the job rather than overwrite somebody else's record.
+          for attempt in 1 2 3; do
+            git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+            git rebase --onto "origin/$BRANCH" HEAD~1 || { git rebase --abort; exit 1; }
+            git push origin "HEAD:refs/heads/$BRANCH" && exit 0
+            sleep 10
+          done
+          exit 1

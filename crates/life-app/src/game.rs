@@ -109,9 +109,6 @@ impl LifeApp {
             world_gen,
         });
         self.sim.send(Command::SetSpeed(crate::sim::DEFAULT_SPEED));
-        if let Some(g) = &mut self.game {
-            g.edited = true;
-        }
         self.toast("30 т/с · цена жизни 150; численность изменится постепенно".into());
     }
 
@@ -143,11 +140,9 @@ impl LifeApp {
                         self.side_open = true;
                     }
                     Tool::Spawn => {
-                        self.sim.send(Command::Spawn { x, y, world_gen });
                         // the planted creature forks the world's stream: a repeat parts from here
-                        if let Some(g) = &mut self.game {
-                            g.edited = true;
-                        }
+                        // (`Frame::edits`)
+                        self.sim.send(Command::Spawn { x, y, world_gen });
                     }
                     Tool::Area => {}
                 },
@@ -463,7 +458,8 @@ impl LifeApp {
         ui.collapsing("Повторить без окна", |ui| {
             let cmd = report_command(&game.start, f.tick);
             ui.label(RichText::new(&cmd).monospace().size(11.5));
-            if game.edited {
+            // the edits the simulation thread took, not the ones the window sent
+            if f.edits > 0 {
                 ui.colored_label(
                     DANGER,
                     "Мир меняли на ходу (правила, подсадка): повтор совпадёт только до первого изменения.",
@@ -635,7 +631,7 @@ impl LifeApp {
                     });
                     if food {
                         ui.add_space(6.0);
-                        crate::screens::food_preview(ui, &self.lab.rules(), space, seed);
+                        crate::screens::rules_preview(ui, &self.lab, space, seed);
                     }
                 });
                 let mut now = self.lab.clone();
@@ -647,12 +643,7 @@ impl LifeApp {
                         && let Some(note) = change.clone()
                     {
                         match self.lab.rules_over(&current, &now) {
-                            Ok(rules) => {
-                                self.sim.send(Command::SetRules { rules, note, world_gen });
-                                if let Some(g) = &mut self.game {
-                                    g.edited = true;
-                                }
-                            }
+                            Ok(rules) => self.sim.send(Command::SetRules { rules, note, world_gen }),
                             Err(e) => self.toast(format!("правила не применены: {e}")),
                         }
                     }

@@ -11,6 +11,8 @@ use life_core::rng::Rng;
 use life_core::senses::{Blind, Threat, senses_from};
 use life_core::{Counters, CreatureGenome, Genome, Rules, Shape, Space, World, WorldConfig};
 
+mod chain;
+
 const BASE: CreatureGenome = CreatureGenome::BASE;
 
 fn genom(size: f64) -> CreatureGenome {
@@ -903,11 +905,6 @@ fn invariants_hold(cfg: &WorldConfig, ticks: u64) {
     }
 }
 
-/// Hunting, fresh meat, rot, bones and division all took part.
-fn whole_chain(c: &life_core::world::Counters) -> bool {
-    c.born > 0 && c.combat > 0 && c.meat_bites > c.rot_bites && c.rot_bites > 0 && c.bone_bites > 0
-}
-
 /// Which seeds of the player's world take the whole food chain in within 3000 ticks, as the energy
 /// test and golden's case I need: for picking another seed when a change of behaviour leaves theirs
 /// without it (the Re-record workflow prints it).
@@ -923,7 +920,7 @@ fn the_chain_by_seed() {
         let c = w.counters;
         println!(
             "seed {seed:>2}: whole chain {:<5} alive {:>4}, born {}, combat {}, shots {}, meat {}, rot {}, bones {}",
-            whole_chain(&c),
+            chain::whole_chain(&w),
             w.creatures.len(),
             c.born,
             c.combat,
@@ -939,7 +936,7 @@ fn the_chain_by_seed() {
 /// only passes along the chain, losing some. So each tick what the living hold (their tanks and the
 /// bodies they grew — a body got for free at birth is nobody's) and what the corpses hold grows by
 /// no more than the raw energy of the plant bites taken that tick. In the player's world with every
-/// diet, so hunting, fresh meat, rot, bones and division all take part; a new mechanic that
+/// diet, so hunting, shots, fresh meat, rot, bones and division all take part; a new mechanic that
 /// makes energy breaks this at once.
 #[test]
 fn energy_is_never_made_from_nothing() {
@@ -965,8 +962,7 @@ fn energy_is_never_made_from_nothing() {
             after - before
         );
     }
-    let c = w.counters;
-    assert!(whole_chain(&c), "the whole chain took part: {c:?}");
+    assert!(chain::whole_chain(&w), "the whole chain took part: {:?}", w.counters);
 }
 
 #[test]

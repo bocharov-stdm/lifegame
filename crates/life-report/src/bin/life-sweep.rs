@@ -224,13 +224,13 @@ struct Job {
 /// (a sweep stopped early must not summarise an older build's or command line's results as its
 /// own); the progress file any run of an earlier sweep left when it was killed goes too (a new run
 /// would show its tick until it writes its own).
-fn clean_out<'a>(out: &Path, jobs: impl IntoIterator<Item = &'a Job>, reuse: impl Fn(&Job) -> bool) {
-    for job in jobs {
+fn clean_out<'a>(out: &Path, jobs: impl IntoIterator<Item = (&'a Job, bool)>) {
+    for (job, reuse) in jobs {
         let (json, txt, cmd) = job_paths(out, job);
         for file in [json.with_extension("tick"), json.with_extension("tick.tmp")] {
             let _ = fs::remove_file(file);
         }
-        if !reuse(job) {
+        if !reuse {
             for file in [json, txt, cmd] {
                 let _ = fs::remove_file(file);
             }
@@ -345,13 +345,14 @@ fn reusable(exe: &Path, plan: &Plan, job: &Job, args: &Args) -> bool {
         && read_json(&json).is_some_and(|v| v["runs"][0]["stop"].as_str().is_some_and(|s| s != "deadline"))
 }
 
-fn run_job(exe: &Path, plan: &Plan, job: &Job, args: &Args, control: &AtomicU8) -> Outcome {
+/// Runs the job unless `reuse` (its `reusable` result, judged as the sweep started).
+fn run_job(exe: &Path, plan: &Plan, job: &Job, reuse: bool, args: &Args, control: &AtomicU8) -> Outcome {
+    if reuse {
+        return Outcome::Reused;
+    }
     let (json, txt, cmd) = job_paths(&args.out, job);
     let line = command_line(exe, plan, job, args.seconds, &json);
     let joined = run_key(&line, exe);
-    if reusable(exe, plan, job, args) {
-        return Outcome::Reused;
-    }
     let _ = fs::remove_file(&json);
     if let Err(e) = fs::create_dir_all(json.parent().expect("a variant dir")) {
         return Outcome::Failed(e.to_string());
@@ -941,12 +942,18 @@ fn main() {
     }
     let cpus = std::thread::available_parallelism().map_or(4, |n| n.get());
     let jobs_at_once = args.jobs.unwrap_or(cpus.saturating_sub(4).max(1)).max(1);
-    let queue: VecDeque<Job> = plan
+    // Each result is judged once, before anything runs (a report is parsed here, not again as its
+    // job's turn comes): the files of those not reused go at once, and a reused job is not run.
+    let queue: VecDeque<(Job, bool)> = plan
         .variants
         .iter()
         .flat_map(|v| plan.seeds.iter().map(|&seed| Job { variant: v.clone(), seed }))
+        .map(|job| {
+            let reuse = reusable(&exe, &plan, &job, &args);
+            (job, reuse)
+        })
         .collect();
-    clean_out(&args.out, &queue, |job| reusable(&exe, &plan, job, &args));
+    clean_out(&args.out, queue.iter().map(|(job, reuse)| (job, *reuse)));
     let total = queue.len();
     let worst_case = Duration::from_secs(total.div_ceil(jobs_at_once) as u64 * (args.seconds + args.grace));
     println!(
@@ -996,14 +1003,14 @@ fn main() {
                             _ => std::thread::sleep(Duration::from_millis(300)),
                         }
                     }
-                    let Some(job) = queue.lock().expect("queue").pop_front() else { break };
+                    let Some((job, reuse)) = queue.lock().expect("queue").pop_front() else { break };
                     let started = Instant::now();
                     progress.lock().expect("progress").running.push((
                         job.variant.name.clone(),
                         job.seed,
                         started,
                     ));
-                    let outcome = run_job(&exe, &plan, &job, &args, &control);
+                    let outcome = run_job(&exe, &plan, &job, reuse, &args, &control);
                     let json = job_paths(&args.out, &job).0;
                     let _ = fs::remove_file(json.with_extension("tick"));
                     let _ = fs::remove_file(json.with_extension("tick.tmp"));
@@ -1014,8 +1021,9 @@ fn main() {
                     let mut p = progress.lock().expect("progress");
                     p.running.retain(|r| !(r.0 == job.variant.name && r.1 == job.seed));
                     if matches!(outcome, Outcome::Interrupted) {
-                        // back to the front of the queue: after the pause it runs first, anew
-                        queue.lock().expect("queue").push_front(job);
+                        // back to the front of the queue: after the pause it runs first, anew (its
+                        // report was removed, nothing to reuse)
+                        queue.lock().expect("queue").push_front((job, false));
                         continue;
                     }
                     p.finished.push(Finished {
@@ -1276,7 +1284,7 @@ mod tests {
                 fs::write(out.join("a").join(format!("s{seed}.{ext}")), "15000 20000 4.2").unwrap();
             }
         }
-        clean_out(&out, &jobs, |job| job.seed == 1);
+        clean_out(&out, jobs.iter().map(|job| (job, job.seed == 1)));
         let left = |seed: u64, ext: &str| out.join("a").join(format!("s{seed}.{ext}")).exists();
         assert_eq!(tick_of(&out, "a", 1), None);
         assert!(!left(1, "tick.tmp") && !left(2, "tick") && !left(2, "tick.tmp"));

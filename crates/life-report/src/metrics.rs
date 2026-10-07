@@ -232,7 +232,7 @@ pub fn cut_short(results: &[(u64, SimResult)], ticks: u64) -> Option<String> {
     results
         .iter()
         .find(|(_, r)| r.stop != StopReason::Extinct && (!r.ok() || r.ticks_done != ticks))
-        .map(|(seed, r)| format!("сид {seed} остановился ({}) на тике {} из {ticks}", r.stop, r.ticks_done))
+        .map(|(seed, r)| format!("seed {seed} stopped ({}) at tick {} of {ticks}", r.stop, r.ticks_done))
 }
 
 /// Write a reference from the current runs — in the format that `Reference::load` reads.
@@ -249,7 +249,7 @@ pub fn save_reference(
     // a seed a guard cut short is no evidence, as for `--compare`; a world that died out is an
     // outcome, and the reference keeps it (the validation allows one of eight)
     if let Some(why) = cut_short(results, ticks) {
-        return Err(format!("эталон не записан: {why}"));
+        return Err(format!("the reference is not saved: {why}"));
     }
     let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(cfg.rules.get(k)))).collect();
     let runs: Vec<Value> = results
@@ -461,11 +461,11 @@ mod tests {
         );
         assert_eq!(late.1.stop, StopReason::Deadline);
         let why = cut_short(&[late], 20).expect("a cut run is refused");
-        assert!(why.contains("сид 3") && why.contains("из 20"), "{why}");
+        assert!(why.contains("seed 3") && why.contains("of 20"), "{why}");
     }
 
     #[test]
-    fn оборванный_прогон_не_становится_эталоном() {
+    fn a_cut_run_never_becomes_a_reference() {
         let cfg = WorldConfig::default();
         let limits = Limits { ticks: 20, deadline: std::time::Duration::ZERO, ..Default::default() };
         let result = run(World::new(&cfg), &limits, &mut |_| {});
@@ -473,7 +473,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("life-incomplete-reference-{}.json", std::process::id()));
         let error = save_reference(&path, &cfg, 20, REFERENCE_SAMPLE, &[(cfg.seed, result)]).unwrap_err();
-        assert!(error.contains("эталон не записан") && error.contains("сид"), "{error}");
+        assert!(error.contains("reference is not saved") && error.contains("seed"), "{error}");
         assert!(!path.exists());
     }
 

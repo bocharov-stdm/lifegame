@@ -17,6 +17,16 @@ pub const MIN_SCALE: f64 = 1.0;
 /// error.
 pub const MAX_SCALE: f64 = 10_000.0;
 
+/// The `--scale` flag of the report and the game: a number from `MIN_SCALE` to `MAX_SCALE`.
+pub fn parse_scale(s: &str) -> Result<f64, String> {
+    let scale: f64 = s.trim().parse().map_err(|_| format!("«{s}» is not a number"))?;
+    if (MIN_SCALE..=MAX_SCALE).contains(&scale) {
+        Ok(scale)
+    } else {
+        Err(format!("the scale is from {MIN_SCALE} to {MAX_SCALE}"))
+    }
+}
+
 /// The world's shape. The area sets the scale, the shape the proportions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Shape {

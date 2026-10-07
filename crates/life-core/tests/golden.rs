@@ -23,6 +23,8 @@ use life_core::genome::CreatureGenome;
 use life_core::genome::creature::Gene;
 use life_core::{Rules, Shape, World, WorldConfig};
 
+mod chain;
+
 const CHECKPOINTS: [u64; 10] = [1, 2, 10, 31, 100, 250, 500, 1000, 2000, 3000];
 
 struct Fnv(u64);
@@ -348,14 +350,10 @@ fn мир_ведёт_себя_как_при_записи() {
                 case.name
             ),
             7 => assert!(c.combat > 0, "{}: creatures die in fights", case.name),
+            // the same world and seed as the energy test, the same predicate (`the_chain_by_seed`)
             8 => assert!(
-                !w.creatures.is_empty()
-                    && c.combat > 0
-                    && c.ranged_shots > 0
-                    && c.meat_bites > c.rot_bites
-                    && c.rot_bites > 0
-                    && c.bone_bites > 0,
-                "{}: the whole food chain lives — hunts, shots, fresh meat, rot and bones: {c:?}",
+                chain::whole_chain(&w),
+                "{}: the whole food chain lives — hunts, shots, fresh meat, rot, bones, division: {c:?}",
                 case.name
             ),
             _ => {}

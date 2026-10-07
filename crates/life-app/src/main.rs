@@ -30,7 +30,7 @@ mod ui_tests;
 mod view;
 
 use clap::Parser;
-use life_core::space::{MAX_SCALE, MIN_SCALE};
+use life_core::space::parse_scale;
 use life_core::{Rules, Shape, WorldConfig};
 
 #[derive(Parser)]
@@ -53,27 +53,6 @@ struct Args {
     /// given by name: `--rule plant_width_profile=waves`.
     #[arg(long = "rule")]
     rules: Vec<String>,
-}
-
-fn parse_scale(s: &str) -> Result<f64, String> {
-    let scale: f64 = s.trim().parse().map_err(|_| format!("«{s}» — не число"))?;
-    if (MIN_SCALE..=MAX_SCALE).contains(&scale) {
-        Ok(scale)
-    } else {
-        Err(format!("масштаб должен быть от {MIN_SCALE} до {MAX_SCALE}"))
-    }
-}
-
-fn parse_rules(pairs: &[String]) -> Result<Rules, String> {
-    let changes = pairs
-        .iter()
-        .map(|pair| {
-            let (key, value) = pair.split_once('=').ok_or(format!("правило «{pair}»: нужно имя=число"))?;
-            Ok((key.trim(), value))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    // checked as a whole: the order of the flags does not matter
-    Rules::default().with_texts(changes)
 }
 
 /// Without a console of its own (a release build on Windows) the errors of the flags and `--help`
@@ -124,7 +103,7 @@ fn main() -> eframe::Result {
         attach_parent_console();
     }
     let args = Args::parse();
-    let rules = parse_rules(&args.rules).unwrap_or_else(|e| {
+    let rules = Rules::from_flags(&args.rules).unwrap_or_else(|e| {
         eprintln!("ошибка: {e}");
         std::process::exit(2);
     });

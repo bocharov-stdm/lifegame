@@ -534,6 +534,20 @@ impl Rules {
         self.with_texts([(key, text)])
     }
 
+    /// The defaults with the `--rule name=value` flags of the report and the game, checked as a
+    /// whole (`with_texts`): the order of the flags does not matter.
+    pub fn from_flags(flags: &[String]) -> Result<Rules, String> {
+        let changes = flags
+            .iter()
+            .map(|flag| {
+                let (key, value) =
+                    flag.split_once('=').ok_or(format!("правило «{flag}»: нужно имя=число"))?;
+                Ok((key.trim(), value))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Rules::default().with_texts(changes)
+    }
+
     /// `with_all` with text values, for the `--rule` flags of the report and the game.
     pub fn with_texts<'a>(
         &self,

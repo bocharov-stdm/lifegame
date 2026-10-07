@@ -34,7 +34,7 @@ use life_core::genome::Variant;
 use life_core::genome::creature::Gene;
 use life_core::par::Threads;
 use life_core::profile::{Phase, PhaseTimes};
-use life_core::space::{MAX_SCALE, MIN_SCALE};
+use life_core::space::{MAX_SCALE, parse_scale};
 use life_core::{Rules, Shape, World, WorldConfig};
 use life_sim::observe::{self, Event, ascii_map};
 use life_sim::{Limits, SimResult, run};
@@ -126,15 +126,6 @@ struct Args {
     phases: bool,
 }
 
-fn parse_scale(s: &str) -> Result<f64, String> {
-    let scale: f64 = s.trim().parse().map_err(|_| format!("«{s}» — не число"))?;
-    if (MIN_SCALE..=MAX_SCALE).contains(&scale) {
-        Ok(scale)
-    } else {
-        Err(format!("масштаб должен быть от {MIN_SCALE} до {MAX_SCALE}"))
-    }
-}
-
 /// Each seed's run on a thread of its own, as many at once as rayon's pool has threads; the results
 /// in the seeds' order. Not on the pool itself, which the worlds' decisions use: a pool thread
 /// driving a seed takes up other jobs while it waits for its decisions, a whole other seed's run
@@ -168,24 +159,12 @@ const _: () = assert!(MAX_BUDGET * MAX_SCALE * MAX_SCALE < f64::MAX);
 /// A work budget is a finite number: NaN or infinity would switch the budget off, and every run
 /// must be capped.
 fn parse_budget(s: &str) -> Result<f64, String> {
-    let budget: f64 = s.trim().parse().map_err(|_| format!("«{s}» — не число"))?;
+    let budget: f64 = s.trim().parse().map_err(|_| format!("«{s}» is not a number"))?;
     if (0.0..=MAX_BUDGET).contains(&budget) {
         Ok(budget)
     } else {
-        Err(format!("бюджет работы — число от 0 до {MAX_BUDGET:e}"))
+        Err(format!("the work budget is a number from 0 to {MAX_BUDGET:e}"))
     }
-}
-
-fn parse_rules(pairs: &[String]) -> Result<Rules, String> {
-    let changes = pairs
-        .iter()
-        .map(|pair| {
-            let (key, value) = pair.split_once('=').ok_or(format!("правило «{pair}»: нужно имя=число"))?;
-            Ok((key.trim(), value))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    // checked as a whole: the order of the flags does not matter
-    Rules::default().with_texts(changes)
 }
 
 /// A mix of strategies: the shares are non-negative, sum to more than zero and to a finite number
@@ -223,7 +202,7 @@ fn main() {
         eprintln!("ошибка: {e}");
         std::process::exit(2);
     };
-    let rules = parse_rules(&args.rules).unwrap_or_else(|e| fail(e));
+    let rules = Rules::from_flags(&args.rules).unwrap_or_else(|e| fail(e));
     check_mix("--mix", &args.mix, &creature_strategy::VARIANTS).unwrap_or_else(|e| fail(e));
     check_mix("--diet-mix", &args.diet_mix, &life_core::genome::creature::DIET_VARIANTS)
         .unwrap_or_else(|e| fail(e));
@@ -392,7 +371,7 @@ fn main() {
         print_phases(&results);
     }
     if let Some(cut) = reference.as_ref().and_then(|_| metrics::cut_short(&results, ticks)) {
-        fail(format!("сверка невозможна: {cut}; оборванный прогон не сравнивают с целыми"));
+        fail(format!("no comparison: {cut}; a cut run is not compared with whole ones"));
     }
     let agrees = reference.as_ref().is_none_or(|r| metrics::print_comparison(r, &results));
     if let Some(path) = &args.json {

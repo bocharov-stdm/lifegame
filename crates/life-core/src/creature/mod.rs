@@ -263,8 +263,9 @@ impl Creature {
             winded: self.winded > 0,
             pheno: &self.pheno,
         };
-        let program = &self.programs[self.stage()];
-        let intent = strategy::decide(&me, program, &mut self.mind, &mut self.rng, senses);
+        let stage = self.stage();
+        let intent = strategy::decide(&me, &self.programs[stage], &mut self.mind, &mut self.rng, senses);
+        self.mind.decided_by = stage as u8;
         self.mind.attack = intent.attack;
         self.act(intent);
     }

@@ -363,11 +363,12 @@ fn approach(me: &Me, fx: f64, fy: f64, reach: f64) -> (f64, f64) {
     (fx + dx / d * stop, fy + dy / d * stop)
 }
 
-/// It has just eaten: a new target at once, at most `reach` away, so it does not tread on the spot
-/// (in flight too).
+/// It has just eaten: a new target at once, at most `reach` away in the band of `layer`, so it does
+/// not tread on the spot (in flight too). The target is `layer`'s: a wander in another layer drops it.
 #[inline(always)]
-pub(crate) fn after_eating(me: &Me, mind: &mut Mind, rng: &mut Rng, reach: f64, band: (f64, f64)) {
-    pick_random_target(me, mind, rng, reach, band);
+pub(crate) fn after_eating(me: &Me, mind: &mut Mind, rng: &mut Rng, reach: f64, layer: (f64, f64)) {
+    mind.target_layer = layer;
+    pick_random_target(me, mind, rng, reach, me.pheno.band(layer));
 }
 
 /// A new wander target in its home band: outside the band, the nearest band point by depth (it

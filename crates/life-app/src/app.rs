@@ -44,11 +44,10 @@ pub enum Tool {
 
 /// A game under way (not the menu's background world).
 pub struct Game {
-    /// What the game began with: «Заново» repeats exactly that.
+    /// What the game began with: «Заново» repeats exactly that. Whether the world was changed on
+    /// the fly (rules, a planted creature) the frame tells (`Frame::edits`): only the simulation
+    /// thread knows whether it took an edit or refused it as built for a world replaced since.
     pub start: WorldConfig,
-    /// The world was changed on the fly (rules, a planted creature): a repeat without a window
-    /// matches only up to the change.
-    pub edited: bool,
 }
 
 pub struct LifeApp {
@@ -117,10 +116,14 @@ impl LifeApp {
         let settings = settings_path.as_deref().map(Settings::load).unwrap_or_default();
 
         let (cfg, screen, game) = match start {
-            Some(cfg) => (cfg.clone(), Screen::Game, Some(Game { start: cfg, edited: false })),
+            Some(cfg) => (cfg.clone(), Screen::Game, Some(Game { start: cfg })),
             None => {
-                let demo = Settings { scale: 1.0, ..settings.clone() };
-                (demo.world_config(random_seed()), Screen::Menu, None)
+                let seed = random_seed();
+                let demo = |s: &Settings| Settings { scale: 1.0, ..s.clone() }.world_config(seed);
+                // a settings file whose rules are refused shows the default world behind the menu
+                let cfg =
+                    demo(&settings).unwrap_or_else(|_| demo(&Settings::default()).expect("the defaults fit"));
+                (cfg, Screen::Menu, None)
             }
         };
         let ctx = cc.egui_ctx.clone();
@@ -212,11 +215,14 @@ impl LifeApp {
         if self.settings.random_seed {
             self.settings.seed = random_seed();
         }
-        let cfg = self.settings.world_config(self.settings.seed);
+        let cfg = match self.settings.world_config(self.settings.seed) {
+            Ok(cfg) => cfg,
+            Err(e) => return self.toast(format!("мир не создан: {e}")),
+        };
         self.save_settings();
         self.sim.send(Command::NewWorld(cfg.clone()));
         self.sim.send(Command::SetPaused(false));
-        self.game = Some(Game { start: cfg, edited: false });
+        self.game = Some(Game { start: cfg });
         self.lab = self.settings.clone();
         self.tool = Tool::Select;
         self.screen = Screen::Game;
@@ -224,9 +230,6 @@ impl LifeApp {
 
     pub fn restart(&mut self) {
         self.sim.send(Command::Restart);
-        if let Some(g) = &mut self.game {
-            g.edited = false;
-        }
     }
 
     pub fn open_menu(&mut self) {

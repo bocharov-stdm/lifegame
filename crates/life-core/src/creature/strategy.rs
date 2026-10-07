@@ -324,8 +324,9 @@ pub struct Mind {
     /// The wander target. None until the first choice: else a newborn would later walk to its
     /// birthplace.
     pub target: Option<(f64, f64)>,
-    /// The layer (`Stance::layer`) its wander target was kept in: a target out of a changed layer is
-    /// dropped; one a growing body's narrower band left past its margin is brought within the band.
+    /// The layer (`Stance::layer`) its wander target was picked or kept in, by a wander or after
+    /// eating: a target out of a changed layer is dropped; one a growing body's narrower band left
+    /// past its margin is brought within the band.
     pub target_layer: (f64, f64),
     /// Until what share of their size it knows its children, as its last tick's «щадить детей» set
     /// it (`Stance::spare`). Copied as the tick begins (`World::step`), so the herd's snapshot, the
@@ -346,6 +347,10 @@ pub struct Mind {
     pub fired: Option<u8>,
     pub applied: u32,
     pub tried: u32,
+    /// The stage (`JUVENILE`, `ADULT`) of the program that decided this tick: `fired`, `applied` and
+    /// `tried` are that program's. On the tick it grows up it is the juvenile one, while
+    /// `Creature::stage` is already adult. Only the window reads it.
+    pub decided_by: u8,
 }
 
 /// A hunt under way: the prey, the gap to its edge the hunter last closed to, and when.
@@ -496,8 +501,8 @@ pub(super) fn plan(
 /// in the band of this tick's layer.
 #[inline(always)]
 pub(crate) fn after_eating(me: &Me, mind: &mut Mind, rng: &mut Rng, reach: f64) {
-    let band = me.pheno.band(mind.stance.layer);
-    actions::after_eating(me, mind, rng, reach, band);
+    let layer = mind.stance.layer;
+    actions::after_eating(me, mind, rng, reach, layer);
 }
 
 #[cfg(test)]

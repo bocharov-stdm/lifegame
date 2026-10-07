@@ -4,10 +4,11 @@
 //! applies, wherever it stands in the program (a pill-shaped box, its down arrow «дальше»). Then the
 //! deciding blocks in order — a condition of up to three tests, «да» to its action with the
 //! action's parameters, «нет» down to the next — ending in «ничего не подошло: стоит». Blocks keep
-//! their numbers in the program. On the track it lives by now the path of the current tick is lit:
-//! the settings that applied, the blocks whose condition held but whose action could not be done
-//! («не вышло»), and the block that decided. Deciding blocks after one that always fires are
-//! faded: their turn never comes. Hovering a box tells what it checks or does.
+//! their numbers in the program. On the track its last decision came from (the one it lives by,
+//! but on the tick it grew up) the path of the current tick is lit: the settings that applied, the
+//! blocks whose condition held but whose action could not be done («не вышло»), and the block that
+//! decided. Deciding blocks after one that always fires are faded: their turn never comes. Hovering
+//! a box tells what it checks or does.
 
 use eframe::egui::text::LayoutJob;
 use eframe::egui::{self, Align2, Color32, FontId, Galley, Pos2, Rect, Sense, Shape, Stroke, Vec2};
@@ -96,11 +97,17 @@ pub(crate) fn behaviour_window(ctx: &egui::Context, open: &mut bool, s: &Selecte
                 "Режим — память программы: установка «режим» включает его на время, условие «режим» \
                  проверяет. Режимы общие для обеих дорожек.",
             );
-            let live = tab == s.stage;
+            // the path is the program's its last decision came from: on the tick it grew up, the
+            // juvenile one, while it already lives by (●) the adult one
+            let live = tab == s.decided_by;
             let note = if live {
                 "Каждый тик: сначала установки (овалы) — из каждого рода первая, чьё условие выполнено, \
                  где бы она ни стояла; потом решает первый блок, чьё условие выполнено и чьё действие \
                  возможно. Жёлтым — путь этого тика."
+            } else if tab == s.stage {
+                "Каждый тик: сначала установки (овалы) — из каждого рода первая, чьё условие выполнено, \
+                 где бы она ни стояла; потом решает первый блок, чьё условие выполнено и чьё действие \
+                 возможно. Этот тик ещё решала детская дорожка: вырос только что."
             } else {
                 "Каждый тик: сначала установки (овалы) — из каждого рода первая, чьё условие выполнено, \
                  где бы она ни стояла; потом решает первый блок, чьё условие выполнено и чьё действие \

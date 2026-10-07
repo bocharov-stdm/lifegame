@@ -19,9 +19,13 @@ use crate::theme::{self, ACCENT, BG, DANGER, GOOD, MUTED, VEIL, spaced};
 /// An estimate of a big world: how many creatures at the start and how fast a tick will go.
 /// A tick's cost is taken from the measurement of the world running now (the menu's background
 /// or a game), rescaled to the area: a tick grows with the number of creatures, and that with
-/// the area. It is a measurement on this machine, not an invented formula.
+/// the area. It is a measurement on this machine, not an invented formula. Rules the world would
+/// refuse are said instead.
 pub fn estimate(settings: &Settings, measured: Option<(f64, f64)>) -> (String, egui::Color32) {
-    let cfg = settings.world_config(0);
+    let cfg = match settings.world_config(0) {
+        Ok(cfg) => cfg,
+        Err(e) => return (format!("мир не создастся: {e}"), DANGER),
+    };
     let start = format!("на старте {} существ", spaced(cfg.creatures_at_start() as u64));
     let Some((tick_ms, scale)) = measured.filter(|(ms, _)| *ms > 0.0) else {
         return (format!("{start}; скорость оценим, когда мир пойдёт"), MUTED);
@@ -142,7 +146,7 @@ impl LifeApp {
                             ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| fields(ui, &mut self.settings, Tab::Food));
                                 ui.add_space(12.0);
-                                food_preview(ui, &self.settings.rules(), space, self.settings.seed);
+                                rules_preview(ui, &self.settings, space, self.settings.seed);
                             });
                         } else if self.setup_tab == Tab::Diets {
                             diet_table(ui, &mut self.settings);
@@ -487,9 +491,19 @@ fn preview_patches(ui: &egui::Ui, rules: &Rules, space: Space, seed: u64) -> Arc
     })
 }
 
+/// The food preview of the sliders' rules, or why the rules are refused.
+pub fn rules_preview(ui: &mut egui::Ui, settings: &Settings, space: Space, seed: u64) {
+    match settings.rules() {
+        Ok(rules) => food_preview(ui, &rules, space, seed),
+        Err(e) => {
+            ui.colored_label(DANGER, format!("правила не сходятся: {e}"));
+        }
+    }
+}
+
 /// The food preview: the world in its own proportions, painted by the plants' density by the
 /// rules — brighter where thicker — and the thickets of seed `seed`. The top is the surface.
-pub fn food_preview(ui: &mut egui::Ui, rules: &Rules, space: Space, seed: u64) {
+fn food_preview(ui: &mut egui::Ui, rules: &Rules, space: Space, seed: u64) {
     let aspect = (space.width / space.height) as f32;
     let (max_w, max_h) = (ui.available_width().clamp(120.0, 280.0), 170.0);
     // a very long strip is still visible at least as a 14-point strip
@@ -646,7 +660,13 @@ pub fn base_value(ui: &mut egui::Ui, f: &Field, default: &Settings) {
 /// The body's upkeep in words and a chart: the formula with the rules' numbers, what a body twice
 /// the base costs, and each term's price against its stat.
 pub fn body_formula(ui: &mut egui::Ui, s: &Settings) {
-    let r = s.rules();
+    let r = match s.rules() {
+        Ok(r) => r,
+        Err(e) => {
+            ui.colored_label(DANGER, format!("правила не сходятся: {e}"));
+            return;
+        }
+    };
     // what each term costs the base genome by config (the three are equal by design)
     let base = life_core::config::SIZE_ENERGY_COEF * 40f64.powf(life_core::config::SIZE_ENERGY_POWER);
     egui::Frame::group(ui.style()).show(ui, |ui| {
