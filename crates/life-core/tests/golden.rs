@@ -302,23 +302,23 @@ fn run(case: &Case) -> (Vec<(u64, u64)>, World, Seen) {
 #[rustfmt::skip]
 const GOLDEN: &[&[(u64, u64)]] = &[
     // A: seed 1, default
-    &[(1, 0x67ca5675822e596d), (2, 0x381ea7179718eb05), (10, 0xc7a5c31a0f499480), (31, 0xee5864599b7dce10), (100, 0xf2adb1e5e35ae5f0), (250, 0x0e7f3ffcc6895b6a), (500, 0x7059fa987bdcd299), (1000, 0x40b3ac6c326c6da0), (2000, 0x5db7eca0ffde3312), (3000, 0x1832f89502fc0b3f), ],
+    &[(1, 0x255f168693cb966d), (2, 0x80bcc8bc523de579), (10, 0x238e1c466cf06e8c), (31, 0xb62cf07bf71cd8ba), (100, 0xfc27fc36230b78b4), (250, 0x7c5c7cd1df64f630), (500, 0x68af9b54c116ad32), (1000, 0x6e18c6379046c4cf), (2000, 0x15b87f92cede6431), (3000, 0x46bf37204f0ca06c), ],
     // B: seed 3, giants
-    &[(1, 0x9d8bca28d62cbb1d), (2, 0x4c1ec5562e4d1fbb), (10, 0xb8ec1bfa3e74de38), (31, 0xa9115bd4be6abda7), (100, 0x04e54955238de2d2), (250, 0xfac9fcbf671eb375), (500, 0xf182244c922f0d1a), (1000, 0xdfcca7c0340da097), (2000, 0x44c2f8230f682f0f), ],
+    &[(1, 0xb688a6853fce93a1), (2, 0x44bd3c00579ad51b), (10, 0x42945fde5ec56688), (31, 0xc8a555195dfcc562), (100, 0x05135d6bb762208e), (250, 0x4fbd397f954235ca), (500, 0xdc59c3d746705af1), (1000, 0x599e5039db6c1f65), (2000, 0x5803ce3342812521), ],
     // C: seed 7, lab
-    &[(1, 0x3a27fbf0f4e97685), (2, 0xac2ad28e839b6420), (10, 0x51b35d06183a600f), (31, 0x7fd08f933ed34c89), (100, 0x75e8544106cc3eb6), (250, 0xedaf7f601ac4d6c5), (500, 0x60c2a65413adb205), (1000, 0xdfe249189335049b), (2000, 0x2d36f43ce20b9586), (3000, 0x9200b79ad98147e4), ],
+    &[(1, 0x60bbec47e90a3d69), (2, 0xc028ef15cb3df708), (10, 0x897e5b8cabbb743f), (31, 0x126b4143552bdba9), (100, 0x938b04df6e8fa7a8), (250, 0x9f38692923c7060a), (500, 0x057cab437e5e94da), (1000, 0x0a445edda7ba96c3), (2000, 0xfc7670042e4b5666), (3000, 0x224cc23ab69c3b52), ],
     // D: seed 2, scale 10
-    &[(1, 0x75f8a6b3de4ea47c), (2, 0x36a210e366710f96), (10, 0xedc0f54f2cb5478e), (31, 0x5338d03956172384), (100, 0x1b52c694a08a689d), (250, 0x34180246cd7de2c7), (500, 0xce01e101742a9e18), ],
+    &[(1, 0x8314e308cd40c2fc), (2, 0x4e256505755ebcba), (10, 0x3a0510f77295ebae), (31, 0xd0987fc29d788d64), (100, 0xefe7c7b6bb73720c), (250, 0xb1604bf061f285c9), (500, 0x90f74435fdec8b4d), ],
     // E: seed 3, rules on the fly and a probe
-    &[(1, 0x9d8bca28d62cbb1d), (2, 0x4c1ec5562e4d1fbb), (10, 0xc4ed9802a59d35c9), (31, 0x285912a7a920be05), (100, 0x50ee3d36731af2ff), (250, 0x35b261ddcc1d29f3), (500, 0x7c39571b3c3f484a), (1000, 0x4b17648295735a4c), ],
+    &[(1, 0xb688a6853fce93a1), (2, 0x44bd3c00579ad51b), (10, 0xbf8e3b1ba0df9609), (31, 0x070fd404f21935ea), (100, 0xa71ccc0c09cedd15), (250, 0x4a6c919766893b8c), (500, 0xefc8fee7e4d2b706), (1000, 0x473f3c6c1ba2f8b9), ],
     // F: seed 5, a mix of strategies
-    &[(1, 0xe6105bc6f4d6a514), (2, 0x4ed6051532f91934), (10, 0x2c808f43bd34e6cb), (31, 0xda597cf78ff5ba22), (100, 0x6e8ce6dd88123ddf), (250, 0x0e412ad0f1c9de93), (500, 0xa3ce2af5f19555eb), (1000, 0x74ca930631f91fad), (2000, 0xc62fbf56f4593afb), ],
+    &[(1, 0xce12de3af51bee2c), (2, 0x1092247f86c18d84), (10, 0x4962c7c32ac3d1d7), (31, 0xc5349916ede4b6ba), (100, 0xf59295781512ce7d), (250, 0x9fb8bc3663a7e0fb), (500, 0x57b8e1c1c3f4c28d), (1000, 0x5c1ee3023210567c), (2000, 0xe2cf2339fec17fab), ],
     // G: seed 6, a x10 square, food linear and in waves
-    &[(1, 0x7986963b47a36677), (2, 0x031953ce90cd4ff7), (10, 0x0f3cb9fda63920c1), (31, 0xece2922a06c4e8e2), (100, 0x3868ce2c1eec5546), (250, 0xa68867008c15882f), (500, 0x5d484b5a002781b2), (1000, 0x4de21e5221315373), ],
+    &[(1, 0xe72874eb2f6f4953), (2, 0x6f1a8751d333a2a3), (10, 0xd3cc57c872a6a459), (31, 0x0988fdad6e0d706b), (100, 0x6a51e37b1d7ab4c6), (250, 0x0f8948f2f1e130a7), (500, 0x74c510845f4d32dd), (1000, 0xac2bbfbae9fdd036), ],
     // H: seed 8, fights
-    &[(1, 0x9fe01a0a7de0716f), (2, 0x644568b0fd152929), (10, 0xfcf92d4234203200), (31, 0xdd8c72de45750236), (100, 0x23d4cea355027d7a), (250, 0xfa85ac8e98eab754), (500, 0xab985fd72a399f32), (1000, 0x10f2164d8044f461), (2000, 0xbea9ed69c1ecbf7c), ],
+    &[(1, 0x8a14fe730a7f0e33), (2, 0xb76b6ff7970cc4e9), (10, 0x3cdfd3709426e01c), (31, 0x1822af789c7586e8), (100, 0xc12de8c4d23e20e7), (250, 0x46285f8dcbad12eb), (500, 0x078199b8dacc7225), (1000, 0x6ed2e1e38a357454), (2000, 0x4fcce780444ccbe2), ],
     // I: seed 3, the game's world x3, every diet
-    &[(1, 0xdcc384472ce2b7ce), (2, 0xbfc8c14dd75ca809), (10, 0x553a99fb6029caea), (31, 0x92485f5281d1f6c1), (100, 0x7f09899423926793), (250, 0x00e0a665bce43f75), (500, 0x36ce03bec8e48414), (1000, 0xda9216357a6a92dc), (2000, 0x905e58ca724a7ce9), (3000, 0xc9e5bad15eb3cb31), ],
+    &[(1, 0x237f84b3fad4d982), (2, 0x919df0756a88e42d), (10, 0x06166c988440519a), (31, 0x730e03115b0197cd), (100, 0x82f86aeb412ecefc), (250, 0xff93c97a6ee458d6), (500, 0x0a63332fbe0aba91), (1000, 0xd338cd1a1785a7ef), (2000, 0xe526d4103f4ad490), (3000, 0x37d07b34575a4721), ],
 ];
 
 #[cfg(not(windows))]
