@@ -345,14 +345,16 @@ fn reusable(exe: &Path, plan: &Plan, job: &Job, args: &Args) -> bool {
         && read_json(&json).is_some_and(|v| v["runs"][0]["stop"].as_str().is_some_and(|s| s != "deadline"))
 }
 
-/// Runs the job unless `reuse` (its `reusable` result, judged as the sweep started).
+/// Runs the job unless `reuse` (its `reusable` result, judged as the sweep started) still holds.
 fn run_job(exe: &Path, plan: &Plan, job: &Job, reuse: bool, args: &Args, control: &AtomicU8) -> Outcome {
-    if reuse {
-        return Outcome::Reused;
-    }
     let (json, txt, cmd) = job_paths(&args.out, job);
     let line = command_line(exe, plan, job, args.seconds, &json);
     let joined = run_key(&line, exe);
+    // the key again at its turn, not the report: a report rebuilt meanwhile (during a pause) would
+    // have the old build's numbers summarised beside the new one's
+    if reuse && fs::read_to_string(&cmd).is_ok_and(|c| c == joined) {
+        return Outcome::Reused;
+    }
     let _ = fs::remove_file(&json);
     if let Err(e) = fs::create_dir_all(json.parent().expect("a variant dir")) {
         return Outcome::Failed(e.to_string());

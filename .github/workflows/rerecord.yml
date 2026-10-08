@@ -1,10 +1,10 @@
 # Records on Windows what a cloud session cannot (it runs no tests or simulations: Linux maths
 # differs in the last bit): golden and both balance references, after a deliberate change of
-# behaviour. Runs by hand (Actions → Re-record) or on a push any of whose commits holds «[re-record]»
-# in its message, not only the last one. It prints which seeds of the player's world take the whole
-# food chain in (for the energy test and golden's case I), records golden and the references, runs
-# every test and the balance against them, and only then commits them to the branch in a commit of
-# their own, on top of whatever reached the branch meanwhile.
+# behaviour. Runs by hand (Actions → Re-record) or on a push one of whose commit messages holds
+# «[re-record]» on a line of its own (a sentence that merely names it asks for nothing). It prints
+# which seeds of the player's world take the whole food chain in (for the energy test and golden's
+# case I), records golden and the references, runs every test and the balance against them, and
+# only then commits them to the branch in a commit of their own.
 name: Re-record
 
 on:
@@ -18,10 +18,31 @@ concurrency:
   group: rerecord-${{ github.ref }}
 
 jobs:
-  rerecord:
+  # Whether a record was asked for: «[re-record]» alone on a line of a pushed commit's message. A
+  # message that only mentions the marker in passing («[re-record]» in any pushed commit starts it)
+  # set off an hour's record the user had not asked for.
+  asked:
     if: >-
       github.event_name == 'workflow_dispatch'
       || contains(join(github.event.commits.*.message, ' '), '[re-record]')
+    runs-on: ubuntu-latest
+    outputs:
+      record: ${{ steps.check.outputs.record }}
+    steps:
+      - id: check
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          MESSAGES: ${{ toJSON(github.event.commits.*.message) }}
+        run: |
+          if [ "$EVENT" = workflow_dispatch ] \
+            || printf '%s' "$MESSAGES" | jq -r '.[]' | tr -d '\r' | grep -qxF '[re-record]'; then
+            echo "record=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  rerecord:
+    needs: asked
+    if: needs.asked.outputs.record == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -60,12 +81,18 @@ jobs:
           fi
           git commit -m "Re-record golden and the references on Windows" \
             -m "Recorded by the Re-record workflow from $GITHUB_SHA."
-          # The run takes an hour or more and the branch moves meanwhile (cloud sessions push to main
-          # too): the record commit goes on top of what is there now. A conflict on golden or a
-          # reference fails the job rather than overwrite somebody else's record.
+          # what the cargo steps left in the tree (a refreshed Cargo.lock) would stop the rebase
+          git reset --hard --quiet
+          # The run is long and the branch may move meanwhile. Only docs may have come: a record
+          # taken from $GITHUB_SHA's code would be wrong on other code, so then the job fails and
+          # the record is taken again from the new head (a run of its own).
           for attempt in 1 2 3; do
             git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
-            git rebase --onto "origin/$BRANCH" HEAD~1 || { git rebase --abort; exit 1; }
+            if ! git diff --quiet "$GITHUB_SHA" "origin/$BRANCH" -- . ':(exclude)*.md'; then
+              echo "::error::$BRANCH moved on with code since $GITHUB_SHA: this record is stale, run Re-record again"
+              exit 1
+            fi
+            git rebase --onto "origin/$BRANCH" HEAD~1 || { git rebase --abort || true; exit 1; }
             git push origin "HEAD:refs/heads/$BRANCH" && exit 0
             sleep 10
           done

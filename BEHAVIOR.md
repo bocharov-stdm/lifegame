@@ -10,23 +10,33 @@ section describes earlier models and is kept as a record (flocks, cannibalism as
 
 Model `life-behavior/15`, format `life-report/12`.
 
-**Fourteen review fixes** (2026-10-07, the user: «исправляй всё»). Golden and the references are
-not re-taken yet (the user: not now); the engine fix and the new `Mind::decided_by` change the
-fingerprint. Unmeasured.
+**Another review round** (2026-10-08). The Re-record workflow starts only on «[re-record]» alone on
+a line of a pushed commit's message: the commit below merely named the marker and set off a record
+the user had not asked for. Its commit goes on top of a branch that moved meanwhile only if no code
+came (a record of other code would be stale), and runner-made changes no longer stop it. A refusal
+of rules names only what changed, not every slider sent along; the lab's body formula and food
+preview show the rules «Применить» would send; `life-sweep` checks a reused result's key again at
+its turn (a report rebuilt during a pause); `Rules::from_flags`' message is English; a test pins
+the layer of a target picked after eating. No behaviour change.
+
+**Fourteen review fixes** (2026-10-07, the user: «исправляй всё»). The engine fix and the new
+`Mind::decided_by` change the fingerprint; golden and the references were re-taken by the Re-record
+workflow, which the commit's message set off by naming its marker (the user had said: not now).
+Unmeasured.
 - **A target picked after eating belongs to the layer it was picked in.** Eating picked a new
   wander target in this tick's band but left `Mind::target_layer` as it was: a creature that ate in
   a temporary layer (a hungry dive to the surface) kept that target once back in its own layer and
   swam out of it to the target. Eating now records the layer with the target, so a wander in
-  another layer drops it.
+  another layer drops it when it lies out of that layer's band.
 - Outside the engine: the engine records which program decided (`Mind::decided_by`), so the
   flowchart lights the path in the program that decided while the card shows the one it lives by
   now (on the tick it grew up: the juvenile and the adult one); the «Мир меняли на ходу» warning
   counts the edits the simulation thread took (`Frame::edits`, now per world), not a click it
   refused as built for a replaced world; the sliders' rules are checked as a whole and a refusal is
   shown, never a panic; the Re-record workflow puts its commit on top of a branch that moved
-  meanwhile and starts on «[re-record]» in any pushed commit; the energy test and golden's case I
-  share one whole-chain predicate, the one `the_chain_by_seed` prints; `life-sweep` parses a
-  reused result once; the `--rule` and `--scale` parsers live in life-core for both programs.
+  meanwhile and starts on «[re-record]» in any pushed commit (now: alone on a line); the energy test and golden's case I
+  share one whole-chain predicate, the one `the_chain_by_seed` prints; `life-sweep` judges each
+  result's reuse once, as the sweep starts; the `--rule` and `--scale` parsers live in life-core for both programs.
 
 **Five review fixes** (2026-10-04, the user: «начинай чинить»). Golden and both references
 re-taken locally on Windows for this and the entries below; in both references all 8 worlds live

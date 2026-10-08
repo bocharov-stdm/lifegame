@@ -364,7 +364,8 @@ fn approach(me: &Me, fx: f64, fy: f64, reach: f64) -> (f64, f64) {
 }
 
 /// It has just eaten: a new target at once, at most `reach` away in the band of `layer`, so it does
-/// not tread on the spot (in flight too). The target is `layer`'s: a wander in another layer drops it.
+/// not tread on the spot (in flight too). The target is `layer`'s: a wander in another layer drops
+/// it if it lies out of that layer's band, as it drops any target of a layer it left.
 #[inline(always)]
 pub(crate) fn after_eating(me: &Me, mind: &mut Mind, rng: &mut Rng, reach: f64, layer: (f64, f64)) {
     mind.target_layer = layer;

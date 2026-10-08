@@ -139,14 +139,14 @@ impl LifeApp {
                             ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| fields(ui, &mut self.settings, Tab::Body));
                                 ui.add_space(12.0);
-                                body_formula(ui, &self.settings);
+                                body_formula(ui, &self.settings.rules());
                             });
                         } else if self.setup_tab == Tab::Food {
                             let space = Space::new(self.settings.scale, self.settings.shape);
                             ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| fields(ui, &mut self.settings, Tab::Food));
                                 ui.add_space(12.0);
-                                rules_preview(ui, &self.settings, space, self.settings.seed);
+                                rules_preview(ui, &self.settings.rules(), space, self.settings.seed);
                             });
                         } else if self.setup_tab == Tab::Diets {
                             diet_table(ui, &mut self.settings);
@@ -492,9 +492,9 @@ fn preview_patches(ui: &egui::Ui, rules: &Rules, space: Space, seed: u64) -> Arc
 }
 
 /// The food preview of the sliders' rules, or why the rules are refused.
-pub fn rules_preview(ui: &mut egui::Ui, settings: &Settings, space: Space, seed: u64) {
-    match settings.rules() {
-        Ok(rules) => food_preview(ui, &rules, space, seed),
+pub fn rules_preview(ui: &mut egui::Ui, rules: &Result<Rules, String>, space: Space, seed: u64) {
+    match rules {
+        Ok(rules) => food_preview(ui, rules, space, seed),
         Err(e) => {
             ui.colored_label(DANGER, format!("правила не сходятся: {e}"));
         }
@@ -659,8 +659,8 @@ pub fn base_value(ui: &mut egui::Ui, f: &Field, default: &Settings) {
 
 /// The body's upkeep in words and a chart: the formula with the rules' numbers, what a body twice
 /// the base costs, and each term's price against its stat.
-pub fn body_formula(ui: &mut egui::Ui, s: &Settings) {
-    let r = match s.rules() {
+pub fn body_formula(ui: &mut egui::Ui, rules: &Result<Rules, String>) {
+    let r = match rules {
         Ok(r) => r,
         Err(e) => {
             ui.colored_label(DANGER, format!("правила не сходятся: {e}"));

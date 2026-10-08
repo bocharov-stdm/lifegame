@@ -396,10 +396,13 @@ impl Rules {
         let mut named = Vec::new();
         for (key, value) in changes {
             let key = key.as_ref();
+            // a refusal names what changed: the game sends every slider at once, most as they were
+            if self.get(key) != Some(value) {
+                named.push(format!("{key}={value}"));
+            }
             r = r.put(key, value)?;
-            named.push(format!("{key}={value}"));
         }
-        r.fits(&named.join(", "))
+        r.fits(&if named.is_empty() { "этих правилах".into() } else { named.join(", ") })
     }
 
     /// One rule's value checked by its own limits, the upkeep not yet (`with_all`).
@@ -541,7 +544,7 @@ impl Rules {
             .iter()
             .map(|flag| {
                 let (key, value) =
-                    flag.split_once('=').ok_or(format!("правило «{flag}»: нужно имя=число"))?;
+                    flag.split_once('=').ok_or(format!("rule «{flag}»: expected name=number"))?;
                 Ok((key.trim(), value))
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -795,6 +798,16 @@ mod tests {
             "the flags' text the same"
         );
         assert!(rules.with_all([("cost_scale", 1e-3), ("size_cost", 1e306), ("cost_scale", 1.0)]).is_err());
+    }
+
+    /// A refusal names the rules that changed, not every rule sent along as it was: the game sends
+    /// every slider at once.
+    #[test]
+    fn a_refusal_names_only_what_changed() {
+        let r = Rules::default();
+        let e = r.with_all([("cost_scale", 1.0), ("plant_energy", r.plant_energy), ("size_cost", 1e306)]);
+        let e = e.unwrap_err();
+        assert!(e.contains("size_cost=") && !e.contains("cost_scale") && !e.contains("plant_energy"), "{e}");
     }
 
     #[test]

@@ -147,6 +147,28 @@ fn a_new_layer_drops_the_wander_target_of_the_old_one() {
     assert_eq!(v.mind.target, Some((v.x, lo)), "the new target is the nearest point of the new layer");
 }
 
+/// A target picked after eating belongs to the layer it was eaten in: a creature that ate in a
+/// temporary layer (a hungry dive to the bottom) drops it once back in its own, instead of walking to
+/// the edge of its band nearest to it.
+#[test]
+fn a_target_picked_after_eating_belongs_to_the_layer_it_ate_in() {
+    let home = [Block::does(Action::Layer).with(0, 0).with(1, 40), Block::does(Action::Wander)];
+    let mut v = creature(1000.0, 100.0);
+    living_by(&mut v, &home);
+    v.step(&Blind);
+    assert_eq!(v.mind.target_layer, (0.0, 0.4));
+    // this tick's settings took it to the bottom, and it ate there
+    v.mind.stance.layer = (0.6, 1.0);
+    v.feed(&Rules::default());
+    assert_eq!(v.mind.target_layer, (0.6, 1.0), "the target is the bottom layer's");
+    let (x, _) = v.mind.target.expect("a target after eating");
+    v.step(&Blind);
+    let (lo, hi) = v.pheno.band((0.0, 0.4));
+    let (tx, ty) = v.mind.target.expect("a wander target");
+    assert!((lo..=hi).contains(&ty), "a target in its own band");
+    assert_ne!((tx, ty), (x, hi), "it dropped the bottom's target, not kept it at the band's edge");
+}
+
 /// The band's margin is the body: a creature that grows sees its band narrow, but its layer is the
 /// same, so the wander target it walks to stays — only brought within the band and the bounds the
 /// grown body reaches (their margin is the body too). A calm walk keeps to the band, so a target

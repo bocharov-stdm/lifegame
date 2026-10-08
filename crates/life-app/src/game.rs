@@ -540,6 +540,13 @@ impl LifeApp {
         }) else {
             return;
         };
+        // what «Применить» would send — the world's rules with the moved sliders over them, which
+        // keep a rule past the sliders' range — is what the body formula and the food preview show
+        let applied = |lab: &settings::Settings| {
+            let mut taken = lab.clone();
+            taken.take_rules(&current);
+            lab.rules_over(&current, &taken)
+        };
         let mut open = true;
         egui::Window::new("Лаборатория")
             .open(&mut open)
@@ -626,12 +633,12 @@ impl LifeApp {
                         });
                         if body {
                             ui.add_space(8.0);
-                            crate::screens::body_formula(ui, &self.lab);
+                            crate::screens::body_formula(ui, &applied(&self.lab));
                         }
                     });
                     if food {
                         ui.add_space(6.0);
-                        crate::screens::rules_preview(ui, &self.lab, space, seed);
+                        crate::screens::rules_preview(ui, &applied(&self.lab), space, seed);
                     }
                 });
                 let mut now = self.lab.clone();
