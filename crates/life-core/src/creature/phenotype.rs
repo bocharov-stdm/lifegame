@@ -39,7 +39,7 @@ impl Diet {
         &rules.diets[self as usize]
     }
 
-    /// Its own food among plants, fresh meat and rot (`DIET_OWN`).
+    /// Its own food among plants, fresh meat, rot and bones (`DIET_OWN`).
     pub fn own(self) -> [bool; 4] {
         DIET_OWN[self as usize]
     }
@@ -57,7 +57,7 @@ pub struct Phenotype {
     /// 1 until old age, down to `OLD_AGE_VIGOUR` (`vigour`): speed, vision, strike and health are
     /// times this.
     pub vigour: f64,
-    /// What it eats; the three efficiencies are its diet's digestion (`Rules::diets`). Zero: it
+    /// What it eats; the four efficiencies are its diet's digestion (`Rules::diets`). Zero: it
     /// neither eats that food nor goes for it.
     pub diet: Diet,
     pub plant_efficiency: f64,

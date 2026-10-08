@@ -3,7 +3,7 @@
 //! finished runs, and buttons to pause, resume or stop the sweep. The same progress shows on its
 //! taskbar button (Windows). `life-sweep` opens it by itself; by hand:
 //!
-//!     target/release/life-progress sweeps/hunt/progress.json
+//!     target/release/life-progress target/sweeps/hunt/progress.json
 //!
 //! It reads `progress.json` twice a second and answers with `control.txt` next to it (`run`, `pause`,
 //! `stop`); the sweep prints and logs every press, so whoever watches its output learns of it.

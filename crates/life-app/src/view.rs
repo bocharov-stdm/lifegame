@@ -484,7 +484,7 @@ impl WorldView {
             return;
         }
         let aspect = (cam.world_h / cam.world_w) as f32;
-        // no more than 30% of the width and 90 points of height (130 for a world like a square:
+        // no more than 30% of the width and 90 points of height (130 for a world up to 4:1 wide:
         // otherwise it shrinks into a stamp): the map must not cover the world
         let max_h = if aspect > 0.25 { 130.0 } else { 90.0 };
         let mut w = (rect.width() * 0.3).clamp(120.0, 320.0);

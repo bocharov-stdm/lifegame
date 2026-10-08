@@ -132,7 +132,8 @@ impl Scene {
         found.filter(|p| p.gap < within)
     }
 
-    /// The nearest threat it has found this tick, if any: it reports it to its neighbours.
+    /// The nearest threat it has found this tick, if any: remembered as `Mind::alarm`, by which a
+    /// parent covers its young child.
     pub fn found_threat(&self) -> Option<Threat> {
         self.struck.or(self.threats.and_then(|t| t.1))
     }

@@ -349,7 +349,7 @@ mod tests {
     /// strikes in proportion to its size, no weaker.
     #[test]
     fn a_bigger_body_strikes_disproportionately_harder() {
-        // the numbers of `MELEE_SIZE_POWER`'s comment, at the carnivore's former strike ×1.5 and
+        // the edges `MELEE_SIZE_POWER` was chosen under: the carnivore's former strike ×1.5 and
         // the herbivore's and the omnivore's former health ×1.5 and ×1
         let strikes_to_kill = |attacker: CreatureGenome, target: CreatureGenome| {
             let mut w = world();

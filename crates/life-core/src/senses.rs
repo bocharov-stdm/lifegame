@@ -11,8 +11,7 @@
 //! their phase they move: the grid's copies of coordinates would go stale, and reading live
 //! positions would make the outcome depend on the order of traversal. By the snapshot everyone
 //! sees the neighbours where they stood at the start of the tick (a lag of no more than a
-//! step), and the parallel tick will be able to decide for all at once (CLAUDE.md,
-//! «Neighbour search»).
+//! step), so the decisions run in parallel (`par.rs`; CLAUDE.md «Performance», «Threads»).
 
 use crate::config::GRID_CELL;
 use crate::corpse::Corpse;

@@ -80,8 +80,8 @@ settings labels and hints, gene `label`/`about`, chronicle texts (`life_sim::obs
   world rules (`Rules::diets`, keys `{diet}_{edge}`, the lab's «Питание»), read in
   `Phenotype::of`. Digestion 0 = neither eats nor goes for it. Without «есть и чужую пищу» a diet
   keeps to its own corpse stages (`DIET_OWN`); plants are never gated, digestion alone decides.
-  By default no founder eats meat (`DIET_START_MIX`); a founders' diet mix may deal meat diets
-  (bigger, `MEAT_FOUNDER_SIZE`), else they arise from mutants.
+  By default the founders are herbivores and omnivores (`DIET_START_MIX`); a founders' diet mix
+  may deal meat diets (bigger, `MEAT_FOUNDER_SIZE`), else they arise from mutants.
 - **Space and food**: scale is area (`per_area`), vertical ecology in % of depth, real units only
   for showing (`units.rs`). A layer is a preference, not a wall: physics clamps only to the world —
   never teleport. Plants live in `PLANT_MAX` slots, one each; the occupied slots are a bitset
@@ -116,8 +116,9 @@ I/O; `life-app` alone knows the screen.
 
 - `life-core/src`: `config.rs`, `rules.rs`, `world.rs` (`World::step` — the phase order only),
   `genome/`, `creature/` (`mod.rs` act/feed/divide, `phenotype.rs`, `program.rs`, `scene.rs`
-  perception, `actions.rs`, `strategy.rs` `plan`, `steer.rs`), `flora.rs`, `combat.rs`,
-  `corpse.rs`, `senses.rs` + `grid.rs`, `par.rs`, `profile.rs`, `space.rs`, `rng.rs`.
+  perception, `actions.rs`, `strategy.rs` `plan`, `steer.rs`), `flora.rs` + `plant.rs`,
+  `combat.rs`, `corpse.rs`, `senses.rs` + `grid.rs`, `par.rs`, `profile.rs`, `space.rs` +
+  `units.rs`, `rng.rs`.
 - **Tick order**: plants → corpses decay → old age, the last tick's kinship kept
   (`Creature::remember_kin`) → neighbour snapshot → decisions, healing, ageing, movement →
   eating plants → simultaneous strikes and shots → survivors eat corpses → reproduction → removing
@@ -155,8 +156,10 @@ I/O; `life-app` alone knows the screen.
   ms/tick against the previous build in a worktree
   (`life-report --scale 100 --ticks 1000 --seeds 1 2 --threads 1`).
 - **Threads**: only work that reads the snapshot and writes its own creature runs in parallel
-  (`par::Threads`: rayon's global pool, `One`, or the caller's `Pool`); eating, combat and division
-  stay sequential — the order of IDs decides who gets a portion. `life-report` drives each seed on
+  (`par::Threads`: rayon's global pool, `One`, or the caller's `Pool`; one thread below
+  `PARALLEL_MIN`); results keep creature order and no float is summed across threads
+  (`tests/parallel.rs`: the same world on any threads). Eating, combat and division stay
+  sequential — the order of IDs decides who gets a portion. `life-report` drives each seed on
   a thread of its own outside the pool (`by_seed`), and on one thread its worlds run `One`. The
   driving thread keeps to a hybrid processor's fast cores (`life_sim::cores`).
 - **Termination**: every headless run is capped by ticks, population, a work budget and a
@@ -167,7 +170,7 @@ I/O; `life-app` alone knows the screen.
 
 **The window never waits for the simulation.** Defaults are the user's world (×20, 2:1,
 `Settings::default`, `settings::GAME_*`) but for the founders' diet mix, which is the engine's
-(`DIET_START_MIX`: no meat eaters); the user plays ×100 and 55/25/10/10. Settings show common
+(`DIET_START_MIX`: no scavengers or carnivores); the user plays ×100 and 55/25/10/10. Settings show common
 factors per 100. A settings file carries `DEFAULTS_VERSION`: keys in `CHANGED_DEFAULTS` take the
 new default.
 
@@ -229,8 +232,8 @@ with a watcher that ends on a press: `until grep -qE "PAUSED by|STOPPED by" LOG;
 
 ```bash
 cargo build -p life-report --release && cargo build -p life-app --release --bin life-progress
-target/release/life-sweep plan.txt --out sweeps/hunt --jobs 16 --seconds 300
-target/release/life-sweep plan.txt --out sweeps/hunt --summary-only
+target/release/life-sweep plan.txt --out target/sweeps/hunt --jobs 16 --seconds 300
+target/release/life-sweep plan.txt --out target/sweeps/hunt --summary-only
 ```
 
 - A plan: one `seeds:` line, one shared `args:` line, `variant NAME: ARGS` (a capitalised

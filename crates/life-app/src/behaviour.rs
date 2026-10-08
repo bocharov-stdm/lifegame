@@ -81,9 +81,8 @@ pub(crate) fn behaviour_window(ctx: &egui::Context, open: &mut bool, s: &Selecte
                 }
             ))
             .on_hover_text(
-                "Считаются мутации, которые что-то изменили: число, условие, действие, порядок, копия, \
-                 удаление, новый блок. Числа ещё и дрейфуют понемногу у каждого мутирующего ребёнка — \
-                 это мутацией не считается.",
+                "Считается каждая мутация, что изменила эту программу. Дрейф чисел у каждого \
+                 мутирующего ребёнка мутацией не считается.",
             );
             let on: Vec<String> = (0..MODES)
                 .filter(|&k| s.modes[k] > 0)
@@ -94,8 +93,8 @@ pub(crate) fn behaviour_window(ctx: &egui::Context, open: &mut bool, s: &Selecte
                 .collect();
             let modes = if on.is_empty() { "все выключены".to_string() } else { on.join(", ") };
             ui.label(format!("Режимы: {modes}")).on_hover_text(
-                "Режим — память программы: установка «режим» включает его на время, условие «режим» \
-                 проверяет. Режимы общие для обеих дорожек.",
+                "Режим — память программы: установка «включить режим» включает его на время, условие \
+                 «включён режим» проверяет. Режимы общие для обеих дорожек.",
             );
             // the path is the program's its last decision came from: on the tick it grew up, the
             // juvenile one, while it already lives by (●) the adult one

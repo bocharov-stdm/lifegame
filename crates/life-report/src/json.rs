@@ -1,6 +1,6 @@
 //! The full report as JSON — for programs and AIs: everything the story prints, plus every
-//! sample in full. The keys are machine ones (English, as in the Python reference), the texts
-//! of the events are in Russian.
+//! sample in full. The keys are machine ones (English), the event texts Russian
+//! (`life_sim::observe`).
 
 use life_core::genome::{GeneKind, GeneSpec, creature};
 use life_core::rules::{DIETS, RULE_KEYS};

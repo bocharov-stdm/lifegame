@@ -161,8 +161,9 @@ const WORLD_RULE_KEYS: [&str; 50] = [
     "program_drift",
 ];
 
-/// Patches per base world — no more than this: at 1500 slots that is five places a patch, and
-/// with fewer a patch is a lone plant, not an island.
+/// Patches per base world — no more than this: at 1500 slots that is three places a patch at the
+/// default share (five with every slot in patches), and with fewer a patch is a lone plant, not an
+/// island.
 pub const MAX_PATCHES: f64 = 300.0;
 
 /// The parameters of the food profiles while none have been chosen (config.rs).
@@ -286,11 +287,11 @@ pub struct Rules {
     /// replace its `diet_jump` (`config::HERBIVORE_LEAP_*`).
     pub diet_leap_carnivore: f64,
     pub diet_leap_scavenger: f64,
-    /// Share of the mutating children whose behaviour program mutates, times the parent's
-    /// mutability (`config::PROGRAM_MUTATION_CHANCE`, `Program::mutate`).
+    /// Chance that each program of a mutating child mutates, times the parent's
+    /// `program_mutability` (`config::PROGRAM_MUTATION_CHANCE`, `Program::mutate`).
     pub program_mutation: f64,
     /// How far a mutating child's program numbers drift, a share of a mutation's nudge, times
-    /// the parent's mutability (`config::PROGRAM_DRIFT`, `Program::drift`).
+    /// the parent's `program_mutability` (`config::PROGRAM_DRIFT`, `Program::drift`).
     pub program_drift: f64,
     /// A corpse's clock, ticks from death: fresh until; how far it sinks a tick; rotted down to the
     /// bones at; and the lowest share of the depth, %, where it comes to rest (`corpse.rs`).

@@ -39,7 +39,8 @@ pub struct Instance {
     pub color: u32,
     /// Seconds since birth at the moment the frame is assembled, for a ghost — since death.
     pub age: f32,
-    /// Heading u16 | view << 16 | ghost | starved to death.
+    /// Bit fields: heading, diet, eating, view, ghost, starved, dot, food direction, proboscis;
+    /// `motion.rs` lays them out and `creatures.wgsl` reads them.
     pub meta: u32,
 }
 
@@ -378,7 +379,7 @@ pub fn dots(world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) 
     true
 }
 
-// ── colours (the palette of app/theme.py) ───────────────────────────────────
+// ── colours ─────────────────────────────────────────────────────────────────
 
 pub const WORLD_TOP: [u8; 3] = [31, 38, 47];
 pub const WORLD_BOTTOM: [u8; 3] = [15, 18, 23];
@@ -394,11 +395,12 @@ pub fn rgba(c: [u8; 3], a: u8) -> u32 {
     u32::from_le_bytes([c[0], c[1], c[2], a])
 }
 
-/// Sprouts are dark green: there are many of them, and they must not compete with those
-/// that move. Charts and counters keep the bright `PLANT_COLOR`.
+/// Sprouts in the world are dark green: there are many of them, and they must not compete with
+/// those that move. The density map and the other charts keep the bright `PLANT_COLOR`, the
+/// population chart its own `PLANT_LINE`.
 pub const SPROUT_COLOR: [u8; 3] = [64, 150, 84];
 
-/// Plants are dimmer than animals: there are many of them, and they must not compete with those that move.
+/// The sprouts' drawn colour: `SPROUT_COLOR` dimmed a quarter toward `WORLD_BOTTOM`.
 pub fn plant_color() -> [u8; 3] {
     lerp(WORLD_BOTTOM, SPROUT_COLOR, 0.75)
 }

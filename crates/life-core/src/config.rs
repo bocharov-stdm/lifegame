@@ -26,7 +26,7 @@ pub const CM_PER_PX: f64 = 0.5;
 pub const SECONDS_PER_TICK: f64 = 0.25;
 pub const TICKS_PER_YEAR: f64 = 1000.0;
 
-/// Once in how many ticks creatures try to divide.
+/// Ticks a creature waits after its birth and after each division before it may divide again.
 pub const DIVIDE_PERIOD: u64 = 30;
 
 // ── Plants ──────────────────────────────────────────────────────────────────
@@ -36,13 +36,14 @@ pub const ENERGY_FROM_PLANT: f64 = 50.0;
 pub const PLANT_BITE_YIELD: f64 = 0.44;
 
 // Where the food grows — the profile by depth and by width (flora.rs), the world's rules.
-// By default: the «игровое» profile down, uniform across, in patches.
+// By default (`Rules::default`): «океаническое» down, uniform across, in patches.
 
 /// The «игровое» depth profile (`flora::Profile::Game`), a rough real sea: nutritious upper
 /// layers and a nearly dead bottom, where the rot settles. Full food down to this share of the
 /// depth, then the exponent with the profile's steepness over the rest, so at the default 8 the
-/// bottom holds ~3000 times less food, like the plain exponent. Before it the default was the plain
-/// exponent with steepness 8; the first «игровое» fell along a straight slope and a cosine.
+/// bottom holds ~3000 times less food, like the plain exponent. It was the default before
+/// «океаническое», and the plain exponent (steepness 8) before it; the first «игровое» fell along a
+/// straight slope and a cosine.
 pub const GAME_PLATEAU: f64 = 0.2;
 /// The «океаническое» depth profile (`flora::Profile::Ocean`): real seas are richest not at the
 /// very surface but a little below it, at the deep chlorophyll maximum, where enough light still
@@ -82,7 +83,7 @@ pub const PLANT_MAX: usize = 1500;
 
 /// Patches of food per base world (`flora.rs`): plants grow in islands instead of an even carpet,
 /// so creatures are seen between the food rather than inside it. 0 — scattered by the profile.
-/// With 1500 slots it is about 60 plants a patch when the world is full.
+/// With 1500 slots, 60% of them in patches, it is about 37 plants a patch when the world is full.
 pub const PLANT_PATCHES: f64 = 24.0;
 /// Mean patch radius; each patch draws its own from half to one and a half of it.
 pub const PLANT_PATCH_SIZE: f64 = 200.0;
@@ -133,19 +134,21 @@ pub const SPEED_ENERGY_POWER: f64 = 2.0;
 pub const SIGHT_ENERGY_POWER: f64 = 2.0;
 
 // The coefficients are normalised so that the base genome spends three EQUAL shares and lives
-// on a full tank about 700 ticks without food. One plant is half a tank.
+// on a full tank (100) about 700 ticks at full speed without food. A plant is 50 raw, 22 digested
+// (`PLANT_BITE_YIELD`): a fifth of the tank.
 pub const SIZE_ENERGY_COEF: f64 = 4.706e-6;
 pub const SPEED_ENERGY_COEF: f64 = 4.762e-4;
 pub const SIGHT_ENERGY_COEF: f64 = 2.976e-7;
 
 /// Moving a big body is dearer: the speed's price is multiplied by (size / 40) ** this.
-/// The base genome (diameter 40) pays exactly as much as without the multiplier. Without it, with plentiful
-/// plants, giants of size 150‒250 survived.
+/// The base genome (diameter 40) pays exactly as much as without the multiplier. Without it, with
+/// plentiful plants, giants of size 150‒250 survived.
 pub const SPEED_MASS_POWER: f64 = 1.0;
 
-/// The ceiling of the mutability gene (a multiplier on the mutations' spread and the chance of
-/// a strategy change). At 10 the creatures' sigma is 3.0: a descendant's genome is almost
-/// random — no point growing further, and without a ceiling the multiplier could go to infinity.
+/// The ceiling of the mutability genes (`mutability` multiplies the genes' spread,
+/// `program_mutability` the programs' mutation and drift). At 10 the creatures' sigma is 3.0: a
+/// descendant's genome is almost random — no point growing further, and without a ceiling the
+/// multiplier could go to infinity.
 pub const MAX_MUTABILITY: f64 = 10.0;
 /// Floor of the mutability gene. Selection pulls it down (a less mutated child is fitter on
 /// average), and at 0 evolution froze: one diet, one strategy, forever.
@@ -155,10 +158,8 @@ pub const MIN_MUTABILITY: f64 = 0.1;
 pub const CLONE_CHANCE: f64 = 0.5;
 
 // ── The neighbour search ────────────────────────────────────────────────────
-/// The grid cell's size (grid.rs). In Python the cell equalled the biggest query radius, and
-/// one far-sighted creature blew it up for everyone. Here the cell is fixed, and a query takes
-/// as many cells as its own radius covers. 256 is of the order of half a sight: a query usually
-/// looks at 4x4‒5x5 cells, and there are few empty cells.
+/// The grid cell's size (grid.rs: why it is fixed). 256 is of the order of half a sight: a query
+/// usually looks at 4x4‒5x5 cells, and there are few empty cells.
 pub const GRID_CELL: f64 = 256.0;
 
 // ── Threads (the `parallel` feature, `par.rs`) ───────────────────────────────
@@ -174,34 +175,36 @@ pub const PARALLEL_CHUNK: usize = 32;
 /// None: behaviour is inherited and mutates as the program (`Program::mutate`); the gene keeps its
 /// draw (`Mutation::Switch` still draws with two variants), so a child keeps its lineage's name.
 pub const STRATEGY_SWITCH_CHANCE: f64 = 0.0;
-/// Share of the children that are not exact copies whose behaviour program mutates once
-/// (`Program::mutate`), times the parent's mutability; the rule `program_mutation`. A generation
+/// Chance that each program (juvenile, adult) of a child that is not an exact copy takes one
+/// structural mutation (`Program::mutate_with`), times the parent's `program_mutability`; the rule
+/// `program_mutation`. A generation
 /// is a few hundred ticks, so a lineage gathers some changes in a game while most programs stay
 /// recognisable; a mutation that breaks one is weeded out by its bearer's fate.
 pub const PROGRAM_MUTATION_CHANCE: f64 = 0.05;
 /// A program threshold's mutation moves it by gauss(0, this) points (thresholds are 0‒100%).
 pub const PROGRAM_NUDGE_POINTS: f64 = 10.0;
-/// Every child that is not an exact copy moves every number of its programs by gauss(0, its
-/// nudge × this × the parent's mutability) — a threshold by 10 points, a ratio by 0.2, a time by
-/// a quarter of its base; the rule `program_drift`. The numbers evolve like the genes they
-/// replaced (the genes drift by `MUTATION_SIGMA` 30% a child): through the rare mutation alone a
-/// given number moved in about one child of 1700, and the old genes' adaptations (the pace to
-/// ~55%, the rest to ~78%, the layer reach to 69% within 20 000 ticks) could not happen.
+/// A child that is not an exact copy moves `PROGRAM_DRIFT_SHARE` of its programs' numbers by
+/// gauss(0, its nudge × this × the parent's `program_mutability`) — a threshold by 10 points, a
+/// ratio by 0.2, a time by a quarter of its base; the rule `program_drift`. The numbers evolve like
+/// the genes they replaced (the genes drift by `MUTATION_SIGMA` 30% a child): through the rare
+/// mutation alone a given number moved in about one child of 1700, and the old genes' adaptations
+/// (the pace to ~55%, the rest to ~78%, the layer reach to 69% within 20 000 ticks) could not
+/// happen.
 pub const PROGRAM_DRIFT: f64 = 1.0;
 /// The share of a program's numbers the drift moves in one child: a third, so that selection sees
 /// a few changes at a time rather than the sum of sixty (with every number moving, a good change
 /// was buried in the noise of the rest).
 pub const PROGRAM_DRIFT_SHARE: f64 = 1.0 / 3.0;
-/// The same rare switch for the other choice genes: shooting, layer.
-pub const CHOICE_SWITCH_CHANCE: f64 = 0.001;
 /// A melee strike: a share of the diameter, at once the base damage and the energy price.
 pub const MELEE_DAMAGE_SHARE: f64 = 0.05;
 /// A bigger body strikes disproportionately harder: melee damage is times (attacker's size /
-/// target's size) ** this when the attacker is the bigger (never less than ×1). Equal bodies still
-/// trade ~20 strikes; 2× bigger needs ~5; 3× a carnivore kills a herbivore in two (0.075 · 3^2.25 /
-/// 1.5 = 0.59 of its health a strike): a carp and a fry, not a duel. There is no cap on a strike's
-/// share of the target's health any more; shots keep theirs. At 1.75 (3× = one blow) carnivores
-/// boomed, ate the herbivores out and starved; at 1.0 they died out everywhere (seeds 1–8).
+/// target's size) ** this when the attacker is the bigger (never less than ×1). Equal herbivores
+/// trade ~22 strikes, one twice the other's size needs ~5; a carnivore twice a herbivore's size
+/// kills it in two blows (0.15 · 2^2.25 / 1.1 = 0.65 of its health a strike), three times in one: a
+/// carp and a fry, not a duel. There is no cap on a strike's share of the target's health; shots
+/// keep theirs. Chosen under the earlier edges (carnivore strike ×1.5, herbivore health ×1.5, where
+/// 3× took two blows): at 1.75 (3× = one blow) carnivores boomed, ate the herbivores out and
+/// starved; at 1.0 they died out everywhere (seeds 1–8).
 pub const MELEE_SIZE_POWER: f64 = 1.25;
 /// A shot is weaker than a melee strike, but needs an energy store of its own.
 pub const SHOT_DAMAGE_SHARE: f64 = 0.01;
@@ -210,8 +213,8 @@ pub const SHOT_PERIOD: u64 = 5;
 pub const SHOT_RANGE_SIZES: f64 = 4.0;
 
 /// The slowest pace a program's block goes at, a share of speed: slower, a creature wandering for
-/// food would stand. A slow step is paid as taken, by the same law `speed ** SPEED_POWER` as the
-/// gene: at the square a third of the speed costs a ninth, and the base creature's whole upkeep
+/// food would stand. A slow step is paid as taken, by the same law `speed ** SPEED_ENERGY_POWER`
+/// as the gene: at the square a third of the speed costs a ninth, and the base creature's whole upkeep
 /// falls to about 70% (the lurker's template wanders at 33%).
 pub const MIN_PACE: f64 = 0.1;
 /// A burst (the `burst` gene, ×1 to `BURST_MAX` its speed) in a chase or in flight, when the goal
@@ -316,12 +319,13 @@ pub const SCAVENGER_START_LAYER: (u16, u16) = (50, 100);
 /// are half grown) and starved by tick ~400 without a single strike. A start condition: the gene
 /// mutates.
 pub const MEAT_FOUNDER_SIZE: f64 = 2.0;
-/// Digestibility by diet (order of `genome::creature::DIET_VARIANTS`): plants, fresh meat,
-/// rot, bones (the corpse's stages, `corpse::Stage`). For plants 1 is the world's yield `plant_bite_yield`; for meat it is the whole raw
-/// portion — the diet alone decides how much of it is taken in (the old flat 10% fed a hunter
-/// less for a whole corpse than one plant). 0 means the creature neither eats that food nor
-/// goes for it. A specialist digests its own food fully; the
-/// omnivore takes everything, but worse; rot feeds well only the scavenger, the others barely.
+/// Digestibility by diet (order of `genome::creature::DIET_VARIANTS`): plants, fresh meat, rot,
+/// bones (the corpse's stages, `corpse::Stage`). For plants 1 is the world's yield
+/// `plant_bite_yield`; for meat it is the whole raw portion — the diet alone decides how much of it
+/// is taken in (the old flat 10% fed a hunter less for a whole corpse than one plant). 0 means the
+/// creature neither eats that food nor goes for it. A specialist digests its own food fully; the
+/// omnivore plants, meat and rot, but worse, and no bones; rot feeds well only the scavenger, the
+/// others barely.
 /// Meat-eaters get a little from plants (not their own food, yet not gated by `DIET_OWN`: their
 /// programs choose when to graze), so a line of them is not starved out before it finds meat.
 /// Bones only the scavenger digests (the user's choice, 2026-09-27): the long-lying remains on the
@@ -358,8 +362,9 @@ pub const DIET_START_MIX: [f64; 4] = [70.0, 30.0, 0.0, 0.0];
 pub const EAT_STOP_SHARE: f64 = 0.85;
 
 // ── Corpses ─────────────────────────────────────────────────────────────────
-// Three stages (`corpse::Stage`), each longer than before (the user's choice, 2026-09-27: fresh
-// 150, a smooth rot to 600, gone by 1800; bones only from an eaten corpse, 1800 ticks, sinking 4).
+// Three stages (`corpse::Stage`, the clock in corpse.rs): fresh where it died; rot that sinks and
+// decays to bones; bones, left when the flesh is eaten or rotted away, that sink fast and lie long.
+// The `corpse_*` rules start from these.
 /// A corpse stays fresh this long and lies where the creature died; then it is rot at once.
 pub const CORPSE_FRESH_TICKS: u64 = 300;
 /// After the fresh time it sinks this far a tick, straight down, and can be eaten all the way. A
@@ -376,7 +381,7 @@ pub const CORPSE_REST_PCT: f64 = 25.0;
 /// This share of a corpse's meat is its bones, left when the flesh is eaten or rotted away. The
 /// hunters' last tenth feeds the scavengers, who alone digest bones.
 pub const CORPSE_SKELETON_SHARE: f64 = 0.1;
-/// Bones sink to the corpse's resting place this far a tick, ten times a corpse: heavy, they fall
+/// Bones sink to the corpse's resting place this far a tick, twenty times a corpse: heavy, they fall
 /// «со свистом»,
 pub const SKELETON_SINK_SPEED: f64 = 40.0;
 /// and lie there long, decaying evenly over this many ticks from when they were left: the
@@ -387,18 +392,18 @@ pub const SKELETON_SINK_SPEED: f64 = 40.0;
 pub const SKELETON_TICKS: u64 = 5000;
 
 // ── Flight ──────────────────────────────────────────────────────────────────
-/// A creature runs from a stranger (not kin) that can eat it when the gap to the edge of its
-/// body is under this share of its own sight. A third — as they ran from predators (tag
+/// The templates' flight distance, a share of sight (`program::FLEE_PCT`: the base of «угроза
+/// ближе», «охотник ближе» and a flight's «снова пугается»). A third — as they ran from predators (tag
 /// `predators-final`): with a far threshold the small would only run and not eat, and one has to
 /// manage to run before the big one reaches.
 pub const FLEE_SIGHT_SHARE: f64 = 1.0 / 3.0;
-/// How many ticks a creature runs after a fright (a second at 60 ticks a second): a threat
-/// gone from sight does not mean it has gone.
+/// The base of a flight's «бежать ещё» and of the templates' alarm (`ALARM_TICKS`): a threat gone
+/// from sight has not gone.
 pub const FLEE_TICKS: u32 = 60;
 
 // ── Life and old age ────────────────────────────────────────────────────────
 /// The `lifespan` gene: every founder starts with this many ticks of life (user's call, 2026-09-27).
-/// The gene is free, like behaviour genes: a long life buys nothing but more time, and the old
+/// The gene is free, like behaviour: a long life buys nothing but more time, and the old
 /// are weak (below). Before, the `life_pace` gene cut upkeep in proportion to a longer life, and
 /// selection pinned it to its floor everywhere: slow life was a free 50% discount.
 pub const LIFESPAN_BASE: f64 = 3000.0;
@@ -414,9 +419,11 @@ pub const OLD_AGE_FULL: f64 = 0.9;
 pub const OLD_AGE_VIGOUR: f64 = 0.7;
 
 // ── The chase ───────────────────────────────────────────────────────────────
-/// A hunter that has not closed in on its prey by at least one of its own steps within this many
-/// ticks gives the chase up: a prey as fast as it, fleeing, is never caught in the open, and the
-/// hunter used to follow it as long as it saw it, starving on the way.
+/// The base of a hunt block's «терпение»: a hunter that has not closed in on its prey by at least
+/// one of its own steps within this many ticks gives the chase up: a prey as fast as it, fleeing,
+/// is never caught in the open, and the hunter used to follow it as long as it saw it, starving on
+/// the way.
 pub const CHASE_PATIENCE: u64 = 30;
-/// For this long it does not choose the prey it gave up again.
+/// The base of a hunt block's «брошенную не трогать»: for this long it does not choose the prey
+/// it gave up again.
 pub const CHASE_GIVE_UP_TICKS: u64 = 180;

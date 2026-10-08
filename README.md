@@ -5,12 +5,9 @@ table of genes that mutates when it divides. Nobody scripts selection: the genom
 themselves survive. The game, the headless runs and the balance report are Rust; the earlier
 Python and pygame version is kept under the tag `python-final`.
 
-The current model is `life-behavior/15` (every behaviour in evolving programs with a memory,
-each creature read by the others by its last move, on the ocean reform).
-[CLAUDE.md](CLAUDE.md) holds the
-project's working rules and the model in brief (its exact numbers live in the code, `config.rs`
-above all); [BEHAVIOR.md](BEHAVIOR.md) records how the model got here and how each stage was
-checked.
+The current model is `life-behavior/15`. [CLAUDE.md](CLAUDE.md) holds the project's working rules
+and the model in brief (its exact numbers live in the code, `config.rs` above all);
+[BEHAVIOR.md](BEHAVIOR.md) records how the model got here and how each stage was checked.
 
 ## The world in short
 
@@ -22,8 +19,8 @@ checked.
   plus the speed of the step it actually takes.
 - **Diets** are a gene: herbivore, omnivore, scavenger and carnivore. Each has a body of its own
   (the strike, health, the price of size and speed, the sense of smell) and its own foods among
-  plants, fresh meat, rot and bones. By default no founder eats meat and carnivores and
-  scavengers arise from mutants; the founders' diet mix can deal them from the start.
+  plants, fresh meat, rot and bones. By default the founders are herbivores and omnivores;
+  scavengers and carnivores arise from mutants, or the founders' diet mix deals them from the start.
 - **Corpses** stay fresh 300 ticks where the creature died, then rot and sink while the flesh
   decays down to the bones; bones feed only the scavenger.
 - **The deep is cold** below a thermocline. The `cold_blood` gene makes a body cheaper and slower
@@ -69,20 +66,19 @@ cargo run -p life-app --release -- --scale 100 --seed 7  # straight into a world
   the cursor, drag or WASD moves the camera, Home shows the whole world, a click selects a
   creature, F follows it, B draws its behaviour programs, Tab opens the side panel (populations by
   diet, who kills whom, the genome, the chronicle, the creature card), L opens the lab (the rules
-  mid-game), I opens the statistics
-  (fullness, where creatures live, an area's genome, and on pause how every characteristic and
-  the adults' behaviour spread within each diet). Esc opens the menu.
+  mid-game), I opens the statistics (fullness, where creatures live, an area's genome, and on
+  pause how every characteristic and the adults' behaviour spread within each diet). Esc opens
+  the menu.
 - **No freezes at any scale**: the simulation runs in its own thread and the window draws the
   last finished frame. The creatures' decisions use every processor core, and the world stays the
   same on any number of them; «Настройки → Скорость расчёта» chooses how many (auto, one, or by
-  hand) and keeps the computation on a hybrid processor's fast cores. «Показывать кадры» also shows
-  where a tick's time goes. Far away the world turns into two-pixel dots or a density map; rendering can
-  be switched off while statistics and the card keep working.
+  hand) and keeps the computation on a hybrid processor's fast cores. «Показывать кадры» also
+  shows where a tick's time goes. Far away the world turns into two-pixel dots or a density map;
+  rendering can be switched off while statistics and the card keep working.
 - **For research**: «Повторить без окна» gives the `life-report` command that repeats the game.
 
 Settings live in `%APPDATA%\lifegame\config\settings.json` (the user's config folder on Linux
-and macOS); a file the game left under its old name, `TinyLife`, is taken over once.
-A broken file does not matter: the game takes the defaults.
+and macOS). A broken file does not matter: the game takes the defaults.
 
 ## Headless runs
 
@@ -140,7 +136,7 @@ screen**, and the crate boundary enforces it.
 | `crates/life-report/` | the report, JSON, the balance comparison and `life-sweep` |
 | `crates/life-app/` | the game (egui + wgpu) and the sweep's progress window |
 | `reference/` | balance references |
-| `docs/` | the parallel tick design, real units |
+| `docs/` | real units (`scale.md`) |
 | `Relict/` | a frozen 2025 archive of early prototypes; never edited |
 
 ## Scale and shape

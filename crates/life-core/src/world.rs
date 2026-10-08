@@ -1,11 +1,13 @@
 //! The simulation's state and one logical tick.
 //!
-//! The order of a tick: plants → creatures (the herd snapshot, moves, eating, fighting, corpses)
-//! → the tick counter. Relatives are seen by the snapshot at the start of the phase. One eaten
-//! in this tick and one that died on its own move act no further. Children pile up in a separate
-//! buffer and do not move in the tick of their birth. Eaten plants are marked and swept out once
-//! a tick. A fight is a separate pass after all the creatures have moved, when they already
-//! stand; fights are always on.
+//! The order of a tick: plants → corpses decay → old age, the last tick's kinship kept → grids and
+//! the herd snapshot → every creature's move (decision, healing, step; in parallel) → eating
+//! plants → simultaneous strikes and shots → survivors eat corpses → division → the dead become
+//! corpses, eaten plants swept, children added → the tick counter. Relatives are seen by the
+//! snapshot at the start of the phase. One that starved or aged out on its move neither eats nor
+//! divides; one killed in the fight gets no prey and does not divide. Children do not move in the
+//! tick of their birth. A fight is a separate pass after all the creatures have moved, when they
+//! already stand; fights are always on.
 //!
 //! Predators were a species of their own until the tag `predators-final`; the meat diets and
 //! corpses took their place.

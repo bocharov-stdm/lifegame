@@ -19,12 +19,12 @@ about nine hours of life. The life cycle is compressed about 126 000 times more 
 |---|---|---|---|---|
 | Base world ×1 3:2 | 6000 × 4000 px | 30 × 20 m | — | a pond |
 | User's world ×20 2:1 | ~31 000 × 15 500 px | ~155 × 77 m | coastal sea: bottom at 20–100 m | coastal, not open ocean |
-| Body | 40 px, evolves to ~85 | 20 cm, ~40 cm | small to medium fish | fits |
-| Speed | 10 px a tick | 20 cm/s, 1 body length/s | cruising 1–2 body lengths/s, bursts to 10 | fits cruising; no bursts yet |
+| Body | 40 px at the start (the `size` gene evolves) | 20 cm | small to medium fish | fits |
+| Speed | 10 px a tick, bursts to ×2 (`burst`) | 20 cm/s, 1 body length/s | cruising 1–2 body lengths/s, bursts to 10 | fits cruising; bursts fall short |
 | Vision | 400 px | 2 m | turbid coastal water 1–5 m, clear ocean 20–30 m | murky water |
 | Scavenger's smell | 3 × vision | 6 m | a scent plume reaches hundreds of metres down-current | far too short; no currents |
-| Plants (default «игровое», ×20) | full to 20% of depth | full to ~15 m, then falling | coastal photic zone 20–50 m | a little shallow |
-| Plants («океаническое», ×20) | peak at 15% | ~12 m | deep chlorophyll maximum 10–30 m on shelves, 50–150 m in the open ocean | coastal |
+| Plants (default «океаническое», ×20) | peak at 15% | ~12 m | deep chlorophyll maximum 10–30 m on shelves, 50–150 m in the open ocean | coastal |
+| Plants («игровое», ×20) | full to 20% of depth | full to ~15 m, then falling | coastal photic zone 20–50 m | a little shallow |
 | Corpse sinking | 2 px a tick | 4 cm/s | a dead fish sinks about 5–20 cm/s once it loses its gas | a little slow |
 
 ## Where the clocks break
@@ -32,8 +32,8 @@ about nine hours of life. The life cycle is compressed about 126 000 times more 
 - **Movement over a lifetime.** A real 20 cm fish swims thousands of kilometres in three years.
   Ours covers 3000 ticks × 5 cm = 150 m, about one width of the user's world. A life is a few
   swims across the world, not a migration.
-- **Corpses fit neither clock.** A corpse stays fresh for 150 ticks. By the swimming clock that is
-  37 seconds; by the life clock it is 55 days. A real carcass stays fresh for hours to a few days
+- **Corpses fit neither clock.** A corpse stays fresh for 300 ticks. By the swimming clock that is
+  75 seconds; by the life clock it is about 110 days. A real carcass stays fresh for hours to a few days
   in cold water. Corpse times are tuned for the balance, not for either clock.
 - **Growth and division.** By the life clock a newborn is grown in weeks, fast but not absurd for
   small fish. Division gives one big offspring. Real fish spawn thousands of eggs, and almost all

@@ -40,7 +40,7 @@ fn speed_label(index: usize) -> String {
 }
 
 /// What the world eats and how it shoots in the last snapshot: diet shares in % and the share of
-/// shooters in %. (How much smaller prey must be lives in each creature's program now.)
+/// shooters in %.
 pub(crate) fn hunting_summary(history: &History) -> Option<([f64; 4], f64)> {
     let last = history.snapshots.last()?;
     let genes = last.genes.as_ref()?;
@@ -837,8 +837,8 @@ fn gene_rows(ui: &mut egui::Ui, genes: &[GeneSpec], g: &[f64], avg: Option<&[f64
     }
 }
 
-/// A diet's edges, from the engine's tables: «удар ×1,5 · скорость дешевле на 20%».
-/// A diet's edges in the world's current rules (the lab may have changed them).
+/// A diet's edges in the world's current rules (the lab may have changed them): «удар ×1,5 ·
+/// скорость дешевле на 20%».
 fn diet_bonuses(gene: f64, rules: &Rules) -> String {
     let e = &rules.diets[(gene.max(0.0) as usize).min(3)];
     let times = |x: f64| format!("{}", (x * 100.0).round() / 100.0).replace('.', ",");

@@ -42,63 +42,45 @@ through `Gene`, append new rows only at the end of the table. Don't mix life sta
 
 Energy is never made from nothing: it enters in plants and only passes along the chain, losing
 some. Behaviour is free: programs are restrained by their consequences and effect limits, never
-by upkeep, and a new behaviour is a block, never a gene or a world constant. Plant capacity lives in slots (`flora.rs`): one plant per slot;
-don't add a second, global plant limit. Senses read the neighbour snapshot; program blocks return
-intents and cannot move, feed or divide a creature. Combat strikes apply simultaneously. The dead don't eat or reproduce; children
-don't act on their birth tick. Death counters for every cause must add up with the population.
-The window never waits for the engine.
+by upkeep, and a new behaviour is a block, never a gene or a world constant. Plant capacity lives
+in slots (`flora.rs`): one plant per slot; don't add a second, global plant limit. Senses read the
+neighbour snapshot; program blocks return intents and cannot move, feed or divide a creature.
+Combat strikes apply simultaneously. The dead don't eat or reproduce; children don't act on their
+birth tick. Death counters for every cause must add up with the population. The window never
+waits for the engine.
 
 ## Checking changes
 
 Add regressions for changed behaviour with fixed seeds and a finite tick count. Don't weaken
-checks to make them pass: changing golden requires explaining the mechanic change; re-record
-golden and the references in a separate commit.
+checks to make them pass: changing golden requires explaining the mechanic change. Golden and the
+references are re-recorded on Windows only, in a commit of their own; from a cloud session through
+the Re-record workflow (`CLAUDE.md`, «Re-recording»).
 
 Balance checks (survival criteria, the user's baseline conditions in `CLAUDE.md`) are the user's
-call: run them only when asked. Measurement series run as `life-sweep` plans. When the JSON structure or the model changes, version the format and
-check that incompatible references are refused.
+call: run them only when asked. Measurement series run as `life-sweep` plans. When the JSON
+structure or the model changes, version the format and check that incompatible references are
+refused.
 
 Commits: short imperative English subjects, only files relevant to the task, straight to `main`.
 Commit and push only when the user asks.
 
 ## Current model specifics
 
-Diets are a gene (herbivore, omnivore, scavenger, carnivore): each has its own body edges and its
-own foods among plants, fresh meat, rot and bones; by default no founder eats meat (a founders'
-diet mix may deal meat diets), and they arise from mutants. A corpse is
-fresh for 300 ticks, then rot that sinks and decays to bones by 3000, then bones for 5000. The deep
-is cold below a thermocline, where the `cold_blood` gene makes a body cheaper and slower. Upkeep is
-the body and eyes plus the speed of the step actually taken. Eleven genes, the body and life
-history: `size`, `speed`, `vision`, `strategy`, `mutability`, `maturation`, `diet`, `lifespan`,
-`cold_blood`, `burst` (the muscles, paid standing), `program_mutability` (the programs' own rate).
-From 70% of its lifespan a creature weakens to 70% at 90%.
+The model in brief is in `CLAUDE.md`, its numbers in `config.rs`. What a change most often breaks:
 
-All behaviour is a program (`creature/program.rs`): an ordered list of ≤ 32 blocks «if up to
-three tests → an action with its parameters». Each tick the settings apply first, wherever they
-stand, the first of each kind whose tests hold: eat foreign food, drive off rivals, how far past
-its layer, the layer, a smooth step, division, healing, eating on the move, sparing its children,
-shooting, and modes (the program's memory, read by a test). Without a setting of a kind the
-creature does not do it: a program without «делиться» never divides. Then the first deciding block
-whose tests hold and whose action can be done decides. A creature has two programs, juvenile and
-adult, shared between relatives that inherited them unchanged. On division a mutating child's
-programs drift — a third of the numbers a little, like genes (`program_drift`) — and mutate
-(`program_mutation`, 5% × `program_mutability` each; a new block only where it is reached and
-never one born dead or killing another, a deletion takes a dead block first, a «pair» makes a
-memory in one step, a «transfer» copies a block from the other track). Founders start from their `strategy` template (standard or lurker),
-which carries the bases of the deleted genes and of what the world used to do and remembers
-hunger, an alarm and a full tank through modes; a founder's layer and the 5% shooters are set in
-its program. No world behaviour constants: numbers live in the blocks. A torpid creature eats
-nothing; others read a creature by the blocks whose tests held on its last move, so a hunt block
-behind an impossible condition scares nobody.
-
-Family is only a parent and its growing child while the parent's «щадить детей» holds; siblings
-and grandchildren are strangers. A parent whose program has «защищать детёныша» goes for its
-child's enemy whatever its size, within the block's limits. A hunt block weighs the meat the tank
-can take in against the strikes it expects (its caution) and gives up a chase that does not close
-in within its patience (30 ticks in the templates). Strikes and shots need a target the program
-chose (prey, a fight back, a child's enemy) or a rival at the same food under the rival setting.
-
-Flocks are gone (tag `flocks-final`): every creature is a loner.
+- All behaviour is a program (`creature/program.rs`): ≤ 32 blocks «if up to three tests → an
+  action with its parameters». Settings apply first, the first of each kind whose tests hold;
+  without a setting of a kind the creature does not do it (no «делиться» — no division). Then the
+  first deciding block whose tests hold and whose action can be done decides.
+- Two programs, juvenile and adult, shared by relatives that inherited them unchanged; a mutating
+  child's programs drift and now and then take one structural mutation that leaves no block dead.
+  Founders start from their `strategy` template (standard or lurker).
+- Diets are a gene (herbivore, omnivore, scavenger, carnivore), each with its own body edges and
+  foods among plants, fresh meat, rot and bones; by default the founders are herbivores and
+  omnivores. Upkeep is the body and eyes plus the speed of the step actually taken.
+- A creature strikes and shoots only what its program chose; others read it by the blocks whose
+  tests held on its last move. Family is a parent and its growing child while «щадить детей»
+  holds; every creature is a loner. A torpid creature eats nothing.
 
 Graphs and summaries are limited to the last 10 000 ticks. World rendering can be turned off;
 this doesn't change the simulation, statistics or the selected card.

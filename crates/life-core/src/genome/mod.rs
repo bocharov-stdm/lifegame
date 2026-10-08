@@ -259,10 +259,11 @@ pub struct Heredity {
     /// The herbivore's own leaps to the carnivore and to the scavenger (`DIET_LEAPS`).
     pub diet_leap_carnivore: f64,
     pub diet_leap_scavenger: f64,
-    /// Share of the mutating children whose program mutates, times mutability (`Program::mutate`).
+    /// Chance that each program of a mutating child mutates, times the parent's
+    /// `program_mutability` (`Program::mutate`).
     pub program_mutation: f64,
-    /// How far a mutating child's program numbers drift, a share of their nudge, times mutability
-    /// (`Program::drift`).
+    /// How far a mutating child's program numbers drift, a share of their nudge, times the
+    /// parent's `program_mutability` (`Program::drift`).
     pub program_drift: f64,
 }
 

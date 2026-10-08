@@ -4,7 +4,7 @@
 //! their ceiling, the starting population — is multiplied by `area_ratio`. The shape decides
 //! where the world grows: a strip only in width (the height stays 4000, as it always was), the
 //! other shapes both ways, keeping proportions. The vertical ecology (the food profile by depth,
-//! the layer genes) is given in percent of depth, so it carries over to any height.
+//! a program's layer) is given in percent of depth, so it carries over to any height.
 
 use crate::config::{WORLD_HEIGHT, WORLD_WIDTH};
 

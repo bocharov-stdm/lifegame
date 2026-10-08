@@ -1,123 +1,127 @@
-# Реформа поведения lifegame
+# lifegame: the behaviour model's history
 
 This file is the history of the behaviour model, newest stage first: what changed at each stage
 and how it was checked. The current model is in `CLAUDE.md` in brief and in the code exactly
-(`config.rs`, the program templates); everything below the first
-section describes earlier models and is kept as a record (flocks, cannibalism as a rule and the
-`--rule cannibalism` commands no longer exist).
+(`config.rs`, the program templates); every section below the first describes an earlier model
+and is kept as a record (flocks, cannibalism as a rule and the `--rule cannibalism` commands no
+longer exist).
+
+| Stage | Section |
+|---|---|
+| `/15` | Review fixes of the programs (the current model) |
+| `/14` | Every behaviour in blocks, flocks removed (the last `life-sweep`) |
+| `/13` | Behaviour programs |
+| `/10`–`/12` | The food web, the life reform and the ocean reform |
+| `/9` | Plant capacity in fertility cells |
+| `/8` | Review fixes, borders and inherited hunger and fear |
+| `/7` | Flocks as feeding circles, battles for room |
+| after `/5` | Flocking, care and territory modes |
+| `/5` | Territories, food portions and shots |
+| `/2` | Living flock life |
+| — | The calm game profile and area selection |
+| up to `/8` | Mechanics, formats, the balance check: the first model, edited in place (out of order) |
+
+Every measurement before `/14` is of worlds with flocks (removed at `/14`, tag `flocks-final`);
+none is a baseline for today.
 
 ## Review fixes of the programs (`life-behavior/15`, this stage)
 
-Model `life-behavior/15`, format `life-report/12`.
+Model `life-behavior/15`, format `life-report/12`. Golden and both references were last
+re-recorded in `25e3bbc` (2026-10-07), covering every entry below. The balance is unmeasured at
+this stage: the last sweep is `/14`'s.
 
-**Another review round** (2026-10-08). The Re-record workflow starts only on «[re-record]» alone on
-a line of a pushed commit's message: the commit below merely named the marker and set off a record
-the user had not asked for. Its commit goes on top of a branch that moved meanwhile only if no code
-came (a record of other code would be stale), and runner-made changes no longer stop it. A refusal
-of rules names only what changed, not every slider sent along; the lab's body formula and food
-preview show the rules «Применить» would send; `life-sweep` checks a reused result's key again at
-its turn (a report rebuilt during a pause); `Rules::from_flags`' message is English; a test pins
-the layer of a target picked after eating. No behaviour change.
+### Fixes since, newest first
 
-**Fourteen review fixes** (2026-10-07, the user: «исправляй всё»). The engine fix and the new
-`Mind::decided_by` change the fingerprint; golden and the references were re-taken by the Re-record
-workflow, which the commit's message set off by naming its marker (the user had said: not now).
-Unmeasured.
-- **A target picked after eating belongs to the layer it was picked in.** Eating picked a new
-  wander target in this tick's band but left `Mind::target_layer` as it was: a creature that ate in
-  a temporary layer (a hungry dive to the surface) kept that target once back in its own layer and
-  swam out of it to the target. Eating now records the layer with the target, so a wander in
-  another layer drops it when it lies out of that layer's band.
-- Outside the engine: the engine records which program decided (`Mind::decided_by`), so the
-  flowchart lights the path in the program that decided while the card shows the one it lives by
-  now (on the tick it grew up: the juvenile and the adult one); the «Мир меняли на ходу» warning
-  counts the edits the simulation thread took (`Frame::edits`, now per world), not a click it
-  refused as built for a replaced world; the sliders' rules are checked as a whole and a refusal is
-  shown, never a panic; the Re-record workflow puts its commit on top of a branch that moved
-  meanwhile and starts on «[re-record]» in any pushed commit (now: alone on a line); the energy test and golden's case I
-  share one whole-chain predicate, the one `the_chain_by_seed` prints; `life-sweep` judges each
-  result's reuse once, as the sweep starts; the `--rule` and `--scale` parsers live in life-core for both programs.
+**Review round** (2026-10-08, `5517d54`). No behaviour change: the Re-record trigger and push, the
+rules' refusal text names only what changed, the lab's body formula and food preview show the rules
+«Применить» would send, `life-sweep` checks a reused result's key again at its turn, a test pins the
+layer of a target picked after eating.
 
-**Five review fixes** (2026-10-04, the user: «начинай чинить»). Golden and both references
-re-taken locally on Windows for this and the entries below; in both references all 8 worlds live
-to 20 000 ticks. The baseline conditions unmeasured.
-- **A grown calm walker does not stand under its wander target.** The target it kept could lie
-  past the grown body's narrower band, and a calm walk («плавно») keeps to the band: it circled
-  under the target for ever. A kept target is now brought within the band as well as the bounds; a
-  target out of a changed layer is still dropped.
+**The wander target** (2026-09-30 – 10-07; `actions::wander`, `after_eating`). A target belongs to
+the layer it was picked in, by a wander or, since 10-07, after eating (`Mind::target_layer`): a
+creature that ate in a temporary layer (a hungry dive to the surface) used to keep that target once
+back in its own layer and swim out of it. After a layer change a target out of the new band is
+dropped at once (09-30; before, it was walked to first). A growing body keeps its layer and its
+target (10-03: the band's margin is the body, so a juvenile that grew dropped a target near its
+edge), brought within the bounds (10-03) and the band (10-04) the grown body reaches, so it never
+stands at a wall or circles under the target.
+
+**Review fixes** (2026-10-07, `3507ee4`, the user: «исправляй всё»). Besides the wander target
+after eating, the engine records which program decided (`Mind::decided_by`), so the flowchart
+lights the path in the program that decided while the card shows the one it lives by now. The
+wander fix changes golden and the references, `Mind::decided_by` golden only (through the mind's
+debug print); re-recorded by the workflow (`25e3bbc`), which this commit set off unasked by naming
+its marker. Outside the engine: the game, `life-sweep`, the energy test and CI (see `3507ee4`).
+
+**Review fixes** (2026-10-04, `bca1a0b`, the user: «начинай чинить»). In both references re-taken
+for this and the entries below (`4c3f760`) all 8 worlds live to 20 000 ticks.
 - **A tiny founders' mix deals no diet without a share.** With shares so small that the founder's
   point rounded up to their sum, `variant_for` fell through to the last variant, share or none: a
   mix of only herbivores could deal carnivores. It now falls back to the last variant that has a
   share.
-- Outside the engine: a click picks a body where the window drew it at that moment, on its way
-  from the previous frame, and among the bodies of the very frame clicked (`Frame::number`), so on
-  pause it never picks a creature planted since; a reference whose series stops short of its run's
-  last tick is refused on loading.
+- Outside the engine: a click picks a body where the window drew it at that moment, among the
+  bodies of the very frame clicked (`Frame::number`); a reference whose series stops short of its
+  run's last tick is refused on loading.
 
-**Six bug-hunt fixes** (2026-10-03, the user: «исправь всё»). Golden and the references
-re-taken with the entry above. Unmeasured.
+**Bug-hunt fixes** (2026-10-03, `bca1a0b`, the user: «исправь всё»).
 - **A hunter on its prey feeds, it does not fight back.** Alarm was told by an attack standing
   still, so a hunter that reached a prey standing still (on its centre) read as fighting back: its
-  activity was «тревога» and combat let it strike past its hunt's size ratio. Now only a
-  «дать отпор» block or a defence of a child is alarm.
+  activity was «тревога» and combat let it strike past its hunt's size ratio. Now a stand counts as
+  a defence (alarm, which may strike past the hunt's size ratio, `combat::defending`) only by a
+  «дать отпор» block or a defence of a child; a flight still reads «тревога».
 - **A parent is no ally of its child against its other child.** A hunt counted the prey's
   defending parent in sight as an ally even when that parent knew the hunter as its child too, and
   kin never strike kin: a careful juvenile left a younger sibling alone for strikes that never come.
-- Outside the engine: a sweep clears the progress files a killed one left; a click picks the body
-  where the clicked frame drew it, not where a running world has since taken it; the genome chart
-  shows small medians with tenths; the flowchart draws «стоит» as never reached whenever a block
-  always fires. `DIET_OWN` gates only corpse stages, plants never: the docs now say so.
+- `DIET_OWN` gates only corpse stages, plants never: the docs now say so. Outside the engine: the
+  sweep, the click, the genome chart and the flowchart (see `bca1a0b`).
 
-**Seven review fixes** (2026-10-03). Golden unchanged: none of its worlds met the two engine
-cases. Unmeasured.
-- **A grown body does not stand short of its wander target.** The target it kept could lie past
-  the bounds the grown body reaches (their margin is the body too): it walked to the wall and stood
-  there for ever. A kept target is now brought within those bounds.
+**Review fixes** (2026-10-03, `bca1a0b`). Golden unchanged: none of its worlds met the engine case.
 - **Standing costs no speed at `speed_power` 0.** `0 ** 0` is 1, so a standing body paid the
   speed term; the speed term of a speed or step of 0 is 0 at any exponent.
-- Outside the engine: `life-sweep` counts a world that died out within the late window as empty
-  for the rest of it and lets no diet of it «hold»; a reference with a cut run is refused on
-  loading, as on saving; `--mix`/`--diet-mix` refuse shares whose sum overflows; the density map
-  of a crowded view shows the diet highlight; a creature picked after it grew up shows the
-  juvenile program it decided by.
+- Outside the engine: `life-sweep`'s late window, references with a cut run, `--mix`/`--diet-mix`
+  overflowing shares, the density map's diet highlight, the program a creature picked after it grew
+  up decided by (see `bca1a0b`).
 
-**Three review fixes** (2026-10-03, the user: «исправляй»). Golden and the references re-recorded
-on Windows by the Re-record workflow. Unmeasured.
-- **A grown body keeps its wander target.** The band's margin is the body, so a juvenile that grew
-  saw its band narrow and dropped a target near its edge, drawing a new one; now only a target out
-  of a *changed layer* is dropped (`Mind::target_layer`).
+**Review fixes** (2026-10-03, `7b1c85c`, `a3359c8`, the user: «исправляй»).
 - **Combat knows kin as the decisions do.** The herd's snapshot and the decisions read the last
   tick's «щадить детей», but combat read this tick's: a parent whose setting just switched off
   struck the child the snapshot still called its own, and the reverse wasted a hunter's tick. Now
-  every reader takes the last tick's (`Mind::knew_until`, copied as the tick begins).
+  every reader takes the last tick's (`Mind::knew_until`, copied as the tick begins,
+  `Creature::remember_kin`).
 - **A transfer brings any live block of the other track.** It used the duplicate's filter, which
   leaves out unconditional settings and the always-firing block (a copy of those beside the
   original would be dead), so a track that lost its «делиться», «слой» or ending wander could
   never get it back from the other one. The no-junk check still turns away a copy that would be
   dead or kill one.
 
-**Healing waits for a calm since it was struck** (2026-10-01, the user's choice: «не били»). A
-strike used to break the striker's calm as well as the victim's, so a hunter whom nobody struck back
-never healed while it hunted — against the setting's own words, «его столько тиков не били». Now
-only being struck or shot breaks it; the victims heal as before. Golden and the references are to
-be re-recorded on Windows. Unmeasured.
+**Engine review fixes** (2026-09-30 – 10-02; `662b249`, `a0baa83`, `69d7311`). Whether a creature
+takes corpses is read once, by its fullness before the fight, for both feeding passes: a strike's
+cost no longer opens corpses to one that claimed none (golden and the references re-recorded,
+`08875fc`). An added block that kills one block while it revives another is refused as junk. A
+diet that digests no plants no longer goes back to the plant it chose while young. A creature with
+NaN energy starves. A hunt block after a give-up looks anew instead of getting the given-up prey
+back (`Scene::prey`'s cache).
 
-**Wander and torpor fixed** (2026-09-30): a wander target out of a changed layer is dropped at once
-instead of walked to first; torpor gets the breath back like standing, so «winded → torpor» no
-longer sleeps for ever. Golden and the references re-recorded. Unmeasured.
+**Healing waits for a calm since it was struck** (2026-10-01, `e54bd1b`, the user's choice: «не
+били»). A strike used to break the striker's calm as well as the victim's, so a hunter whom nobody
+struck back never healed while it hunted — against the setting's own words, «его столько тиков не
+били». Now only being struck or shot breaks it; the victims heal as before.
 
-**The herbivore recalibrated by the user** (2026-09-29, the lab's «Питание» tab again): health
-×1.1 (was 1.5) and the omnivore's ×1.05 (was 1); the herbivore's size costs the base (was ×0.85);
-it digests fresh meat at 10% (was 0) — foreign food, so only a hungry one (the template's mode 3)
-eats a fresh corpse or hunts, and then others fear it. Unmeasured.
+**Torpor gets the breath back** (2026-09-30, `f20af62`) like standing, so «winded → torpor» no
+longer sleeps for ever.
 
-**The diet edges calibrated by the user** (2026-09-29, from the lab's «Питание» tab): the
-omnivore strikes ×1.5 (was 1.15), smells corpses at 1.2× vision (was 1) and digests plants,
-fresh meat and rot at 80/60/20% (was 70/30/5%); the scavenger digests fresh meat at 100% (was
-80%); the carnivore rot at 30% (was 10%); every diet has a juvenile gut (plants while young:
-100/100/70/70%, was only the carnivore's 70%). All shares stay ≤ 100%. Unmeasured.
+**The diet edges calibrated by the user** (2026-09-29, two passes in the lab's «Питание» tab). The
+omnivore strikes ×1.5 (was 1.15), smells corpses at 1.2× vision (was 1) and digests plants, fresh
+meat and rot at 80/60/20% (was 70/30/5%); the scavenger digests fresh meat at 100% (was 80%); the
+carnivore rot at 30% (was 10%); every diet has a juvenile gut (plants while young: 100/100/70/70%,
+was only the carnivore's 70%). Then the herbivore: health ×1.1 (was 1.5) and the omnivore's ×1.05
+(was 1); the herbivore's size costs the base (was ×0.85); it digests fresh meat at 10% (was 0) —
+foreign food, so only a hungry one (the template's mode 3) eats a fresh corpse or hunts, and then
+others fear it. All shares stay ≤ 100%.
 
-A review of the block programs (2026-09-29; the user: «исправляй, задавая вопросы») found the
+### The stage's opening (2026-09-29), in the order it happened
+
+A review of the block programs (`ce026a6`; the user: «исправляй, задавая вопросы») found the
 interpreter sound and four things in the way of evolution or of the rules:
 - **A free bluff.** Others feared a creature by the most permissive *live* hunt block of its
   program, a hunter counted a parent as its child's ally by a live defence block and expected
@@ -129,11 +133,12 @@ interpreter sound and four things in the way of evolution or of the rules:
   tick is not feared, so an ambush is real; before its first move a creature is read by its
   program's shape. The user chose this over leaving it.
 - **Programs grew by themselves**: insertions and copies (6 + 8%) outweighed deletions (8%), so
-  every line filled up to 32 blocks with junk. Now a deletion is as likely as both (11 against
-  5 + 6) and takes a dead block first (switched off or never reached). The user's choice.
+  every line filled up to 32 blocks with junk. Now a deletion is as likely as all adding kinds
+  together and takes a dead block first (switched off or never reached): 11% against 5 + 6 then,
+  14% with the pair and the transfer, 16% after the second review (`MUTATIONS`). The user's choice.
 - **Two negations in three knocked a block out**: they landed on an «всегда». A negation now turns
   only a test with a condition; switching a block off or on is its own mutation, 3% (taken from the
-  nudge, 35 → 32). The user's choice.
+  nudge, 35 → 32; the nudge is 25% now). The user's choice.
 - **A hidden coupling**: a flight's burst, its truce in combat and the window's «убегает» read the
   flight's memory (`flee_ticks`), so a block whose «бежать ещё» drifted to 0 lost them. They read
   the flight block's decision now (`Mind::flight`).
@@ -143,8 +148,8 @@ plant) no longer chooses the kept plant — only the plant block does; an ambush
 resting in the chronicle; the behaviour window shows a setting skipped behind an earlier one of its
 kind as not looked at; the drift allocates nothing.
 
-Then, the user's ask: «чтобы вследствие мутаций могли появляться сложные и устойчивые алгоритмы и не
-было мусора». Four choices put to the user, all taken as recommended:
+Then, the user's ask (`15cde91`): «чтобы вследствие мутаций могли появляться сложные и устойчивые
+алгоритмы и не было мусора». Four choices put to the user, all taken as recommended:
 - **The drift moves a third of the numbers** a child (`PROGRAM_DRIFT_SHARE`), not all sixty at
   once: selection sees a few changes at a time instead of the sum of the noise.
 - **Memory that can evolve.** No working mode had ever evolved (`_mode_share` 0): a mode needs a
@@ -153,14 +158,14 @@ Then, the user's ask: «чтобы вследствие мутаций могл�
   modes — hunger (mode 3), an alarm (mode 1), a full tank (mode 2) — instead of the special tests
   «ещё убегает» and «отдыхает», so every line starts with a working memory a mutation can rebuild.
   The templates went from 19 to 20 blocks; the flight, the rest and the foreign food act as before
-  within a tick or two (the memory now expires 60 or 200 ticks after the last trigger).
+  within a tick or two (the memory expires after the last trigger: 60 ticks for hunger, 61 for an
+  alarm since the second review, 200 for a full tank).
 - **Structure without junk** (the user: «я сам не понял, что ты предложил, но хочу чтобы было
   лучше», so all four): a new, copied or transferred deciding block goes only where it is reached
   (above the first block that always fires); a copy is only of a live block; a «transfer» (2%)
   copies a live block of the other track (the adult's into the juvenile's or back), so what one
   stage found the other may try; a replaced action keeps the parameters of the same label and unit
-  (the pace, a burst, «только если выгоднее») instead of starting over. Deletion 14% against 5 + 6
-  + 3 (+ 2) adding.
+  (the pace, a burst, «только если выгоднее») instead of starting over.
 - **A gene of its own for the programs' rate**, `program_mutability` (eleventh, appended; base 1,
   Scale, floored by `min_mutability` at the user's word so it cannot fall to zero): the tempo of
   the body and of behaviour need not be one.
@@ -168,12 +173,11 @@ The report prints, per track, the median length, the share of dead blocks, the m
 live mode settings and `Program::spread` — how far the biggest shape's numbers have spread (0
 copies, ~0.5 random) — as `METRIC` lines, to see whether these measures work.
 
-How it was checked: in a cloud session — reading, `cargo build`, `clippy`, `fmt`; no tests, no
-golden, no runs. The golden digests and the references are to be re-recorded on Windows; the
-balance is unmeasured. The tests of the mutation kinds were re-aimed by expectation (of 8000
-mutations ~320 negations, ~240 switch-offs).
+The tests of the mutation kinds were re-aimed by expectation (of 8000 mutations ~320 negations,
+~240 switch-offs).
 
-A second review (the same day; the user: «исправь») found junk still born and a bluff left:
+A second review (`1858a34`, the same day; the user: «исправь») found junk still born and a bluff
+left:
 - **Dead settings.** Only the first setting of a kind whose tests hold applies, so one behind an
   earlier unconditional setting of its kind never acts; it counted as live. Now it is dead: the
   window mutes it, a deletion takes it first, `_dead_share` counts it.
@@ -192,9 +196,10 @@ A second review (the same day; the user: «исправь») found junk still bo
 - **The alarm ran a tick short.** The templates flee under an alarm mode of 60 ticks, which covers
   the tick it is raised and 59 after; the old flight ran 61. The alarm is 61 ticks now.
 
-Checked: `clippy` on the whole workspace, `fmt --check`; no tests, no golden, no runs.
+Both reviews were checked in a cloud session by `clippy`, `fmt` and the build alone; golden and the
+references were re-recorded on Windows for `/15` (`8a5b1b1`).
 
-## Every behaviour in blocks, flocks removed (`life-behavior/14`, previous stage)
+## Every behaviour in blocks, flocks removed (`life-behavior/14`)
 
 Model `life-behavior/14`, format `life-report/12`.
 
@@ -360,8 +365,9 @@ torpor) and `layer_reach` (how far past its layer it goes for plants, corpses an
 
 Measured on the user's baseline conditions (24 seeds × 20 000 ticks) up to stage D: carnivores
 held in 67–88% of worlds and scavengers in 38–46% depending on the stage; the burst, torpor and
-the ocean default are not measured yet. The numbers per stage are in `CLAUDE.md` («Where the work
-stands»). Golden digests follow the model; the balance references are still `life-behavior/9`.
+the ocean default are not measured yet. The numbers per stage were in `CLAUDE.md`'s «Where the
+work stands» (removed in `5528a40`; `git show 5528a40^:CLAUDE.md`). Golden digests follow the
+model; the balance references are still `life-behavior/9`.
 
 ## Plant capacity in fertility cells (`life-behavior/9`)
 
@@ -396,7 +402,7 @@ for `life-behavior/9`. On Windows the giants of seed 4 stopped at size 99 (just 
 threshold of 100; on Linux they passed it), while the other seeds of 1–10 pass 100 by tick 1500
 and reach 132–534 by tick 2000; the giant worlds of the golden and the senses tests use seed 3 now.
 
-## Review fixes, borders and inherited hunger and fear (previous stage)
+## Review fixes, borders and inherited hunger and fear (`life-behavior/8`)
 
 Model `life-behavior/8`, format `life-report/9` (unchanged).
 
@@ -481,10 +487,10 @@ Sharp turns (`social_probe`, seeds 1–8; before → after): around a border 26.
 16.5 → 9.7% (base, without / with combat), 17.0 → 10.3% and 15.7 → 9.4% (calm); all moves 2.90 →
 2.46%, 2.50 → 2.31%, 1.61 → 1.62%, 2.44 → 2.03%. Moves elsewhere are unchanged (1.2–1.6%).
 
-## Flocks as feeding circles, battles for room (previous stage)
+## Flocks as feeding circles, battles for room (`life-behavior/7`)
 
-Formats: `life-report/9`, model `life-behavior/7`. This section is in English; the rest of the file
-is translated in a separate commit.
+Formats: `life-report/9`, model `life-behavior/7`. This section is in English; much of what
+follows is still Russian.
 
 **The circle.** A family flock of two or more members is a circle that moves as one object, and
 its members feed inside it. Radius: `flock_spacing · √n`, clamped to 80–600 (`flock::MIN_RADIUS`,
@@ -667,7 +673,7 @@ foragers, a faster circle (0.6 of the members' speed), other hunger thresholds, 
 20/60/20 by territoriality, splitting a flock that outgrew the largest circle (flocks persisted in
 72% of base worlds with combat instead of 91%).
 
-## Стайность, забота и режимы территорий (предыдущий этап)
+## Flocking, care and territory modes (after `life-behavior/5`)
 
 У половины основателей есть стайность. Среди стайных 50% не охраняют границу,
 40% защищают её после 30 тиков вторжения, 10% атакуют допустимого чужака сразу.
@@ -693,7 +699,7 @@ foragers, a faster circle (0.6 of the members' speed), other hunger thresholds, 
 диаметр тела при смерти, а расход пищи меняет только прозрачность. Кольцо
 контактного ближнего боя показано лишь у выбранного существа.
 
-### Проверка модели `life-behavior/5` до этих изменений
+### Checking `life-behavior/5` before these changes
 
 Профили без ручной настройки прошли seed 1–8 по 20 000 тиков с боями и без.
 Все 32 прогона завершились по числу тиков, без остановки по лимиту; во всех
@@ -724,7 +730,7 @@ Golden включает режимы стаи, родительскую забо
 квадратов и 0,001 мс при выключенном рендере; реальную частоту кадров окна
 эти замеры не подменяют.
 
-## Территории, порции пищи и дальний бой (предыдущий этап)
+## Territories, food portions and shots (`life-behavior/5`)
 
 Территориальная стая из двух и более участников защищает круг вокруг своего центра. Его радиус
 `clamp(1,4 × разброс + 40; 120; 320)` следует за стаей. Чужое существо
@@ -770,7 +776,7 @@ Golden включает режимы стаи, родительскую забо
 и выключенных/включённых боёв выжили 8 из 8 миров; все дошли до конца.
 Новые поля присутствуют в JSON, а эталон старой версии отклоняется до прогона.
 
-### Проверка предыдущей модели
+### Checking the model before
 
 Сравнение с `d395fd2`: seed 1–8, по 20 000 тиков, без преждевременной
 остановки. Каждый тик проверены конечность координат, энергии и здоровья,
@@ -800,7 +806,7 @@ Golden обновлён после этих прогонов; оба этало�
 `cargo test --workspace` (209 тестов), `cargo fmt --all -- --check`, строгий
 Clippy и release-сборка окна прошли.
 
-## Живая стайная жизнь (предыдущий этап)
+## Living flock life (`life-behavior/2`)
 
 Социальная память отделена от генома (`social.rs`). Ген `sociability`
 добавлен после предыдущих генов: 0–100%, база 50%. Его цена — время сбора и помощи,
@@ -860,7 +866,7 @@ Clippy и release-сборка окна прошли.
 одного существа без боя и бегства; после остановки или рождения пары нет.
 Seed считаются независимо в диагностической программе, сам движок последовательный.
 
-### Приёмка социальной модели
+### Accepting the social model
 
 Сравнение с `3745cc3`, seed 1–8, по 20 000 тиков, без остановки по лимитам:
 
@@ -888,7 +894,7 @@ Seed считаются независимо в диагностической �
 давали перенаселение и не приняты. Итог меняет только социальные веса и пороги:
 содержание, урон, пищевые коэффициенты, рост и возраст не перенастраивались.
 
-## Спокойный игровой профиль и выбор области
+## The calm game profile and area selection
 
 В игре новый профиль по умолчанию: содержание `cost_scale=3`, стартовый темп
 30 тиков/с. Кнопка «Спокойнее» применяет эти значения к текущей партии и сохраняет
@@ -913,10 +919,10 @@ cargo run -p life-report --release -- --compare reference/calm-fingerprint.json 
 Claude над родством и бегством. Она сохранена и включена в новый жизненный цикл.
 Параллельный тик, бенчмарк компьютера и `Relict/` не изменялись.
 
-## Механики (`life-behavior/8`, history)
+## Mechanics (the first model, edited in place up to `life-behavior/8`)
 
-- Family is a parent and its child while the parent still knows it (`care`, see the first
-  section). Family and carriers of the same flock label may not be attacked. Threats are read
+- Family is a parent and its child while the parent still knows it (`care`, see «Flocks as
+  feeding circles»). Family and carriers of the same flock label may not be attacked. Threats are read
   from the neighbour snapshot. Coinciding coordinates give a reproducible direction; turning
   cannibalism off resets fleeing and the attack target.
 - The size gene sets the adult diameter. A child is born at half of it; founders and spawned
@@ -951,7 +957,7 @@ Claude над родством и бегством. Она сохранена и
   time of the chase, the fight and the meal (see "Rational hunting"). `cannibalism` turns all
   combat off.
 - The flock label is kept apart from the gene table: unique for founders, inherited with a 99%
-  chance. Two living carriers make a flock, and a flock has a circle (see the first section).
+  chance. Two living carriers make a flock, and a flock has a circle (see «Flocks as feeding circles»).
   There is no cooperative hunting. Empty flocks are removed.
 
 Порядок тика: растения → снимок и решения → движение и жизненные расходы →
@@ -959,7 +965,7 @@ Claude над родством и бегством. Она сохранена и
 удаление погибших и добавление детей. Дети не действуют в тик рождения.
 Обе стратегии используют общие правила; затаившийся медленно блуждает.
 
-## Форматы и отображение (`life-behavior/8`, history)
+## Formats and display (as at `life-behavior/8`)
 
 Карточка показывает текущий и взрослый размер, возраст, здоровье, состояние и стаю.
 Статистика показывает молодых, стаи и причины смерти. Рисование и выбор мышью
@@ -973,7 +979,7 @@ Golden переснят намеренно: старое мгновенное п
 решениями о родстве и бегстве. Новый отпечаток включает жизненное состояние,
 таймеры, намерения, родство, метки, цели и генераторы стай.
 
-## Проверка баланса (`life-behavior/8`, history)
+## Balance check (as at `life-behavior/8`)
 
 Все прогоны завершили ровно 20 000 тиков, без остановок по лимитам. Во всех
 снимках проверено: начальная численность + рождения − все причины смерти =

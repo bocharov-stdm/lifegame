@@ -16,9 +16,9 @@
 //!     cargo run -p life-report --release -- --seeds 1 2 3 --story        # a story for every seed
 //!     cargo run -p life-report --release -- --ticks 5000 --json -        # everything as JSON to stdout
 //!
-//! The seeds are computed in parallel, one to a core. The limits are the same as in Python: the
-//! work budget grows with the number of ticks, and the summary lists cut-off runs separately
-//! instead of passing them off as healthy.
+//! The seeds run in parallel, each on a thread of its own (`by_seed`). The default work budget
+//! grows with the number of ticks, and the summary lists cut-off runs separately instead of
+//! passing them off as healthy.
 
 mod json;
 mod metrics;
@@ -39,7 +39,7 @@ use life_core::{Rules, Shape, World, WorldConfig};
 use life_sim::observe::{self, Event, ascii_map};
 use life_sim::{Limits, SimResult, run};
 
-/// The «creatures x plants» budget per tick — like WORK_PER_TICK in Python.
+/// The «creatures x plants» budget per tick: the default work budget is this × ticks.
 const WORK_PER_TICK: f64 = 60_000.0;
 
 #[derive(Parser, Debug)]
@@ -93,13 +93,15 @@ struct Args {
     /// Processor threads (all by default).
     #[arg(long)]
     threads: Option<usize>,
-    /// Check against a reference fingerprint (reference/fingerprint.json): its seeds and number of
-    /// ticks are taken; the rules, the scale and the start must match.
+    /// Check against a reference fingerprint (reference/fingerprint.json), taking its seeds and
+    /// ticks, with a 1e15 work budget unless --max-work is given. Exit 1 if a metric's mean leaves
+    /// the reference's per-seed range, 2 if the rules, the scale or the start differ.
     #[arg(long)]
     compare: Option<PathBuf>,
-    /// Take a new reference from Rust and write it to a FILE (the --compare format). The default
-    /// seeds are 1‒8. Needed after a deliberate change of balance.
-    #[arg(long, value_name = "ФАЙЛ")]
+    /// Take a new reference and write it to FILE (the --compare format): seeds 1‒8 and 20 000
+    /// ticks by default, a 1e15 work budget unless --max-work is given. Only after a deliberate
+    /// change of balance.
+    #[arg(long, value_name = "FILE")]
     save_reference: Option<PathBuf>,
     /// A story of each run: causes of deaths, intervals, genome, depth, the chronicle of events.
     /// For one seed it is printed even without the flag.
@@ -251,8 +253,8 @@ fn main() {
         args.sample = Some(r.sample_every);
     }
     if reference.is_some() || saving {
-        // a reference is taken without a work budget — otherwise a cut-off run would be compared with a whole
-        // one
+        // a reference is taken without a work budget — otherwise a cut-off run would be compared
+        // with a whole one
         args.max_work.get_or_insert(1e15);
     }
 

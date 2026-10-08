@@ -19,7 +19,8 @@ pub enum StatsTab {
     Energy,
     Where,
     Region,
-    /// How the characteristics spread within each diet: a census, taken only on pause.
+    /// How the characteristics spread within each diet: a census, taken on pause or once a game
+    /// has ended.
     Species,
 }
 

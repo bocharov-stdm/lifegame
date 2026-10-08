@@ -1,6 +1,6 @@
 [package]
 name        = "life-core"
-description = "Движок lifegame: мир, тик, сетка соседей, правила, геном. Ничего не знает об экране."
+description = "The lifegame engine: world, tick, neighbour grid, rules, genome. It knows nothing of the screen."
 edition.workspace = true
 version.workspace = true
 license.workspace = true

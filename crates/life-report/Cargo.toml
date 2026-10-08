@@ -1,6 +1,6 @@
 [package]
 name        = "life-report"
-description = "Отчёт о балансе lifegame без окна: прогоны по сидам параллельно, сводка и сверка с эталоном."
+description = "lifegame's windowless balance report (seeds in parallel, a summary, the reference check) and life-sweep, many reports at once."
 edition.workspace = true
 version.workspace = true
 license.workspace = true

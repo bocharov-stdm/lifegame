@@ -3,8 +3,8 @@
 //!     cargo run -p life-app --release                        # the menu
 //!     cargo run -p life-app --release -- --scale 10 --seed 3 # straight into a world
 //!
-//! The world's flags are the same as `life-report`'s, so a game can be repeated without the window
-//! with the same seed, scale and rules.
+//! The world's flags mean what they mean in `life-report`; `game::report_command` gives the whole
+//! line that repeats a game without the window.
 
 // A release build on Windows has no black console window: the game is launched by a double click.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
@@ -34,7 +34,11 @@ use life_core::space::parse_scale;
 use life_core::{Rules, Shape, WorldConfig};
 
 #[derive(Parser)]
-#[command(about = "lifegame — эволюция растений и существ")]
+#[command(
+    about = "lifegame: plants and creatures evolving. Without flags it opens the menu; any world flag \
+             starts that world at once with the engine's default rules (cost_scale 1), not the game's \
+             saved settings."
+)]
 struct Args {
     /// The world's seed; without it, a random one.
     #[arg(long)]

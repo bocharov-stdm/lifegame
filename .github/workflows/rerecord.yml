@@ -18,9 +18,8 @@ concurrency:
   group: rerecord-${{ github.ref }}
 
 jobs:
-  # Whether a record was asked for: «[re-record]» alone on a line of a pushed commit's message. A
-  # message that only mentions the marker in passing («[re-record]» in any pushed commit starts it)
-  # set off an hour's record the user had not asked for.
+  # Whether a record was asked for: «[re-record]» alone on a line of a pushed commit's message; the
+  # job's `if` only pre-filters, `grep -x` decides.
   asked:
     if: >-
       github.event_name == 'workflow_dispatch'

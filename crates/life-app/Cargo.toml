@@ -1,6 +1,6 @@
 [package]
 name        = "life-app"
-description = "Игра lifegame: окно, рендер мира, меню и графики. Симуляция идёт в своём потоке."
+description = "The lifegame game (window, world render, menu, charts; the simulation on its own thread) and life-progress, a sweep's progress window."
 edition.workspace = true
 version.workspace = true
 license.workspace = true

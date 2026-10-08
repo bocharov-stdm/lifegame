@@ -275,7 +275,7 @@ fn print_genes<const N: usize>(genes: &[GeneSpec; N], a: &[GeneStat; N], b: &[Ge
     }
 }
 
-/// «стандартный 70%, трусливый 30%» — the variants present in the population.
+/// «стандартный 70%, затаившийся 30%» — the variants present in the population.
 fn shares(spec: &GeneSpec, s: &[f64; MAX_VARIANTS]) -> String {
     let variants = spec.variants().unwrap_or_default();
     let parts: Vec<String> = variants

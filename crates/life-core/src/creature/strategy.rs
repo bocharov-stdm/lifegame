@@ -1,8 +1,8 @@
 //! How a creature decides its step. The step splits in two: the strategy **decides** where to go
 //! (`decide`), the creature **acts** (`Creature::act`: a step of its pace, clamped to the world,
 //! the upkeep, death). The strategy sees only itself (`Me`), its program, its memory (`Mind`), its
-//! generator and its senses — it cannot move, feed or divide the creature. The parallel tick will
-//! need it: decisions can be taken at once.
+//! generator and its senses — it cannot move, feed or divide the creature. So the decisions run in
+//! parallel (`par.rs`).
 //!
 //! What it decides is its behaviour program for its stage of life (`program.rs`): each tick it
 //! perceives the scene (`scene.rs`); the settings whose tests hold set how this tick goes,

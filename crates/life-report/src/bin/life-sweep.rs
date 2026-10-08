@@ -3,7 +3,7 @@
 //! herbivores coexist?") without babysitting dozens of terminals.
 //!
 //!     cargo build -p life-report --release
-//!     target/release/life-sweep plan.txt --out sweeps/hunt --jobs 16 --seconds 300
+//!     target/release/life-sweep plan.txt --out target/sweeps/hunt --jobs 16 --seconds 300
 //!
 //! The plan is a text file:
 //!
@@ -32,8 +32,10 @@
 //! runs end on their own, not on the work budget.
 //!
 //! Results: `OUT/<variant>/s<seed>.json` and `.txt` (the report's JSON and text), `OUT/runs.csv`
-//! (one row per run), `OUT/summary.csv` and `OUT/summary.md` (one row per variant). A run whose
-//! JSON and command line are already in `OUT` is reused, so a stopped sweep resumes where it was.
+//! (one row per run), `OUT/summary.csv` and `OUT/summary.md` (one row per variant). A run is
+//! reused when it succeeded with the same command line and report build and the wall clock did not
+//! cut it, so a stopped sweep resumes where it was; any other result in `OUT` is removed when the
+//! sweep starts.
 //! Lines `METRIC <name> <number>` in a run's text output become extra columns (for experiment
 //! builds).
 
@@ -53,7 +55,10 @@ use serde_json::{Value, json};
 #[derive(Parser, Debug)]
 #[command(about = "Run a plan of variants x seeds through life-report and summarise each variant")]
 struct Args {
-    /// The plan file (see the module docs).
+    /// The plan file: one "seeds:" line, one "args:" line shared by every variant, then "variant
+    /// NAME: ARGS" lines (a capitalised NAME=VALUE token is an env var of that run); # comment
+    /// blocks describe the plan and the variants below them. --seed(s), --seconds, --threads,
+    /// --json, --compare and --progress are the sweep's own and are refused.
     plan: PathBuf,
     /// Where the runs and the summary go.
     #[arg(long)]
@@ -303,7 +308,8 @@ enum Outcome {
     Interrupted,
 }
 
-/// What the window asks for, in `OUT/control.txt` (a variant name has no dot, so no variant folder takes its name): `run`, `pause` or `stop`.
+/// What the window asks for, in `OUT/control.txt` (a variant name has no dot, so no variant folder
+/// takes its name): `run`, `pause` or `stop`.
 const RUN: u8 = 0;
 const PAUSE: u8 = 1;
 const STOP: u8 = 2;

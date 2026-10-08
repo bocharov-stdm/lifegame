@@ -1,10 +1,10 @@
 //! The simulation thread. `World` lives only here: the window sends commands and takes ready
-//! frames, but never waits for a tick. The successor of `app/session.py`.
+//! frames, but never waits for a tick. The successor of `app/session.py` (tag `python-final`).
 //!
-//! Frames follow the «last one wins» principle: the thread puts a frame in the slot only when
-//! the window has taken the previous one — there is no queue, and a slow window does not pile up
-//! frames, and a slow tick does not hold the window. The window hands the buffers of circles
-//! back, so as not to allocate memory for every frame.
+//! Frames go through a one-slot mailbox: the thread builds a frame only when the window has taken
+//! the previous one, so none is dropped (history, chronicle and samples ride in it as deltas), a
+//! slow window does not pile frames up and a slow tick does not hold the window. The window hands
+//! the buffers of circles back, so a frame allocates none.
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -42,8 +42,8 @@ pub const SPEEDS: [Option<f64>; 9] = [
 /// A calm start: 30 t/s; a speed-up is available on the top panel.
 pub const DEFAULT_SPEED: usize = 1;
 
-/// Creatures per base area after which the game stops («a population explosion»). Like
-/// `EXPLOSION_LIMIT` in Python; grows with the area.
+/// Creatures per base area after which the game stops («a population explosion»); grows with the
+/// area.
 pub const EXPLOSION_LIMIT: usize = 3000;
 
 /// A point of the population chart — once in this many ticks.
@@ -154,7 +154,7 @@ impl SimHandle {
         let _ = self.tx.send(cmd);
     }
 
-    /// The last ready frame, if a new one has come.
+    /// The ready frame, if one has come since the last take.
     pub fn take_frame(&self) -> Option<Frame> {
         self.slot.lock().ok()?.take()
     }
@@ -750,9 +750,8 @@ impl Sim {
         self.last_time = now;
         if self.running() {
             if let Some(tps) = self.target_tps() {
-                // The lag does not pile up: catching up seconds of ticks in a jerk is the same freeze, only
-                // in
-                // the simulation. The debt is no more than a tenth of a second.
+                // The lag does not pile up: catching up seconds of ticks in a jerk is the same freeze,
+                // only in the simulation. The debt is no more than a tenth of a second.
                 self.due = (self.due + dt * tps).min(tps * 0.1 + 1.0);
             }
             let start = Instant::now();

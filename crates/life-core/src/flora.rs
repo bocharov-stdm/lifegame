@@ -8,12 +8,12 @@
 //! is what is derived from them (like a phenotype from a genome), and it is recomputed together
 //! with the rules.
 //!
-//! The distribution of food is a property of the world. The layer genes do not adjust to it and
-//! stay a vertical preference in percent of depth.
+//! The distribution of food is a property of the world; a program's layer («слой») is a preference
+//! in percent of depth and does not adjust to it.
 //!
-//! Exactly two random numbers are drawn for each plant at any profile: first x, then y. The
-//! exponent by depth and the uniformity by width are computed by the same expressions as before
-//! the profiles — the default world has not shifted by a single bit.
+//! Without patches a plant draws exactly two numbers at any profile, x then y; in patches three
+//! (below). The plain exponent by depth and the uniform width use the same expressions as before
+//! the profiles, so those rules without patches plant bit for bit as then.
 //!
 //! Capacity is `PLANT_MAX` (per area) places, *slots*, and a slot holds at most one plant
 //! (`World::spawn_plants`): a seed that lands in an occupied slot does not sprout. So a full
