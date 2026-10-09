@@ -353,8 +353,11 @@ pub struct Frame {
     pub fast_cores: bool,
 }
 
-/// Light instances for a far scale: no matching of frames, ghosts, headings and sorting.
-/// Bodies and plants keep their colours.
+/// How bright a far dot of an empty tank is, of its diet's colour; a full one is the colour itself.
+const DOT_HUNGRY: f64 = 0.45;
+
+/// Light instances for a far scale: no matching of frames, ghosts, headings and sorting. Plants
+/// keep their colour; a creature is its diet's, dimmer when hungry.
 pub fn dots(world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) -> bool {
     use crate::motion::{DIET_SHIFT, DOT_BIT, KIND_CREATURE, KIND_PLANT, OLD};
 
@@ -384,11 +387,13 @@ pub fn dots(world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) 
             return false;
         }
     }
-    // far away every creature is a dot in its diet's colour
-    let colors = crate::theme::DIET_COLORS.map(|c| rgba(c, 255));
+    // far away every creature is a dot in its diet's colour, dimmer when hungry, as a body's core
     for v in &world.creatures {
         let diet = ((v.pheno.diet as u32) & 3) << DIET_SHIFT;
-        if !add(v.x, v.y, colors[v.pheno.diet as usize & 3], KIND_CREATURE, diet) {
+        let fullness = (v.energy / v.pheno.max_energy).clamp(0.0, 1.0);
+        let lit = |c: u8| (f64::from(c) * (DOT_HUNGRY + (1.0 - DOT_HUNGRY) * fullness)).round() as u8;
+        let color = rgba(crate::theme::DIET_COLORS[v.pheno.diet as usize & 3].map(lit), 255);
+        if !add(v.x, v.y, color, KIND_CREATURE, diet) {
             out.clear();
             return false;
         }
