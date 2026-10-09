@@ -88,8 +88,9 @@ cargo run -p life-app --release -- --scale 100 --seed 7  # straight into a world
   last finished frame. The creatures' decisions use every processor core, and the world stays the
   same on any number of them; «Настройки → Скорость расчёта» chooses how many (auto, one, or by
   hand) and keeps the computation on a hybrid processor's fast cores. «Показывать кадры» also
-  shows where a tick's time goes. Far away the world turns into two-pixel dots or a density map;
-  rendering can be switched off while statistics and the card keep working.
+  shows where a tick's time goes. Far away the world turns into two-pixel dots, fading in and
+  out as the zoom crosses that scale (the zoom alone switches it, never the creatures growing),
+  or a density map; rendering can be switched off while statistics and the card keep working.
 
 Settings live in `%APPDATA%\lifegame\config\settings.json` (the user's config folder on Linux
 and macOS). A broken file does not matter: the game takes the defaults.

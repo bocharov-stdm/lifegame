@@ -13,7 +13,9 @@ struct U {
     time: f32,
     // diets to highlight, a bit per diet; 0 — nobody highlighted
     highlight: u32,
-    pad1: vec2<f32>,
+    // how much the far dots weigh, the bodies the rest: 1 or 0 but while the far scale fades
+    dots_weight: f32,
+    pad1: f32,
     // the diets' colours, from the game's palette (`theme::DIET_COLORS`)
     diets: array<vec4<f32>, 4>,
 };
@@ -118,6 +120,9 @@ fn vs_main(
     // smaller than a pixel: we draw a pixel, but with a brightness by area
     let drawn = max(r_px, select(0.7, HL_MIN_PX, hl == 1u));
     alpha = select(alpha * min(1.0, r_px * r_px / (drawn * drawn)), 1.0, dot);
+    // while the far scale fades in or out the frame holds both ways of drawing: weigh each (by the
+    // dot bit, which a highlighted creature keeps though it is drawn as a body)
+    alpha = alpha * select(1.0 - u.dots_weight, u.dots_weight, (flags & (1u << 20u)) != 0u);
     if hl == 1u {
         alpha = max(alpha, select(0.0, 1.0, !ghost));
     } else if hl == 2u {

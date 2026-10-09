@@ -409,9 +409,14 @@ impl WorldView {
         } else if !self.instances.is_empty() {
             let (ox, oy) = cam.to_screen(f.origin.0, f.origin.1);
             let since = f.built.map_or(ANIMATION, |b| b.elapsed().as_secs_f32());
-            if !f.dots && (k < 1.0 || since < ANIMATION) {
+            let fading = f.blend.is_some_and(|b| !b.done());
+            if (!f.dots && (k < 1.0 || since < ANIMATION)) || fading {
                 ui.ctx().request_repaint();
             }
+            let dots_weight = match f.blend {
+                Some(b) => b.dots_weight(),
+                None => f32::from(u8::from(f.dots)),
+            };
             painter.add(egui_wgpu::Callback::new_paint_callback(
                 rect,
                 Circles {
@@ -425,6 +430,7 @@ impl WorldView {
                     since,
                     time: (ui.ctx().input(|i| i.time) % 1000.0) as f32,
                     highlight: self.highlight,
+                    dots_weight,
                 },
             ));
         }

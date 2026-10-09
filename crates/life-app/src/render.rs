@@ -36,7 +36,8 @@ struct Uniforms {
     since: f32,
     time: f32,
     highlight: u32,
-    pad: [f32; 2],
+    dots_weight: f32,
+    pad: f32,
     /// The diets' colours (`theme::DIET_COLORS`, linear 0..1 in sRGB terms, alpha unused): the
     /// shader has no palette of its own.
     diets: [[f32; 4]; 4],
@@ -160,6 +161,9 @@ pub struct Circles {
     pub time: f32,
     /// Diets to highlight, a bit per diet in `Diet` order; 0 — none, everyone drawn as usual.
     pub highlight: u32,
+    /// How much the far dots weigh, the bodies the rest: 1 or 0 but while the far scale fades in or
+    /// out (`frame::Blend`), when the frame holds both.
+    pub dots_weight: f32,
 }
 
 impl egui_wgpu::CallbackTrait for Circles {
@@ -181,7 +185,8 @@ impl egui_wgpu::CallbackTrait for Circles {
             since: self.since,
             time: self.time,
             highlight: self.highlight,
-            pad: [0.0; 2],
+            dots_weight: self.dots_weight,
+            pad: 0.0,
             diets: crate::theme::DIET_COLORS.map(|c| [c[0], c[1], c[2], 255].map(|v| v as f32 / 255.0)),
         };
         queue.write_buffer(&res.uniforms, 0, bytemuck::bytes_of(&u));

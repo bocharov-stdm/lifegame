@@ -261,6 +261,13 @@ struct Sim {
     region: Option<Area>,
     render_world: bool,
     dots: bool,
+    /// Pixels per world unit when the far scale was last weighed (NaN — weigh it at the next
+    /// frame, without a fade: a new world or the render switched back on).
+    mode_scale: f64,
+    /// When `dots` last switched and which way, while the old way still fades out.
+    blend: Option<frame::Blend>,
+    /// The old way of drawing during a blend, kept for its capacity.
+    blend_buf: Vec<Instance>,
 
     // ── observation ─────────────────────────────────────────────────────────
     /// Plants, creatures and creatures by diet over the last `DIVIDE_PERIOD` ticks: a smoothed point.
@@ -364,6 +371,9 @@ impl Sim {
             region: None,
             render_world: true,
             dots: false,
+            mode_scale: f64::NAN,
+            blend: None,
+            blend_buf: Vec::new(),
             window: VecDeque::new(),
             tracker: EventTracker::new(),
             snapshot_every: SNAPSHOT_EVERY,
@@ -498,6 +508,8 @@ impl Sim {
                 self.paused = true;
                 self.ended = None;
                 self.motion = Motion::default();
+                self.mode_scale = f64::NAN;
+                self.blend = None;
                 self.last_minimap = None;
                 self.dirty = true;
             }
@@ -518,6 +530,8 @@ impl Sim {
                 if self.render_world != enabled {
                     self.motion = Motion::default();
                     self.dots = false;
+                    self.mode_scale = f64::NAN;
+                    self.blend = None;
                     self.recent_shots.clear();
                 }
                 self.render_world = enabled;
@@ -667,6 +681,8 @@ impl Sim {
         self.last_time = Instant::now();
         self.last_minimap = None;
         self.motion = Motion::default();
+        self.mode_scale = f64::NAN;
+        self.blend = None;
         self.recent_shots.clear();
         self.shown.clear();
         self.tick_ms = 0.0;
@@ -887,22 +903,31 @@ impl Sim {
         let w = &self.world;
         let mut instances = self.recycled.try_iter().last().unwrap_or_default();
         let mut density = None;
+        let mut blend = None;
         let mut origin = (0.0, 0.0);
         if self.render_world
             && let Some(view) = self.view
         {
             let rect = view.padded();
             origin = (rect.0, rect.1);
-            let mean_size =
-                w.creatures.iter().map(|v| v.pheno.size).sum::<f64>() / w.creatures.len().max(1) as f64;
-            let px_size = mean_size * view.px_w as f64 / (view.x1 - view.x0).max(1.0);
-            if self.dots {
-                if px_size >= 3.5 {
-                    self.dots = false;
-                    self.motion = Motion::default();
+            // The far scale follows the zoom: it is weighed again only when the scale changes, so a
+            // population growing or shrinking under a still camera does not switch it (nor an
+            // empty world, which has no size to weigh). A switch by zoom fades over `BLEND`.
+            let px_per_unit = view.px_w as f64 / (view.x1 - view.x0).max(1.0);
+            let first = !self.mode_scale.is_finite();
+            if !w.creatures.is_empty() && (first || (px_per_unit / self.mode_scale - 1.0).abs() > 1e-6) {
+                self.mode_scale = px_per_unit;
+                let mean_size =
+                    w.creatures.iter().map(|v| v.pheno.size).sum::<f64>() / w.creatures.len() as f64;
+                let px_size = mean_size * px_per_unit;
+                let dots = if self.dots { px_size < 3.5 } else { px_size <= 2.5 };
+                if dots != self.dots {
+                    self.dots = dots;
+                    if !dots {
+                        self.motion = Motion::default();
+                    }
+                    self.blend = (!first).then(|| frame::Blend { since: Instant::now(), to_dots: dots });
                 }
-            } else if px_size <= 2.5 {
-                self.dots = true;
             }
             let collected = if self.dots {
                 frame::dots(w, rect, &mut instances)
@@ -933,6 +958,24 @@ impl Sim {
                     spots.extend(self.motion.drawn());
                 }
                 self.shown.push_back((self.frames_built + 1, spots));
+                // while the far scale fades, the old way of drawing goes first, under the new
+                if let Some(b) = self.blend.filter(|b| !b.done()) {
+                    let mut old = std::mem::take(&mut self.blend_buf);
+                    let fits = if b.to_dots {
+                        self.motion.collect(w, rect, &mut old)
+                    } else {
+                        frame::dots(w, rect, &mut old)
+                    };
+                    if fits && old.len() + instances.len() <= frame::MAX_INSTANCES {
+                        old.extend_from_slice(&instances);
+                        std::mem::swap(&mut old, &mut instances);
+                        blend = Some(b);
+                    }
+                    old.clear();
+                    self.blend_buf = old;
+                } else {
+                    self.blend = None;
+                }
             } else {
                 instances.clear();
                 // The density map is exactly over the visible area, a cell is a couple of pixels.
@@ -1019,6 +1062,7 @@ impl Sim {
             },
             render_world: self.render_world,
             dots: self.dots && self.render_world,
+            blend,
             origin,
             instances,
             patches,

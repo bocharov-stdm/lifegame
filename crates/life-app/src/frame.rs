@@ -21,6 +21,31 @@ use crate::history::Sample;
 /// the circles are smaller than a pixel anyway.
 pub const MAX_INSTANCES: usize = 250_000;
 
+/// How long the far scale fades in or out when the zoom crosses it: the old way of drawing and the
+/// new are both in the frames this long after the switch, and the window weighs them.
+pub const BLEND: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// The frames just after the far scale switched on or off: `instances` hold the old way of drawing
+/// first, then the new one.
+#[derive(Clone, Copy, Debug)]
+pub struct Blend {
+    pub since: std::time::Instant,
+    /// Towards the dots (else back to the bodies).
+    pub to_dots: bool,
+}
+
+impl Blend {
+    /// How much the dots weigh at this moment (the bodies weigh the rest): 0‒1 over `BLEND`.
+    pub fn dots_weight(&self) -> f32 {
+        let t = (self.since.elapsed().as_secs_f32() / BLEND.as_secs_f32()).clamp(0.0, 1.0);
+        if self.to_dots { t } else { 1.0 - t }
+    }
+
+    pub fn done(&self) -> bool {
+        self.since.elapsed() >= BLEND
+    }
+}
+
 /// One circle. Exactly 32 bytes — that is how the shader reads them (`render.rs`).
 /// The coordinates are relative to `Frame::origin`; the view, the heading and the ghost's flags
 /// are in `meta` (see `motion.rs`).
@@ -310,6 +335,8 @@ pub struct Frame {
     pub render_world: bool,
     /// A far scale: motionless two-pixel squares without animation.
     pub dots: bool,
+    /// Just after `dots` switched: both ways of drawing are in `instances`, to fade between.
+    pub blend: Option<Blend>,
     /// The origin of the circles in the world (f64): at ×10 000 the world is 6·10⁷ wide, and in f32
     /// absolute coordinates would lose units of pixels.
     pub origin: (f64, f64),
@@ -392,7 +419,9 @@ pub fn dots(world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) 
         let diet = ((v.pheno.diet as u32) & 3) << DIET_SHIFT;
         let fullness = (v.energy / v.pheno.max_energy).clamp(0.0, 1.0);
         let lit = |c: u8| (f64::from(c) * (DOT_HUNGRY + (1.0 - DOT_HUNGRY) * fullness)).round() as u8;
-        let color = rgba(crate::theme::DIET_COLORS[v.pheno.diet as usize & 3].map(lit), 255);
+        // the alpha carries the fullness, as a body's does (the hover reads it; a dot's shader not)
+        let color =
+            rgba(crate::theme::DIET_COLORS[v.pheno.diet as usize & 3].map(lit), (fullness * 255.0) as u8);
         if !add(v.x, v.y, color, KIND_CREATURE, diet) {
             out.clear();
             return false;
@@ -587,6 +616,24 @@ mod tests {
         assert_eq!(at(&herbivores, 50, 25), [DIET_COLORS[0][0], DIET_COLORS[0][1], DIET_COLORS[0][2], 255]);
         assert!(at(&herbivores, 0, 50)[3] < at(&plain, 0, 50)[3], "the plants dimmed");
         assert!(at(&carnivores, 50, 25)[3] < at(&plain, 50, 25)[3], "the herbivore dimmed");
+    }
+
+    /// The far scale fades over `BLEND`: the dots from nothing to all as they come, the other way
+    /// as they go. Moments set far from now, so a slow machine does not change the answer.
+    #[test]
+    fn the_far_scale_fades_over_the_blend() {
+        let now = std::time::Instant::now();
+        let (past, ahead) = (now - BLEND * 2, now + std::time::Duration::from_secs(60));
+        for (since, to_dots, weight, done) in [
+            (past, true, 1.0, true),
+            (past, false, 0.0, true),
+            (ahead, true, 0.0, false),
+            (ahead, false, 1.0, false),
+        ] {
+            let b = Blend { since, to_dots };
+            assert_eq!(b.dots_weight(), weight, "to dots {to_dots}, done {done}");
+            assert_eq!(b.done(), done);
+        }
     }
 
     /// Far dots carry each creature's diet: the shader's diet highlight reads it at any zoom.
