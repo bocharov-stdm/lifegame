@@ -37,6 +37,9 @@ struct Uniforms {
     time: f32,
     highlight: u32,
     pad: [f32; 2],
+    /// The diets' colours (`theme::DIET_COLORS`, linear 0..1 in sRGB terms, alpha unused): the
+    /// shader has no palette of its own.
+    diets: [[f32; 4]; 4],
 }
 
 /// Everything that lives on the graphics card between frames.
@@ -178,6 +181,7 @@ impl egui_wgpu::CallbackTrait for Circles {
             time: self.time,
             highlight: self.highlight,
             pad: [0.0; 2],
+            diets: crate::theme::DIET_COLORS.map(|c| [c[0], c[1], c[2], 255].map(|v| v as f32 / 255.0)),
         };
         queue.write_buffer(&res.uniforms, 0, bytemuck::bytes_of(&u));
         if res.generation != self.generation {

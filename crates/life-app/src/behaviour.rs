@@ -36,7 +36,7 @@ const END_H: f32 = 34.0;
 /// The band above a section (settings, decisions) with its caption.
 const CAPTION_H: f32 = 20.0;
 /// The colour of settings' boxes.
-const SETTING: Color32 = Color32::from_rgb(96, 190, 170);
+const SETTING: Color32 = crate::theme::FLOW_SETTING;
 
 /// The window, while `open` and a creature is selected. The tab shown is remembered per creature;
 /// a newly selected one opens on the track it lives by.
@@ -146,9 +146,9 @@ fn action_color(a: Action) -> Color32 {
         Action::Hunt => rgb(DIET_COLORS[3]),
         Action::EatCorpse => rgb(DIET_COLORS[2]),
         Action::EatPlant => rgb(DIET_COLORS[0]),
-        Action::Ambush | Action::Rest | Action::Torpor => Color32::from_rgb(176, 160, 214),
+        Action::Ambush | Action::Rest | Action::Torpor => crate::theme::FLOW_STILL,
         a if a.is_setting() => SETTING,
-        _ => Color32::from_rgb(110, 165, 230),
+        _ => crate::theme::FLOW_MOVE,
     }
 }
 

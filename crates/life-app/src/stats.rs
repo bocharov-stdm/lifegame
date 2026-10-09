@@ -71,7 +71,7 @@ impl LifeApp {
                 ui.label(life_sim::observe::describe_flows(&s.counters.since(&first.counters)));
             }
         }
-        ui.label(RichText::new("Сытость").strong());
+        ui.label(crate::theme::strong("Сытость"));
         charts::energy(ui, &snaps, 190.0);
         ui.add_space(4.0);
         ui.colored_label(
@@ -84,7 +84,7 @@ impl LifeApp {
     fn where_tab(&mut self, ui: &mut egui::Ui) {
         ui.colored_label(MUTED, self.history.span_label());
         let snaps = self.history.snapshots.points();
-        ui.label(RichText::new("Глубина существ во времени").strong());
+        ui.label(crate::theme::strong("Глубина существ во времени"));
         let hovered = charts::depth_map(ui, &snaps, 170.0);
         let Some(&at) = hovered.and_then(|i| snaps.get(i)).or(snaps.last()) else { return };
         let layer = at.depth.map_or("существ нет".into(), |d| {
@@ -92,14 +92,14 @@ impl LifeApp {
         });
         ui.colored_label(MUTED, format!("тик {} · {layer}; верх — поверхность", spaced(at.tick)));
         ui.add_space(8.0);
-        ui.label(RichText::new("Растения и существа по глубине").strong());
+        ui.label(crate::theme::strong("Растения и существа по глубине"));
         ui.colored_label(MUTED, "слева — доля растений, справа — доля существ");
         charts::bands(ui, &at.plants_by_depth, &at.creatures_by_depth, ("поверхность", "дно"));
         // across the width there is something to look at only if the food is uneven along it
         let uneven = self.view.frame.as_ref().is_some_and(|f| f.rules.plant_width.kind() != Profile::Uniform);
         if uneven {
             ui.add_space(8.0);
-            ui.label(RichText::new("По ширине").strong());
+            ui.label(crate::theme::strong("По ширине"));
             charts::bands(ui, &at.plants_by_width, &at.creatures_by_width, ("слева", "справа"));
         }
     }
@@ -138,7 +138,7 @@ impl LifeApp {
             }
         });
         ui.add_space(6.0);
-        ui.label(RichText::new("Геном существ").strong());
+        ui.label(crate::theme::strong("Геном существ"));
         compare(ui, "область-существа", &creature::GENES, r.inside.as_ref(), r.world.as_ref());
         ui.add_space(6.0);
         ui.colored_label(MUTED, "Сводка обновляется на каждом срезе мира и сразу, когда область задана.");
@@ -204,7 +204,7 @@ impl LifeApp {
         }
 
         ui.add_space(4.0);
-        ui.label(RichText::new("Признаки").strong());
+        ui.label(crate::theme::strong("Признаки"));
         let columns: Vec<usize> = census::numeric().collect();
         charts::histograms(ui, group, &columns, color);
         for c in census::choices() {
@@ -218,7 +218,7 @@ impl LifeApp {
 
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Два признака").strong());
+            ui.label(crate::theme::strong("Два признака"));
             for (k, axis) in ["по горизонтали", "по вертикали"].into_iter().enumerate()
             {
                 egui::ComboBox::from_id_salt(("перепись-ось", k))
@@ -239,7 +239,7 @@ impl LifeApp {
         );
 
         ui.add_space(8.0);
-        ui.label(RichText::new("Поведение взрослых").strong());
+        ui.label(crate::theme::strong("Поведение взрослых"));
         let n = group.count as f64;
         for b in &group.behaviours {
             behaviour_row(ui, b.count as f64 / n, &chain(&b.chain), color);

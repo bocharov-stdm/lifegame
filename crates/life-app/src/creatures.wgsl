@@ -14,6 +14,8 @@ struct U {
     // diets to highlight, a bit per diet; 0 — nobody highlighted
     highlight: u32,
     pad1: vec2<f32>,
+    // the diets' colours, from the game's palette (`theme::DIET_COLORS`)
+    diets: array<vec4<f32>, 4>,
 };
 @group(0) @binding(0) var<uniform> u: U;
 
@@ -160,12 +162,7 @@ fn inside(d: f32) -> f32 {
 
 // The rim's colour by diet: herbivore, omnivore, scavenger, carnivore.
 fn diet_color(diet: u32) -> vec3<f32> {
-    switch diet {
-        case 0u: { return vec3(0.35, 0.80, 0.42); }
-        case 1u: { return vec3(0.90, 0.78, 0.30); }
-        case 2u: { return vec3(0.62, 0.52, 0.70); }
-        default: { return vec3(0.92, 0.30, 0.26); }
-    }
+    return u.diets[min(diet, 3u)].rgb;
 }
 
 @fragment

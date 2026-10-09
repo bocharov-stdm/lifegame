@@ -404,8 +404,7 @@ impl LifeApp {
                 ui.label(egui::RichText::new(&failure).monospace().color(theme::DANGER));
                 ui.add_space(6.0);
                 ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .add(theme::primary("Запустить заново"))
+                    if theme::primary_button(ui, "Запустить заново")
                         .on_hover_text("Та же партия с начала")
                         .clicked()
                     {
@@ -456,12 +455,12 @@ impl LifeApp {
         };
         let modal = egui::Modal::new(egui::Id::new("подтверждение")).show(ctx, |ui| {
             ui.set_max_width(380.0);
-            ui.label(egui::RichText::new(title).strong().size(16.0));
+            ui.label(theme::heading(title, theme::HEADING));
             ui.add_space(4.0);
             ui.label(text);
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                if ui.add(theme::primary(yes)).clicked() {
+                if theme::danger_button(ui, yes).clicked() {
                     match what {
                         Confirm::Restart => self.restart(),
                         Confirm::NewGame => self.start_game(),

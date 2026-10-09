@@ -12,7 +12,8 @@ use life_sim::observe::{GeneStat, MAX_VARIANTS, Snapshot, Spread};
 use crate::census::{self, Census, Group};
 use crate::frame::{CREATURE_COLOR, PLANT_COLOR};
 use crate::history::{History, Sample};
-use crate::theme::{DIET_COLORS, DIET_NAMES, LINE, MUTED, TEXT, rgb, spaced};
+pub use crate::theme::VARIANT_COLORS;
+use crate::theme::{DIET_COLORS, DIET_NAMES, LINE, MUTED, PLANT_LINE, TEXT, rgb, spaced};
 
 /// The index of the point under the cursor (by x), if the cursor is over the chart.
 fn hover_index(ui: &egui::Ui, rect: Rect, n: usize) -> Option<usize> {
@@ -151,9 +152,6 @@ pub fn populations(ui: &mut egui::Ui, history: &History, height: f32) {
     ];
     lines(ui, &points, |s| s.tick, &all, Scale::Own, height);
 }
-
-/// Plants on the population chart: a pale grey green, apart from the herbivores' green.
-const PLANT_LINE: [u8; 3] = [120, 150, 130];
 
 /// Fullness: the mean tank fullness of the creatures and how far the plants have run into the ceiling.
 pub fn energy(ui: &mut egui::Ui, snaps: &[&Snapshot], height: f32) {
@@ -322,15 +320,6 @@ fn number_text(now: f64, was: f64, percent: bool) -> (String, String) {
     };
     (value, change)
 }
-
-/// The colours of a choice gene's variants — in order.
-pub const VARIANT_COLORS: [Color32; 5] = [
-    Color32::from_rgb(205, 134, 255),
-    Color32::from_rgb(245, 197, 66),
-    Color32::from_rgb(93, 211, 158),
-    Color32::from_rgb(110, 170, 255),
-    Color32::from_rgb(239, 99, 81),
-];
 
 /// A mini-chart of a choice gene: the variants' shares in layers from bottom to top.
 fn shares_row(painter: &egui::Painter, spark: Rect, points: &[GenePoint], g: usize, variants: usize) {

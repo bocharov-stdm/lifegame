@@ -102,7 +102,10 @@ fn paint_patches(painter: &egui::Painter, cam: &Camera, rect: Rect, patches: &[P
             let a = (alpha * (0.5 + dense)) as u8;
             painter.add(egui::Shape::convex_polygon(
                 points,
-                Color32::from_rgba_unmultiplied(70, 150, 90, a),
+                {
+                    let [r, g, b] = crate::theme::SPROUT_COLOR;
+                    Color32::from_rgba_unmultiplied(r, g, b, a)
+                },
                 Stroke::NONE,
             ));
         }
@@ -413,15 +416,8 @@ impl WorldView {
             let (x0, y0) = cam.to_screen(shot.from.0, shot.from.1);
             let (x1, y1) = cam.to_screen(shot.to.0, shot.to.1);
             let alpha = ((1.0 - age / 0.25) * 220.0) as u8;
-            shot_painter.line_segment(
-                [pos(x0, y0), pos(x1, y1)],
-                Stroke::new(1.6, Color32::from_rgba_unmultiplied(255, 216, 122, alpha)),
-            );
-            shot_painter.circle_filled(
-                pos(x1, y1),
-                2.0,
-                Color32::from_rgba_unmultiplied(255, 216, 122, alpha),
-            );
+            shot_painter.line_segment([pos(x0, y0), pos(x1, y1)], Stroke::new(1.6, shot_color(alpha)));
+            shot_painter.circle_filled(pos(x1, y1), 2.0, shot_color(alpha));
             ui.ctx().request_repaint();
         }
         painter.rect_stroke(world_rect, 0.0, Stroke::new(1.0, LINE), StrokeKind::Outside);
@@ -496,7 +492,13 @@ impl WorldView {
         let map = Rect::from_min_size(Pos2::new(rect.min.x + 10.0, rect.max.y - h - 10.0), Vec2::new(w, h));
         let resp = ui.interact(map, ui.id().with("миникарта"), Sense::click_and_drag());
         let painter = ui.painter_at(rect);
-        painter.rect_filled(map.expand(3.0), 3.0, Color32::from_rgba_unmultiplied(12, 14, 18, 220));
+        painter.rect_filled(map.expand(3.0), 4.0, crate::theme::BG.gamma_multiply(0.9));
+        painter.rect_stroke(
+            map.expand(3.0),
+            4.0,
+            Stroke::new(1.0, crate::theme::LINE),
+            egui::StrokeKind::Inside,
+        );
         painter.image(tex.id(), map, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
         let to_map = |x: f64, y: f64| {
             pos(
@@ -568,4 +570,10 @@ fn between(prev: Option<(u64, f64, f64)>, s: &frame::Selected, k: f32) -> (f64, 
         Some((id, px, py)) if id == s.id => (px + (s.x - px) * k as f64, py + (s.y - py) * k as f64),
         _ => (s.x, s.y),
     }
+}
+
+/// A shot's trail at this opacity.
+fn shot_color(alpha: u8) -> Color32 {
+    let [r, g, b] = crate::theme::SHOT_COLOR;
+    Color32::from_rgba_unmultiplied(r, g, b, alpha)
 }

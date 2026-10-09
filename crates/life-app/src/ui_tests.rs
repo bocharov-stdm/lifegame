@@ -754,10 +754,12 @@ fn режимы_рендера_и_размер_трупа_без_окна() {
         settle(&mut h);
         let selected_image = h.render().expect("снимок выбранного существа");
         let selected_ring = selected_image.get_pixel(ring_x, ring_y).0;
-        assert!(
-            selected_ring[0] > 140 && selected_ring[1] > 100 && selected_ring[2] < 110,
-            "{tag}: у выбранного существа кольцо контакта: {selected_ring:?}"
-        );
+        // the ring is the interface's accent
+        let accent = crate::theme::ACCENT;
+        let off = (selected_ring[0] as i32 - accent.r() as i32).abs()
+            + (selected_ring[1] as i32 - accent.g() as i32).abs()
+            + (selected_ring[2] as i32 - accent.b() as i32).abs();
+        assert!(off < 150, "{tag}: у выбранного существа кольцо контакта: {selected_ring:?}");
         shot(&mut h, &format!("рендер-выбранный-контакт-{tag}"));
 
         h.state_mut().render_world = false;

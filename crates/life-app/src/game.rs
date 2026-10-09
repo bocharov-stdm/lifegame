@@ -121,13 +121,23 @@ impl LifeApp {
         let ctx = ui.ctx().clone();
         self.game_keyboard(&ctx);
 
-        egui::Panel::top("верх").show(ui, |ui| self.top_bar(ui));
-        egui::Panel::bottom("низ").show(ui, |ui| self.bottom_bar(ui));
+        let frame = theme::panel_frame(ui.style());
+        egui::Panel::top("верх").frame(frame).show(ui, |ui| {
+            theme::backdrop(ui, Some(Align2::CENTER_BOTTOM));
+            self.top_bar(ui)
+        });
+        egui::Panel::bottom("низ").frame(frame).show(ui, |ui| {
+            theme::backdrop(ui, Some(Align2::CENTER_TOP));
+            self.bottom_bar(ui)
+        });
         if self.side_open {
-            egui::Panel::right("сбоку")
-                .default_size(340.0)
-                .size_range(310.0..=620.0)
-                .show(ui, |ui| self.side_panel(ui));
+            egui::Panel::right("сбоку").frame(frame).default_size(340.0).size_range(310.0..=620.0).show(
+                ui,
+                |ui| {
+                    theme::backdrop(ui, Some(Align2::LEFT_CENTER));
+                    self.side_panel(ui)
+                },
+            );
         }
         egui::CentralPanel::no_frame().show(ui, |ui| {
             let rect = ui.max_rect();
@@ -450,7 +460,7 @@ impl LifeApp {
         egui::ScrollArea::vertical().show(ui, |ui| {
             self.diets_block(ui);
             ui.add_space(6.0);
-            ui.label(RichText::new("Численность").strong().color(ACCENT)).on_hover_text(
+            ui.label(crate::theme::strong("Численность").color(ACCENT)).on_hover_text(
                 "Растения — в своей шкале, питания — в одной общей, чтобы их можно было сравнивать. \
                  Наведите на график — под ним будут числа в этой точке.",
             );
@@ -586,7 +596,7 @@ impl LifeApp {
         let diet = lost.diet.min(3);
         ui.horizontal(|ui| {
             ui.label(RichText::new("●").color(rgb(theme::DIET_COLORS[diet])).size(18.0));
-            ui.label(RichText::new("Погибло").strong().size(17.0));
+            ui.label(theme::heading("Погибло", theme::HEADING));
             ui.colored_label(MUTED, format!("№ {}", lost.id));
         });
         ui.label(format!(
@@ -726,7 +736,10 @@ impl LifeApp {
                 let change = settings::describe_change(&now, &self.lab);
                 ui.add_space(6.0);
                 ui.horizontal_wrapped(|ui| {
-                    if ui.add_enabled(change.is_some(), theme::primary("Применить")).clicked()
+                    if ui
+                        .add_enabled_ui(change.is_some(), |ui| theme::primary_button(ui, "Применить"))
+                        .inner
+                        .clicked()
                         && let Some(note) = change.clone()
                     {
                         match self.lab.rules_over(&current, &now) {
@@ -817,8 +830,7 @@ impl LifeApp {
                 ui.label(text);
                 ui.add_space(6.0);
                 ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .add(theme::primary("Новый сид"))
+                    if theme::primary_button(ui, "Новый сид")
                         .on_hover_text("Та же партия с другим сидом")
                         .clicked()
                     {
@@ -887,7 +899,7 @@ fn creature_card(
     let color = rgb(theme::DIET_COLORS[diet_index]);
     ui.horizontal(|ui| {
         ui.label(RichText::new("●").color(color).size(18.0));
-        ui.label(RichText::new(format!("Существо № {}", s.id)).strong().size(16.0));
+        ui.label(theme::heading(format!("Существо № {}", s.id), theme::HEADING));
     });
     ui.colored_label(MUTED, s.state);
     ui.horizontal_wrapped(|ui| {

@@ -59,19 +59,19 @@ impl LifeApp {
             egui::Frame::window(ui.style()).inner_margin(28.0).show(ui, |ui| {
                 ui.set_width(300.0);
                 ui.vertical_centered_justified(|ui| {
-                    ui.label(RichText::new("lifegame").size(34.0).strong());
+                    ui.label(theme::heading("lifegame", 36.0).color(theme::ACCENT));
                     ui.colored_label(MUTED, "эволюция растений и существ");
-                    ui.add_space(18.0);
+                    ui.add_space(theme::GAP_WIDE);
                     let big = |t: &str| RichText::new(t).size(17.0);
-                    if started && ui.add(theme::primary_rich(big("Продолжить"))).clicked() {
+                    if started && theme::primary_sized(ui, "Продолжить", 17.0).clicked() {
                         self.resume();
                     }
                     let new = if started {
-                        egui::Button::new(big("Новый мир"))
+                        ui.button(big("Новый мир"))
                     } else {
-                        theme::primary_rich(big("Новый мир"))
+                        theme::primary_sized(ui, "Новый мир", 17.0)
                     };
-                    if ui.add(new).clicked() {
+                    if new.clicked() {
                         self.screen = Screen::Setup;
                     }
                     if ui.button(big("Настройки")).clicked() {
@@ -102,7 +102,8 @@ impl LifeApp {
         let measured = self.view.frame.as_ref().map(|f| (f.tick_ms, f.scale));
         // The buttons are at the bottom, outside the scroll: the tabs differ in height, and «Начать»
         // («Start») must always be visible.
-        egui::Panel::bottom("кнопки нового мира").show(ui, |ui| {
+        egui::Panel::bottom("кнопки нового мира").frame(theme::panel_frame(ui.style())).show(ui, |ui| {
+            theme::backdrop(ui, Some(Align2::CENTER_TOP));
             ui.add_space(6.0);
             ui.vertical_centered(|ui| {
                 ui.set_max_width(760.0);
@@ -111,7 +112,7 @@ impl LifeApp {
                         self.save_settings();
                         self.screen = Screen::Menu;
                     }
-                    if ui.add(theme::primary("Начать")).clicked() {
+                    if theme::primary_button(ui, "Начать").clicked() {
                         if self.game.is_some() {
                             self.confirm = Some(crate::app::Confirm::NewGame);
                         } else {
@@ -132,11 +133,13 @@ impl LifeApp {
             });
             ui.add_space(4.0);
         });
-        egui::CentralPanel::default().show(ui, |ui| {
+        egui::CentralPanel::default().frame(egui::Frame::central_panel(ui.style()).fill(theme::BG)).show(ui, |ui| {
+            // the deep water behind the settings: lighter at the top
+            theme::gradient(ui.painter(), ui.clip_rect(), theme::PANEL_TOP, theme::BG);
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.set_max_width(760.0);
-                    ui.label(RichText::new("Новый мир").size(26.0).strong());
+                    ui.label(theme::heading("Новый мир", theme::TITLE));
                     ui.add_space(6.0);
                     ui.horizontal_wrapped(|ui| {
                         for (tab, name) in std::iter::once((Tab::World, "Мир")).chain(Tab::RULES) {
@@ -187,7 +190,7 @@ impl LifeApp {
 
     fn world_tab(&mut self, ui: &mut egui::Ui, measured: Option<(f64, f64)>) {
         let s = &mut self.settings;
-        ui.label(RichText::new("Масштаб").strong());
+        ui.label(crate::theme::strong("Масштаб"));
         ui.horizontal_wrapped(|ui| {
             for (name, scale) in PRESETS {
                 let label = format!("{name} ×{}", spaced(scale as u64));
@@ -221,7 +224,7 @@ impl LifeApp {
         ui.add_space(8.0);
 
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Форма").strong());
+            ui.label(crate::theme::strong("Форма"));
             for shape in Shape::ALL {
                 let hint = match shape {
                     Shape::Strip => "Высота всегда 4000, большой мир растёт только вширь — длинной лентой.",
@@ -241,7 +244,7 @@ impl LifeApp {
         );
         ui.add_space(8.0);
 
-        ui.label(RichText::new("Сид").strong());
+        ui.label(crate::theme::strong("Сид"));
         ui.horizontal(|ui| {
             ui.add_enabled(!s.random_seed, egui::DragValue::new(&mut s.seed).range(1..=SEED_MAX));
             if ui.button("🎲").on_hover_text("Случайный сид").clicked() {
@@ -275,7 +278,7 @@ impl LifeApp {
                     ui,
                     |ui| {
                         let s = &mut self.settings;
-                        ui.label(RichText::new("Экран").strong());
+                        ui.label(crate::theme::strong("Экран"));
                         ui.checkbox(&mut s.fullscreen, "Во весь экран");
                         ui.horizontal(|ui| {
                             ui.label("Масштаб интерфейса");
@@ -314,7 +317,7 @@ impl LifeApp {
             .default_pos(screen.center())
             .show(ctx, |ui| {
             egui::ScrollArea::vertical().max_height((screen.height() - 160.0).max(200.0)).show(ui, |ui| {
-                ui.label(RichText::new("Управление").strong());
+                ui.label(crate::theme::strong("Управление"));
                 egui::Grid::new("клавиши").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
                     for (k, what) in [
                         ("Пробел", "пауза"),
@@ -331,13 +334,13 @@ impl LifeApp {
                         ("I", "статистика: сытость, где живут, область"),
                         ("Esc", "закрыть верхнее окно, снять выбор; потом меню"),
                     ] {
-                        ui.label(RichText::new(k).strong());
+                        ui.label(crate::theme::strong(k));
                         ui.label(what);
                         ui.end_row();
                     }
                 });
                 ui.add_space(6.0);
-                ui.label(RichText::new("Что происходит").strong());
+                ui.label(crate::theme::strong("Что происходит"));
                 ui.label(
                     "Растения по умолчанию растут гуще у поверхности (вверху). Существа едят их, растут, \
                      делятся и мутируют. Тело задают гены, поведение — две программы из блоков, детская \
@@ -351,7 +354,7 @@ impl LifeApp {
                      смотрит туда, куда существо идёт. Рамка на миникарте — то, что сейчас на экране.",
                 );
                 ui.add_space(6.0);
-                ui.label(RichText::new("Гены").strong());
+                ui.label(crate::theme::strong("Гены"));
                 egui::Grid::new("гены").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
                     for spec in creature::GENES.iter().filter(|s| crate::charts::shown(s)) {
                         ui.label(spec.label);
@@ -366,14 +369,14 @@ impl LifeApp {
                     }
                 });
                 ui.add_space(6.0);
-                ui.label(RichText::new("Масштаб и форма").strong());
+                ui.label(crate::theme::strong("Масштаб и форма"));
                 ui.label(
                     "Масштаб — во сколько раз мир больше по площади; плотность жизни та же. Форма — его \
                      пропорции: квадрат, 3:2, 2:1 или полоса, которая растёт только вширь. Если тик не успевает за \
                      скоростью, вверху появляется «отстаёт»: мир идёт медленнее, но окно не тормозит.",
                 );
                 ui.add_space(6.0);
-                ui.label(RichText::new("Еда").strong());
+                ui.label(crate::theme::strong("Еда"));
                 ui.label(
                     "Где растут растения, задаётся по глубине и по ширине отдельно: равномерно, линейно, \
                      экспонентой, логарифмом или волнами-полосами. Слой глубины задают программы поведения, \
@@ -390,7 +393,7 @@ impl LifeApp {
 /// Nothing here can spoil a game: the world goes the same on any threads, only faster or slower.
 fn computation(ui: &mut egui::Ui, s: &mut Settings, now: Option<(usize, bool)>) {
     let (cpu, auto) = (cpu_threads(), auto_threads());
-    ui.label(RichText::new("Скорость расчёта").strong());
+    ui.label(crate::theme::strong("Скорость расчёта"));
     ui.colored_label(
         MUTED,
         "Сколько потоков процессора считает мир. На сам мир это не влияет: партия идёт точно так же, \
@@ -695,8 +698,7 @@ pub fn diet_table(ui: &mut egui::Ui, s: &mut Settings) {
     egui::Grid::new("бонусы питаний").num_columns(7).spacing([8.0, 6.0]).striped(true).show(ui, |ui| {
         ui.label("");
         for d in 0..4 {
-            let [r, g, b] = theme::DIET_COLORS[d];
-            ui.colored_label(egui::Color32::from_rgb(r, g, b), theme::DIET_NAMES[d])
+            ui.colored_label(theme::rgb(theme::DIET_COLORS[d]), theme::DIET_NAMES[d])
                 .on_hover_text(theme::DIET_HINTS[d]);
         }
         ui.colored_label(MUTED, "база").on_hover_text("Значения по умолчанию, по порядку столбцов");
@@ -752,7 +754,7 @@ pub fn body_formula(ui: &mut egui::Ui, rules: &Result<Rules, String>) {
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.vertical(|ui| {
             ui.set_width(300.0);
-            ui.label(RichText::new("Сколько стоит тело").strong());
+            ui.label(crate::theme::strong("Сколько стоит тело"));
             ui.label("Каждый тик существо тратит энергию на своё тело:");
             let formula = format!(
                 "трата = {:.2} × (
@@ -811,11 +813,7 @@ fn cost_chart(ui: &mut egui::Ui, powers: [f64; 3]) {
     painter.line_segment([at(1.0, 0.0), at(1.0, top)], grid);
     painter.line_segment([at(x0, 1.0), at(x1, 1.0)], grid);
     let names = ["размер", "скорость", "зрение"];
-    let colors = [
-        egui::Color32::from_rgb(235, 170, 90),
-        egui::Color32::from_rgb(110, 190, 235),
-        egui::Color32::from_rgb(190, 140, 235),
-    ];
+    let colors = theme::STAT_COLORS;
     for (power, color) in powers.iter().zip(colors) {
         let points: Vec<egui::Pos2> =
             (0..=60).map(|i| x0 + (x1 - x0) * i as f64 / 60.0).map(|x| at(x, x.powf(*power))).collect();

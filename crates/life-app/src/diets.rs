@@ -59,7 +59,7 @@ fn window(snaps: &[&Snapshot]) -> DietCounters {
 impl LifeApp {
     /// A row per diet: its colour, name, number and share, and a bar. A click opens its details.
     pub(crate) fn diets_block(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Кто живёт").strong()).on_hover_text(
+        ui.label(crate::theme::strong("Кто живёт")).on_hover_text(
             "Сколько сейчас существ каждого питания. Нажмите на строку — откроется, какие они, \
              отчего умирают и кого убивают.",
         );
