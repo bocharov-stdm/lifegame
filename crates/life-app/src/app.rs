@@ -29,9 +29,12 @@ pub enum Screen {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SideTab {
+    /// «Обзор»: who lives, the counts, who kills whom.
     Charts,
     Log,
     Creature,
+    /// The lab: the world's rules on the fly.
+    Lab,
 }
 
 /// A short message at the bottom of the window. An error stays until it is closed.
@@ -88,7 +91,6 @@ pub struct LifeApp {
     pub diet_open: [bool; 4],
     /// Whether to show the bodies and the surroundings of the world; the history and the card update always.
     pub render_world: bool,
-    pub lab_open: bool,
     /// The selected creature's behaviour window (`behaviour.rs`).
     pub behaviour_open: bool,
     /// A draft of the lab's rules on the fly; applied with a button.
@@ -178,7 +180,6 @@ impl LifeApp {
             side_tab: SideTab::Charts,
             diet_open: [false; 4],
             render_world: true,
-            lab_open: false,
             behaviour_open: false,
             lab_tab: Tab::Food,
             lab_reset_selected: HashSet::new(),
@@ -355,7 +356,6 @@ impl LifeApp {
         if self.game.is_some() {
             self.sim.send(Command::SetPaused(true));
         }
-        self.lab_open = false;
         self.screen = Screen::Menu;
     }
 
@@ -386,6 +386,21 @@ impl LifeApp {
         if self.applied_threads != Some(want) {
             self.sim.send(Command::Threads { threads: want.0, fast_cores: want.1 });
             self.applied_threads = Some(want);
+        }
+    }
+
+    /// Whether the side panel shows the lab.
+    pub fn lab_shown(&self) -> bool {
+        self.side_open && self.side_tab == SideTab::Lab
+    }
+
+    /// L and the lab's button: the lab on the side panel, or back to the overview.
+    pub fn toggle_lab(&mut self) {
+        if self.lab_shown() {
+            self.side_tab = SideTab::Charts;
+        } else {
+            self.side_open = true;
+            self.side_tab = SideTab::Lab;
         }
     }
 

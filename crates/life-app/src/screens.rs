@@ -281,29 +281,39 @@ impl LifeApp {
                     ui,
                     |ui| {
                         let s = &mut self.settings;
-                        ui.label(crate::theme::strong("Экран"));
-                        ui.checkbox(&mut s.fullscreen, "Во весь экран");
-                        ui.horizontal(|ui| {
-                            ui.label("Масштаб интерфейса");
-                            egui::ComboBox::from_id_salt("масштаб интерфейса")
-                                .selected_text(ui_scale_label(s.ui_scale))
-                                .show_ui(ui, |ui| {
-                                    for v in UI_SCALES {
-                                        ui.selectable_value(&mut s.ui_scale, v, ui_scale_label(v));
-                                    }
+                        // two columns: the screen and help at the left, the computation at the right,
+                        // so the window fits 960×600 without scrolling
+                        ui.horizontal_top(|ui| {
+                            ui.vertical(|ui| {
+                                ui.set_max_width(280.0);
+                                ui.label(crate::theme::strong("Экран"));
+                                ui.checkbox(&mut s.fullscreen, "Во весь экран");
+                                ui.horizontal(|ui| {
+                                    ui.label("Масштаб интерфейса");
+                                    egui::ComboBox::from_id_salt("масштаб интерфейса")
+                                        .selected_text(ui_scale_label(s.ui_scale))
+                                        .show_ui(ui, |ui| {
+                                            for v in UI_SCALES {
+                                                ui.selectable_value(&mut s.ui_scale, v, ui_scale_label(v));
+                                            }
+                                        });
                                 });
+                                ui.checkbox(&mut s.show_fps, "Показывать кадры в секунду и цену тика");
+                                ui.add_space(theme::GAP);
+                                ui.label(crate::theme::strong("Подсказки"));
+                                ui.checkbox(&mut s.details, "Подробности для исследователя").on_hover_text(
+                                    "Формула цены тела, «Внутри видов» в статистике, команда повтора партии без окна",
+                                );
+                                if s.intro_seen && ui.button("Подсказка новичка снова").clicked() {
+                                    s.intro_seen = false;
+                                }
+                            });
+                            ui.separator();
+                            ui.vertical(|ui| {
+                                ui.set_max_width(340.0);
+                                computation(ui, s, now);
+                            });
                         });
-                        ui.checkbox(&mut s.show_fps, "Показывать кадры в секунду и цену тика");
-                        ui.checkbox(&mut s.details, "Подробности для исследователя").on_hover_text(
-                            "Формула цены тела, «Внутри видов» в статистике, команда повтора партии без окна",
-                        );
-                        if ui.button("Показать подсказку новичка снова").clicked()
-                        {
-                            s.intro_seen = false;
-                        }
-                        ui.add_space(6.0);
-                        ui.separator();
-                        computation(ui, s, now);
                     },
                 );
             });

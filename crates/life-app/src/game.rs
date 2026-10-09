@@ -20,8 +20,6 @@ use life_core::profile::Phase;
 
 /// The speed of panning with the keys, screen points a second.
 const PAN_SPEED: f64 = 900.0;
-/// The lab's width on every tab: the diets' table fits it.
-const LAB_WIDTH: f32 = 660.0;
 
 /// The tick's dearest phases by share: «фазы тика: решения 62% · стадо 12% · …», the rest as one.
 fn phases_line(shares: &[f64; Phase::N]) -> String {
@@ -135,13 +133,16 @@ impl LifeApp {
             self.tool_rail(ui)
         });
         if self.side_open {
-            egui::Panel::right("сбоку").frame(frame).default_size(340.0).size_range(310.0..=620.0).show(
-                ui,
-                |ui| {
-                    theme::backdrop(ui, Some(Align2::LEFT_CENTER));
-                    self.side_panel(ui)
-                },
-            );
+            // the lab wants room for its rules: a wider panel of its own width
+            let (id, size, range) = if self.side_tab == SideTab::Lab {
+                ("сбоку-лаборатория", 560.0, 420.0..=900.0)
+            } else {
+                ("сбоку", 340.0, 310.0..=620.0)
+            };
+            egui::Panel::right(id).frame(frame).default_size(size).size_range(range).show(ui, |ui| {
+                theme::backdrop(ui, Some(Align2::LEFT_CENTER));
+                self.side_panel(ui)
+            });
         }
         egui::CentralPanel::no_frame().show(ui, |ui| {
             let rect = ui.max_rect();
@@ -187,9 +188,6 @@ impl LifeApp {
                 );
             }
         });
-        if self.lab_open {
-            self.lab_window(&ctx);
-        }
         if self.behaviour_open {
             match self.view.frame.as_ref().and_then(|f| f.selected) {
                 Some(s) => crate::behaviour::behaviour_window(&ctx, &mut self.behaviour_open, &s),
@@ -267,7 +265,7 @@ impl LifeApp {
             self.side_open = !self.side_open;
         }
         if lab {
-            self.lab_open = !self.lab_open;
+            self.toggle_lab();
         }
         if stats {
             self.stats_open = !self.stats_open;
@@ -285,8 +283,8 @@ impl LifeApp {
                 self.prefs_open = false;
             } else if self.keys_open {
                 self.keys_open = false;
-            } else if self.lab_open {
-                self.lab_open = false;
+            } else if self.lab_shown() {
+                self.side_tab = SideTab::Charts;
             } else if self.behaviour_open {
                 self.behaviour_open = false;
             } else if self.stats_open {
@@ -398,8 +396,9 @@ impl LifeApp {
                 if theme::icon_button(ui, Icon::Help, "Клавиши и справка (F1)", self.keys_open).clicked() {
                     self.keys_open = !self.keys_open;
                 }
-                if theme::icon_button(ui, Icon::Lab, "Лаборатория: правила на ходу (L)", self.lab_open).clicked() {
-                    self.lab_open = !self.lab_open;
+                if theme::icon_button(ui, Icon::Lab, "Лаборатория: правила на ходу (L)", self.lab_shown()).clicked()
+                {
+                    self.toggle_lab();
                 }
                 if ui
                     .add_enabled_ui(selected, |ui| {
@@ -518,21 +517,25 @@ impl LifeApp {
 
     fn side_panel(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing.y = 4.0;
-        // the charts tab lists the diets itself; the other tabs keep one line of them in sight
-        if self.side_tab != SideTab::Charts {
-            self.diets_line(ui);
-            self.highlight_toggles(ui);
-        }
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.side_tab, SideTab::Charts, "Графики");
-            ui.selectable_value(&mut self.side_tab, SideTab::Log, "Хроника");
+        // the tabs first, always in the same place
+        ui.horizontal_wrapped(|ui| {
+            ui.selectable_value(&mut self.side_tab, SideTab::Charts, "Обзор");
             ui.selectable_value(&mut self.side_tab, SideTab::Creature, "Существо");
+            ui.selectable_value(&mut self.side_tab, SideTab::Log, "Хроника");
+            ui.selectable_value(&mut self.side_tab, SideTab::Lab, "Лаборатория");
         });
         ui.add_space(3.0);
+        // the overview lists the diets itself; the creature and the chronicle keep one line of them
+        if matches!(self.side_tab, SideTab::Creature | SideTab::Log) {
+            self.diets_line(ui);
+            self.highlight_toggles(ui);
+            ui.add_space(3.0);
+        }
         match self.side_tab {
             SideTab::Charts => self.charts_tab(ui),
             SideTab::Log => self.log_tab(ui),
             SideTab::Creature => self.creature_tab(ui),
+            SideTab::Lab => self.lab_page(ui),
         }
     }
 
@@ -773,7 +776,9 @@ impl LifeApp {
         });
     }
 
-    fn lab_window(&mut self, ctx: &egui::Context) {
+    /// The lab on the side panel: the world's rules by topic, applied with a button, saved for new
+    /// worlds with another.
+    fn lab_page(&mut self, ui: &mut egui::Ui) {
         let Some((current, space, seed, world_gen)) = self.view.frame.as_ref().map(|f| {
             (f.rules.clone(), life_core::Space { width: f.world_w, height: f.world_h }, f.seed, f.world_gen)
         }) else {
@@ -786,19 +791,10 @@ impl LifeApp {
             taken.take_rules(&current);
             lab.rules_over(&current, &taken)
         };
-        let mut open = true;
-        // one width on every tab (the diets' table is the widest), left of the side panel
-        let screen = ctx.content_rect();
-        let side = if self.side_open { 340.0 } else { 0.0 };
-        let x = (screen.right() - side - LAB_WIDTH - 40.0).max(screen.left() + 8.0);
-        egui::Window::new("Лаборатория")
-            .open(&mut open)
-            .resizable(false)
-            .default_pos(egui::pos2(x, screen.top() + 55.0))
-            .show(ctx, |ui| {
+        {
+            {
                 let body = self.lab_tab == Tab::Body;
                 let diets = self.lab_tab == Tab::Diets;
-                ui.set_width(LAB_WIDTH);
                 ui.horizontal_wrapped(|ui| {
                     for (tab, name) in Tab::RULES {
                         ui.selectable_value(&mut self.lab_tab, tab, name);
@@ -816,8 +812,9 @@ impl LifeApp {
                     .wrap(),
                 );
                 let default = settings::Settings::default();
-                let height = (ctx.content_rect().height() - 210.0).clamp(220.0, 520.0);
-                egui::ScrollArea::vertical().max_height(height).show(ui, |ui| {
+                // the buttons stay in sight under the scrolled rules; the diets' table scrolls across
+                let height = (ui.available_height() - 76.0).max(120.0);
+                egui::ScrollArea::both().max_height(height).auto_shrink([false, true]).show(ui, |ui| {
                     if diets {
                         ui.add_space(5.0);
                         crate::screens::diet_table(ui, &mut self.lab);
@@ -932,8 +929,8 @@ impl LifeApp {
                         self.toast("правила сохранены для новых миров".into());
                     }
                 });
-            });
-        self.lab_open &= open;
+            }
+        }
     }
 
     /// The end of a game: what happened and what to do — a new seed (the same one would only end

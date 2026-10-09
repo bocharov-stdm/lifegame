@@ -158,7 +158,7 @@ fn игра_помещается_в_окно() {
             }
             settle(h);
             // the side panel scrolls: from its tabs to the bottom panel
-            let top = h.get_by_label("Графики").rect();
+            let top = h.get_by_label("Обзор").rect();
             let bottom = h.get_by_label("Мир ▾").rect().top() - 4.0;
             let panel =
                 Rect::from_min_max(Pos2::new(top.left() - 12.0, top.top()), Pos2::new(size.x, bottom));
@@ -187,7 +187,7 @@ fn игра_помещается_в_окно() {
         // the price of a tick and, below it, where its time goes
         h.state_mut().settings.show_fps = true;
         settle(h);
-        let top = h.get_by_label("Графики").rect();
+        let top = h.get_by_label("Обзор").rect();
         let bottom = h.get_by_label("Мир ▾").rect().top() - 4.0;
         let panel = Rect::from_min_max(Pos2::new(top.left() - 12.0, top.top()), Pos2::new(size.x, bottom));
         check_layout(h, size, &format!("игра, цена тика, {tag}"), Some(panel));
@@ -270,8 +270,9 @@ fn квадратный_мир_помещается_в_окно() {
 fn лаборатория_на_ходу_помещается_в_окно() {
     let _gpu = gpu();
     each_size(|h, size, tag| {
-        h.state_mut().lab_open = true;
-        h.state_mut().side_open = false;
+        // the lab is a tab of the side panel
+        h.state_mut().side_open = true;
+        h.state_mut().side_tab = SideTab::Lab;
         for tab in Tab::RULES.map(|(tab, _)| tab) {
             h.state_mut().lab_tab = tab;
             if tab == Tab::Food {
@@ -284,12 +285,14 @@ fn лаборатория_на_ходу_помещается_в_окно() {
                 window.contains_rect(apply),
                 "лаборатория {tab:?}, {tag}: «Применить» за окном: {apply:?}"
             );
+            // the rules scroll above the buttons: what is in view is whole inside the window
             for role in [Role::SpinButton, Role::ComboBox] {
                 for node in h.query_all_by_role(role) {
-                    assert!(
-                        window.contains_rect(node.rect()),
-                        "лаборатория {tab:?}, {tag}: {role:?} за окном"
-                    );
+                    let r = node.rect();
+                    if r.top() >= apply.top() {
+                        continue;
+                    }
+                    assert!(window.contains_rect(r), "лаборатория {tab:?}, {tag}: {role:?} за окном: {r:?}");
                 }
             }
             shot(h, &format!("лаборатория-{tab:?}-{tag}"));
@@ -352,6 +355,9 @@ fn справка_и_настройки_помещаются_в_окно() {
         inside(h, "настройки");
         shot(h, &format!("настройки-{tag}"));
         // by hand: a slider within the processor's threads; back to the defaults with one button
+        // the window may scroll at a small size: bring the control into view first
+        h.get_by_label("Вручную").scroll_to_me();
+        settle(h);
         h.get_by_label("Вручную").click();
         settle(h);
         let (cpu, auto) = (crate::settings::cpu_threads(), crate::settings::auto_threads());
@@ -365,11 +371,17 @@ fn справка_и_настройки_помещаются_в_окно() {
         assert!(h.query_by_label_contains("Окну почти не остаётся").is_some(), "предупреждение");
         inside(h, "настройки, все потоки");
         shot(h, &format!("настройки-все-потоки-{tag}"));
+        // the window may scroll at a small size: bring the control into view first
+        h.get_by_label("Как по умолчанию").scroll_to_me();
+        settle(h);
         h.get_by_label("Как по умолчанию").click();
         settle(h);
         assert_eq!(h.state().settings.threads, 0, "снова авто");
         assert_eq!(h.query_all_by_role(Role::Slider).count(), 0, "в авто ползунка нет");
         // the simulation takes what the settings say
+        // the window may scroll at a small size: bring the control into view first
+        h.get_by_label("Один поток: медленнее, зато процессор свободен").scroll_to_me();
+        settle(h);
         h.get_by_label("Один поток: медленнее, зато процессор свободен").click();
         for _ in 0..200 {
             h.step();
@@ -387,7 +399,8 @@ fn справка_и_настройки_помещаются_в_окно() {
 fn лаборатория_сбрасывает_отмеченные_цены_и_показывается_без_окна() {
     let _gpu = gpu();
     each_size(|h, size, tag| {
-        h.state_mut().lab_open = true;
+        h.state_mut().side_open = true;
+        h.state_mut().side_tab = SideTab::Lab;
         h.state_mut().lab_tab = Tab::Combat;
         h.state_mut().lab.set(Key::ShotDamage, 0.05);
         h.state_mut().lab.set(Key::ShotCost, 0.10);
@@ -890,7 +903,7 @@ fn поведение_выбранного_помещается_в_окно() {
             settle(h);
             assert!(h.state().behaviour_open, "{name}, {tag}: the card's button opens it");
             let window = Rect::from_min_size(Pos2::ZERO, size).expand(0.5);
-            let top = h.get_by_label("Графики").rect();
+            let top = h.get_by_label("Обзор").rect();
             let bottom = h.get_by_label("Мир ▾").rect().top() - 4.0;
             let panel =
                 Rect::from_min_max(Pos2::new(top.left() - 12.0, top.top()), Pos2::new(size.x, bottom));
@@ -1066,13 +1079,13 @@ fn gallery_windows_over_the_side_panel() {
     let _gpu = gpu();
     each_size(|h, _size, tag| {
         h.state_mut().side_open = true;
-        h.state_mut().lab_open = true;
+        h.state_mut().side_tab = SideTab::Lab;
         for tab in Tab::RULES.map(|(tab, _)| tab) {
             h.state_mut().lab_tab = tab;
             settle(h);
             shot(h, &format!("галерея-лаборатория-с-панелью-{tab:?}-{tag}"));
         }
-        h.state_mut().lab_open = false;
+        h.state_mut().side_tab = SideTab::Charts;
         h.state_mut().stats_open = true;
         for tab in [StatsTab::Energy, StatsTab::Where] {
             h.state_mut().stats_tab = tab;
@@ -1168,14 +1181,14 @@ fn tab_toggles_the_panel_and_the_keys_keep_working() {
     }
     h.key_press(K::L);
     settle(&mut h);
-    assert!(h.state().lab_open, "L opens the lab after Tab");
+    assert!(h.state().lab_shown(), "L opens the lab after Tab");
     h.key_press(K::I);
     settle(&mut h);
     assert!(h.state().stats_open, "I opens the statistics");
     // Esc closes the topmost first, and only then would it open the menu
     h.key_press(K::Escape);
     settle(&mut h);
-    assert!(!h.state().lab_open && h.state().stats_open, "Esc closes the lab first");
+    assert!(!h.state().lab_shown() && h.state().stats_open, "Esc closes the lab first");
     h.key_press(K::Escape);
     settle(&mut h);
     assert!(!h.state().stats_open);
