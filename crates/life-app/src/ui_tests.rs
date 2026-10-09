@@ -312,7 +312,13 @@ fn меню_и_новый_мир_помещаются_в_окно() {
             h.state_mut().screen = Screen::Setup;
             h.state_mut().setup_tab = tab;
             settle(h);
-            check_layout(h, size, &format!("новый мир, {tab:?}, {tag}"), None);
+            // a page taller than the screen scrolls between the pinned tabs and the buttons: what
+            // lies past its visible part is scrolled away, not out of the window
+            let page = Rect::from_min_max(
+                Pos2::ZERO,
+                Pos2::new(size.x, h.get_by_label("Начать").rect().top() - 4.0),
+            );
+            check_layout(h, size, &format!("новый мир, {tab:?}, {tag}"), Some(page));
             shot(h, &format!("новый-мир-{tab:?}-{tag}"));
         }
         // waves along both axes: each axis shows two parameters — the longest tab
