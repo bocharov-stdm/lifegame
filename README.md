@@ -82,7 +82,8 @@ cargo run -p life-app --release -- --scale 100 --seed 7  # straight into a world
   («Внутри видов») and «Повторить без окна», the `life-report` command that repeats the game.
 - **The look**: one dark palette with a cold accent in `crates/life-app/src/theme.rs`, which the
   sweep's window shares; a creature's colour is its diet, colours chosen to stay apart for
-  colour-blind eyes; Inter and JetBrains Mono (SIL Open Font License, `assets/fonts`).
+  colour-blind eyes, and up close its shape tells it too (a carnivore's edge has teeth, a
+  scavenger's rim is dashed); Inter and JetBrains Mono (SIL Open Font License, `assets/fonts`).
 - **No freezes at any scale**: the simulation runs in its own thread and the window draws the
   last finished frame. The creatures' decisions use every processor core, and the world stays the
   same on any number of them; «Настройки → Скорость расчёта» chooses how many (auto, one, or by

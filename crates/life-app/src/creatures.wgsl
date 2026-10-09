@@ -57,6 +57,11 @@ const DIM_PLANT: f32 = 0.45;
 // a highlighted body is at least this big, px, and wears a halo this wide
 const HL_MIN_PX: f32 = 3.0;
 const HALO_PX: f32 = 3.0;
+// The diets told by shape as well as by colour, once the details show: a carnivore's edge has
+// teeth (notches this deep, as a share of the radius), a scavenger's rim is dashed.
+const TEETH: f32 = 12.0;
+const TOOTH_DEPTH: f32 = 0.12;
+const DASHES: f32 = 10.0;
 
 @vertex
 fn vs_main(
@@ -200,6 +205,13 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     } else {
         // coordinates along the heading and across it
         let f = vec2(dot(q, in.dir), dot(q, vec2(-in.dir.y, in.dir.x)));
+        // the angle around the body from its heading: the teeth and dashes turn with it
+        let ang = atan2(f.y, f.x);
+        if in.diet == 3u {
+            // a triangle wave: 0 at a tooth's tip, 1 in the notch between two
+            let notch = abs(fract(ang * TEETH / TAU) - 0.5) * 2.0;
+            d = len - r * (1.0 - TOOTH_DEPTH * notch * detail);
+        }
         let rim_w = max(1.0, 0.16 * r);
         let within = inside(d + rim_w);
         // the body is its diet's colour: a dark shell, a light core that grows with fullness (a
@@ -207,7 +219,11 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
         let hue = diet_color(in.diet);
         let core_r = (r - rim_w) * sqrt(full);
         let core = inside(len - core_r);
-        let rim = mix(hue * 0.55, hue, 0.85);
+        var rim = mix(hue * 0.55, hue, 0.85);
+        if in.diet == 2u {
+            let gap = smoothstep(0.2, 0.8, 0.5 + 0.5 * cos(ang * DASHES));
+            rim = mix(rim, hue * 0.3, gap);
+        }
         var fill = mix(hue * 0.26, hue * 0.92, core);
         // an eye along the heading
         let eye_r = max(1.0, 0.15 * r);
