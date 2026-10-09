@@ -25,6 +25,8 @@ pub const LINE: Color32 = Color32::from_rgb(30, 52, 72);
 pub const TEXT: Color32 = Color32::from_rgb(222, 234, 244);
 /// Secondary text: 7.9:1 on `PANEL`, 7.3:1 on `CARD`.
 pub const MUTED: Color32 = Color32::from_rgb(150, 170, 190);
+/// The least of the texts (a footnote), still 5:1 on `BG`.
+pub const FAINT: Color32 = Color32::from_rgb(118, 138, 158);
 
 // ── the interface's state ───────────────────────────────────────────────────
 /// The cold accent: what is selected, on, followed, the main action. Never a diet's colour.
@@ -77,6 +79,11 @@ pub const CREATURE_COLOR: [u8; 3] = [200, 210, 228];
 pub const SHOT_COLOR: [u8; 3] = [255, 216, 122];
 /// Plants' line on the population chart.
 pub const PLANT_LINE: [u8; 3] = PLANT_COLOR;
+/// Corpses: fresh meat a light red, rot a dark olive, bones pale — apart by lightness as well as
+/// by hue, so colour-blind eyes tell them too.
+pub const CORPSE_FRESH: [u8; 3] = [226, 92, 96];
+pub const CORPSE_ROT: [u8; 3] = [92, 98, 58];
+pub const CORPSE_BONES: [u8; 3] = [226, 218, 196];
 
 // ── charts and diagrams ─────────────────────────────────────────────────────
 /// The variants of a choice gene, in order (the strategies' templates first).
@@ -671,5 +678,6 @@ mod tests {
                 assert!(contrast(rgb(d), ground) >= 5.0, "{d:?} on {ground:?}");
             }
         }
+        assert!(contrast(FAINT, BG) >= 5.0, "a footnote on the ground");
     }
 }

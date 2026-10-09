@@ -36,7 +36,7 @@ and the model in brief (its exact numbers live in the code, `config.rs` above al
   like genes, and now and then a program mutates: a number moves, a test or an action changes, a
   block is swapped, copied, deleted or added. Founders start from a template (standard or lurker).
   Behaviour costs nothing: it is held back by what it does, never by upkeep. The game draws the
-  selected creature's programs as flowcharts (B).
+  selected creature's programs as a flowchart or a list (B).
 - **Energy is never made from nothing**: it enters the world only in plants and passes along the
   chain, losing some at every step.
 - Every creature is a loner: flocks were removed (the tag `flocks-final` keeps them).
@@ -59,23 +59,36 @@ cargo run -p life-app --release                          # the menu (same as pla
 cargo run -p life-app --release -- --scale 100 --seed 7  # straight into a world
 ```
 
-- **New world**: the scale (×1 to ×10 000) with a speed estimate for this machine, the shape
-  (1:1, 3:2, 2:1 or a strip), the seed, the founders' mixes, and every world rule by topic: food,
-  body, diets, combat, corpses, evolution.
-- **In the game**: Space pauses, → steps one tick, + and − change the speed, the wheel zooms to
-  the cursor, drag or WASD moves the camera, Home shows the whole world, a click selects a
-  creature, F follows it, B draws its behaviour programs, Tab opens the side panel (populations by
-  diet, who kills whom, the genome, the chronicle, the creature card), L opens the lab (the rules
-  mid-game), I opens the statistics (fullness, where creatures live, an area's genome, and on
-  pause how every characteristic and the adults' behaviour spread within each diet). Esc opens
-  the menu.
+- **New world**: the scale (presets from «Пруд ×1» to «Планета ×1000», up to ×10 000) with a
+  speed estimate for this machine, the shape (1:1, 3:2, 2:1 or a strip), the seed, the founders'
+  mixes, and every world rule by topic: food, water (the thermocline), body, diets (with how they
+  change in the young), combat and corpses, evolution.
+- **The screen**: a top bar (the menu, time — pause, a step, slower and faster — the tick and
+  the counts, chips for a pause, a lag or an edited world, and buttons for the panel, the keys,
+  the lab, behaviour and statistics); a tool rail at the left (select, plant a creature, drag an
+  area, the whole world, follow the selected one); a side panel with tabs «Обзор» (populations by
+  diet, who kills whom, the genome), «Существо» (the card), «Хроника» and «Лаборатория» (the rules
+  mid-game); at the bottom «Мир ▾» (calmer, restart, a new seed, a new world, drawing the world
+  on or off) and a timeline of the population with the chronicle's events, a click on which
+  pauses. Over the world: a depth ruler, the thermocline, a scale bar, a minimap, an arrow to a
+  selected creature off screen, a hint under the cursor.
+- **Keys**: Space pauses, → steps one tick, + and − change the speed, the wheel zooms to the
+  cursor, drag or WASD moves the camera, Home shows the whole world, a click selects a creature
+  (a miss keeps the selection), F follows it, B shows its behaviour programs (a flowchart or a
+  list), Tab the side panel, L the lab, I the statistics (fullness, where creatures live, an
+  area's genome), Esc closes the topmost thing and then opens the menu, F1 lists the keys.
+- **Two levels**: by default the screen keeps to what a player needs; «Настройки → Подробности
+  для исследователя» adds the body's formula, how every characteristic spreads within each diet
+  («Внутри видов») and «Повторить без окна», the `life-report` command that repeats the game.
+- **The look**: one dark palette with a cold accent in `crates/life-app/src/theme.rs`, which the
+  sweep's window shares; a creature's colour is its diet, colours chosen to stay apart for
+  colour-blind eyes; Inter and JetBrains Mono (SIL Open Font License, `assets/fonts`).
 - **No freezes at any scale**: the simulation runs in its own thread and the window draws the
   last finished frame. The creatures' decisions use every processor core, and the world stays the
   same on any number of them; «Настройки → Скорость расчёта» chooses how many (auto, one, or by
   hand) and keeps the computation on a hybrid processor's fast cores. «Показывать кадры» also
   shows where a tick's time goes. Far away the world turns into two-pixel dots or a density map;
   rendering can be switched off while statistics and the card keep working.
-- **For research**: «Повторить без окна» gives the `life-report` command that repeats the game.
 
 Settings live in `%APPDATA%\lifegame\config\settings.json` (the user's config folder on Linux
 and macOS). A broken file does not matter: the game takes the defaults.

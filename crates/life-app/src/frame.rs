@@ -264,13 +264,13 @@ pub struct CorpseMark {
 }
 
 impl CorpseMark {
-    /// Fresh meat is a light red, rot a dark olive, bones pale: apart by lightness as well as by
-    /// hue, so colour-blind eyes tell them too.
+    /// Fresh, rot or bones (`theme::CORPSE_*`).
     pub fn rgb(&self) -> [u8; 3] {
+        use crate::theme::{CORPSE_BONES, CORPSE_FRESH, CORPSE_ROT};
         match (self.skeleton, self.rot) {
-            (true, _) => [226, 218, 196],
-            (false, true) => [92, 98, 58],
-            (false, false) => [226, 92, 96],
+            (true, _) => CORPSE_BONES,
+            (false, true) => CORPSE_ROT,
+            (false, false) => CORPSE_FRESH,
         }
     }
 }

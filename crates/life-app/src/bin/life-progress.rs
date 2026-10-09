@@ -30,8 +30,7 @@ const EDGE: Color32 = theme::LINE;
 const TRACK: Color32 = theme::CARD_HOVER;
 const TEXT: Color32 = theme::TEXT;
 const WEAK: Color32 = theme::MUTED;
-/// The least of the texts, still 5:1 on `BG`.
-const FAINT: Color32 = Color32::from_rgb(118, 138, 158);
+const FAINT: Color32 = theme::FAINT;
 const GREEN: Color32 = theme::GOOD;
 const BLUE: Color32 = theme::ACCENT;
 const AMBER: Color32 = theme::WARN;

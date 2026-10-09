@@ -179,9 +179,15 @@ new default.
   from a frame carry its `world_gen`; a click (`Pick`) its `number` and the window's animation
   progress too, and picks the bodies where that frame drew them at that moment.
 - `frame.rs` (32-byte instances relative to an f64 origin), `motion.rs`, `render.rs` +
-  `creatures.wgsl` (one instanced draw), `view.rs`, `game.rs`, `behaviour.rs` (programs as
-  flowcharts), `stats.rs`, `census.rs`, `settings.rs` (`FIELDS` — the single spec of every field;
-  the file atomic, clamped, unknown keys ignored).
+  `creatures.wgsl` (one instanced draw; the diets' colours come in its uniforms), `view.rs`,
+  `game.rs` (top bar, tool rail, side panel with the docked lab, bottom «Мир ▾» and timeline),
+  `behaviour.rs` (programs as a flowchart or a list), `charts.rs`, `stats.rs`, `census.rs`,
+  `settings.rs` (`FIELDS` — the single spec of every field; the file atomic, clamped, unknown keys
+  ignored; `details` gates the researcher's extras).
+- `theme.rs` — the one palette, sizes, fonts (Inter, JetBrains Mono under `assets/fonts`, OFL),
+  icons and button styles; no colour literal elsewhere. `life-progress` includes it as a module.
+  Its tests keep the diets apart for colour-blind eyes and the text readable on the panels.
+  Floating windows open in and are kept to the world's area (`LifeApp::world_area`).
 - `ui_tests.rs` — kittest at 960×600 and 1600×900 under one GPU lock; CI renders through WARP and
   uploads every screen's picture as the `ui-shots` artifact (14 days; the `gallery_*` tests only
   take pictures). A cloud session reads them through the GitHub tools

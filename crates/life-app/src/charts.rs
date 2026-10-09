@@ -156,7 +156,7 @@ pub fn lines<T>(
     let n = points.len();
     let inner = rect.shrink(4.0);
     let small = FontId::monospace(10.5);
-    let faint = MUTED.gamma_multiply(0.8);
+    let faint = crate::theme::FAINT;
     if scale == Scale::Share {
         // the middle of the scale is a landmark for «more or less than half»
         let y = inner.center().y;
