@@ -99,6 +99,9 @@ pub struct LifeApp {
     pub lab_tab: Tab,
     /// The rules ticked for a joint reset in the lab.
     pub lab_reset_selected: HashSet<settings::Key>,
+    /// The world's part of the screen this frame, between the bars, the rail and the side panel:
+    /// the floating windows open and stay in it.
+    pub world_area: egui::Rect,
     /// The «Статистика» window and its tab.
     pub stats_open: bool,
     pub stats_tab: StatsTab,
@@ -183,6 +186,7 @@ impl LifeApp {
             behaviour_open: false,
             lab_tab: Tab::Food,
             lab_reset_selected: HashSet::new(),
+            world_area: egui::Rect::EVERYTHING,
             stats_open: false,
             stats_tab: StatsTab::Energy,
             region: None,

@@ -146,6 +146,7 @@ impl LifeApp {
         }
         egui::CentralPanel::no_frame().show(ui, |ui| {
             let rect = ui.max_rect();
+            self.world_area = rect;
             self.view.area_mode = self.tool == Tool::Area;
             let click = self.view.show(ui, rect, &self.sim, true);
             // the world the click was aimed at: one replaced since takes no clicks
@@ -190,7 +191,9 @@ impl LifeApp {
         });
         if self.behaviour_open {
             match self.view.frame.as_ref().and_then(|f| f.selected) {
-                Some(s) => crate::behaviour::behaviour_window(&ctx, &mut self.behaviour_open, &s),
+                Some(s) => {
+                    crate::behaviour::behaviour_window(&ctx, self.world_area, &mut self.behaviour_open, &s)
+                }
                 None => self.behaviour_open = false,
             }
         }

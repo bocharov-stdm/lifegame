@@ -27,22 +27,23 @@ pub enum StatsTab {
 impl LifeApp {
     pub fn stats_window(&mut self, ctx: &egui::Context) {
         let mut open = true;
-        // beside the behaviour window (at the left, `behaviour::WIDTH` wide) when the world has
-        // room for both, else a step lower: never right on top of it
-        let screen = ctx.content_rect();
-        let side = if self.side_open { 340.0 } else { 0.0 };
-        let beside = screen.width() - side >= 24.0 + crate::behaviour::WIDTH + 16.0 + 640.0;
+        // in the world's part of the screen, beside the behaviour window (at the left,
+        // `behaviour::WIDTH` wide) when the world has room for both, else a step lower: never right
+        // on top of it
+        let area = self.world_area;
+        let beside = area.width() >= 12.0 + crate::behaviour::WIDTH + 16.0 + 640.0;
         let at = if beside {
-            Vec2::new(24.0 + crate::behaviour::WIDTH + 16.0, 60.0)
+            Vec2::new(12.0 + crate::behaviour::WIDTH + 16.0, 12.0)
         } else {
-            Vec2::new(48.0, 110.0)
+            Vec2::new(36.0, 60.0)
         };
         egui::Window::new("Статистика")
             .open(&mut open)
             .resizable(true)
             .default_size(Vec2::new(640.0, 460.0))
             .min_width(420.0)
-            .default_pos(screen.left_top() + at)
+            .default_pos(area.left_top() + at)
+            .constrain_to(area)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Energy, "Энергия");

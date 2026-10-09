@@ -38,14 +38,15 @@ const CAPTION_H: f32 = 20.0;
 /// The colour of settings' boxes.
 const SETTING: Color32 = crate::theme::FLOW_SETTING;
 
-/// The window, while `open` and a creature is selected. The tab shown is remembered per creature;
-/// a newly selected one opens on the track it lives by.
-pub(crate) fn behaviour_window(ctx: &egui::Context, open: &mut bool, s: &Selected) {
+/// The window, while `open` and a creature is selected, in the world's part of the screen `area`.
+/// The tab shown is remembered per creature; a newly selected one opens on the track it lives by.
+pub(crate) fn behaviour_window(ctx: &egui::Context, area: Rect, open: &mut bool, s: &Selected) {
     egui::Window::new(format!("Поведение № {}", s.id))
         .id(egui::Id::new("поведение"))
         .open(open)
         .resizable(false)
-        .default_pos(ctx.content_rect().left_top() + Vec2::new(24.0, 60.0))
+        .default_pos(area.left_top() + Vec2::new(12.0, 12.0))
+        .constrain_to(area)
         .show(ctx, |ui| {
             ui.set_width(WIDTH);
             let memory = egui::Id::new("поведение-дорожка");
@@ -114,8 +115,8 @@ pub(crate) fn behaviour_window(ctx: &egui::Context, open: &mut bool, s: &Selecte
             };
             ui.add(egui::Label::new(egui::RichText::new(note).color(MUTED)).wrap());
             ui.add_space(4.0);
-            // as tall as the program, up to what the screen allows, scrolling a long one
-            let height = (ctx.content_rect().height() - 250.0).clamp(140.0, 1200.0);
+            // as tall as the program, up to what the world's area allows, scrolling a long one
+            let height = (area.height() - 270.0).clamp(120.0, 1200.0);
             let path = live.then_some(Path { fired: s.fired, applied: s.applied, tried: s.tried });
             egui::ScrollArea::vertical()
                 .id_salt(tab)
