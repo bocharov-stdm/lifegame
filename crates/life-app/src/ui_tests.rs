@@ -42,6 +42,8 @@ fn harness(size: Vec2) -> Harness<'static, LifeApp> {
 fn harness_with(size: Vec2, cfg: WorldConfig) -> Harness<'static, LifeApp> {
     let mut h =
         Harness::builder().with_size(size).wgpu().build_eframe(|cc| LifeApp::new(cc, Some(cfg), None));
+    // the first game's card is read: it would stand over every screen (a test of its own shows it)
+    h.state_mut().settings.intro_seen = true;
     h.state_mut().sim.send(Command::SetPaused(true));
     // the world's first frame comes from the simulation thread; we wait a limited time
     for _ in 0..300 {
@@ -157,7 +159,7 @@ fn игра_помещается_в_окно() {
             settle(h);
             // the side panel scrolls: from its tabs to the bottom panel
             let top = h.get_by_label("Графики").rect();
-            let bottom = h.get_by_label("Выбор").rect().top();
+            let bottom = h.get_by_label("Мир ▾").rect().top() - 4.0;
             let panel =
                 Rect::from_min_max(Pos2::new(top.left() - 12.0, top.top()), Pos2::new(size.x, bottom));
             check_layout(h, size, &format!("игра, {tab:?}, {tag}"), Some(panel));
@@ -186,7 +188,7 @@ fn игра_помещается_в_окно() {
         h.state_mut().settings.show_fps = true;
         settle(h);
         let top = h.get_by_label("Графики").rect();
-        let bottom = h.get_by_label("Выбор").rect().top();
+        let bottom = h.get_by_label("Мир ▾").rect().top() - 4.0;
         let panel = Rect::from_min_max(Pos2::new(top.left() - 12.0, top.top()), Pos2::new(size.x, bottom));
         check_layout(h, size, &format!("игра, цена тика, {tag}"), Some(panel));
         let phases = h.get_by_label_contains("фазы тика:").rect();
@@ -498,7 +500,7 @@ fn статистика_помещается_в_окно() {
                 assert!(h.query_by_label("Вся партия").is_none());
             }
         }
-        h.get_by_label("Убрать рамку").click();
+        h.get_by_label("Снять область (Esc)").click();
         settle(h);
         assert!(h.state().region.is_none() && h.state().view.area.is_none());
     });
@@ -511,6 +513,9 @@ fn спокойный_профиль_работает_на_паузе() {
         h.state_mut().side_open = false;
         settle(h);
         let tick = h.state().view.frame.as_ref().unwrap().tick;
+        // the world's menu at the bottom holds it
+        h.get_by_label("Мир ▾").click();
+        settle(h);
         h.get_by_label("Спокойнее").click();
         for _ in 0..100 {
             h.step();
@@ -886,7 +891,7 @@ fn поведение_выбранного_помещается_в_окно() {
             assert!(h.state().behaviour_open, "{name}, {tag}: the card's button opens it");
             let window = Rect::from_min_size(Pos2::ZERO, size).expand(0.5);
             let top = h.get_by_label("Графики").rect();
-            let bottom = h.get_by_label("Выбор").rect().top();
+            let bottom = h.get_by_label("Мир ▾").rect().top() - 4.0;
             let panel =
                 Rect::from_min_max(Pos2::new(top.left() - 12.0, top.top()), Pos2::new(size.x, bottom));
             // the adult tab, the one it lives by, opens first; then the juvenile one
@@ -1090,6 +1095,10 @@ fn gallery_other_sizes_and_scale() {
         h.state_mut().settings.ui_scale = scale;
         settle(&mut h);
         shot(&mut h, &format!("галерея-игра-{tag}"));
+        h.state_mut().settings.intro_seen = false;
+        settle(&mut h);
+        shot(&mut h, &format!("галерея-подсказка-новичка-{tag}"));
+        h.state_mut().settings.intro_seen = true;
         h.state_mut().screen = Screen::Menu;
         settle(&mut h);
         shot(&mut h, &format!("галерея-меню-{tag}"));
@@ -1170,6 +1179,15 @@ fn tab_toggles_the_panel_and_the_keys_keep_working() {
     h.key_press(K::Escape);
     settle(&mut h);
     assert!(!h.state().stats_open);
+    assert_eq!(h.state().screen, Screen::Game);
+    // F1 shows the keys' card, Esc puts it away
+    h.key_press(K::F1);
+    settle(&mut h);
+    assert!(h.state().keys_open && h.query_by_label("Вся справка").is_some());
+    shot(&mut h, "клавиши-960x600");
+    h.key_press(K::Escape);
+    settle(&mut h);
+    assert!(!h.state().keys_open);
     assert_eq!(h.state().screen, Screen::Game);
 }
 

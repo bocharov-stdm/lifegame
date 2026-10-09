@@ -15,6 +15,81 @@ use crate::history::{History, Sample};
 pub use crate::theme::VARIANT_COLORS;
 use crate::theme::{DIET_COLORS, DIET_NAMES, LINE, MUTED, PLANT_LINE, TEXT, rgb, spaced};
 
+/// The bottom strip's timeline: the creatures over the charts' span as a lit line with a faint
+/// fill, and the chronicle's events as marks in their colours (a fall red, a rise green, a shift of
+/// genes cyan, the player's own edits amber). Hovering a mark tells it; a click on one returns
+/// its tick.
+pub fn timeline(
+    ui: &mut egui::Ui,
+    history: &History,
+    log: &[crate::frame::LogEntry],
+    width: f32,
+    height: f32,
+) -> Option<u64> {
+    use life_sim::observe::EventKind;
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width.max(60.0), height), Sense::click());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 5.0, crate::theme::BG.gamma_multiply(0.6));
+    let points = history.counts.points();
+    let (Some(first), Some(last)) = (points.first(), points.last()) else { return None };
+    let (t0, t1) = (first.tick, last.tick.max(first.tick + 1));
+    let x_of = |tick: u64| rect.left() + (tick.saturating_sub(t0)) as f32 / (t1 - t0) as f32 * rect.width();
+    let most = points.iter().map(|s| s.creatures).fold(1.0_f64, f64::max);
+    let y_of = |v: f64| rect.bottom() - 3.0 - (v / most) as f32 * (rect.height() - 6.0);
+    let line: Vec<Pos2> = points.iter().map(|s| Pos2::new(x_of(s.tick), y_of(s.creatures))).collect();
+    // the fill under the line: a quad per step down to the bottom
+    let fill = rgb(CREATURE_COLOR).gamma_multiply(0.12);
+    let mut mesh = egui::Mesh::default();
+    for pair in line.windows(2) {
+        let i = mesh.vertices.len() as u32;
+        mesh.colored_vertex(pair[0], fill);
+        mesh.colored_vertex(pair[1], fill);
+        mesh.colored_vertex(Pos2::new(pair[0].x, rect.bottom()), fill);
+        mesh.colored_vertex(Pos2::new(pair[1].x, rect.bottom()), fill);
+        mesh.add_triangle(i, i + 1, i + 2);
+        mesh.add_triangle(i + 1, i + 2, i + 3);
+    }
+    painter.add(Shape::mesh(mesh));
+    painter.add(Shape::line(line, Stroke::new(1.4, rgb(CREATURE_COLOR))));
+    let color = |kind: Option<EventKind>| match kind {
+        Some(EventKind::CreaturesCrash | EventKind::CreaturesExtinct) => crate::theme::DANGER,
+        Some(EventKind::CreaturesRise) => crate::theme::GOOD,
+        Some(EventKind::GeneShift | EventKind::StrategyShift) => crate::theme::ACCENT,
+        Some(_) => MUTED,
+        None => crate::theme::WARN,
+    };
+    let marks: Vec<(f32, &crate::frame::LogEntry)> =
+        log.iter().filter(|e| e.tick >= t0 && e.tick <= t1).map(|e| (x_of(e.tick), e)).collect();
+    for (x, e) in &marks {
+        painter.vline(
+            *x,
+            rect.top() + 2.0..=rect.top() + rect.height() * 0.55,
+            Stroke::new(1.5, color(e.kind)),
+        );
+    }
+    let near = ui.input(|i| i.pointer.hover_pos()).filter(|p| rect.contains(*p)).and_then(|p| {
+        marks
+            .iter()
+            .filter(|(x, _)| (x - p.x).abs() <= 4.0)
+            .min_by(|a, b| (a.0 - p.x).abs().total_cmp(&(b.0 - p.x).abs()))
+    });
+    if let Some((x, e)) = near {
+        painter.vline(*x, rect.y_range(), Stroke::new(1.0, TEXT));
+        response.clone().on_hover_text(format!("тик {}: {}", spaced(e.tick), e.text));
+        if response.clicked() {
+            return Some(e.tick);
+        }
+    } else {
+        response.on_hover_text(format!(
+            "Существ за {}: от {} до {}. Чёрточки — события хроники, клик по ним — пауза.",
+            history.span_label().to_lowercase(),
+            spaced(points.iter().map(|s| s.creatures).fold(f64::MAX, f64::min).round() as u64),
+            spaced(most.round() as u64),
+        ));
+    }
+    None
+}
+
 /// The index of the point under the cursor (by x), if the cursor is over the chart.
 fn hover_index(ui: &egui::Ui, rect: Rect, n: usize) -> Option<usize> {
     let p = ui.input(|i| i.pointer.hover_pos())?;

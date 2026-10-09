@@ -1256,6 +1256,10 @@ pub struct Settings {
     pub fullscreen: bool,
     pub ui_scale: f64,
     pub show_fps: bool,
+    /// The researcher's details: the body formula, the census, the repeat command.
+    pub details: bool,
+    /// The first game's card of how things work has been read.
+    pub intro_seen: bool,
     // ── the world's computation ──────────────────────────────────────────────
     /// Threads for the creatures' decisions: 0 — auto (`auto_threads`), 1 — no parallelism.
     pub threads: usize,
@@ -1302,6 +1306,8 @@ impl Default for Settings {
             fullscreen: false,
             ui_scale: 0.0,
             show_fps: false,
+            details: false,
+            intro_seen: false,
             threads: 0,
             fast_cores: true,
         }
@@ -1425,6 +1431,8 @@ impl Settings {
         m.insert("fullscreen".into(), self.fullscreen.into());
         m.insert("ui_scale".into(), self.ui_scale.into());
         m.insert("show_fps".into(), self.show_fps.into());
+        m.insert("details".into(), self.details.into());
+        m.insert("intro_seen".into(), self.intro_seen.into());
         m.insert("threads".into(), self.threads.into());
         m.insert("fast_cores".into(), self.fast_cores.into());
         Value::Object(m)
@@ -1469,6 +1477,12 @@ impl Settings {
             let v = if v < 1.1 { 0.0 } else { v };
             s.ui_scale =
                 UI_SCALES.into_iter().min_by(|a, b| (a - v).abs().total_cmp(&(b - v).abs())).unwrap_or(0.0);
+        }
+        if let Some(v) = flag("details") {
+            s.details = v;
+        }
+        if let Some(v) = flag("intro_seen") {
+            s.intro_seen = v;
         }
         if let Some(v) = flag("show_fps") {
             s.show_fps = v;

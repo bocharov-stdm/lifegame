@@ -334,6 +334,202 @@ pub fn danger_button(ui: &mut egui::Ui, text: impl Into<String>) -> egui::Respon
     ui.add(egui::Button::new(label).fill(DANGER.gamma_multiply(0.12)).stroke(Stroke::new(1.0, DANGER)))
 }
 
+/// The icons of the tool rail and the top bar, drawn as lines: no font has them all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Icon {
+    Menu,
+    Play,
+    Pause,
+    Step,
+    Slower,
+    Faster,
+    Select,
+    Spawn,
+    Area,
+    Fit,
+    Follow,
+    Panel,
+    Stats,
+    Behaviour,
+    Lab,
+    Help,
+}
+
+/// A square button with an icon; `label` is what a hover and a screen reader say. `selected`:
+/// lit with the accent, as a tool in use or a window open.
+pub fn icon_button(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(32.0, 28.0), egui::Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, selected, label));
+    if ui.is_rect_visible(rect) {
+        let hovered = response.hovered() && enabled;
+        let (fill, edge) = match (selected, hovered) {
+            (true, _) => (ACCENT_DEEP, ACCENT),
+            (false, true) => (CARD_HOVER, ACCENT.gamma_multiply(0.6)),
+            (false, false) => (CARD, LINE),
+        };
+        let painter = ui.painter();
+        painter.rect(
+            rect,
+            CornerRadius::same(RADIUS),
+            fill,
+            Stroke::new(1.0, edge),
+            egui::StrokeKind::Inside,
+        );
+        let ink = if !enabled {
+            MUTED.gamma_multiply(0.5)
+        } else if selected {
+            ACCENT
+        } else {
+            TEXT
+        };
+        paint_icon(painter, icon, rect.shrink2(egui::vec2(9.0, 7.0)), ink);
+    }
+    response.on_hover_text(label)
+}
+
+/// An icon's lines inside `r`.
+pub fn paint_icon(painter: &egui::Painter, icon: Icon, r: egui::Rect, ink: Color32) {
+    use egui::{Shape, pos2};
+    let line = Stroke::new(1.6, ink);
+    let (l, t, rt, b) = (r.left(), r.top(), r.right(), r.bottom());
+    let (cx, cy) = (r.center().x, r.center().y);
+    let at = |x: f32, y: f32| pos2(l + (rt - l) * x, t + (b - t) * y);
+    match icon {
+        Icon::Menu => {
+            for y in [0.15, 0.5, 0.85] {
+                painter.line_segment([at(0.0, y), at(1.0, y)], line);
+            }
+        }
+        Icon::Play => {
+            painter.add(Shape::convex_polygon(
+                vec![at(0.2, 0.0), at(0.9, 0.5), at(0.2, 1.0)],
+                ink,
+                Stroke::NONE,
+            ));
+        }
+        Icon::Pause => {
+            painter.rect_filled(egui::Rect::from_min_max(at(0.18, 0.0), at(0.4, 1.0)), 1.0, ink);
+            painter.rect_filled(egui::Rect::from_min_max(at(0.6, 0.0), at(0.82, 1.0)), 1.0, ink);
+        }
+        Icon::Step => {
+            painter.add(Shape::convex_polygon(
+                vec![at(0.1, 0.0), at(0.7, 0.5), at(0.1, 1.0)],
+                ink,
+                Stroke::NONE,
+            ));
+            painter.rect_filled(egui::Rect::from_min_max(at(0.75, 0.0), at(0.92, 1.0)), 1.0, ink);
+        }
+        Icon::Slower => {
+            painter.line_segment([at(0.15, 0.5), at(0.85, 0.5)], line);
+        }
+        Icon::Faster => {
+            painter.line_segment([at(0.15, 0.5), at(0.85, 0.5)], line);
+            painter.line_segment([pos2(cx, t + 1.0), pos2(cx, b - 1.0)], line);
+        }
+        Icon::Select => {
+            let arrow = vec![
+                at(0.2, 0.0),
+                at(0.85, 0.6),
+                at(0.52, 0.62),
+                at(0.68, 1.0),
+                at(0.56, 1.0),
+                at(0.4, 0.66),
+                at(0.2, 0.85),
+            ];
+            painter.add(Shape::closed_line(arrow, line));
+        }
+        Icon::Spawn => {
+            painter.circle_stroke(pos2(cx, cy), (b - t) * 0.5, line);
+            painter.line_segment([pos2(cx - 3.5, cy), pos2(cx + 3.5, cy)], line);
+            painter.line_segment([pos2(cx, cy - 3.5), pos2(cx, cy + 3.5)], line);
+        }
+        Icon::Area => {
+            let corners = [at(0.0, 0.0), at(1.0, 0.0), at(1.0, 1.0), at(0.0, 1.0), at(0.0, 0.0)];
+            painter.extend(Shape::dashed_line(&corners, Stroke::new(1.4, ink), 3.0, 2.0));
+        }
+        Icon::Fit => {
+            for (x, y, dx, dy) in
+                [(0.0, 0.0, 1.0, 1.0), (1.0, 0.0, -1.0, 1.0), (0.0, 1.0, 1.0, -1.0), (1.0, 1.0, -1.0, -1.0)]
+            {
+                let c = at(x, y);
+                painter.line_segment([c, c + egui::vec2(5.0 * dx, 0.0)], line);
+                painter.line_segment([c, c + egui::vec2(0.0, 5.0 * dy)], line);
+            }
+        }
+        Icon::Follow => {
+            let radius = (b - t) * 0.42;
+            painter.circle_stroke(pos2(cx, cy), radius, line);
+            painter.circle_filled(pos2(cx, cy), 1.8, ink);
+            for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                let from = pos2(cx + dx * (radius - 1.0), cy + dy * (radius - 1.0));
+                painter.line_segment([from, from + egui::vec2(dx * 3.5, dy * 3.5)], line);
+            }
+        }
+        Icon::Panel => {
+            painter.rect_stroke(r, 1.5, line, egui::StrokeKind::Inside);
+            painter.line_segment([at(0.62, 0.0), at(0.62, 1.0)], line);
+        }
+        Icon::Stats => {
+            for (x, h) in [(0.1, 0.45), (0.45, 0.8), (0.8, 0.6)] {
+                painter.rect_filled(
+                    egui::Rect::from_min_max(at(x - 0.1, 1.0 - h), at(x + 0.12, 1.0)),
+                    1.0,
+                    ink,
+                );
+            }
+        }
+        Icon::Behaviour => {
+            painter.rect_stroke(
+                egui::Rect::from_min_max(at(0.0, 0.0), at(0.45, 0.38)),
+                1.0,
+                line,
+                egui::StrokeKind::Inside,
+            );
+            painter.rect_stroke(
+                egui::Rect::from_min_max(at(0.55, 0.62), at(1.0, 1.0)),
+                1.0,
+                line,
+                egui::StrokeKind::Inside,
+            );
+            painter.add(Shape::line(vec![at(0.22, 0.38), at(0.22, 0.81), at(0.55, 0.81)], line));
+        }
+        Icon::Lab => {
+            let flask = vec![
+                at(0.36, 0.0),
+                at(0.64, 0.0),
+                at(0.64, 0.38),
+                at(0.95, 1.0),
+                at(0.05, 1.0),
+                at(0.36, 0.38),
+            ];
+            painter.add(Shape::closed_line(flask, line));
+            painter.line_segment([at(0.2, 0.72), at(0.8, 0.72)], Stroke::new(1.2, ink));
+        }
+        Icon::Help => {
+            painter.text(
+                r.center(),
+                egui::Align2::CENTER_CENTER,
+                "?",
+                FontId::new(15.0, strong_family()),
+                ink,
+            );
+        }
+    }
+}
+
+/// A small rounded badge with a word in it: «пауза», «отстаёт», «мир изменён».
+pub fn chip(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
+    let label = egui::RichText::new(text).family(strong_family()).size(SMALL).color(color);
+    egui::Frame::new()
+        .fill(color.gamma_multiply(0.14))
+        .stroke(Stroke::new(1.0, color.gamma_multiply(0.8)))
+        .corner_radius(CornerRadius::same(10))
+        .inner_margin(egui::Margin::symmetric(8, 2))
+        .show(ui, |ui| ui.label(label))
+        .response
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

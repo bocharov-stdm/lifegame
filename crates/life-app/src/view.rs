@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use eframe::egui::{
-    self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, TextureOptions, Vec2,
+    self, Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, TextureHandle,
+    TextureOptions, Vec2,
 };
 use eframe::egui_wgpu;
 
@@ -449,6 +450,122 @@ impl WorldView {
             painter.circle_stroke(pos(sx, sy), body + 5.0, Stroke::new(2.0, ACCENT));
         }
 
+        // ── what the world tells of itself: depth, the thermocline, the scale, who is where ──
+        if interactive {
+            let clip = world_rect.intersect(rect);
+            let overlay = painter.with_clip_rect(clip);
+            let at_depth = |pct: f64| (top + (bottom - top) * pct / 100.0) as f32;
+            let small = FontId::proportional(crate::theme::SMALL);
+            if clip.is_positive() {
+                // the thermocline's top and bottom: warm water above, cold below
+                for (pct, alpha, label) in
+                    [(f.rules.thermo_top, 0.55, Some("термоклин")), (f.rules.thermo_bottom, 0.3, None)]
+                {
+                    let y = at_depth(pct);
+                    if y > clip.top() && y < clip.bottom() {
+                        let line = [Pos2::new(clip.left(), y), Pos2::new(clip.right(), y)];
+                        overlay.extend(Shape::dashed_line(
+                            &line,
+                            Stroke::new(1.0, ACCENT.gamma_multiply(alpha)),
+                            6.0,
+                            6.0,
+                        ));
+                        if let Some(label) = label {
+                            overlay.text(
+                                Pos2::new(clip.left() + 44.0, y - 2.0),
+                                Align2::LEFT_BOTTOM,
+                                label,
+                                small.clone(),
+                                ACCENT.gamma_multiply(0.8),
+                            );
+                        }
+                    }
+                }
+                // the depth ruler at the world's left edge
+                if bottom - top > 120.0 {
+                    let x = clip.left() + 2.0;
+                    for pct in [0, 25, 50, 75, 100] {
+                        let y = at_depth(pct as f64);
+                        if y < clip.top() - 1.0 || y > clip.bottom() + 1.0 {
+                            continue;
+                        }
+                        let y = y.clamp(clip.top() + 0.5, clip.bottom() - 0.5);
+                        overlay.hline(x..=x + 6.0, y, Stroke::new(1.0, MUTED));
+                        let anchor = match pct {
+                            0 => Align2::LEFT_TOP,
+                            100 => Align2::LEFT_BOTTOM,
+                            _ => Align2::LEFT_CENTER,
+                        };
+                        overlay.text(
+                            Pos2::new(x + 9.0, y),
+                            anchor,
+                            format!("{pct}%"),
+                            FontId::monospace(10.5),
+                            MUTED,
+                        );
+                    }
+                }
+            }
+            scale_bar(&painter, rect, cam.zoom);
+            if let Some(s) = f.selected {
+                let (x, y) = between(self.prev_selected, &s, k);
+                let (sx, sy) = cam.to_screen(x, y);
+                let inner = rect.shrink(14.0);
+                // off the screen: an arrow at the edge toward it
+                if !inner.contains(pos(sx, sy)) {
+                    let c = inner.center();
+                    let d = Vec2::new(sx as f32 - c.x, sy as f32 - c.y);
+                    let t = (inner.width() / 2.0 / d.x.abs().max(1e-3))
+                        .min(inner.height() / 2.0 / d.y.abs().max(1e-3));
+                    let tip = c + d * t;
+                    let dir = d.normalized();
+                    let side = Vec2::new(-dir.y, dir.x);
+                    let arrow = vec![tip, tip - dir * 12.0 + side * 6.0, tip - dir * 12.0 - side * 6.0];
+                    painter.add(Shape::convex_polygon(arrow, ACCENT, Stroke::NONE));
+                    painter.text(
+                        tip - dir * 18.0,
+                        Align2::CENTER_CENTER,
+                        format!("№ {}", s.id),
+                        small.clone(),
+                        ACCENT,
+                    );
+                }
+                if cam.target == Some(s.id) {
+                    badge(
+                        &painter,
+                        Pos2::new(rect.center().x, rect.top() + 12.0),
+                        &format!("слежу за № {} · F — отпустить", s.id),
+                    );
+                }
+            }
+            // hovering a body names it (a scan of the drawn bodies; skipped in a crowded view)
+            if response.hovered()
+                && !response.dragged()
+                && self.instances.len() <= 60_000
+                && let Some(p) = response.hover_pos()
+            {
+                let (wx, wy) = cam.to_world(p.x as f64, p.y as f64);
+                let near = self
+                    .instances
+                    .iter()
+                    .filter(|i| {
+                        (i.meta >> 16) & 3 == crate::motion::KIND_CREATURE
+                            && i.meta & crate::motion::GHOST == 0
+                    })
+                    .map(|i| (i, (f.origin.0 + i.x as f64 - wx).hypot(f.origin.1 + i.y as f64 - wy)))
+                    .filter(|(i, d)| *d <= (i.r as f64).max(4.0 / cam.zoom))
+                    .min_by(|a, b| a.1.total_cmp(&b.1));
+                if let Some((i, _)) = near {
+                    let diet = ((i.meta >> 12) & 3) as usize;
+                    let full = (i.color >> 24) as f64 / 255.0 * 100.0;
+                    response.clone().on_hover_text_at_pointer(format!(
+                        "{} · сытость {full:.0}% — клик: выбрать",
+                        life_core::genome::creature::DIET_VARIANTS[diet].label
+                    ));
+                }
+            }
+        }
+
         // ── the visible area — to the simulation thread ───────────────────────
         let (x0, y0, x1, y1) = cam.visible_world();
         let ppp = ui.ctx().pixels_per_point();
@@ -467,14 +584,15 @@ impl WorldView {
         }
 
         if interactive {
-            self.minimap(ui, rect);
+            let selected = f.selected.map(|s| (s.x, s.y));
+            self.minimap(ui, rect, selected);
         }
         click
     }
 
     /// The minimap in the bottom left corner: where we are in the world. A click or a drag on it
     /// moves the camera. When the whole world is visible, it is not needed.
-    fn minimap(&mut self, ui: &mut egui::Ui, rect: Rect) {
+    fn minimap(&mut self, ui: &mut egui::Ui, rect: Rect, selected: Option<(f64, f64)>) {
         let (Some(tex), Some(cam)) = (&self.minimap, &mut self.camera) else { return };
         if cam.is_fit() {
             return;
@@ -516,6 +634,10 @@ impl WorldView {
             seen = Rect::from_center_size(seen.center(), Vec2::new(3.0, seen.height()));
         }
         painter.rect_stroke(seen, 0.0, Stroke::new(1.5, ACCENT), StrokeKind::Outside);
+        if let Some((x, y)) = selected {
+            painter.circle_filled(to_map(x, y), 3.0, ACCENT);
+            painter.circle_stroke(to_map(x, y), 5.0, Stroke::new(1.0, BG));
+        }
         if (resp.clicked() || resp.dragged())
             && let Some(p) = resp.interact_pointer_pos()
         {
@@ -576,4 +698,55 @@ fn between(prev: Option<(u64, f64, f64)>, s: &frame::Selected, k: f32) -> (f64, 
 fn shot_color(alpha: u8) -> Color32 {
     let [r, g, b] = crate::theme::SHOT_COLOR;
     Color32::from_rgba_unmultiplied(r, g, b, alpha)
+}
+
+/// A 1-2-5 length near `about`.
+fn nice_length(about: f64) -> f64 {
+    let p = 10f64.powf(about.log10().floor());
+    [1.0, 2.0, 5.0, 10.0]
+        .into_iter()
+        .map(|m| m * p)
+        .min_by(|a, b| (a - about).abs().total_cmp(&(b - about).abs()))
+        .unwrap_or(p)
+}
+
+/// The scale bar at the bottom right: a round length of the world in metres (or centimetres) and
+/// in base bodies, about 110 points long.
+fn scale_bar(painter: &egui::Painter, rect: Rect, zoom: f64) {
+    let length = nice_length(110.0 / zoom);
+    let px = (length * zoom) as f32;
+    let (right, y) = (rect.right() - 16.0, rect.bottom() - 14.0);
+    let metres = life_core::units::metres(length);
+    let size = if metres >= 1.0 {
+        format!("{} м", format!("{metres:.1}").trim_end_matches(".0").replace('.', ","))
+    } else {
+        format!("{:.0} см", life_core::units::cm(length))
+    };
+    let base = life_core::genome::creature::GENES[life_core::genome::creature::Gene::Size as usize].base;
+    let bodies = length / base;
+    let text = format!("{size} · ≈ {} тел", crate::theme::spaced(bodies.round().max(1.0) as u64));
+    let font = FontId::proportional(crate::theme::SMALL);
+    let galley = painter.layout_no_wrap(text, font, MUTED);
+    let back = Rect::from_min_max(
+        Pos2::new(right - px - galley.size().x - 18.0, y - 10.0),
+        Pos2::new(right + 6.0, y + 8.0),
+    );
+    painter.rect_filled(back, 6.0, BG.gamma_multiply(0.7));
+    let bar = Stroke::new(1.5, crate::theme::TEXT);
+    painter.hline(right - px..=right, y, bar);
+    painter.vline(right - px, y - 3.0..=y + 3.0, bar);
+    painter.vline(right, y - 3.0..=y + 3.0, bar);
+    painter.galley(Pos2::new(right - px - galley.size().x - 8.0, y - galley.size().y / 2.0), galley, MUTED);
+}
+
+/// A word over the world at the top: what the camera is doing.
+fn badge(painter: &egui::Painter, at: Pos2, text: &str) {
+    let font = FontId::new(crate::theme::SMALL, crate::theme::strong_family());
+    let galley = painter.layout_no_wrap(text.to_owned(), font, ACCENT);
+    let back = Rect::from_center_size(
+        at + Vec2::new(0.0, galley.size().y / 2.0),
+        galley.size() + Vec2::new(18.0, 6.0),
+    );
+    painter.rect(back, 10.0, BG.gamma_multiply(0.8), Stroke::new(1.0, ACCENT), StrokeKind::Inside);
+    painter.galley(back.center() - galley.size() / 2.0, galley, ACCENT);
 }

@@ -14,7 +14,7 @@ use crate::frame::{CREATURE_COLOR, Ending, PLANT_COLOR, Selected};
 use crate::history::History;
 use crate::settings::{self, FIELDS, Tab};
 use crate::sim::{Command, SPEEDS};
-use crate::theme::{self, ACCENT, DANGER, GOOD, MUTED, TEXT, rgb, spaced};
+use crate::theme::{self, ACCENT, DANGER, GOOD, Icon, MUTED, TEXT, rgb, spaced};
 use crate::view::Click;
 use life_core::profile::Phase;
 
@@ -130,6 +130,10 @@ impl LifeApp {
             theme::backdrop(ui, Some(Align2::CENTER_TOP));
             self.bottom_bar(ui)
         });
+        egui::Panel::left("инструменты").frame(frame).resizable(false).exact_size(46.0).show(ui, |ui| {
+            theme::backdrop(ui, Some(Align2::RIGHT_CENTER));
+            self.tool_rail(ui)
+        });
         if self.side_open {
             egui::Panel::right("сбоку").frame(frame).default_size(340.0).size_range(310.0..=620.0).show(
                 ui,
@@ -195,6 +199,12 @@ impl LifeApp {
         if self.stats_open {
             self.stats_window(&ctx);
         }
+        if self.keys_open {
+            self.keys_window(&ctx);
+        }
+        if !self.settings.intro_seen && self.game.is_some() {
+            self.intro_window(&ctx);
+        }
         self.ending_window(&ctx);
     }
 
@@ -228,12 +238,16 @@ impl LifeApp {
                     p(Key::I),
                     p(Key::Escape),
                     p(Key::B),
+                    p(Key::F1),
                 ],
                 [i.key_down(Key::W), i.key_down(Key::S), i.key_down(Key::A), i.key_down(Key::D)],
                 i.stable_dt.min(0.1) as f64,
             )
         });
-        let [space, step, faster, slower, home, follow, tab, lab, stats, escape, behaviour] = keys;
+        let [space, step, faster, slower, home, follow, tab, lab, stats, escape, behaviour, f1] = keys;
+        if f1 {
+            self.keys_open = !self.keys_open;
+        }
         if space {
             self.sim.send(Command::TogglePause);
         }
@@ -269,6 +283,8 @@ impl LifeApp {
                 self.help_open = false;
             } else if self.prefs_open {
                 self.prefs_open = false;
+            } else if self.keys_open {
+                self.keys_open = false;
             } else if self.lab_open {
                 self.lab_open = false;
             } else if self.behaviour_open {
@@ -300,74 +316,102 @@ impl LifeApp {
         }
     }
 
+    /// The top bar: the menu, time (pause, a step, the speed), the counts, what state the world is
+    /// in (chips), and on the right the windows: statistics, behaviour, lab, help, the side panel.
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         let Some(f) = &self.view.frame else {
             ui.label("Создаём мир…");
             return;
         };
         let (st, tick, counts) = (f.status, f.tick, [f.plants, f.creatures]);
-        let (seed, scale) = (f.seed, f.scale);
+        let (seed, scale, edited, selected) = (f.seed, f.scale, f.edits > 0, f.selected.is_some());
         let (tick_ms, snapshot_ms, build_ms, draw_ms) =
             (f.tick_ms, f.snapshot_ms, f.build_ms, self.view.draw_ms);
         let phases = f.phases;
+        ui.add_space(3.0);
         ui.horizontal(|ui| {
-            let (icon, hint) = if st.paused {
-                ("▶", "Пуск (Пробел)")
-            } else {
-                ("⏸", "Пауза (Пробел)")
-            };
-            if ui.button(icon).on_hover_text(hint).clicked() {
+            if theme::icon_button(ui, Icon::Menu, "Меню (Esc)", false).clicked() {
+                self.open_menu();
+            }
+            ui.add_space(theme::GAP);
+            let (icon, hint) = if st.paused { (Icon::Play, "Пуск (Пробел)") } else { (Icon::Pause, "Пауза (Пробел)") };
+            if theme::icon_button(ui, icon, hint, false).clicked() {
                 self.sim.send(Command::TogglePause);
             }
-            if ui.add_enabled(st.paused, egui::Button::new("⏭")).on_hover_text("Один тик (→)").clicked()
+            if ui.add_enabled_ui(st.paused, |ui| theme::icon_button(ui, Icon::Step, "Один тик (→)", false)).inner.clicked()
             {
                 self.sim.send(Command::Step);
             }
             if ui
-                .add_enabled(st.speed_index > 0, egui::Button::new("−"))
-                .on_hover_text("Медленнее (−)")
+                .add_enabled_ui(st.speed_index > 0, |ui| theme::icon_button(ui, Icon::Slower, "Медленнее (−)", false))
+                .inner
                 .clicked()
             {
                 self.sim.send(Command::SetSpeed(st.speed_index - 1));
             }
-            ui.label(speed_label(st.speed_index));
+            ui.label(RichText::new(speed_label(st.speed_index)).monospace()).on_hover_text("Выбранная скорость");
             if ui
-                .add_enabled(st.speed_index + 1 < SPEEDS.len(), egui::Button::new("+"))
-                .on_hover_text("Быстрее (+)")
+                .add_enabled_ui(st.speed_index + 1 < SPEEDS.len(), |ui| {
+                    theme::icon_button(ui, Icon::Faster, "Быстрее (+)", false)
+                })
+                .inner
                 .clicked()
             {
                 self.sim.send(Command::SetSpeed(st.speed_index + 1));
             }
-            ui.separator();
-            ui.label(format!("тик {}", spaced(tick)));
-            ui.colored_label(rgb(PLANT_COLOR), format!("растения {}", spaced(counts[0] as u64)));
-            ui.colored_label(rgb(CREATURE_COLOR), format!("существа {}", spaced(counts[1] as u64)));
-            ui.separator();
+            ui.add_space(theme::GAP);
+            ui.label(RichText::new(format!("тик {}", spaced(tick))).monospace())
+                .on_hover_text(format!("Сид {seed}, мир ×{scale}"));
+            ui.label(RichText::new(format!("● {}", spaced(counts[0] as u64))).monospace().color(rgb(PLANT_COLOR)))
+                .on_hover_text("Растений");
+            ui.label(RichText::new(format!("● {}", spaced(counts[1] as u64))).monospace().color(rgb(CREATURE_COLOR)))
+                .on_hover_text("Существ");
             if st.lagging {
                 let target = SPEEDS[st.speed_index].unwrap_or(0.0);
-                ui.colored_label(DANGER, format!("отстаёт: {:.0} из {target:.0} тиков/с", st.tps)).on_hover_text(
+                theme::chip(ui, &format!("отстаёт: {:.0} из {target:.0}", st.tps), DANGER).on_hover_text(
                     "Тик не успевает за выбранной скоростью: мир большой или скорость высокая. \
                      Окно при этом не тормозит.",
                 );
             } else if st.paused {
-                ui.colored_label(MUTED, "пауза");
-            } else {
-                ui.colored_label(MUTED, format!("{:.0} тиков/с", st.tps));
+                theme::chip(ui, "пауза", theme::WARN).on_hover_text("Пробел — пуск");
+            }
+            if edited {
+                theme::chip(ui, "мир изменён", MUTED).on_hover_text(
+                    "Правила или существ меняли на ходу: повтор этой партии без окна совпадёт только до \
+                     первого изменения.",
+                );
             }
             if self.settings.show_fps {
                 ui.colored_label(
                     MUTED,
                     format!(
-                        "{:.0} к/с · тик {tick_ms:.1} · срез {snapshot_ms:.1} · сборка {build_ms:.1} · рисунок {draw_ms:.1} мс",
-                        self.fps()
+                        "{:.0} к/с · {:.0} тиков/с · тик {tick_ms:.1} · срез {snapshot_ms:.1} · сборка {build_ms:.1} · рисунок {draw_ms:.1} мс",
+                        self.fps(),
+                        st.tps
                     ),
                 );
             }
-            ui.colored_label(MUTED, format!("сид {seed} · ×{scale}"));
-
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("☰ Меню").on_hover_text("Меню (Esc)").clicked() {
-                    self.open_menu();
+                if theme::icon_button(ui, Icon::Panel, "Боковая панель (Tab)", self.side_open).clicked() {
+                    self.side_open = !self.side_open;
+                }
+                if theme::icon_button(ui, Icon::Help, "Клавиши и справка (F1)", self.keys_open).clicked() {
+                    self.keys_open = !self.keys_open;
+                }
+                if theme::icon_button(ui, Icon::Lab, "Лаборатория: правила на ходу (L)", self.lab_open).clicked() {
+                    self.lab_open = !self.lab_open;
+                }
+                if ui
+                    .add_enabled_ui(selected, |ui| {
+                        theme::icon_button(ui, Icon::Behaviour, "Поведение выбранного (B)", self.behaviour_open)
+                    })
+                    .inner
+                    .clicked()
+                {
+                    self.behaviour_open = !self.behaviour_open;
+                }
+                if theme::icon_button(ui, Icon::Stats, "Статистика (I)", self.stats_open).clicked() {
+                    self.stats_open = !self.stats_open;
                 }
             });
         });
@@ -377,50 +421,99 @@ impl LifeApp {
                  Сглажено, как цена тика.",
             );
         }
+        ui.add_space(2.0);
     }
 
-    fn bottom_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut self.tool, Tool::Select, "Выбор")
-                .on_hover_text("Клик по существу — выбрать");
-            ui.selectable_value(&mut self.tool, Tool::Spawn, "+ существо")
-                .on_hover_text("Подсадить базовое существо кликом по миру");
-            ui.selectable_value(&mut self.tool, Tool::Area, "Область")
-                .on_hover_text("Протянуть прямоугольник по миру и увидеть геном тех, кто внутри");
-            if self.view.area.is_some() && ui.button("Убрать рамку").on_hover_text("Снять область (Esc)").clicked() {
-                self.clear_region();
+    /// The tool rail at the left: what a click on the world does, and the camera.
+    fn tool_rail(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(6.0);
+        ui.vertical_centered(|ui| {
+            for (tool, icon, label) in [
+                (Tool::Select, Icon::Select, "Выбор: клик по существу"),
+                (Tool::Spawn, Icon::Spawn, "Подсадить существо кликом"),
+                (Tool::Area, Icon::Area, "Область: протянуть рамку — геном тех, кто внутри"),
+            ] {
+                if theme::icon_button(ui, icon, label, self.tool == tool).clicked() {
+                    self.tool = tool;
+                }
             }
-            let was_rendering = self.render_world;
-            egui::ComboBox::from_id_salt("рендер мира")
-                .selected_text(if self.render_world { "Рендер: авто" } else { "Рендер: выкл" })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.render_world, true, "авто");
-                    ui.selectable_value(&mut self.render_world, false, "выкл");
-                });
-            if was_rendering != self.render_world {
-                self.sim.send(Command::RenderWorld(self.render_world));
-            }
-            ui.separator();
-            if ui.button("Весь мир").on_hover_text("Показать весь мир (Home)").clicked()
+            ui.add_space(theme::GAP);
+            if theme::icon_button(ui, Icon::Fit, "Весь мир (Home)", false).clicked()
                 && let Some(cam) = &mut self.view.camera
             {
                 cam.fit();
             }
-            ui.toggle_value(&mut self.lab_open, "Лаборатория").on_hover_text("Правила мира на ходу (L)");
-            ui.toggle_value(&mut self.stats_open, "Статистика")
-                .on_hover_text("Сытость, где живут, область (I)");
-            ui.toggle_value(&mut self.side_open, "Панель").on_hover_text("Графики, хроника, существо (Tab)");
-            if ui.button("Спокойнее").on_hover_text("30 тиков/с и цена жизни 150 (обычная — 100): численность постепенно снижается, но падальщики почти не держатся. Можно применить к старой партии.").clicked() {
-                self.calm_world();
-            }
+            let selected = self.view.frame.as_ref().is_some_and(|f| f.selected.is_some());
             if ui
-                .button("Заново")
-                .on_hover_text("Та же партия с начала: тот же сид и стартовые правила")
+                .add_enabled_ui(selected, |ui| {
+                    theme::icon_button(ui, Icon::Follow, "Следить за выбранным (F)", self.view.following())
+                })
+                .inner
                 .clicked()
             {
-                self.confirm = Some(crate::app::Confirm::Restart);
+                self.view.toggle_follow();
+            }
+            ui.add_space(theme::GAP);
+            let area = self.view.area.is_some();
+            if ui
+                .add_enabled_ui(area, |ui| theme::icon_button(ui, Icon::Area, "Снять область (Esc)", area))
+                .inner
+                .clicked()
+            {
+                self.clear_region();
             }
         });
+    }
+
+    /// The bottom strip: the world's menu, the creatures over the charts' span with the
+    /// chronicle's marks (a click on a mark pauses), and the region, if one is set.
+    fn bottom_bar(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(3.0);
+        ui.horizontal(|ui| {
+            ui.menu_button("Мир ▾", |ui| {
+                if ui
+                    .button("Спокойнее")
+                    .on_hover_text(
+                        "30 тиков/с и цена жизни 150 (обычная — 100): численность постепенно снижается, \
+                         но падальщики почти не держатся. Сохраняется и для новых миров.",
+                    )
+                    .clicked()
+                {
+                    self.calm_world();
+                    ui.close();
+                }
+                if ui
+                    .button("Заново…")
+                    .on_hover_text("Та же партия с начала: тот же сид и стартовые правила")
+                    .clicked()
+                {
+                    self.confirm = Some(crate::app::Confirm::Restart);
+                    ui.close();
+                }
+                if ui.button("Новый сид").on_hover_text("Та же партия с другим сидом").clicked()
+                {
+                    self.new_seed();
+                    ui.close();
+                }
+                if ui.button("Новый мир…").clicked() {
+                    self.screen = crate::app::Screen::Setup;
+                    ui.close();
+                }
+                ui.separator();
+                let was_rendering = self.render_world;
+                ui.checkbox(&mut self.render_world, "Рисовать мир")
+                    .on_hover_text("Без рисунка мир считается быстрее; графики и карточка работают");
+                if was_rendering != self.render_world {
+                    self.sim.send(Command::RenderWorld(self.render_world));
+                }
+            });
+            let width = ui.available_width();
+            if let Some(tick) = charts::timeline(ui, &self.history, &self.log, width, 26.0) {
+                self.sim.send(Command::SetPaused(true));
+                self.toast(format!("пауза у события тика {}", spaced(tick)));
+            }
+        });
+        ui.add_space(2.0);
     }
 
     fn side_panel(&mut self, ui: &mut egui::Ui) {
@@ -483,7 +576,9 @@ impl LifeApp {
                 }
             });
             self.other_facts(ui);
-            self.research(ui);
+            if self.settings.details {
+                self.research(ui);
+            }
         });
     }
 
@@ -547,6 +642,57 @@ impl LifeApp {
         if pause {
             self.sim.send(Command::SetPaused(true));
         }
+    }
+
+    /// The first game's card: what the world shows and where things are, in four lines. Read once;
+    /// the settings can show it again.
+    fn intro_window(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Как здесь всё устроено")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_BOTTOM, Vec2::new(0.0, -64.0))
+            .show(ctx, |ui| {
+                ui.set_max_width(460.0);
+                ui.horizontal(|ui| {
+                    ui.label("Цвет существа — его питание:");
+                    for d in 0..4 {
+                        ui.colored_label(rgb(theme::DIET_COLORS[d]), theme::DIET_NAMES[d]);
+                    }
+                });
+                for line in [
+                    "Светлое ядро — сытость: у голодных оно маленькое.",
+                    "Пробел — пауза, колесо — приблизить, клик по существу — его карточка справа.",
+                    "Слева — инструменты и камера, вверху справа — статистика, поведение, лаборатория; \
+                     Tab прячет боковую панель.",
+                    "F1 — все клавиши.",
+                ] {
+                    ui.label(line);
+                }
+                ui.add_space(theme::GAP);
+                if theme::primary_button(ui, "Понятно").clicked() {
+                    self.settings.intro_seen = true;
+                    self.save_settings();
+                }
+            });
+    }
+
+    /// The keys' card at the top right, under the bar: what each key does, and the whole help.
+    fn keys_window(&mut self, ctx: &egui::Context) {
+        let mut open = true;
+        egui::Window::new("Клавиши")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::RIGHT_TOP, Vec2::new(-12.0, 52.0))
+            .show(ctx, |ui| {
+                crate::screens::keys_grid(ui);
+                ui.add_space(theme::GAP);
+                if ui.button("Вся справка").clicked() {
+                    self.help_open = true;
+                    self.keys_open = false;
+                }
+            });
+        self.keys_open &= open;
     }
 
     /// Drop the selection, its following and the card of one that died.
@@ -721,7 +867,7 @@ impl LifeApp {
                                     }
                                 });
                         });
-                        if body {
+                        if body && self.settings.details {
                             ui.add_space(8.0);
                             crate::screens::body_formula(ui, &applied(&self.lab));
                         }

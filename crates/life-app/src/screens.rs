@@ -162,8 +162,11 @@ impl LifeApp {
                         if self.setup_tab == Tab::Body {
                             ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| fields(ui, &mut self.settings, Tab::Body));
-                                ui.add_space(12.0);
-                                body_formula(ui, &self.settings.rules());
+                                // the formula is a researcher's detail
+                                if self.settings.details {
+                                    ui.add_space(12.0);
+                                    body_formula(ui, &self.settings.rules());
+                                }
                             });
                         } else if self.setup_tab == Tab::Food {
                             let space = Space::new(self.settings.scale, self.settings.shape);
@@ -291,6 +294,13 @@ impl LifeApp {
                                 });
                         });
                         ui.checkbox(&mut s.show_fps, "Показывать кадры в секунду и цену тика");
+                        ui.checkbox(&mut s.details, "Подробности для исследователя").on_hover_text(
+                            "Формула цены тела, «Внутри видов» в статистике, команда повтора партии без окна",
+                        );
+                        if ui.button("Показать подсказку новичка снова").clicked()
+                        {
+                            s.intro_seen = false;
+                        }
                         ui.add_space(6.0);
                         ui.separator();
                         computation(ui, s, now);
@@ -318,27 +328,7 @@ impl LifeApp {
             .show(ctx, |ui| {
             egui::ScrollArea::vertical().max_height((screen.height() - 160.0).max(200.0)).show(ui, |ui| {
                 ui.label(crate::theme::strong("Управление"));
-                egui::Grid::new("клавиши").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
-                    for (k, what) in [
-                        ("Пробел", "пауза"),
-                        ("→", "один тик на паузе"),
-                        ("+ / −", "быстрее / медленнее"),
-                        ("колесо", "приблизить к курсору"),
-                        ("перетаскивание, WASD", "двигать камеру"),
-                        ("Home", "весь мир"),
-                        ("клик", "выбрать существо (промах выбор не снимает)"),
-                        ("F", "следить за выбранным"),
-                        ("B", "поведение выбранного: блок-схема его программы"),
-                        ("Tab", "боковая панель"),
-                        ("L", "лаборатория: правила на ходу"),
-                        ("I", "статистика: сытость, где живут, область"),
-                        ("Esc", "закрыть верхнее окно, снять выбор; потом меню"),
-                    ] {
-                        ui.label(crate::theme::strong(k));
-                        ui.label(what);
-                        ui.end_row();
-                    }
-                });
+                keys_grid(ui);
                 ui.add_space(6.0);
                 ui.label(crate::theme::strong("Что происходит"));
                 ui.label(
@@ -473,6 +463,35 @@ fn threads_word(n: usize) -> &'static str {
 fn fast_cores_exist() -> bool {
     static HYBRID: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *HYBRID.get_or_init(life_sim::cores::has_fast_cores)
+}
+
+/// The game's keys and mouse, for the help and the keys' card.
+pub const CONTROLS: [(&str, &str); 14] = [
+    ("Пробел", "пауза"),
+    ("→", "один тик на паузе"),
+    ("+ / −", "быстрее / медленнее"),
+    ("колесо", "приблизить к курсору"),
+    ("перетаскивание, WASD", "двигать камеру"),
+    ("Home", "весь мир"),
+    ("клик", "выбрать существо (промах выбор не снимает)"),
+    ("F", "следить за выбранным"),
+    ("B", "поведение выбранного: блок-схема его программы"),
+    ("Tab", "боковая панель"),
+    ("L", "лаборатория: правила на ходу"),
+    ("I", "статистика: сытость, где живут, область"),
+    ("Esc", "закрыть верхнее окно, снять выбор; потом меню"),
+    ("F1", "эта подсказка"),
+];
+
+/// The keys as a two-column grid.
+pub fn keys_grid(ui: &mut egui::Ui) {
+    egui::Grid::new("клавиши").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
+        for (k, what) in CONTROLS {
+            ui.label(theme::strong(k));
+            ui.label(what);
+            ui.end_row();
+        }
+    });
 }
 
 /// 0 and 1 are the same scale (the system's): a file saved with 1 shows it as the system's.

@@ -48,7 +48,10 @@ impl LifeApp {
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Energy, "Энергия");
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Where, "Где живут");
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Region, "Область");
-                    ui.selectable_value(&mut self.stats_tab, StatsTab::Species, "Внутри видов");
+                    // the census is a researcher's detail
+                    if self.settings.details || self.stats_tab == StatsTab::Species {
+                        ui.selectable_value(&mut self.stats_tab, StatsTab::Species, "Внутри видов");
+                    }
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| match self.stats_tab {

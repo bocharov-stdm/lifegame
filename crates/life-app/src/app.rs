@@ -112,6 +112,8 @@ pub struct LifeApp {
     pub setup_tab: Tab,
     pub prefs_open: bool,
     pub help_open: bool,
+    /// The keys' card over the game (F1, «?»).
+    pub keys_open: bool,
     /// Whether the game was paused when the menu was opened.
     pub paused_before_menu: bool,
     pub toasts: VecDeque<Toast>,
@@ -191,6 +193,7 @@ impl LifeApp {
             setup_tab: Tab::World,
             prefs_open: false,
             help_open: false,
+            keys_open: false,
             paused_before_menu: false,
             toasts: VecDeque::new(),
             lost: None,
