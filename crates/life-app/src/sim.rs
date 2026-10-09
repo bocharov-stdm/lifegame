@@ -1322,8 +1322,11 @@ mod tests {
         let f = wait_frame(&h, |f| f.selected.is_some());
         let s = f.selected.unwrap();
         assert_eq!(s.id, 1);
-        // a click into the void drops the selection
+        // a click into the void keeps the selection; «Снять выбор» drops it
         h.send(Command::Pick { x: -1e6, y: -1e6, radius: 1.0, world_gen: 1, frame: f.number, k: 1.0 });
+        let after = wait_frame(&h, |g| g.number > f.number);
+        assert_eq!(after.selected.map(|s| s.id), Some(1), "a miss keeps the selection");
+        h.send(Command::Select(None));
         wait_frame(&h, |f| f.selected.is_none());
         // a click exactly in the centre selects
         h.send(Command::Pick { x: s.x, y: s.y, radius: 1.0, world_gen: 1, frame: f.number, k: 1.0 });
@@ -1352,6 +1355,7 @@ mod tests {
         assert_eq!(sim.selected, Some(id), "picked where the frame drew it");
         sim.world.creatures[0].alive = false;
         sim.world.creatures.retain(|v| v.alive);
+        sim.selected = None;
         sim.apply(pick(frame.number));
         assert_eq!(sim.selected, None, "dead since");
     }
@@ -1376,6 +1380,8 @@ mod tests {
             |k| Command::Pick { x: x + step / 2.0, y, radius: 1.0, world_gen: 0, frame: frame.number, k };
         sim.apply(pick(0.5));
         assert_eq!(sim.selected, Some(id), "halfway, where it was drawn");
+        // a miss keeps a selection: start from none to see what the click hits
+        sim.selected = None;
         sim.apply(pick(1.0));
         assert_ne!(sim.selected, Some(id), "at the end of its way it is no longer there");
     }
