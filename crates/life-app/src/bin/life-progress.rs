@@ -18,18 +18,24 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, vec2};
 use serde_json::Value;
 
-// The window's own dark palette, whatever the system theme: text must read on its background.
-const BG: Color32 = Color32::from_rgb(0x15, 0x17, 0x1c);
-const CARD: Color32 = Color32::from_rgb(0x20, 0x24, 0x2c);
-const EDGE: Color32 = Color32::from_rgb(0x2e, 0x34, 0x3e);
-const TRACK: Color32 = Color32::from_rgb(0x2a, 0x2f, 0x38);
-const TEXT: Color32 = Color32::from_rgb(0xe8, 0xea, 0xed);
-const WEAK: Color32 = Color32::from_rgb(0xa4, 0xac, 0xb6);
-const FAINT: Color32 = Color32::from_rgb(0x74, 0x7c, 0x88);
-const GREEN: Color32 = Color32::from_rgb(0x4c, 0xc3, 0x8a);
-const BLUE: Color32 = Color32::from_rgb(0x5a, 0xa9, 0xff);
-const AMBER: Color32 = Color32::from_rgb(0xf0, 0xb4, 0x4c);
-const RED: Color32 = Color32::from_rgb(0xef, 0x6b, 0x5f);
+// The game's look, so the sweep's window is one of the family: its palette, fonts and widgets.
+// This window uses a part of it.
+#[allow(dead_code)]
+#[path = "../theme.rs"]
+mod theme;
+
+const BG: Color32 = theme::BG;
+const CARD: Color32 = theme::CARD;
+const EDGE: Color32 = theme::LINE;
+const TRACK: Color32 = theme::CARD_HOVER;
+const TEXT: Color32 = theme::TEXT;
+const WEAK: Color32 = theme::MUTED;
+/// The least of the texts, still 5:1 on `BG`.
+const FAINT: Color32 = Color32::from_rgb(118, 138, 158);
+const GREEN: Color32 = theme::GOOD;
+const BLUE: Color32 = theme::ACCENT;
+const AMBER: Color32 = theme::WARN;
+const RED: Color32 = theme::DANGER;
 
 /// Seconds as the window says them: «40 с», «12 мин», «1 ч 5 мин».
 fn span(s: f64) -> String {
@@ -304,37 +310,17 @@ fn send(progress: &Path, what: &str) {
     }
 }
 
-/// The window's palette and sizes, set once.
+/// The window's look, set once: the game's (`theme::apply`; «⏸ ▶ ⏹» come from egui's own icon
+/// font behind it), on the deepest ground, the buttons a little roomier.
 fn style(ctx: &egui::Context) {
-    let mut v = egui::Visuals::dark();
-    v.override_text_color = Some(TEXT);
-    v.panel_fill = BG;
-    v.window_fill = BG;
-    v.extreme_bg_color = TRACK;
-    v.widgets.inactive.weak_bg_fill = Color32::from_rgb(0x2c, 0x32, 0x3c);
-    v.widgets.inactive.bg_stroke = Stroke::new(1.0, EDGE);
-    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(0x38, 0x40, 0x4c);
-    v.widgets.active.weak_bg_fill = Color32::from_rgb(0x44, 0x4d, 0x5b);
-    // «≈», «⏸», «▶», «⏹» are missing from egui's main font; the built-in Hack falls back for them
-    let mut fonts = egui::FontDefinitions::default();
-    if let Some(list) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-        list.push("Hack".into());
-    }
-    ctx.set_fonts(fonts);
-    ctx.set_theme(egui::Theme::Dark);
-    ctx.set_visuals_of(egui::Theme::Dark, v);
+    theme::apply(ctx);
     ctx.all_styles_mut(|s| {
-        s.spacing.item_spacing = vec2(8.0, 6.0);
+        s.visuals.override_text_color = Some(TEXT);
+        s.visuals.panel_fill = BG;
+        s.visuals.window_fill = BG;
         s.spacing.button_padding = vec2(12.0, 5.0);
-        for (text, size) in [
-            (egui::TextStyle::Body, 14.0),
-            (egui::TextStyle::Button, 14.0),
-            (egui::TextStyle::Small, 12.0),
-            (egui::TextStyle::Heading, 19.0),
-        ] {
-            if let Some(f) = s.text_styles.get_mut(&text) {
-                f.size = size;
-            }
+        if let Some(f) = s.text_styles.get_mut(&egui::TextStyle::Heading) {
+            f.size = 19.0;
         }
     });
 }
@@ -348,7 +334,10 @@ fn bar(ui: &mut egui::Ui, view: &View) {
     let mut fill = rect;
     fill.set_width((rect.width() * view.share()).max(if view.done > 0 { 14.0 } else { 0.0 }));
     if view.done > 0 {
-        p.rect_filled(fill, r, view.state.color().gamma_multiply(0.85));
+        // a dim fill under a lit edge: the count on it stays readable
+        let color = view.state.color();
+        p.rect_filled(fill, r, color.gamma_multiply(0.45));
+        p.rect_stroke(fill, r, Stroke::new(1.0, color.gamma_multiply(0.9)), egui::StrokeKind::Inside);
     }
     p.text(
         rect.center(),
