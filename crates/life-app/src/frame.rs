@@ -174,6 +174,19 @@ pub struct Selected {
     pub tried: u32,
 }
 
+/// The selected creature that died: the card shows it in place of the living one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lost {
+    pub id: u64,
+    pub tick: u64,
+    pub age: f64,
+    pub cause: life_core::creature::Death,
+    /// Its diet (`Diet` order) and where it died.
+    pub diet: usize,
+    pub x: f64,
+    pub y: f64,
+}
+
 impl Selected {
     pub fn of(world: &World, id: u64) -> Option<Selected> {
         world.creature(id).map(|v| {
@@ -311,6 +324,8 @@ pub struct Frame {
     /// The whole world in big cells; comes not in every frame.
     pub minimap: Option<Raster>,
     pub selected: Option<Selected>,
+    /// The selected creature that died since the previous frame (its selection is gone).
+    pub lost: Option<Lost>,
     /// What is new since the previous frame: the charts' points and the chronicle entries. Frames
     /// are not lost (the thread puts a new one only when the window has taken the previous one), so
     /// increments are enough.

@@ -98,7 +98,7 @@ impl LifeApp {
         // a price set far past the sliders' range (`--rule size_cost=...`) can overflow the upkeep at ×3
         let rules = match f.rules.with("cost_scale", 3.0) {
             Ok(rules) => rules,
-            Err(e) => return self.toast(format!("спокойный профиль не применён: {e}")),
+            Err(e) => return self.error(format!("спокойный профиль не применён: {e}")),
         };
         self.lab.take_rules(&rules);
         self.settings.set(settings::Key::CostScale, 3.0);
@@ -109,7 +109,10 @@ impl LifeApp {
             world_gen,
         });
         self.sim.send(Command::SetSpeed(crate::sim::DEFAULT_SPEED));
-        self.toast("30 т/с · цена жизни 150; численность изменится постепенно".into());
+        self.toast(
+            "30 тиков/с · цена жизни 150 — в этой партии и в новых мирах; численность изменится постепенно"
+                .into(),
+        );
     }
 
     pub fn game_screen(&mut self, ui: &mut egui::Ui) {
@@ -136,8 +139,9 @@ impl LifeApp {
                         let frame = self.view.frame.as_ref().map_or(0, |f| f.number);
                         let k = f64::from(self.view.progress());
                         self.sim.send(Command::Pick { x, y, radius, world_gen, frame, k });
-                        self.side_tab = SideTab::Creature;
-                        self.side_open = true;
+                        // the card opens once the pick comes back with a creature: a miss keeps
+                        // the tab and the selection
+                        self.pick_pending = 30;
                     }
                     Tool::Spawn => {
                         // the planted creature forks the world's stream: a repeat parts from here
@@ -183,9 +187,19 @@ impl LifeApp {
     }
 
     fn game_keyboard(&mut self, ctx: &egui::Context) {
-        if ctx.egui_wants_keyboard_input() {
+        // only typing into a field silences the game's keys
+        if ctx.text_edit_focused() {
             return;
         }
+        // Tab and the arrows are the game's keys here, not egui's moves of the focus, and a button
+        // keeps no focus: once one had it every key stayed egui's, and Space pressed it as well as
+        // pausing. Called before any widget of the frame, so the move is cancelled in time.
+        ctx.memory_mut(|m| {
+            m.move_focus(egui::FocusDirection::None);
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
         let Some(st) = self.view.frame.as_ref().map(|f| f.status) else { return };
         let (keys, held, dt) = ctx.input(|i| {
             let p = |k| i.key_pressed(k);
@@ -235,18 +249,27 @@ impl LifeApp {
         if behaviour && self.view.frame.as_ref().is_some_and(|f| f.selected.is_some()) {
             self.behaviour_open = !self.behaviour_open;
         }
-        if escape {
-            if self.view.area.is_some() {
-                self.clear_region();
-            } else if self.tool != Tool::Select {
-                self.tool = Tool::Select;
-                self.view.cancel_area_drag();
+        // Esc closes the topmost thing first: a window, then what is on the world, then the
+        // selection; only then the menu. Esc that ended typing into a field does nothing more.
+        if escape && !self.was_editing {
+            let selected = self.view.frame.as_ref().is_some_and(|f| f.selected.is_some());
+            if self.help_open {
+                self.help_open = false;
+            } else if self.prefs_open {
+                self.prefs_open = false;
             } else if self.lab_open {
                 self.lab_open = false;
             } else if self.behaviour_open {
                 self.behaviour_open = false;
             } else if self.stats_open {
                 self.stats_open = false;
+            } else if self.view.area.is_some() {
+                self.clear_region();
+            } else if self.tool != Tool::Select {
+                self.tool = Tool::Select;
+                self.view.cancel_area_drag();
+            } else if selected || self.lost.is_some() {
+                self.unselect();
             } else {
                 self.open_menu();
             }
@@ -383,7 +406,7 @@ impl LifeApp {
                 .on_hover_text("Та же партия с начала: тот же сид и стартовые правила")
                 .clicked()
             {
-                self.restart();
+                self.confirm = Some(crate::app::Confirm::Restart);
             }
         });
     }
@@ -455,21 +478,25 @@ impl LifeApp {
     /// For a researcher: how to repeat a game without a window.
     fn research(&mut self, ui: &mut egui::Ui) {
         let (Some(game), Some(f)) = (&self.game, &self.view.frame) else { return };
+        let (cmd, edited) = (report_command(&game.start, f.tick), f.edits > 0);
+        let mut copied = false;
         ui.collapsing("Повторить без окна", |ui| {
-            let cmd = report_command(&game.start, f.tick);
             ui.label(RichText::new(&cmd).monospace().size(11.5));
             // the edits the simulation thread took, not the ones the window sent
-            if f.edits > 0 {
+            if edited {
                 ui.colored_label(
-                    DANGER,
+                    ACCENT,
                     "Мир меняли на ходу (правила, подсадка): повтор совпадёт только до первого изменения.",
                 );
             }
             if ui.button("Скопировать команду").clicked() {
-                ui.ctx().copy_text(cmd);
-                self.toast = Some(("команда скопирована".into(), 2.0));
+                ui.ctx().copy_text(cmd.clone());
+                copied = true;
             }
         });
+        if copied {
+            self.toast("команда скопирована".into());
+        }
     }
 
     fn log_tab(&mut self, ui: &mut egui::Ui) {
@@ -510,10 +537,24 @@ impl LifeApp {
         }
     }
 
+    /// Drop the selection, its following and the card of one that died.
+    pub fn unselect(&mut self) {
+        self.sim.send(Command::Select(None));
+        self.lost = None;
+        self.refollow = false;
+        if let Some(cam) = &mut self.view.camera {
+            cam.follow(None, None);
+        }
+    }
+
     fn creature_tab(&mut self, ui: &mut egui::Ui) {
         let Some((s, rules)) = self.view.frame.as_ref().and_then(|f| Some((f.selected?, f.rules.clone())))
         else {
-            ui.colored_label(MUTED, "Никто не выбран. Кликните по существу в мире.");
+            if let Some(lost) = self.lost {
+                self.lost_card(ui, lost);
+            } else {
+                ui.colored_label(MUTED, "Никто не выбран. Кликните по существу в мире.");
+            }
             return;
         };
         let avg = self.history.counts.last().and_then(|p| p.genom);
@@ -525,11 +566,44 @@ impl LifeApp {
                 self.view.toggle_follow();
             }
 
-            if ui.button("Снять выбор").clicked() {
-                self.sim.send(Command::Select(None));
-                if let Some(cam) = &mut self.view.camera {
-                    cam.follow(None, None);
-                }
+            if ui.button("Снять выбор").on_hover_text("Esc").clicked() {
+                self.unselect();
+            }
+        });
+    }
+
+    /// The card of the selected creature that died: how and when, and who to look at next.
+    fn lost_card(&mut self, ui: &mut egui::Ui, lost: crate::frame::Lost) {
+        let diet = lost.diet.min(3);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("●").color(rgb(theme::DIET_COLORS[diet])).size(18.0));
+            ui.label(RichText::new("Погибло").strong().size(17.0));
+            ui.colored_label(MUTED, format!("№ {}", lost.id));
+        });
+        ui.label(format!(
+            "{} · {} на тике {} в возрасте {:.0}",
+            creature::DIET_VARIANTS[diet].label,
+            crate::sim::death_words(lost.cause),
+            spaced(lost.tick),
+            lost.age
+        ));
+        ui.add_space(6.0);
+        let world_gen = self.view.frame.as_ref().map_or(0, |f| f.world_gen);
+        ui.horizontal_wrapped(|ui| {
+            let nearest = |diet| Command::SelectNearest { x: lost.x, y: lost.y, diet, world_gen };
+            if ui
+                .button(format!("Ближайший: {}", theme::DIET_NAMES[diet]))
+                .on_hover_text("Выбрать живое существо того же питания, ближайшее к месту гибели")
+                .clicked()
+            {
+                self.sim.send(nearest(Some(diet)));
+            }
+            if ui.button("Ближайший любой").clicked() {
+                self.sim.send(nearest(None));
+            }
+            if ui.button("Закрыть").on_hover_text("Esc").clicked() {
+                self.lost = None;
+                self.refollow = false;
             }
         });
     }
@@ -645,16 +719,23 @@ impl LifeApp {
                 now.take_rules(&current);
                 let change = settings::describe_change(&now, &self.lab);
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if ui.add_enabled(change.is_some(), theme::primary("Применить")).clicked()
                         && let Some(note) = change.clone()
                     {
                         match self.lab.rules_over(&current, &now) {
-                            Ok(rules) => self.sim.send(Command::SetRules { rules, note, world_gen }),
-                            Err(e) => self.toast(format!("правила не применены: {e}")),
+                            Ok(rules) => {
+                                self.sim.send(Command::SetRules { rules, note, world_gen });
+                                self.toast("правила применены к этому миру".into());
+                            }
+                            Err(e) => self.error(format!("правила не применены: {e}")),
                         }
                     }
-                    if ui.add_enabled(change.is_some(), egui::Button::new("Отменить")).clicked() {
+                    if ui
+                        .add_enabled(change.is_some(), egui::Button::new("Вернуть как в мире"))
+                        .on_hover_text("Забыть несохранённые правки: как сейчас в мире")
+                        .clicked()
+                    {
                         self.lab.take_rules(&current);
                     }
                     if ui
@@ -668,19 +749,57 @@ impl LifeApp {
                             self.lab.set(key, default.get(key));
                         }
                     }
+                    // «Применить» changes this world only; new worlds start from the settings
+                    let saved =
+                        FIELDS.iter().all(|f| !f.live() || self.settings.get(f.key) == self.lab.get(f.key));
+                    if ui
+                        .add_enabled(!saved, egui::Button::new("Сохранить для новых миров"))
+                        .on_hover_text(
+                            "Записать эти правила в настройки «Нового мира»: с ними начнутся новые \
+                             партии. «Заново» и «Новый сид» повторяют начало этой.",
+                        )
+                        .clicked()
+                    {
+                        for f in FIELDS.iter().filter(|f| f.live()) {
+                            self.settings.set(f.key, self.lab.get(f.key));
+                        }
+                        self.save_settings();
+                        self.toast("правила сохранены для новых миров".into());
+                    }
                 });
             });
         self.lab_open &= open;
     }
 
+    /// The end of a game: what happened and what to do — a new seed (the same one would only end
+    /// the same way), planting into an extinct world, going on past an explosion, or just looking.
     fn ending_window(&mut self, ctx: &egui::Context) {
-        let Some(ended) = self.view.frame.as_ref().and_then(|f| f.status.ended) else { return };
+        let Some(f) = self.view.frame.as_ref() else { return };
+        if f.status.ended.is_none() {
+            // a world revived and ended again asks again
+            self.ending_closed = false;
+            return;
+        }
+        let Some(ended) = f.status.ended.filter(|_| !self.ending_closed) else { return };
+        let area = f.world_w * f.world_h / (life_core::config::WORLD_WIDTH * life_core::config::WORLD_HEIGHT);
+        let limit = (crate::sim::EXPLOSION_LIMIT as f64 * area).round() as u64;
         let (title, text) = match ended {
-            Ending::Extinct => ("Все вымерли", "В мире не осталось ни одного существа."),
+            Ending::Extinct => (
+                "Все вымерли",
+                format!(
+                    "На тике {} в мире не осталось ни одного существа. Тот же сид кончится так же; \
+                     подсаженное существо оживит этот мир.",
+                    spaced(f.tick)
+                ),
+            ),
             Ending::Explosion => (
                 "Взрыв численности",
-                "Существ стало так много, что мир почти наверняка пошёл вразнос. \
-                 Можно продолжить — но тик станет медленным.",
+                format!(
+                    "Существ {} при пределе {}: мир почти наверняка пошёл вразнос. Можно продолжить — \
+                     тик станет медленным — или сделать жизнь дороже.",
+                    spaced(f.creatures as u64),
+                    spaced(limit)
+                ),
             ),
         };
         egui::Window::new(title)
@@ -688,18 +807,48 @@ impl LifeApp {
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .show(ctx, |ui| {
+                ui.set_max_width(420.0);
                 ui.label(text);
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.add(theme::primary("Заново")).clicked() {
-                        self.restart();
-                    }
-                    if ended == Ending::Explosion && ui.button("Продолжить всё равно").clicked()
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add(theme::primary("Новый сид"))
+                        .on_hover_text("Та же партия с другим сидом")
+                        .clicked()
                     {
-                        self.sim.send(Command::KeepGoing);
+                        self.new_seed();
+                    }
+                    match ended {
+                        Ending::Extinct => {
+                            if ui
+                                .button("Подсадить существо")
+                                .on_hover_text("Клик по миру — подсадить")
+                                .clicked()
+                            {
+                                self.tool = Tool::Spawn;
+                                self.ending_closed = true;
+                            }
+                        }
+                        Ending::Explosion => {
+                            if ui
+                                .button("Спокойнее")
+                                .on_hover_text("Цена жизни 150 и 30 тиков/с, и мир идёт дальше")
+                                .clicked()
+                            {
+                                self.calm_world();
+                                self.sim.send(Command::KeepGoing);
+                            }
+                            if ui.button("Продолжить всё равно").clicked() {
+                                self.sim.send(Command::KeepGoing);
+                            }
+                        }
                     }
                     if ui.button("Новый мир").clicked() {
                         self.screen = crate::app::Screen::Setup;
+                    }
+                    if ui.button("Закрыть").on_hover_text("Посмотреть на мир, каким он кончился").clicked()
+                    {
+                        self.ending_closed = true;
                     }
                 });
             });

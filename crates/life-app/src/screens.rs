@@ -82,8 +82,15 @@ impl LifeApp {
                 });
             });
         });
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) && started && !self.prefs_open && !self.help_open {
-            self.resume();
+        // Esc closes an open window first, then goes back to the game
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) && !self.was_editing {
+            if self.help_open {
+                self.help_open = false;
+            } else if self.prefs_open {
+                self.prefs_open = false;
+            } else if started {
+                self.resume();
+            }
         }
     }
 
@@ -100,13 +107,23 @@ impl LifeApp {
                         self.save_settings();
                         self.screen = Screen::Menu;
                     }
-                    if ui.button("По умолчанию").on_hover_text("Вернуть значения этой вкладки").clicked()
-                    {
-                        self.settings.reset(self.setup_tab);
-                    }
                     if ui.add(theme::primary("Начать")).clicked() {
-                        self.start_game();
+                        if self.game.is_some() {
+                            self.confirm = Some(crate::app::Confirm::NewGame);
+                        } else {
+                            self.start_game();
+                        }
                     }
+                    // apart from «Начать»: a slip of the hand must not reset a tab
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button("Сбросить вкладку")
+                            .on_hover_text("Вернуть значения этой вкладки к значениям по умолчанию")
+                            .clicked()
+                        {
+                            self.confirm = Some(crate::app::Confirm::ResetTab(self.setup_tab));
+                        }
+                    });
                 });
             });
             ui.add_space(4.0);
@@ -157,7 +174,8 @@ impl LifeApp {
                 });
             });
         });
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        // Esc that ended typing into a field only ends the typing
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) && !self.was_editing {
             self.save_settings();
             self.screen = Screen::Menu;
         }

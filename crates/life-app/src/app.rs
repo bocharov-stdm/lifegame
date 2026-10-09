@@ -1,7 +1,7 @@
 //! The application: screens, transitions, settings. The window only draws the last frame and
 //! sends commands; everything heavy is in the simulation thread (`sim.rs`).
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 
 use eframe::egui;
@@ -9,7 +9,7 @@ use life_core::WorldConfig;
 use life_core::genome::creature::Gene;
 
 use crate::census::Census;
-use crate::frame::{LogEntry, RegionStats};
+use crate::frame::{LogEntry, Lost, RegionStats};
 use crate::history::History;
 use crate::settings::{self, Settings, Tab};
 use crate::sim::{Command, SimHandle};
@@ -32,6 +32,27 @@ pub enum SideTab {
     Charts,
     Log,
     Creature,
+}
+
+/// A short message at the bottom of the window. An error stays until it is closed.
+pub struct Toast {
+    pub text: String,
+    /// Seconds left; None — an error, until closed.
+    pub left: Option<f64>,
+}
+
+/// Messages shown at once; an older one goes first.
+const TOASTS: usize = 3;
+
+/// An action that loses what was there, asked about first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Confirm {
+    /// «Заново»: the same game from its start.
+    Restart,
+    /// «Начать» while a game is under way: it is replaced.
+    NewGame,
+    /// «Сбросить вкладку» on «Новый мир».
+    ResetTab(Tab),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,7 +114,20 @@ pub struct LifeApp {
     pub help_open: bool,
     /// Whether the game was paused when the menu was opened.
     pub paused_before_menu: bool,
-    pub toast: Option<(String, f64)>,
+    pub toasts: VecDeque<Toast>,
+    /// The selected creature that died, shown on the card until another is selected.
+    pub lost: Option<Lost>,
+    /// Window frames left for a click's pick to come back: a creature it selects opens the card.
+    pub pick_pending: u32,
+    /// Following was on when the selected one died: follow the next one selected.
+    pub refollow: bool,
+    /// A text field had the keyboard in the last frame: Esc, which egui takes the focus away with
+    /// before a frame starts, ended the typing and must not also close or leave anything.
+    pub was_editing: bool,
+    /// The action waiting for «Да» in a modal question.
+    pub confirm: Option<Confirm>,
+    /// The ending's window was closed for this world (the world stays as it ended).
+    pub ending_closed: bool,
     fps: f64,
     applied: (bool, f64),
     /// The threads and fast cores the simulation was last told (`Command::Threads`).
@@ -158,7 +192,13 @@ impl LifeApp {
             prefs_open: false,
             help_open: false,
             paused_before_menu: false,
-            toast: None,
+            toasts: VecDeque::new(),
+            lost: None,
+            pick_pending: 0,
+            refollow: false,
+            was_editing: false,
+            confirm: None,
+            ending_closed: false,
             fps: 0.0,
             applied: (false, -1.0),
             applied_threads: None,
@@ -178,6 +218,34 @@ impl LifeApp {
             self.view.area = None;
             self.census = None;
             self.census_asked = None;
+            self.lost = None;
+            self.pick_pending = 0;
+            self.refollow = false;
+            self.ending_closed = false;
+        }
+        let before = self.view.frame.as_ref().and_then(|f| f.selected).map(|s| s.id);
+        let now = f.selected.map(|s| (s.id, s.x, s.y));
+        if let Some(lost) = f.lost.take() {
+            self.refollow = self.view.following();
+            let diet = theme::DIET_NAMES[lost.diet.min(3)];
+            self.toast(format!("№ {} ({diet}) погибло {}", lost.id, crate::sim::death_words(lost.cause)));
+            self.lost = Some(lost);
+        }
+        self.pick_pending = self.pick_pending.saturating_sub(1);
+        if let Some((id, x, y)) = now.filter(|n| Some(n.0) != before) {
+            self.lost = None;
+            // a click's pick opens the card; a selection made elsewhere (the card's own buttons)
+            // keeps the tab the player is on
+            if self.pick_pending > 0 {
+                self.side_tab = SideTab::Creature;
+                self.side_open = true;
+                self.pick_pending = 0;
+            }
+            if std::mem::take(&mut self.refollow)
+                && let Some(cam) = &mut self.view.camera
+            {
+                cam.follow(Some(id), Some((x, y)));
+            }
         }
         if let Some(r) = f.region.take().filter(|r| self.view.area == Some(r.area)) {
             self.region = Some(r);
@@ -202,12 +270,59 @@ impl LifeApp {
         if let Some(path) = &self.settings_path
             && let Err(e) = self.settings.save(path)
         {
-            self.toast(format!("настройки не сохранились: {e}"));
+            self.error(format!("настройки не сохранились: {e}"));
         }
     }
 
+    /// A message for a few seconds.
     pub fn toast(&mut self, text: String) {
-        self.toast = Some((text, 3.0));
+        self.push_toast(Toast { text, left: Some(4.0) });
+    }
+
+    /// An error: it stays until the player closes it.
+    pub fn error(&mut self, text: String) {
+        self.push_toast(Toast { text, left: None });
+    }
+
+    fn push_toast(&mut self, toast: Toast) {
+        self.toasts.retain(|t| t.text != toast.text);
+        self.toasts.push_back(toast);
+        while self.toasts.len() > TOASTS {
+            self.toasts.pop_front();
+        }
+    }
+
+    fn toasts_area(&mut self, ctx: &egui::Context) {
+        if self.toasts.is_empty() {
+            return;
+        }
+        let mut closed = None;
+        egui::Area::new("тост".into()).anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -60.0)).show(
+            ctx,
+            |ui| {
+                for (i, t) in self.toasts.iter().enumerate() {
+                    let error = t.left.is_none();
+                    let frame = egui::Frame::popup(ui.style());
+                    let frame =
+                        if error { frame.stroke(egui::Stroke::new(1.5, theme::DANGER)) } else { frame };
+                    frame.show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            if error {
+                                ui.colored_label(theme::DANGER, t.text.as_str());
+                                if ui.small_button("✕").on_hover_text("Закрыть").clicked() {
+                                    closed = Some(i);
+                                }
+                            } else {
+                                ui.label(t.text.as_str());
+                            }
+                        });
+                    });
+                }
+            },
+        );
+        if let Some(i) = closed {
+            self.toasts.remove(i);
+        }
     }
 
     /// Start a new game by the settings of the «Новый мир» screen.
@@ -217,7 +332,7 @@ impl LifeApp {
         }
         let cfg = match self.settings.world_config(self.settings.seed) {
             Ok(cfg) => cfg,
-            Err(e) => return self.toast(format!("мир не создан: {e}")),
+            Err(e) => return self.error(format!("мир не создан: {e}")),
         };
         self.save_settings();
         self.sim.send(Command::NewWorld(cfg.clone()));
@@ -274,6 +389,95 @@ impl LifeApp {
     pub fn fps(&self) -> f64 {
         self.fps
     }
+
+    /// The simulation thread stopped with an error: what it said, and a way on without restarting
+    /// the program.
+    fn crash_window(&mut self, ctx: &egui::Context) {
+        let failure = self.sim.failure().unwrap_or_else(|| "поток завершился без объяснения".into());
+        egui::Window::new("Симуляция остановилась")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_max_width(460.0);
+                ui.label("Поток симуляции завершился с ошибкой:");
+                ui.label(egui::RichText::new(&failure).monospace().color(theme::DANGER));
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add(theme::primary("Запустить заново"))
+                        .on_hover_text("Та же партия с начала")
+                        .clicked()
+                    {
+                        let cfg = match &self.game {
+                            Some(game) => game.start.clone(),
+                            None => Settings { scale: 1.0, ..self.settings.clone() }
+                                .world_config(random_seed())
+                                .unwrap_or_default(),
+                        };
+                        let waker = ctx.clone();
+                        self.sim = SimHandle::spawn(cfg, Box::new(move || waker.request_repaint()));
+                        self.applied_threads = None;
+                    }
+                    if ui.button("Скопировать текст").clicked() {
+                        ctx.copy_text(failure.clone());
+                    }
+                });
+            });
+    }
+
+    /// The same game anew, with a new seed: a world that ended would only end the same way again.
+    pub fn new_seed(&mut self) {
+        let Some(game) = &mut self.game else { return };
+        game.start.seed = random_seed();
+        self.sim.send(Command::NewWorld(game.start.clone()));
+        self.sim.send(Command::SetPaused(false));
+    }
+
+    /// The modal question of `confirm`; «Да» does the action, Esc or a click outside cancels.
+    fn confirm_window(&mut self, ctx: &egui::Context) {
+        let Some(what) = self.confirm else { return };
+        let (title, text, yes) = match what {
+            Confirm::Restart => (
+                "Начать партию заново?",
+                "Мир вернётся к своему началу: тот же сид и стартовые правила. Всё, что выросло, пропадёт.",
+                "Заново",
+            ),
+            Confirm::NewGame => (
+                "Заменить текущую партию?",
+                "Идущий мир закроется, вместо него начнётся новый с настройками этого экрана.",
+                "Начать новый",
+            ),
+            Confirm::ResetTab(_) => (
+                "Сбросить вкладку?",
+                "Все значения этой вкладки вернутся к значениям по умолчанию.",
+                "Сбросить",
+            ),
+        };
+        let modal = egui::Modal::new(egui::Id::new("подтверждение")).show(ctx, |ui| {
+            ui.set_max_width(380.0);
+            ui.label(egui::RichText::new(title).strong().size(16.0));
+            ui.add_space(4.0);
+            ui.label(text);
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.add(theme::primary(yes)).clicked() {
+                    match what {
+                        Confirm::Restart => self.restart(),
+                        Confirm::NewGame => self.start_game(),
+                        Confirm::ResetTab(tab) => self.settings.reset(tab),
+                    }
+                    self.confirm = None;
+                }
+                if ui.button("Отмена").clicked() {
+                    self.confirm = None;
+                }
+            });
+        });
+        if modal.should_close() {
+            self.confirm = None;
+        }
+    }
 }
 
 /// A random seed from the clock: the engine needs no shared generator.
@@ -298,13 +502,14 @@ impl eframe::App for LifeApp {
         if dt > 0.0 {
             self.fps = self.fps * 0.9 + 0.1 / dt;
         }
-        if let Some((_, left)) = &mut self.toast {
-            *left -= dt;
-            if *left <= 0.0 {
-                self.toast = None;
-            } else {
-                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        for t in &mut self.toasts {
+            if let Some(left) = &mut t.left {
+                *left -= dt;
             }
+        }
+        self.toasts.retain(|t| t.left.is_none_or(|left| left > 0.0));
+        if self.toasts.iter().any(|t| t.left.is_some()) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
 
         match self.screen {
@@ -314,19 +519,12 @@ impl eframe::App for LifeApp {
         }
         self.prefs_window(&ctx);
         self.help_window(&ctx);
+        self.confirm_window(&ctx);
 
-        if let Some((text, _)) = &self.toast {
-            egui::Area::new("тост".into()).anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -60.0)).show(
-                &ctx,
-                |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| ui.label(text.as_str()));
-                },
-            );
-        }
+        self.was_editing = ctx.text_edit_focused();
+        self.toasts_area(&ctx);
         if !self.sim.is_alive() {
-            egui::Window::new("Симуляция остановилась").collapsible(false).show(&ctx, |ui| {
-                ui.label("Поток симуляции завершился с ошибкой. Подробности — в консоли.");
-            });
+            self.crash_window(&ctx);
         }
         if self.screen != Screen::Game {
             return;

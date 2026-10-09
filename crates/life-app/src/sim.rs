@@ -21,11 +21,21 @@ use life_sim::observe::{EventTracker, Snapshot};
 use crate::app::LOG_LIMIT;
 use crate::census::Census;
 use crate::frame::{
-    self, Area, CorpseMark, Ending, Frame, Instance, LogEntry, Raster, RegionStats, Selected, ShotTrail,
-    Status, ViewRequest,
+    self, Area, CorpseMark, Ending, Frame, Instance, LogEntry, Lost, Raster, RegionStats, Selected,
+    ShotTrail, Status, ViewRequest,
 };
 use crate::history::{Sample, WINDOW_TICKS};
 use crate::motion::Motion;
+use life_core::creature::Death;
+
+/// How a creature died, for the chronicle and the card: «от голода», «от старости», «в схватке».
+pub fn death_words(cause: Death) -> &'static str {
+    match cause {
+        Death::Starved => "от голода",
+        Death::OldAge => "от старости",
+        Death::Combat => "в схватке",
+    }
+}
 
 /// The speeds, ticks a second; None — «maximum», as many as the processor manages.
 pub const SPEEDS: [Option<f64>; 9] = [
@@ -91,6 +101,13 @@ pub enum Command {
     },
     /// Select a creature by number.
     Select(Option<u64>),
+    /// Select the living creature nearest to (x, y), of this diet (`Diet` order) or any.
+    SelectNearest {
+        x: f64,
+        y: f64,
+        diet: Option<usize>,
+        world_gen: u64,
+    },
     /// A region for the genes' summary (the «Область» tool); None — clear. `world_gen`: the
     /// frame's it was drawn on.
     SetRegion {
@@ -134,6 +151,9 @@ pub struct SimHandle {
     slot: Arc<Mutex<Option<Frame>>>,
     recycle: Sender<Vec<Instance>>,
     thread: Option<JoinHandle<()>>,
+    /// Why the thread stopped, if it panicked: the window shows it (a release build on Windows
+    /// has no console to read it in).
+    failure: Arc<Mutex<Option<String>>>,
 }
 
 impl SimHandle {
@@ -142,11 +162,25 @@ impl SimHandle {
         let (recycle, recycled) = mpsc::channel();
         let slot = Arc::new(Mutex::new(None));
         let shared = slot.clone();
+        let failure = Arc::new(Mutex::new(None));
+        let failed = failure.clone();
         let thread = std::thread::Builder::new()
             .name("симуляция".into())
-            .spawn(move || Sim::new(cfg, rx, recycled, shared, waker).run())
+            .spawn(move || {
+                let run = std::panic::AssertUnwindSafe(|| Sim::new(cfg, rx, recycled, shared, waker).run());
+                if let Err(panic) = std::panic::catch_unwind(run) {
+                    let text = panic
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                        .unwrap_or_else(|| "неизвестная ошибка".into());
+                    if let Ok(mut f) = failed.lock() {
+                        *f = Some(text);
+                    }
+                }
+            })
             .expect("поток симуляции не запустился");
-        SimHandle { tx, slot, recycle, thread: Some(thread) }
+        SimHandle { tx, slot, recycle, thread: Some(thread), failure }
     }
 
     pub fn send(&self, cmd: Command) {
@@ -167,6 +201,11 @@ impl SimHandle {
     pub fn is_alive(&self) -> bool {
         self.thread.as_ref().is_some_and(|t| !t.is_finished())
     }
+
+    /// Why the thread stopped, if it panicked.
+    pub fn failure(&self) -> Option<String> {
+        self.failure.lock().ok()?.clone()
+    }
 }
 
 impl Drop for SimHandle {
@@ -186,6 +225,7 @@ struct Pending {
     region: Option<RegionStats>,
     census: Option<Census>,
     log: Vec<LogEntry>,
+    lost: Option<Lost>,
 }
 
 /// Drops the points the window's history would drop on taking them (`history::Series::push`):
@@ -495,13 +535,15 @@ impl Sim {
             // Built from the frame of a world replaced since («Заново» pressed and the old frame
             // still on screen while the new world was built): not for this one.
             Command::Pick { world_gen, .. }
+            | Command::SelectNearest { world_gen, .. }
             | Command::Spawn { world_gen, .. }
             | Command::SetRegion { world_gen, .. }
             | Command::SetRules { world_gen, .. }
                 if world_gen != self.world_gen => {}
             Command::Pick { x, y, radius, frame, k, .. } => {
                 let drawn = self.shown.iter().find(|(n, _)| *n == frame);
-                self.selected = match drawn {
+                // a click that hits nobody keeps the selection: «Снять выбор» and Esc drop it
+                let picked = match drawn {
                     // where the clicked frame drew the bodies — the world may have gone on or been
                     // edited since — of those still alive
                     Some((_, spots)) => pick_among(spots, x, y, k, 0.0)
@@ -510,6 +552,21 @@ impl Sim {
                     // no bodies kept (a density map, the render off): the world as it is now
                     None => self.world.pick(x, y, 0.0).or_else(|| self.world.pick(x, y, radius)),
                 };
+                if picked.is_some() {
+                    self.selected = picked;
+                }
+                self.dirty = true;
+            }
+            Command::SelectNearest { x, y, diet, .. } => {
+                let nearest = self
+                    .world
+                    .creatures
+                    .iter()
+                    .filter(|v| v.alive && diet.is_none_or(|d| v.pheno.diet as usize == d))
+                    .min_by(|a, b| (a.x - x).hypot(a.y - y).total_cmp(&(b.x - x).hypot(b.y - y)));
+                if let Some(v) = nearest {
+                    self.selected = Some(v.id);
+                }
                 self.dirty = true;
             }
             Command::Select(c) => {
@@ -634,6 +691,11 @@ impl Sim {
         // the phases are measured always: a dozen clock reads a tick, and the world goes the same
         self.world.set_profiling(true);
         self.world.set_threads(self.pool.clone());
+        // the selected one as it was, to tell how it died if this tick kills it
+        let before = self
+            .selected
+            .and_then(|id| self.world.creature(id))
+            .map(|v| (v.age, v.pheno.lifespan, v.energy - v.pheno.upkeep, v.pheno.diet as usize, v.x, v.y));
         let start = Instant::now();
         self.world.step();
         let engine_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -660,7 +722,25 @@ impl Sim {
             && self.world.creature(id).is_none()
         {
             self.selected = None;
-            self.log(None, "выбранное существо погибло".into());
+            // old age comes first in a tick, then hunger on its move; a death past both is a fight's
+            let lost = before.map(|(age, lifespan, left, diet, x, y)| Lost {
+                id,
+                tick: self.world.tick,
+                age: age + 1.0,
+                cause: if age + 1.0 >= lifespan {
+                    Death::OldAge
+                } else if left <= 0.0 {
+                    Death::Starved
+                } else {
+                    Death::Combat
+                },
+                diet,
+                x,
+                y,
+            });
+            let how = lost.map_or("", |l| death_words(l.cause));
+            self.log(None, format!("выбранное существо № {id} погибло {how}").trim_end().to_string());
+            self.pending.lost = lost;
         }
 
         let n = self.world.creatures.len();
@@ -947,6 +1027,7 @@ impl Sim {
             density,
             minimap,
             selected: self.selected.and_then(|id| Selected::of(w, id)),
+            lost: pending.lost,
             samples: pending.samples.into(),
             snapshots: pending.snapshots.into(),
             region: pending.region,

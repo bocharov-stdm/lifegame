@@ -1,4 +1,4 @@
-﻿//! Screen tests without a window (egui_kittest) — the successor of the Python version's `TestLayout`.
+//! Screen tests without a window (egui_kittest) — the successor of the Python version's `TestLayout`.
 //!
 //! Every screen on the smallest window 960×600 and on a usual one 1600×900: buttons and sliders
 //! whole inside the window and not overlapping one another. An interface scale of ×2 on a window
@@ -392,7 +392,8 @@ fn лаборатория_сбрасывает_отмеченные_цены_и_
         h.state_mut().lab_reset_selected.extend([Key::ShotDamage, Key::ShotCost]);
         settle(h);
         let screen = Rect::from_min_size(Pos2::ZERO, size).expand(0.5);
-        for label in ["Применить", "Отменить", "Сбросить отмеченные"] {
+        for label in ["Применить", "Вернуть как в мире", "Сбросить отмеченные"]
+        {
             let node = h.get_by_label(label);
             assert!(
                 screen.contains_rect(node.rect()),
@@ -422,6 +423,10 @@ fn новый_мир_из_экрана_настроек_запускает_па�
     h.state_mut().settings.scale = 10.0;
     settle(&mut h);
     h.get_by_label("Начать").click();
+    settle(&mut h);
+    // a game is under way: it is replaced only after a question
+    assert_eq!(h.state().confirm, Some(crate::app::Confirm::NewGame));
+    h.get_by_label("Начать новый").click();
     for _ in 0..300 {
         h.step();
         if h.state().view.frame.as_ref().is_some_and(|f| f.seed == 4242) {
@@ -1132,4 +1137,125 @@ fn gallery_the_density_map() {
         settle(&mut h);
         shot(&mut h, &format!("галерея-карта-плотности-{tag}"));
     }
+}
+
+// ── Input and selection ─────────────────────────────────────────────────────────────────────
+
+/// Tab shows and hides the side panel any number of times, and the other keys keep working after
+/// it: egui used to move its focus to a button on Tab, and a focused button silenced every key.
+#[test]
+fn tab_toggles_the_panel_and_the_keys_keep_working() {
+    use eframe::egui::Key as K;
+    let _gpu = gpu();
+    let mut h = harness(SMALL);
+    settle(&mut h);
+    let open = h.state().side_open;
+    for round in 1..=3 {
+        h.key_press(K::Tab);
+        settle(&mut h);
+        assert_eq!(h.state().side_open, open ^ (round % 2 == 1), "Tab number {round}");
+    }
+    h.key_press(K::L);
+    settle(&mut h);
+    assert!(h.state().lab_open, "L opens the lab after Tab");
+    h.key_press(K::I);
+    settle(&mut h);
+    assert!(h.state().stats_open, "I opens the statistics");
+    // Esc closes the topmost first, and only then would it open the menu
+    h.key_press(K::Escape);
+    settle(&mut h);
+    assert!(!h.state().lab_open && h.state().stats_open, "Esc closes the lab first");
+    h.key_press(K::Escape);
+    settle(&mut h);
+    assert!(!h.state().stats_open);
+    assert_eq!(h.state().screen, Screen::Game);
+}
+
+/// A click that hits nobody keeps the selection and the tab the player reads.
+#[test]
+fn a_click_on_nobody_keeps_the_selection_and_the_tab() {
+    let _gpu = gpu();
+    let mut h = harness(NORMAL);
+    settle(&mut h);
+    assert!(pick_biggest(&mut h), "a creature to select");
+    let id = h.state().view.frame.as_ref().and_then(|f| f.selected).map(|s| s.id);
+    h.state_mut().side_tab = SideTab::Log;
+    let (world_gen, frame) = {
+        let f = h.state().view.frame.as_ref().unwrap();
+        (f.world_gen, f.number)
+    };
+    // a corner of the world, far from any body
+    h.state_mut().sim.send(Command::Pick { x: -1.0e6, y: -1.0e6, radius: 0.0, world_gen, frame, k: 1.0 });
+    for _ in 0..30 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(h.state().view.frame.as_ref().and_then(|f| f.selected).map(|s| s.id), id);
+    assert_eq!(h.state().side_tab, SideTab::Log);
+}
+
+/// The selected one starves: the card tells how and when, and offers the nearest of its diet.
+#[test]
+fn the_card_of_a_selected_creature_that_died() {
+    use life_core::{CreatureGenome, Rules, World, creature::Death};
+    let _gpu = gpu();
+    let mut w = World::new(&WorldConfig {
+        seed: 5,
+        n_creatures: Some(0),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
+        ..Default::default()
+    });
+    let doomed = w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(0.001));
+    let other = w.spawn(CreatureGenome::BASE, 3000.0, 2000.0, Some(90.0));
+    let mut h = harness(NORMAL);
+    let generation = h.state().view.frame.as_ref().unwrap().world_gen;
+    h.state_mut().sim.send(Command::TestWorld(Box::new(w)));
+    h.state_mut().sim.send(Command::Select(Some(doomed)));
+    wait_for(&mut h, |s| {
+        s.view.frame.as_ref().is_some_and(|f| f.world_gen > generation && f.selected.is_some())
+    });
+    h.state_mut().side_open = true;
+    h.state_mut().side_tab = SideTab::Creature;
+    h.state_mut().sim.send(Command::Step);
+    wait_for(&mut h, |s| s.lost.is_some());
+    let lost = h.state().lost.expect("the card of the dead one");
+    assert_eq!((lost.id, lost.cause), (doomed, Death::Starved));
+    settle(&mut h);
+    assert!(h.query_by_label("Погибло").is_some());
+    shot(&mut h, "погибшее-существо-1600x900");
+    h.get_by_label("Ближайший любой").click();
+    wait_for(&mut h, |s| s.view.frame.as_ref().and_then(|f| f.selected).is_some());
+    assert_eq!(h.state().view.frame.as_ref().and_then(|f| f.selected).map(|s| s.id), Some(other));
+    assert!(h.state().lost.is_none(), "a new selection replaces the card");
+}
+
+/// A world that died out offers a new seed and planting, and its window can be closed.
+#[test]
+fn the_ending_can_be_closed_and_offers_a_new_seed() {
+    use life_core::{Rules, World};
+    let _gpu = gpu();
+    let empty = World::new(&WorldConfig {
+        seed: 9,
+        n_creatures: Some(0),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
+        ..Default::default()
+    });
+    let mut h = harness(SMALL);
+    h.state_mut().side_open = false;
+    let generation = h.state().view.frame.as_ref().unwrap().world_gen;
+    h.state_mut().sim.send(Command::TestWorld(Box::new(empty)));
+    h.state_mut().sim.send(Command::Step);
+    wait_for(&mut h, |s| {
+        s.view.frame.as_ref().is_some_and(|f| f.world_gen > generation && f.status.ended.is_some())
+    });
+    settle(&mut h);
+    for label in ["Новый сид", "Подсадить существо", "Новый мир", "Закрыть"]
+    {
+        assert!(h.query_by_label(label).is_some(), "the ending offers «{label}»");
+    }
+    check_layout(&h, SMALL, "конец, вымерли, 960x600", None);
+    h.get_by_label("Закрыть").click();
+    settle(&mut h);
+    assert!(h.query_by_label("Новый сид").is_none(), "the window is closed");
+    assert_eq!(h.state().screen, Screen::Game);
 }
