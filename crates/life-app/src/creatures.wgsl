@@ -202,17 +202,19 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
         let f = vec2(dot(q, in.dir), dot(q, vec2(-in.dir.y, in.dir.x)));
         let rim_w = max(1.0, 0.16 * r);
         let within = inside(d + rim_w);
-        // the core grows with fullness: a full tank — a light body, an empty one — a shell alone
+        // the body is its diet's colour: a dark shell, a light core that grows with fullness (a
+        // full tank — a light body, an empty one — a shell alone), a lit rim
+        let hue = diet_color(in.diet);
         let core_r = (r - rim_w) * sqrt(full);
         let core = inside(len - core_r);
-        // the rim is the diet's colour
-        let rim = mix(base * 0.3, diet_color(in.diet) * 0.85, 0.8);
-        var fill = mix(base * 0.6, base * 1.05, core);
+        let rim = mix(hue * 0.55, hue, 0.85);
+        var fill = mix(hue * 0.26, hue * 0.92, core);
         // an eye along the heading
         let eye_r = max(1.0, 0.15 * r);
         let eye = inside(length(f - vec2(0.55 * r, 0.0)) - eye_r) * clamp((r - 5.0) / 3.0, 0.0, 1.0);
         fill = mix(fill, vec3(0.95, 0.93, 0.98), eye);
-        let far = base * (0.55 + 0.45 * full);
+        // far away, where the details fade, the diet's colour stays
+        let far = hue * (0.55 + 0.45 * full);
         col = mix(far, mix(rim, fill, within), detail);
 
         let reach = in.proboscis.z;
@@ -227,7 +229,7 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
             let gulp = 1.0 - fract(in.proboscis.w * 1.7);
             w = w * (1.0 + 0.5 * exp(-pow((t - gulp) / 0.14, 2.0)));
             tube_a = inside(length(q - toward * along) - w) * detail;
-            tube = mix(base * 0.75, diet_color(in.diet), 0.25) + vec3(0.06) * (1.0 - t);
+            tube = hue * 0.7 + vec3(0.06) * (1.0 - t);
         }
     }
     let lum = dot(col, vec3(0.3, 0.59, 0.11)) * 0.6;
@@ -238,7 +240,9 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     var a = body_a + t_a;
     if in.hl == 1u {
         // a halo in the diet's colour just outside the body
-        let halo = inside(d - HALO_PX) * (1.0 - inside(d)) * 0.9 * in.alpha * (1.0 - a);
+        // a soft glow fading outward rather than a hard ring
+        let glow = clamp(1.0 - d / HALO_PX, 0.0, 1.0);
+        let halo = glow * glow * (1.0 - inside(d)) * 0.9 * in.alpha * (1.0 - a);
         rgb = rgb + diet_color(in.diet) * halo;
         a = a + halo;
     }

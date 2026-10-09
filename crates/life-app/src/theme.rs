@@ -45,6 +45,28 @@ pub const VEIL: Color32 = Color32::from_rgba_premultiplied(3, 6, 10, 200);
 /// The water from the surface down to the bottom.
 pub const WORLD_TOP: [u8; 3] = [12, 32, 50];
 pub const WORLD_BOTTOM: [u8; 3] = [3, 8, 16];
+/// The warm water just above the thermocline and the cold one below it.
+const WATER_WARM: [u8; 3] = [10, 30, 46];
+const WATER_COLD: [u8; 3] = [5, 15, 30];
+
+/// The water's colour at `depth` % of the world: lighter at the surface, a warm layer down to the
+/// thermocline's top (`top`, %), a smooth turn to the cold water at its bottom, then darker to the
+/// floor — so the layers that matter to the cold-blooded are seen.
+pub fn water(depth: f64, top: f64, bottom: f64) -> [u8; 3] {
+    let lerp = |a: [u8; 3], b: [u8; 3], t: f64| -> [u8; 3] {
+        let t = t.clamp(0.0, 1.0);
+        std::array::from_fn(|i| (a[i] as f64 + (b[i] as f64 - a[i] as f64) * t).round() as u8)
+    };
+    let (top, bottom) = (top.clamp(0.0, 100.0), bottom.clamp(top.clamp(0.0, 100.0), 100.0));
+    if depth <= top {
+        lerp(WORLD_TOP, WATER_WARM, depth / top.max(1e-9))
+    } else if depth < bottom {
+        let t = (depth - top) / (bottom - top);
+        lerp(WATER_WARM, WATER_COLD, t * t * (3.0 - 2.0 * t))
+    } else {
+        lerp(WATER_COLD, WORLD_BOTTOM, (depth - bottom) / (100.0 - bottom).max(1e-9))
+    }
+}
 /// Plants on the charts, the counters, the density map and the minimap: sage, apart from every
 /// diet; the sprouts in the world are a darker green of their own.
 pub const PLANT_COLOR: [u8; 3] = [144, 181, 122];
@@ -617,6 +639,21 @@ mod tests {
                         DIET_NAMES[j]
                     );
                 }
+            }
+        }
+    }
+
+    /// The water runs from the surface's colour to the floor's, through the thermocline's layers,
+    /// whatever odd thermocline the lab sets.
+    #[test]
+    fn the_water_runs_from_surface_to_floor() {
+        assert_eq!(water(0.0, 15.0, 45.0), WORLD_TOP);
+        assert_eq!(water(100.0, 15.0, 45.0), WORLD_BOTTOM);
+        assert_eq!(water(15.0, 15.0, 45.0), WATER_WARM);
+        assert_eq!(water(45.0, 15.0, 45.0), WATER_COLD);
+        for (top, bottom) in [(0.0, 0.0), (100.0, 100.0), (60.0, 20.0), (0.0, 100.0)] {
+            for depth in [0.0, 10.0, 50.0, 99.0, 100.0] {
+                let _ = water(depth, top, bottom);
             }
         }
     }

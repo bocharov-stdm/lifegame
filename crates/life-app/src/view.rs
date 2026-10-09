@@ -325,7 +325,7 @@ impl WorldView {
             painter.rect_filled(
                 band.intersect(rect),
                 0.0,
-                rgb(frame::lerp(frame::WORLD_TOP, frame::WORLD_BOTTOM, t)),
+                rgb(crate::theme::water(t * 100.0, f.rules.thermo_top, f.rules.thermo_bottom)),
             );
         }
 
@@ -344,7 +344,8 @@ impl WorldView {
             if !Rect::from_center_size(center, Vec2::splat(radius * 2.0)).intersects(rect) {
                 continue;
             }
-            let alpha = (75.0 + 95.0 * corpse.fullness) as u8;
+            // even a nearly eaten one stays seen against the water
+            let alpha = (130.0 + 90.0 * corpse.fullness) as u8;
             let [r, g, b] = corpse.rgb();
             let fill = Color32::from_rgba_unmultiplied(r, g, b, alpha);
             if f.dots {
@@ -355,13 +356,30 @@ impl WorldView {
                 );
                 continue;
             }
-            world_painter.circle_filled(center, radius, fill);
             let rim = |c: u8| c.saturating_add(50);
-            world_painter.circle_stroke(
-                center,
-                radius,
-                Stroke::new(1.0, Color32::from_rgba_unmultiplied(rim(r), rim(g), rim(b), alpha)),
-            );
+            let edge = Stroke::new(1.2, Color32::from_rgba_unmultiplied(rim(r), rim(g), rim(b), alpha));
+            if corpse.skeleton {
+                // bones: a pale ring with a faint inside, not a disc
+                world_painter.circle_filled(
+                    center,
+                    radius,
+                    Color32::from_rgba_unmultiplied(r, g, b, alpha / 5),
+                );
+                world_painter.circle_stroke(center, radius, Stroke::new(1.6, fill));
+            } else if corpse.rot {
+                // rot: a dashed edge, apart from fresh meat at a glance
+                world_painter.circle_filled(center, radius, fill);
+                let ring: Vec<Pos2> = (0..=24)
+                    .map(|i| {
+                        let a = i as f32 / 24.0 * std::f32::consts::TAU;
+                        center + Vec2::new(a.cos(), a.sin()) * radius
+                    })
+                    .collect();
+                world_painter.extend(Shape::dashed_line(&ring, edge, 3.0, 3.0));
+            } else {
+                world_painter.circle_filled(center, radius, fill);
+                world_painter.circle_stroke(center, radius, edge);
+            }
         }
 
         // the selected creature's layer band — where it may live and eat

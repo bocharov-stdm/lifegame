@@ -264,12 +264,13 @@ pub struct CorpseMark {
 }
 
 impl CorpseMark {
-    /// Fresh meat is red-brown, rot grey-green, bones pale.
+    /// Fresh meat is a light red, rot a dark olive, bones pale: apart by lightness as well as by
+    /// hue, so colour-blind eyes tell them too.
     pub fn rgb(&self) -> [u8; 3] {
         match (self.skeleton, self.rot) {
-            (true, _) => [206, 198, 172],
-            (false, true) => [118, 128, 96],
-            (false, false) => [176, 104, 88],
+            (true, _) => [226, 218, 196],
+            (false, true) => [92, 98, 58],
+            (false, false) => [226, 92, 96],
         }
     }
 }
@@ -383,10 +384,11 @@ pub fn dots(world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) 
             return false;
         }
     }
-    let color = rgba(CREATURE_COLOR, 255);
+    // far away every creature is a dot in its diet's colour
+    let colors = crate::theme::DIET_COLORS.map(|c| rgba(c, 255));
     for v in &world.creatures {
         let diet = ((v.pheno.diet as u32) & 3) << DIET_SHIFT;
-        if !add(v.x, v.y, color, KIND_CREATURE, diet) {
+        if !add(v.x, v.y, colors[v.pheno.diet as usize & 3], KIND_CREATURE, diet) {
             out.clear();
             return false;
         }
@@ -397,7 +399,7 @@ pub fn dots(world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) 
 // ── colours ─────────────────────────────────────────────────────────────────
 
 // the palette is `theme.rs`'s; the frame builds the world's colours from it
-pub use crate::theme::{CREATURE_COLOR, PLANT_COLOR, SPROUT_COLOR, WORLD_BOTTOM, WORLD_TOP};
+pub use crate::theme::{CREATURE_COLOR, PLANT_COLOR, SPROUT_COLOR, WORLD_BOTTOM};
 
 pub fn lerp(a: [u8; 3], b: [u8; 3], t: f64) -> [u8; 3] {
     std::array::from_fn(|i| (a[i] as f64 + (b[i] as f64 - a[i] as f64) * t).round() as u8)
@@ -458,11 +460,9 @@ pub fn density(
     world.plants.iter().for_each(|p| add(p.x, p.y, 0, PLANT_COLOR));
     for v in &world.creatures {
         let diet = v.pheno.diet as usize;
-        if (highlight >> diet) & 1 != 0 {
-            add(v.x, v.y, 2, DIET_COLORS[diet]);
-        } else {
-            add(v.x, v.y, 1, CREATURE_COLOR);
-        }
+        // a cell's hue is the mean of its creatures' diets, the highlighted ones on a layer of their own
+        let layer = if (highlight >> diet) & 1 != 0 { 2 } else { 1 };
+        add(v.x, v.y, layer, DIET_COLORS[diet]);
     }
     let dim = if highlight == 0 { [1.0; 3] } else { [DIM_PLANT, DIM_CREATURE, 1.0] };
 
