@@ -39,7 +39,11 @@ pub fn estimate(settings: &Settings, measured: Option<(f64, f64)>) -> (String, e
     } else {
         ("очень медленно", DANGER)
     };
-    let speed = if tps >= 1000.0 { "больше 1000 т/с".into() } else { format!("до {tps:.0} т/с") };
+    let speed = if tps >= 1000.0 {
+        "больше 1000 тиков/с".into()
+    } else {
+        format!("до {tps:.0} тиков/с")
+    };
     (format!("{start}; тик ~{ms:.2} мс, {speed} — {verdict}"), color)
 }
 
@@ -187,7 +191,14 @@ impl LifeApp {
         ui.horizontal_wrapped(|ui| {
             for (name, scale) in PRESETS {
                 let label = format!("{name} ×{}", spaced(scale as u64));
-                if ui.selectable_label(s.scale == scale, label).clicked() {
+                let hint = if scale == Settings::default().scale {
+                    "Размер мира по умолчанию"
+                } else {
+                    ""
+                };
+                let button = ui.selectable_label(s.scale == scale, label);
+                let button = if hint.is_empty() { button } else { button.on_hover_text(hint) };
+                if button.clicked() {
                     s.scale = scale;
                 }
             }
@@ -251,25 +262,38 @@ impl LifeApp {
         let before = self.settings.clone();
         // what the simulation really runs on now (the last frame tells)
         let now = self.view.frame.as_ref().map(|f| (f.threads, f.fast_cores));
-        egui::Window::new("Настройки").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
-            let s = &mut self.settings;
-            ui.label(RichText::new("Экран").strong());
-            ui.checkbox(&mut s.fullscreen, "Во весь экран");
-            ui.horizontal(|ui| {
-                ui.label("Масштаб интерфейса");
-                egui::ComboBox::from_id_salt("масштаб интерфейса")
-                    .selected_text(ui_scale_label(s.ui_scale))
-                    .show_ui(ui, |ui| {
-                        for v in UI_SCALES {
-                            ui.selectable_value(&mut s.ui_scale, v, ui_scale_label(v));
-                        }
-                    });
+        let screen = ctx.content_rect();
+        egui::Window::new("Настройки")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .pivot(Align2::CENTER_CENTER)
+            .default_pos(screen.center())
+            .show(ctx, |ui| {
+                // at a big interface scale the window is taller than the screen: it scrolls
+                egui::ScrollArea::vertical().max_height((screen.height() - 120.0).max(200.0)).show(
+                    ui,
+                    |ui| {
+                        let s = &mut self.settings;
+                        ui.label(RichText::new("Экран").strong());
+                        ui.checkbox(&mut s.fullscreen, "Во весь экран");
+                        ui.horizontal(|ui| {
+                            ui.label("Масштаб интерфейса");
+                            egui::ComboBox::from_id_salt("масштаб интерфейса")
+                                .selected_text(ui_scale_label(s.ui_scale))
+                                .show_ui(ui, |ui| {
+                                    for v in UI_SCALES {
+                                        ui.selectable_value(&mut s.ui_scale, v, ui_scale_label(v));
+                                    }
+                                });
+                        });
+                        ui.checkbox(&mut s.show_fps, "Показывать кадры в секунду и цену тика");
+                        ui.add_space(6.0);
+                        ui.separator();
+                        computation(ui, s, now);
+                    },
+                );
             });
-            ui.checkbox(&mut s.show_fps, "Показывать кадры в секунду и цену тика");
-            ui.add_space(6.0);
-            ui.separator();
-            computation(ui, s, now);
-        });
         self.prefs_open = open;
         if self.settings != before {
             self.save_settings();
@@ -281,8 +305,38 @@ impl LifeApp {
             return;
         }
         let mut open = true;
-        egui::Window::new("Справка").open(&mut open).collapsible(false).default_width(560.0).show(ctx, |ui| {
-            egui::ScrollArea::vertical().max_height(520.0).show(ui, |ui| {
+        let screen = ctx.content_rect();
+        egui::Window::new("Справка")
+            .open(&mut open)
+            .collapsible(false)
+            .default_width((screen.width() - 40.0).clamp(300.0, 560.0))
+            .pivot(Align2::CENTER_CENTER)
+            .default_pos(screen.center())
+            .show(ctx, |ui| {
+            egui::ScrollArea::vertical().max_height((screen.height() - 160.0).max(200.0)).show(ui, |ui| {
+                ui.label(RichText::new("Управление").strong());
+                egui::Grid::new("клавиши").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
+                    for (k, what) in [
+                        ("Пробел", "пауза"),
+                        ("→", "один тик на паузе"),
+                        ("+ / −", "быстрее / медленнее"),
+                        ("колесо", "приблизить к курсору"),
+                        ("перетаскивание, WASD", "двигать камеру"),
+                        ("Home", "весь мир"),
+                        ("клик", "выбрать существо (промах выбор не снимает)"),
+                        ("F", "следить за выбранным"),
+                        ("B", "поведение выбранного: блок-схема его программы"),
+                        ("Tab", "боковая панель"),
+                        ("L", "лаборатория: правила на ходу"),
+                        ("I", "статистика: сытость, где живут, область"),
+                        ("Esc", "закрыть верхнее окно, снять выбор; потом меню"),
+                    ] {
+                        ui.label(RichText::new(k).strong());
+                        ui.label(what);
+                        ui.end_row();
+                    }
+                });
+                ui.add_space(6.0);
                 ui.label(RichText::new("Что происходит").strong());
                 ui.label(
                     "Растения по умолчанию растут гуще у поверхности (вверху). Существа едят их, растут, \
@@ -312,29 +366,6 @@ impl LifeApp {
                     }
                 });
                 ui.add_space(6.0);
-                ui.label(RichText::new("Управление").strong());
-                egui::Grid::new("клавиши").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
-                    for (k, what) in [
-                        ("Пробел", "пауза"),
-                        ("→", "один тик на паузе"),
-                        ("+ / −", "быстрее / медленнее"),
-                        ("колесо", "приблизить к курсору"),
-                        ("перетаскивание, WASD", "двигать камеру"),
-                        ("Home", "весь мир"),
-                        ("клик", "выбрать существо"),
-                        ("F", "следить за выбранным"),
-                        ("B", "поведение выбранного: блок-схема его программы"),
-                        ("Tab", "боковая панель"),
-                        ("L", "лаборатория: правила на ходу"),
-                        ("I", "статистика: сытость, где живут, область"),
-                        ("Esc", "меню"),
-                    ] {
-                        ui.label(RichText::new(k).strong());
-                        ui.label(what);
-                        ui.end_row();
-                    }
-                });
-                ui.add_space(6.0);
                 ui.label(RichText::new("Масштаб и форма").strong());
                 ui.label(
                     "Масштаб — во сколько раз мир больше по площади; плотность жизни та же. Форма — его \
@@ -345,8 +376,8 @@ impl LifeApp {
                 ui.label(RichText::new("Еда").strong());
                 ui.label(
                     "Где растут растения, задаётся по глубине и по ширине отдельно: равномерно, линейно, \
-                     экспонентой, логарифмом или волнами-полосами. Гены слоя под еду не подстраиваются — \
-                     существа сами ищут, на какой глубине выгоднее. Профиль можно менять и посреди партии: \
+                     экспонентой, логарифмом или волнами-полосами. Слой глубины задают программы поведения, \
+                     а не мир: выгодную глубину существа находят сами. Профиль можно менять и посреди партии: \
                      выросшее остаётся, новое растёт по-новому.",
                 );
             });
@@ -441,8 +472,9 @@ fn fast_cores_exist() -> bool {
     *HYBRID.get_or_init(life_sim::cores::has_fast_cores)
 }
 
+/// 0 and 1 are the same scale (the system's): a file saved with 1 shows it as the system's.
 fn ui_scale_label(v: f64) -> String {
-    if v == 0.0 { "как в системе".into() } else { format!("{:.0}%", v * 100.0) }
+    if v == 0.0 || v == 1.0 { "как в системе".into() } else { format!("{:.0}%", v * 100.0) }
 }
 
 /// A field from `FIELDS`: a slider or, if the field has variants, a drop-down list. true — the
@@ -451,13 +483,27 @@ pub fn field_input(ui: &mut egui::Ui, f: &Field, value: &mut f64) -> bool {
     if f.choices.is_empty() {
         // typed or dragged, the value stays inside the field's hard limits
         let mut shown = *value * f.shown;
+        // a percent field says so in its box too, not only in its base value; a price shown per
+        // 100 of the game's own (life ×2, speed ×0,5) shows the factor the formula uses beside it
+        let unit = if f.unit.is_empty() && (f.format)(f.hi).ends_with('%') {
+            " %".to_string()
+        } else if f.unit.is_empty() && f.shown != 1.0 && f.shown != 100.0 {
+            format!(" · ×{}", format!("{:.2}", *value).replace('.', ","))
+        } else {
+            f.unit.to_string()
+        };
+        let decimals = f.decimals;
         let response = ui
             .add(
                 egui::DragValue::new(&mut shown)
                     .range(f.lo * f.shown..=f.hi * f.shown)
                     .speed(f.step * f.shown)
-                    .fixed_decimals(f.decimals)
-                    .suffix(f.unit),
+                    // the decimal comma, as in every text of the game; a point is taken too
+                    .custom_formatter(move |v, _| format!("{v:.decimals$}").replace('.', ","))
+                    .custom_parser(|text| {
+                        text.trim().trim_end_matches('%').trim().replace(',', ".").parse().ok()
+                    })
+                    .suffix(unit),
             )
             .on_hover_text(field_hint(f));
         if response.changed() {
@@ -488,7 +534,7 @@ pub fn field_hint(f: &Field) -> String {
     }
     let why = if f.limit.is_empty() { String::new() } else { format!(" {}", f.limit) };
     format!(
-        "{}\n\nМожно от {} до {}.{why} Тяните мышью или щёлкните дважды и впишите число.",
+        "{}\n\nМожно от {} до {}.{why} Тяните мышью влево-вправо или щёлкните и впишите число.",
         f.hint,
         (f.format)(f.lo),
         (f.format)(f.hi)
@@ -613,9 +659,24 @@ fn fields(ui: &mut egui::Ui, s: &mut Settings, tab: Tab) {
         }
     });
     if tab == Tab::World {
+        // the four diet boxes are weights: what share each diet gets
+        let weights = [Key::Herbivores, Key::Omnivores, Key::Scavengers, Key::Carnivores].map(|k| s.get(k));
+        let sum: f64 = weights.iter().sum();
+        let shares = if sum <= 0.0 {
+            "одни травоядные".to_string()
+        } else {
+            let parts: Vec<String> = weights
+                .iter()
+                .zip(crate::theme::DIET_NAMES)
+                .filter(|(w, _)| **w > 0.0)
+                .map(|(w, name)| format!("{name} {:.0}%", w / sum * 100.0))
+                .collect();
+            parts.join(" · ")
+        };
+        ui.label(format!("Основатели по питанию: {shares}"));
         ui.colored_label(
             MUTED,
-            "Численность и плотность энергии — на участок 6000×4000: в большом мире всё в той же плотности.",
+            "Численность основателей — на участок 6000×4000: в большом мире всё в той же плотности.",
         );
     }
 }

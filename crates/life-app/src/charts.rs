@@ -308,7 +308,7 @@ fn number_row(
 
 fn number_text(now: f64, was: f64, percent: bool) -> (String, String) {
     let change = if percent {
-        format!("{:+.0} п.п.", now - was)
+        format!("{:+.0} пунктов", now - was)
     } else if was > 0.0 {
         format!("{:+.0}%", (now / was - 1.0) * 100.0)
     } else {
@@ -732,6 +732,6 @@ mod tests {
         assert_eq!(number_text(1.45, 1.0, false).0, "1.4");
         assert_eq!(number_text(0.4, 1.0, false).0, "0.4");
         assert_eq!(number_text(42.4, 40.0, false).0, "42");
-        assert_eq!(number_text(37.6, 30.0, true), ("38%".into(), "+8 п.п.".into()));
+        assert_eq!(number_text(37.6, 30.0, true), ("38%".into(), "+8 пунктов".into()));
     }
 }

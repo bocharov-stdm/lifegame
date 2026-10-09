@@ -122,7 +122,7 @@ pub const GENES: [GeneSpec; N] = [
     },
     GeneSpec {
         key: "strategy",
-        label: "происхождение",
+        label: "шаблон",
         about: "С какой программы поведения начинал род основателей. Потомкам не меняется: наследуется и мутирует сама программа.",
         kind: GeneKind::Choice(&STRATEGIES),
         base: 0.0,
@@ -165,7 +165,7 @@ pub const GENES: [GeneSpec; N] = [
     },
     GeneSpec {
         key: "lifespan",
-        label: "срок_жизни",
+        label: "срок жизни",
         about: "Сколько тиков живёт. С 70% срока слабеет: к 90% скорость, зрение, удар и здоровье — 70% прежних (500–10 000).",
         kind: GeneKind::Absolute,
         base: LIFESPAN_BASE,

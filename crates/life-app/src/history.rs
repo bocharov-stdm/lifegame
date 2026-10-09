@@ -60,6 +60,17 @@ pub struct History {
 }
 
 impl History {
+    /// «Последние 600 тиков» — the charts' span: the whole window once it is full, the game so far
+    /// before that.
+    pub fn span_label(&self) -> String {
+        let span = match (self.counts.first(), self.counts.last()) {
+            (Some(a), Some(b)) => (b.tick - a.tick).min(WINDOW_TICKS),
+            _ => 0,
+        };
+        let word = life_core::creature::program::ticks_word((span % 100 + 100) as u16);
+        format!("Последние {} {word}", crate::theme::spaced(span))
+    }
+
     pub fn add_sample(&mut self, s: Sample) {
         self.counts.push(s.tick, s);
     }

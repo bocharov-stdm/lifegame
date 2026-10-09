@@ -20,6 +20,8 @@ use life_core::profile::Phase;
 
 /// The speed of panning with the keys, screen points a second.
 const PAN_SPEED: f64 = 900.0;
+/// The lab's width on every tab: the diets' table fits it.
+const LAB_WIDTH: f32 = 660.0;
 
 /// The tick's dearest phases by share: «фазы тика: решения 62% · стадо 12% · …», the rest as one.
 fn phases_line(shares: &[f64; Phase::N]) -> String {
@@ -34,7 +36,7 @@ fn phases_line(shares: &[f64; Phase::N]) -> String {
 
 fn speed_label(index: usize) -> String {
     match SPEEDS[index] {
-        Some(tps) => format!("{tps:.0} т/с"),
+        Some(tps) => format!("{tps:.0} тиков/с"),
         None => "максимум".into(),
     }
 }
@@ -333,14 +335,14 @@ impl LifeApp {
             ui.separator();
             if st.lagging {
                 let target = SPEEDS[st.speed_index].unwrap_or(0.0);
-                ui.colored_label(DANGER, format!("отстаёт: {:.0} из {target:.0} т/с", st.tps)).on_hover_text(
+                ui.colored_label(DANGER, format!("отстаёт: {:.0} из {target:.0} тиков/с", st.tps)).on_hover_text(
                     "Тик не успевает за выбранной скоростью: мир большой или скорость высокая. \
                      Окно при этом не тормозит.",
                 );
             } else if st.paused {
                 ui.colored_label(MUTED, "пауза");
             } else {
-                ui.colored_label(MUTED, format!("{:.0} т/с", st.tps));
+                ui.colored_label(MUTED, format!("{:.0} тиков/с", st.tps));
             }
             if self.settings.show_fps {
                 ui.colored_label(
@@ -452,7 +454,7 @@ impl LifeApp {
                 "Растения — в своей шкале, питания — в одной общей, чтобы их можно было сравнивать. \
                  Наведите на график — под ним будут числа в этой точке.",
             );
-            ui.colored_label(MUTED, "Последние 10 000 тиков");
+            ui.colored_label(MUTED, self.history.span_label());
             charts::populations(ui, &self.history, 112.0);
             ui.add_space(4.0);
             self.kills_table(ui);
@@ -548,7 +550,8 @@ impl LifeApp {
     }
 
     fn creature_tab(&mut self, ui: &mut egui::Ui) {
-        let Some((s, rules)) = self.view.frame.as_ref().and_then(|f| Some((f.selected?, f.rules.clone())))
+        let Some((s, rules, world_h)) =
+            self.view.frame.as_ref().and_then(|f| Some((f.selected?, f.rules.clone(), f.world_h)))
         else {
             if let Some(lost) = self.lost {
                 self.lost_card(ui, lost);
@@ -557,19 +560,25 @@ impl LifeApp {
             }
             return;
         };
-        let avg = self.history.counts.last().and_then(|p| p.genom);
-        creature_card(ui, &s, avg, &rules, &mut self.behaviour_open);
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            let following = self.view.following();
-            if ui.selectable_label(following, "Следить (F)").clicked() {
-                self.view.toggle_follow();
+        // its own diet's medians: a carnivore is compared with carnivores, not with the herbivores
+        let diet = (s.genome[creature::Gene::Diet as usize] as usize).min(3);
+        let mut own = [None; N];
+        if let Some(genes) = self.history.snapshots.last().and_then(|snap| snap.diets[diet].genes) {
+            for (spread, gene) in genes.iter().zip(life_sim::observe::DIET_GENES) {
+                own[gene as usize] = Some(spread.p50);
             }
-
-            if ui.button("Снять выбор").on_hover_text("Esc").clicked() {
-                self.unselect();
-            }
+        }
+        let following = self.view.following();
+        let mut act = CardAction::None;
+        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            act = creature_card(ui, &s, &own, &rules, world_h, self.behaviour_open, following);
         });
+        match act {
+            CardAction::None => {}
+            CardAction::Behaviour => self.behaviour_open = !self.behaviour_open,
+            CardAction::Follow => self.view.toggle_follow(),
+            CardAction::Unselect => self.unselect(),
+        }
     }
 
     /// The card of the selected creature that died: how and when, and who to look at next.
@@ -622,22 +631,18 @@ impl LifeApp {
             lab.rules_over(&current, &taken)
         };
         let mut open = true;
+        // one width on every tab (the diets' table is the widest), left of the side panel
+        let screen = ctx.content_rect();
+        let side = if self.side_open { 340.0 } else { 0.0 };
+        let x = (screen.right() - side - LAB_WIDTH - 40.0).max(screen.left() + 8.0);
         egui::Window::new("Лаборатория")
             .open(&mut open)
-            .resizable(true)
-            .default_width(410.0)
-            .default_pos(ctx.content_rect().right_top() + Vec2::new(-440.0, 55.0))
+            .resizable(false)
+            .default_pos(egui::pos2(x, screen.top() + 55.0))
             .show(ctx, |ui| {
-                // the body's formula stands beside its fields: the window widens for it
                 let body = self.lab_tab == Tab::Body;
                 let diets = self.lab_tab == Tab::Diets;
-                ui.set_width(if body {
-                    740.0
-                } else if diets {
-                    660.0
-                } else {
-                    410.0
-                });
+                ui.set_width(LAB_WIDTH);
                 ui.horizontal_wrapped(|ui| {
                     for (tab, name) in Tab::RULES {
                         ui.selectable_value(&mut self.lab_tab, tab, name);
@@ -662,7 +667,8 @@ impl LifeApp {
                         crate::screens::diet_table(ui, &mut self.lab);
                         return;
                     }
-                    ui.horizontal_top(|ui| {
+                    // the body's formula under its fields, so the window keeps its width
+                    ui.vertical(|ui| {
                         ui.vertical(|ui| {
                             ui.add_space(5.0);
                             egui::Grid::new(("правила лаборатории", self.lab_tab as u8))
@@ -855,52 +861,81 @@ impl LifeApp {
     }
 }
 
-/// The card of the selected creature: energy, genes.
-/// `behaviour`: whether its behaviour window is open; the card's header toggles it.
+/// What the card's buttons asked for.
+enum CardAction {
+    None,
+    Behaviour,
+    Follow,
+    Unselect,
+}
+
+/// The card of the selected creature: who it is and the buttons first, then how it is doing
+/// (fullness, health, life lived) as bars, what it eats and how it behaves, and its genes folded.
+/// `own`: its diet's median of each gene the panel follows (`DIET_GENES`), None for the rest.
 fn creature_card(
     ui: &mut egui::Ui,
     s: &Selected,
-    avg: Option<[f64; N]>,
+    own: &[Option<f64>; N],
     rules: &Rules,
-    behaviour: &mut bool,
-) {
-    let color = rgb(CREATURE_COLOR);
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("●").color(color).size(18.0));
-        ui.label(RichText::new("Существо").strong().size(17.0));
-        ui.colored_label(MUTED, format!("№ {}", s.id));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .selectable_label(*behaviour, "Поведение (B)")
-                .on_hover_text("Блок-схема его программы поведения")
-                .clicked()
-            {
-                *behaviour = !*behaviour;
-            }
-        });
-    });
-    ui.label(format!(
-        "Тело {:.1} / {:.1} · возраст {:.0}",
-        s.half * 2.0,
-        s.genome[creature::Gene::Size as usize],
-        s.age
-    ));
-    // the same in real units (`life_core::units`): the life clock is compressed
-    ui.colored_label(
-        MUTED,
-        format!(
-            "≈ {:.0} см · {:.1} года · глубина {:.0} м",
-            units::cm(s.half * 2.0),
-            units::years(s.age),
-            units::metres(s.y)
-        ),
-    )
-    .on_hover_text(
-        "В настоящих единицах: базовое существо — рыба в 20 см. Жизнь ускорена: тик жизни ≈ 9 часов.",
-    );
-    ui.label(format!("Здоровье {:.1} / {:.1} · {}", s.health, s.max_health, s.state));
+    world_h: f64,
+    behaviour: bool,
+    following: bool,
+) -> CardAction {
+    let mut act = CardAction::None;
     let diet_index = (s.genome[creature::Gene::Diet as usize] as usize).min(3);
     let diet = &creature::DIET_VARIANTS[diet_index];
+    let color = rgb(theme::DIET_COLORS[diet_index]);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("●").color(color).size(18.0));
+        ui.label(RichText::new(format!("Существо № {}", s.id)).strong().size(16.0));
+    });
+    ui.colored_label(MUTED, s.state);
+    ui.horizontal_wrapped(|ui| {
+        if ui.selectable_label(behaviour, "Поведение (B)").on_hover_text("Блок-схема его программ").clicked()
+        {
+            act = CardAction::Behaviour;
+        }
+        if ui.selectable_label(following, "Следить (F)").on_hover_text("Камера идёт за ним").clicked()
+        {
+            act = CardAction::Follow;
+        }
+        if ui.button("Снять выбор").on_hover_text("Esc").clicked() {
+            act = CardAction::Unselect;
+        }
+    });
+    ui.add_space(4.0);
+
+    let lifespan = s.genome[creature::Gene::Lifespan as usize].max(1.0);
+    let fullness = (s.energy / s.max_energy).clamp(0.0, 1.0);
+    let health = (s.health / s.max_health.max(1e-9)).clamp(0.0, 1.0);
+    let lived = (s.age / lifespan).clamp(0.0, 1.0);
+    let bar = |ui: &mut egui::Ui, frac: f64, fill: egui::Color32, text: String, hint: &str| {
+        ui.add(egui::ProgressBar::new(frac as f32).fill(fill).desired_height(16.0).text(text))
+            .on_hover_text(hint);
+    };
+    bar(
+        ui,
+        fullness,
+        charts::energy_color(fullness, color),
+        format!("сытость {:.0}% · расход {:.2} в тик", fullness * 100.0, s.upkeep),
+        "Сколько энергии в баке от полного. Пустой бак — смерть от голода.",
+    );
+    bar(
+        ui,
+        health,
+        charts::energy_color(health, GOOD),
+        format!("здоровье {:.0} из {:.0}", s.health.max(0.0), s.max_health),
+        "Удары отнимают здоровье; лечится по своей программе.",
+    );
+    bar(
+        ui,
+        lived,
+        rgb(CREATURE_COLOR).gamma_multiply(0.7),
+        format!("прожито {:.0}% · возраст {:.0} тиков", lived * 100.0, s.age),
+        "Доля срока жизни. С 70% тело слабеет, на 100% — смерть от старости.",
+    );
+    ui.add_space(4.0);
+
     let program = &s.programs[s.stage];
     // how much smaller its prey, by the program it lives by now; only who digests fresh meat hunts
     let prey = match program.hunt_ratio() {
@@ -911,6 +946,16 @@ fn creature_card(
     };
     ui.colored_label(color, format!("Питание: {}{prey}", diet.label)).on_hover_text(diet.about);
     ui.colored_label(MUTED, diet_bonuses(s.genome[creature::Gene::Diet as usize], rules));
+    if let Some(food) = s.eating {
+        use life_core::corpse::Stage;
+        use life_core::creature::Morsel;
+        ui.label(match food {
+            Morsel::Plant => "ест растение",
+            Morsel::Corpse { stage: Stage::Fresh } => "ест свежее мясо",
+            Morsel::Corpse { stage: Stage::Rot } => "ест гниль",
+            Morsel::Corpse { stage: Stage::Bones } => "грызёт кости",
+        });
+    }
     let template = life_core::creature::strategy::VARIANTS
         .get(s.genome[creature::Gene::Strategy as usize] as usize)
         .map_or("?", |v| v.label);
@@ -918,45 +963,45 @@ fn creature_card(
     ui.colored_label(
         MUTED,
         format!(
-            "Поведение: {template}, дорожка {track}, мутаций {}, блоков {}",
+            "Шаблон {template} · дорожка {track} · мутаций {} · блоков {}",
             program.changes,
             program.blocks().len()
         ),
     )
     .on_hover_text(
-        "Две программы поведения: детская — пока растёт, взрослая — когда вырос. \
-         Блок-схемы — по кнопке «Поведение (B)».",
+        "Две программы поведения: детская — пока растёт, взрослая — когда вырос. Шаблон — с какой \
+         программы начинал род. Блок-схемы — по кнопке «Поведение (B)».",
     );
-    if let Some(food) = s.eating {
-        use life_core::corpse::Stage;
-        use life_core::creature::Morsel;
-        ui.colored_label(
-            MUTED,
-            match food {
-                Morsel::Plant => "ест растение".to_string(),
-                Morsel::Corpse { stage: Stage::Fresh } => "ест свежее мясо".to_string(),
-                Morsel::Corpse { stage: Stage::Rot } => "ест гниль".to_string(),
-                Morsel::Corpse { stage: Stage::Bones } => "грызёт кости".to_string(),
-            },
-        );
-    }
-    let frac = (s.energy / s.max_energy).clamp(0.0, 1.0);
-    ui.horizontal(|ui| {
-        ui.colored_label(MUTED, "энергия");
-        ui.label(format!("{:.0} / {:.0}", s.energy.max(0.0), s.max_energy));
-        ui.colored_label(MUTED, format!("расход {:.2} в тик", s.upkeep));
+    ui.colored_label(
+        MUTED,
+        format!(
+            "тело {:.1} из {:.1} · глубина {:.0}%",
+            s.half * 2.0,
+            s.genome[creature::Gene::Size as usize],
+            s.y / world_h.max(1.0) * 100.0
+        ),
+    )
+    // the same in real units (`life_core::units`): the life clock is compressed
+    .on_hover_text(format!(
+        "Растёт до размера своего гена. В настоящих единицах: {:.0} см, {:.1} года, глубина {:.0} м \
+         (базовое существо — рыба в 20 см; тик жизни ≈ 9 часов).",
+        units::cm(s.half * 2.0),
+        units::years(s.age),
+        units::metres(s.y)
+    ));
+    ui.add_space(4.0);
+    egui::CollapsingHeader::new("Гены").default_open(false).show(ui, |ui| {
+        ui.colored_label(MUTED, format!("справа — к медиане: {}", theme::DIET_NAMES[diet_index]));
+        egui::Grid::new("карточка").num_columns(3).spacing([14.0, 4.0]).show(ui, |ui| {
+            gene_rows(ui, &creature::GENES, &s.genome, own);
+        });
     });
-    ui.add(egui::ProgressBar::new(frac as f32).fill(charts::energy_color(frac, color)).desired_height(6.0));
-    ui.add_space(6.0);
-
-    egui::Grid::new("карточка").num_columns(3).spacing([14.0, 4.0]).show(ui, |ui| {
-        gene_rows(ui, &creature::GENES, &s.genome, avg.as_ref());
-    });
+    act
 }
 
-/// A creature's genes by the table. `avg` is the population's mean genome: who is this one —
-/// bigger, more far-sighted? A choice gene with one variant is not shown.
-fn gene_rows(ui: &mut egui::Ui, genes: &[GeneSpec], g: &[f64], avg: Option<&[f64; N]>) {
+/// A creature's genes by the table, against `own` (its diet's median, where known): who is this
+/// one — bigger, more far-sighted than its kind? A choice gene with one variant is not shown.
+fn gene_rows(ui: &mut egui::Ui, genes: &[GeneSpec], g: &[f64], own: &[Option<f64>; N]) {
     for (i, spec) in genes.iter().enumerate().filter(|(_, spec)| charts::shown(spec)) {
         ui.colored_label(MUTED, spec.label);
         if let Some(variants) = spec.variants() {
@@ -972,11 +1017,11 @@ fn gene_rows(ui: &mut egui::Ui, genes: &[GeneSpec], g: &[f64], avg: Option<&[f64
             (false, true) => format!("{:.1}", g[i]),
             (false, false) => format!("{:.0}", g[i]),
         });
-        let delta = avg.map(|a| {
+        let delta = own[i].map(|m| {
             if percent {
-                format!("{:+.0} п.п. к среднему", g[i] - a[i])
-            } else if a[i] > 0.0 {
-                format!("{:+.0}% к среднему", (g[i] / a[i] - 1.0) * 100.0)
+                format!("{:+.0} пунктов", g[i] - m)
+            } else if m > 0.0 {
+                format!("{:+.0}%", (g[i] / m - 1.0) * 100.0)
             } else {
                 String::new()
             }

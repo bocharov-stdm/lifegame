@@ -464,7 +464,7 @@ fn статистика_помещается_в_окно() {
             settle(h);
             assert_eq!(h.state().view.area, Some((0.0, 0.0, w / 2.0, hh / 3.0)));
             if tab != StatsTab::Region {
-                assert!(h.query_by_label("Последние 10 000 тиков").is_some());
+                assert!(h.query_by_label_contains("Последние").is_some());
             }
             check_layout(h, size, &format!("статистика, {tab:?}, {tag}"), None);
             shot(h, &format!("статистика-{tab:?}-{tag}"));
@@ -493,7 +493,7 @@ fn статистика_помещается_в_окно() {
             settle(h);
             assert!(h.state().view.area.is_some(), "смена вкладки сохраняет область");
             if tab == SideTab::Charts {
-                assert!(h.query_by_label("Последние 10 000 тиков").is_some());
+                assert!(h.query_by_label_contains("Последние").is_some());
                 assert!(h.query_by_label("Недавнее").is_none());
                 assert!(h.query_by_label("Вся партия").is_none());
             }

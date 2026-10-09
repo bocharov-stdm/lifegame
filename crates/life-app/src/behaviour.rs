@@ -26,7 +26,7 @@ const NUMBER_W: f32 = 26.0;
 const COND_W: f32 = 236.0;
 const GAP: f32 = 58.0;
 const ACTION_W: f32 = 190.0;
-const WIDTH: f32 = NUMBER_W + COND_W + GAP + ACTION_W + 6.0;
+pub(crate) const WIDTH: f32 = NUMBER_W + COND_W + GAP + ACTION_W + 6.0;
 /// A condition box's least height (a row is as tall as its taller box) and the room below a row
 /// for the «нет» arrow.
 const BOX_H: f32 = 46.0;
@@ -114,13 +114,12 @@ pub(crate) fn behaviour_window(ctx: &egui::Context, open: &mut bool, s: &Selecte
             };
             ui.add(egui::Label::new(egui::RichText::new(note).color(MUTED)).wrap());
             ui.add_space(4.0);
-            // as tall as the screen allows, scrolling a long program
+            // as tall as the program, up to what the screen allows, scrolling a long one
             let height = (ctx.content_rect().height() - 250.0).clamp(140.0, 1200.0);
             let path = live.then_some(Path { fired: s.fired, applied: s.applied, tried: s.tried });
             egui::ScrollArea::vertical()
                 .id_salt(tab)
                 .max_height(height)
-                .min_scrolled_height(height)
                 .show(ui, |ui| flowchart(ui, p, path));
         });
 }
@@ -409,7 +408,7 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
         }
         if setting {
             action_hint.push_str(
-                "\nУстановка не решает ход и действует, где бы ни стояла в программе; из установок \
+                "\nУстановка не решает, что делать в этот тик, и действует, где бы ни стояла в программе; из установок \
                  одного рода действует первая, чьё условие выполнено.",
             );
         } else if !b.action.never_fails() {

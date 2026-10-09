@@ -30,7 +30,7 @@ const COST_SHOWN: f64 = 100.0 / GAME_COST_SCALE;
 pub const GAME_SPEED_COST: f64 = 0.5;
 const SPEED_COST_SHOWN: f64 = 100.0 / GAME_SPEED_COST;
 /// The interface scale; 0 — as in the system.
-pub const UI_SCALES: [f64; 6] = [0.0, 1.0, 1.25, 1.5, 1.75, 2.0];
+pub const UI_SCALES: [f64; 5] = [0.0, 1.25, 1.5, 1.75, 2.0];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
@@ -481,7 +481,7 @@ const BASE_FIELDS: [Field; 57] = [
     },
     Field {
         key: Key::MeatFounders,
-        label: "Размер мясоедов на старте",
+        label: "Размер мясоедов и падальщиков",
         hint: "Размер основателей-падальщиков и мясоедов; 100 — обычный, 200 — вдвое крупнее. Равные \
                остальным, они не находили добычи и умирали с голоду. Дальше размер наследуется как обычно.",
         lo: 0.25,
@@ -1238,8 +1238,9 @@ pub fn field(key: Key) -> &'static Field {
 }
 
 /// The scale presets of the «Новый мир» screen.
-pub const PRESETS: [(&str, f64); 4] =
-    [("Как раньше", 1.0), ("Остров", 10.0), ("Материк", 100.0), ("Планета", 1000.0)];
+/// The scale presets; «Море» ×20 is the game's default world.
+pub const PRESETS: [(&str, f64); 5] =
+    [("Пруд", 1.0), ("Остров", 10.0), ("Море", 20.0), ("Материк", 100.0), ("Планета", 1000.0)];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
@@ -1464,6 +1465,8 @@ impl Settings {
             s.fullscreen = v;
         }
         if let Some(v) = num("ui_scale") {
+            // 100% was a choice of its own, the same as the system's (0); below 1.1 it is that one
+            let v = if v < 1.1 { 0.0 } else { v };
             s.ui_scale =
                 UI_SCALES.into_iter().min_by(|a, b| (a - v).abs().total_cmp(&(b - v).abs())).unwrap_or(0.0);
         }

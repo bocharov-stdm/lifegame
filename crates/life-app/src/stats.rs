@@ -27,12 +27,22 @@ pub enum StatsTab {
 impl LifeApp {
     pub fn stats_window(&mut self, ctx: &egui::Context) {
         let mut open = true;
+        // beside the behaviour window (at the left, `behaviour::WIDTH` wide) when the world has
+        // room for both, else a step lower: never right on top of it
+        let screen = ctx.content_rect();
+        let side = if self.side_open { 340.0 } else { 0.0 };
+        let beside = screen.width() - side >= 24.0 + crate::behaviour::WIDTH + 16.0 + 640.0;
+        let at = if beside {
+            Vec2::new(24.0 + crate::behaviour::WIDTH + 16.0, 60.0)
+        } else {
+            Vec2::new(48.0, 110.0)
+        };
         egui::Window::new("Статистика")
             .open(&mut open)
             .resizable(true)
             .default_size(Vec2::new(640.0, 460.0))
             .min_width(420.0)
-            .default_pos(ctx.content_rect().left_top() + Vec2::new(40.0, 60.0))
+            .default_pos(screen.left_top() + at)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Energy, "Энергия");
@@ -52,7 +62,7 @@ impl LifeApp {
     }
 
     fn energy_tab(&mut self, ui: &mut egui::Ui) {
-        ui.colored_label(MUTED, "Последние 10 000 тиков");
+        ui.colored_label(MUTED, self.history.span_label());
         self.diets_line(ui);
         let snaps = self.history.snapshots.points();
         if let Some(s) = snaps.last() {
@@ -72,7 +82,7 @@ impl LifeApp {
     }
 
     fn where_tab(&mut self, ui: &mut egui::Ui) {
-        ui.colored_label(MUTED, "Последние 10 000 тиков");
+        ui.colored_label(MUTED, self.history.span_label());
         let snaps = self.history.snapshots.points();
         ui.label(RichText::new("Глубина существ во времени").strong());
         let hovered = charts::depth_map(ui, &snaps, 170.0);
@@ -346,7 +356,7 @@ fn row(spec: &GeneSpec, inside: &GeneStat, world: Option<&GeneStat>) -> (String,
         (GeneStat::Number(a), world) => {
             let b = world.and_then(|w| w.spread()).map(|s| s.mean);
             let diff = match b {
-                Some(b) if percent => signed(a.mean - b, " п.п."),
+                Some(b) if percent => signed(a.mean - b, " пунктов"),
                 Some(b) if b > 0.0 => signed((a.mean / b - 1.0) * 100.0, "%"),
                 _ => String::new(),
             };
@@ -358,7 +368,7 @@ fn row(spec: &GeneSpec, inside: &GeneStat, world: Option<&GeneStat>) -> (String,
                 return Default::default();
             };
             let b = world.and_then(|w| w.shares()).map(|s| s[k]);
-            let diff = b.map(|b| signed((a[k] - b) * 100.0, " п.п.")).unwrap_or_default();
+            let diff = b.map(|b| signed((a[k] - b) * 100.0, " пунктов")).unwrap_or_default();
             (
                 format!("{} {:.0}%", variants[k].label, a[k] * 100.0),
                 b.map(|b| format!("{:.0}%", b * 100.0)).unwrap_or_default(),
@@ -411,7 +421,7 @@ mod tests {
         let at = |mean| GeneStat::Number(Spread { p10: mean, p50: mean, p90: mean, mean });
         assert_eq!(row(spec, &at(60.0), Some(&at(40.0))), ("60".into(), "40".into(), "+50%".into()));
         let maturation = &creature::GENES[Gene::Maturation as usize];
-        assert_eq!(row(maturation, &at(30.0), Some(&at(40.0))).2, "-10 п.п.");
+        assert_eq!(row(maturation, &at(30.0), Some(&at(40.0))).2, "-10 пунктов");
         let strategy = &creature::GENES[Gene::Strategy as usize];
         let mut a = [0.0; life_sim::observe::MAX_VARIANTS];
         a[1] = 0.75;
@@ -419,7 +429,7 @@ mod tests {
         let mut b = a;
         b[1] = 0.5;
         let (here, there, diff) = row(strategy, &GeneStat::Shares(a), Some(&GeneStat::Shares(b)));
-        assert!(here.ends_with("75%") && there == "50%" && diff == "+25 п.п.", "{here} {there} {diff}");
+        assert!(here.ends_with("75%") && there == "50%" && diff == "+25 пунктов", "{here} {there} {diff}");
         assert_eq!(row(spec, &at(40.1), Some(&at(40.0))).2, "0%", "без «-0» и «+0»");
     }
 

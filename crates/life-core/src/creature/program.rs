@@ -430,7 +430,7 @@ pub enum Action {
     DefendChild,
 }
 
-const PACE: ParamSpec = ParamSpec::percent("ход", 10, 100, 100);
+const PACE: ParamSpec = ParamSpec::percent("темп", 10, 100, 100);
 const BURST: ParamSpec = ParamSpec::flag("рывком", true);
 const BEST: ParamSpec = ParamSpec::flag("только если выгоднее", true);
 const FIGHT_PARAMS: [ParamSpec; 1] = [ParamSpec::ratio("враг крупнее не более чем в", 150)];
@@ -455,7 +455,7 @@ const HUNT_PARAMS: [ParamSpec; 8] = [
     BURST,
     ParamSpec::ticks("брошенную не трогать", 0, 3000, CHASE_GIVE_UP_TICKS as u16),
     ParamSpec::sight("добыча не дальше", 10, 100, 100, PROGRAM_NUDGE_POINTS),
-    ParamSpec::percent("ход погони", 10, 100, 100),
+    ParamSpec::percent("темп погони", 10, 100, 100),
 ];
 const CORPSE_PARAMS: [ParamSpec; 2] = [BEST, PACE];
 /// The old plant choice: the plant it goes to while it lives and is seen, else the nearest.
@@ -1752,7 +1752,7 @@ mod tests {
         assert_eq!(
             text[13],
             "14. если включён режим 1 → убегать (бежать ещё 60 тиков, рывком, снова пугается угрозы ближе \
-             33% зрения, ход 100%, прямо)"
+             33% зрения, темп 100%, прямо)"
         );
         assert_eq!(
             text[14],
@@ -1763,7 +1763,7 @@ mod tests {
             text[15],
             "16. если всегда → охотиться (добыча мельче в 1,5 раза, осторожность 100%, терпение 30 тиков, \
              только если выгоднее, рывком, брошенную не трогать 180 тиков, добыча не дальше 100% зрения, \
-             ход погони 100%)"
+             темп погони 100%)"
         );
         assert_eq!(
             text[16],
@@ -1771,13 +1771,13 @@ mod tests {
         );
         assert_eq!(
             text[18],
-            "19. если всегда → к растению (ход 100%, держится выбранного, не самое выгодное)"
+            "19. если всегда → к растению (темп 100%, держится выбранного, не самое выгодное)"
         );
         assert_eq!(
             *text.last().unwrap(),
-            format!("{}. если всегда → бродить (ход 100%, цели до 200% зрения)", text.len())
+            format!("{}. если всегда → бродить (темп 100%, цели до 200% зрения)", text.len())
         );
-        assert!(l.describe().last().unwrap().contains("(ход 33%"));
+        assert!(l.describe().last().unwrap().contains("(темп 33%"));
     }
 
     #[test]
@@ -1791,7 +1791,7 @@ mod tests {
         assert_eq!(p.reachable(), 2);
         assert_eq!(
             p.describe()[0],
-            "1. если сытость < 40% → к растению (ход 100%, держится выбранного, не самое выгодное)"
+            "1. если сытость < 40% → к растению (темп 100%, держится выбранного, не самое выгодное)"
         );
         assert!(!p.live(2), "a deciding block after one that always fires is never reached");
         assert!(p.live(3), "a setting applies wherever it stands");
