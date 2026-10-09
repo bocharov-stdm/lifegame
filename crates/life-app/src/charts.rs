@@ -125,6 +125,11 @@ pub enum Scale {
     Share,
 }
 
+/// A line drawn on a scale of its own (dashed: its height is not to be compared with the others').
+fn on_its_own<T>(line: &Line<T>, scale: Scale) -> bool {
+    scale == Scale::Own && !line.shared
+}
+
 /// A chart of lines by the history's points. Under the chart — the tick and the values at the
 /// point under the cursor (or at the last one).
 pub fn lines<T>(
@@ -150,15 +155,39 @@ pub fn lines<T>(
     }
     let n = points.len();
     let inner = rect.shrink(4.0);
+    let small = FontId::monospace(10.5);
+    let faint = MUTED.gamma_multiply(0.8);
     if scale == Scale::Share {
         // the middle of the scale is a landmark for «more or less than half»
         let y = inner.center().y;
         painter
             .line_segment([Pos2::new(inner.left(), y), Pos2::new(inner.right(), y)], Stroke::new(1.0, LINE));
+        painter.text(Pos2::new(inner.left() + 2.0, y), Align2::LEFT_BOTTOM, "50%", small.clone(), faint);
+        painter.text(inner.left_top(), Align2::LEFT_TOP, "100%", small.clone(), faint);
     }
+    // the time axis: how far back the left edge is
+    let span = tick(points[n - 1]).saturating_sub(tick(points[0]));
+    painter.text(
+        inner.left_bottom(),
+        Align2::LEFT_BOTTOM,
+        format!("−{} тиков", spaced(span)),
+        small.clone(),
+        faint,
+    );
+    painter.text(inner.right_bottom(), Align2::RIGHT_BOTTOM, "сейчас", small.clone(), faint);
     let top = |line: &Line<T>| points.iter().filter_map(|p| (line.value)(p)).fold(0.0f64, f64::max).max(1.0);
     let shared = lines.iter().filter(|l| l.shared).map(top).fold(1.0f64, f64::max);
+    if scale == Scale::Own && lines.iter().any(|l| l.shared) {
+        painter.text(
+            inner.left_top(),
+            Align2::LEFT_TOP,
+            format!("до {}", spaced(shared.round() as u64)),
+            small.clone(),
+            faint,
+        );
+    }
     for line in lines {
+        let dashed = on_its_own(line, scale);
         let max = match scale {
             Scale::Own if line.shared => shared,
             Scale::Own => top(line),
@@ -172,10 +201,10 @@ pub fn lines<T>(
                     x_at(inner, i, n),
                     inner.bottom() - (v / max).clamp(0.0, 1.0) as f32 * inner.height(),
                 )),
-                None => draw_run(&painter, &mut run, line.color),
+                None => draw_run(&painter, &mut run, line.color, dashed),
             }
         }
-        draw_run(&painter, &mut run, line.color);
+        draw_run(&painter, &mut run, line.color, dashed);
     }
 
     let hovered = hover_index(ui, rect, n);
@@ -195,14 +224,23 @@ pub fn lines<T>(
             };
             // non-breaking spaces: the label does not break by a wrap in the middle
             let text = format!("{} {value}", line.label).replace(' ', "\u{a0}");
-            ui.colored_label(line.color, text);
+            if on_its_own(line, scale) {
+                ui.colored_label(line.color, format!("┄\u{a0}{text}"))
+                    .on_hover_text("Пунктир — своя шкала: с остальными линиями по высоте не сравнивать");
+            } else {
+                ui.colored_label(line.color, text);
+            }
         }
     });
 }
 
-fn draw_run(painter: &egui::Painter, run: &mut Vec<Pos2>, color: Color32) {
+fn draw_run(painter: &egui::Painter, run: &mut Vec<Pos2>, color: Color32, dashed: bool) {
     if run.len() >= 2 {
-        painter.add(Shape::line(std::mem::take(run), Stroke::new(1.6, color)));
+        if dashed {
+            painter.extend(Shape::dashed_line(run, Stroke::new(1.3, color), 5.0, 3.0));
+        } else {
+            painter.add(Shape::line(std::mem::take(run), Stroke::new(1.6, color)));
+        }
     }
     run.clear();
 }
@@ -490,7 +528,8 @@ pub fn histograms(ui: &mut egui::Ui, group: &Group, columns: &[usize], color: Co
             if n == 0 {
                 continue;
             }
-            let h = (n as f32 / top).sqrt().max(0.08) * bars.height();
+            // linear, as heights are read; a lone creature still shows as a sliver
+            let h = (n as f32 / top * bars.height()).max(2.0);
             let left = bars.left() + b as f32 * bar_w;
             let r = Rect::from_min_max(
                 Pos2::new(left + 0.5, bars.bottom() - h),
@@ -579,7 +618,8 @@ pub fn shares(ui: &mut egui::Ui, spec: &GeneSpec, column: &census::Column) {
 const SCATTER_CELL: f32 = 5.0;
 
 /// Two characteristics of a census group against each other, as a density: separate clouds are
-/// separate kinds. Everybody is coloured by diet; a cell's brightness is how many are there.
+/// separate kinds. A cell takes the colour of the diet most of its creatures have (a blend of four
+/// colours reads as a fifth diet); its brightness is how many are there.
 pub fn scatter(ui: &mut egui::Ui, census: &Census, group: usize, axes: [usize; 2], height: f32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
     let painter = ui.painter_at(rect.expand(2.0));
@@ -611,11 +651,9 @@ pub fn scatter(ui: &mut egui::Ui, census: &Census, group: usize, axes: [usize; 2
         if n == 0 {
             continue;
         }
-        let mix: [f32; 3] = std::array::from_fn(|ch| {
-            (0..4).map(|d| c[d] as f32 * f32::from(DIET_COLORS[d][ch])).sum::<f32>() / n as f32
-        });
+        let most = (0..4).max_by_key(|&d| (c[d], std::cmp::Reverse(d))).unwrap_or(0);
         let a = (0.35 + (n as f32).log2() / 8.0).min(1.0);
-        let color = Color32::from_rgb(mix[0] as u8, mix[1] as u8, mix[2] as u8).gamma_multiply(a);
+        let color = rgb(DIET_COLORS[most]).gamma_multiply(a);
         let min = Pos2::new(inner.left() + (k % w) as f32 * cw, inner.top() + (k / w) as f32 * ch);
         painter.rect_filled(Rect::from_min_size(min, Vec2::new(cw + 0.5, ch + 0.5)), 0.0, color);
     }
