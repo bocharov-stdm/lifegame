@@ -776,6 +776,48 @@ impl LifeApp {
         });
     }
 
+    /// The lab's rows of one tab's live rules: a box to mark for a joint reset, the name, the
+    /// value, the default, and ↺ when it differs.
+    fn lab_grid(&mut self, ui: &mut egui::Ui, tab: Tab, default: &settings::Settings) {
+        ui.add_space(5.0);
+        egui::Grid::new(("правила лаборатории", tab as u8)).num_columns(5).spacing([7.0, 4.0]).show(
+            ui,
+            |ui| {
+                let rows = FIELDS
+                    .iter()
+                    .filter(|f| f.live() && f.tab == tab && !matches!(f.key, settings::Key::Diet(..)));
+                for f in rows {
+                    if !(f.visible)(&self.lab) {
+                        continue;
+                    }
+                    let mut marked = self.lab_reset_selected.contains(&f.key);
+                    if ui.checkbox(&mut marked, "").on_hover_text("Отметить для общего сброса").changed()
+                    {
+                        if marked {
+                            self.lab_reset_selected.insert(f.key);
+                        } else {
+                            self.lab_reset_selected.remove(&f.key);
+                        }
+                    }
+                    ui.label(f.label).on_hover_text(crate::screens::field_hint(f));
+                    let mut v = self.lab.get(f.key);
+                    if crate::screens::field_input(ui, f, &mut v) {
+                        self.lab.set(f.key, v);
+                    }
+                    crate::screens::base_value(ui, f, default);
+                    if self.lab.is_default(f.key) {
+                        ui.label("");
+                    } else if ui.small_button("↺").on_hover_text("Вернуть значение по умолчанию").clicked()
+                    {
+                        self.lab.set(f.key, default.get(f.key));
+                        self.lab_reset_selected.remove(&f.key);
+                    }
+                    ui.end_row();
+                }
+            },
+        );
+    }
+
     /// The lab on the side panel: the world's rules by topic, applied with a button, saved for new
     /// worlds with another.
     fn lab_page(&mut self, ui: &mut egui::Ui) {
@@ -818,52 +860,23 @@ impl LifeApp {
                     if diets {
                         ui.add_space(5.0);
                         crate::screens::diet_table(ui, &mut self.lab);
+                        ui.add_space(theme::GAP_WIDE);
+                        ui.label(theme::strong("Как меняется питание у потомков"));
+                        self.lab_grid(ui, Tab::Diets, &default);
                         return;
                     }
-                    // the body's formula under its fields, so the window keeps its width
+                    // the body's formula under its fields, so the panel keeps its width
                     ui.vertical(|ui| {
-                        ui.vertical(|ui| {
-                            ui.add_space(5.0);
-                            egui::Grid::new(("правила лаборатории", self.lab_tab as u8))
-                                .num_columns(5)
-                                .spacing([7.0, 4.0])
-                                .show(ui, |ui| {
-                                    for f in FIELDS.iter().filter(|f| f.live() && f.tab == self.lab_tab) {
-                                        if !(f.visible)(&self.lab) {
-                                            continue;
-                                        }
-                                        let mut marked = self.lab_reset_selected.contains(&f.key);
-                                        if ui
-                                            .checkbox(&mut marked, "")
-                                            .on_hover_text("Отметить для общего сброса")
-                                            .changed()
-                                        {
-                                            if marked {
-                                                self.lab_reset_selected.insert(f.key);
-                                            } else {
-                                                self.lab_reset_selected.remove(&f.key);
-                                            }
-                                        }
-                                        ui.label(f.label).on_hover_text(crate::screens::field_hint(f));
-                                        let mut v = self.lab.get(f.key);
-                                        if crate::screens::field_input(ui, f, &mut v) {
-                                            self.lab.set(f.key, v);
-                                        }
-                                        crate::screens::base_value(ui, f, &default);
-                                        if self.lab.is_default(f.key) {
-                                            ui.label("");
-                                        } else if ui
-                                            .small_button("↺")
-                                            .on_hover_text("Вернуть исходное значение")
-                                            .clicked()
-                                        {
-                                            self.lab.set(f.key, default.get(f.key));
-                                            self.lab_reset_selected.remove(&f.key);
-                                        }
-                                        ui.end_row();
-                                    }
-                                });
-                        });
+                        if self.lab_tab == Tab::Water {
+                            ui.label(crate::screens::WATER_NOTE);
+                        }
+                        for (i, (tab, heading)) in self.lab_tab.pages().iter().enumerate() {
+                            if let Some(heading) = heading.filter(|_| i > 0) {
+                                ui.add_space(theme::GAP_WIDE);
+                                ui.label(theme::strong(heading));
+                            }
+                            self.lab_grid(ui, *tab, &default);
+                        }
                         if body && self.settings.details {
                             ui.add_space(8.0);
                             crate::screens::body_formula(ui, &applied(&self.lab));

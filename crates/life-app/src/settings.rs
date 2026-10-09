@@ -39,13 +39,15 @@ pub enum Tab {
     /// The world's rules by topic; they can be changed mid-game in the lab too.
     /// «Еда»: how much food comes and where plants grow.
     Food,
+    /// «Вода»: where it is warm and where cold (the thermocline).
+    Water,
     /// «Тело»: what a body costs to keep and to bear.
     Body,
-    /// «Питание»: what each diet is good at, as a table.
+    /// «Питание»: what each diet is good at, as a table, and how a child's diet changes.
     Diets,
-    /// «Бой».
+    /// «Бой и трупы»: the strikes and shots; the corpses' fields stand on the same page.
     Combat,
-    /// «Трупы»: how corpses rot and sink.
+    /// How corpses rot and sink: shown on «Бой и трупы».
     Corpses,
     /// «Эволюция»: how children inherit.
     Evolution,
@@ -55,12 +57,26 @@ impl Tab {
     /// The rule tabs, in the order the lab and «Новый мир» show them.
     pub const RULES: [(Tab, &'static str); 6] = [
         (Tab::Food, "Еда"),
+        (Tab::Water, "Вода"),
         (Tab::Body, "Тело"),
         (Tab::Diets, "Питание"),
-        (Tab::Combat, "Бой"),
-        (Tab::Corpses, "Трупы"),
+        (Tab::Combat, "Бой и трупы"),
         (Tab::Evolution, "Эволюция"),
     ];
+
+    /// The tabs whose fields a page shows: «Бой и трупы» holds the corpses' too.
+    pub fn pages(self) -> &'static [(Tab, Option<&'static str>)] {
+        match self {
+            Tab::Combat => &[(Tab::Combat, None), (Tab::Corpses, Some("Трупы"))],
+            Tab::Diets => &[(Tab::Diets, Some("Как меняется питание у потомков"))],
+            Tab::World => &[(Tab::World, None)],
+            Tab::Food => &[(Tab::Food, None)],
+            Tab::Water => &[(Tab::Water, None)],
+            Tab::Body => &[(Tab::Body, None)],
+            Tab::Corpses => &[(Tab::Corpses, None)],
+            Tab::Evolution => &[(Tab::Evolution, None)],
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1054,7 +1070,7 @@ const BASE_FIELDS: [Field; 57] = [
         step: 1.0,
         format: percent,
         unit: " %",
-        tab: Tab::Food,
+        tab: Tab::Water,
         rule: Some("thermo_top"),
         ..NUMBER
     },
@@ -1068,7 +1084,7 @@ const BASE_FIELDS: [Field; 57] = [
         step: 1.0,
         format: percent,
         unit: " %",
-        tab: Tab::Food,
+        tab: Tab::Water,
         rule: Some("thermo_bottom"),
         ..NUMBER
     },
@@ -1161,7 +1177,7 @@ const BASE_FIELDS: [Field; 57] = [
         shown: 100.0,
         unit: " %",
         decimals: 2,
-        tab: Tab::Evolution,
+        tab: Tab::Diets,
         rule: Some("diet_step"),
         ..NUMBER
     },
@@ -1177,7 +1193,7 @@ const BASE_FIELDS: [Field; 57] = [
         shown: 100.0,
         unit: " %",
         decimals: 3,
-        tab: Tab::Evolution,
+        tab: Tab::Diets,
         rule: Some("diet_jump"),
         ..NUMBER
     },
@@ -1194,7 +1210,7 @@ const BASE_FIELDS: [Field; 57] = [
         shown: 100.0,
         unit: " %",
         decimals: 2,
-        tab: Tab::Evolution,
+        tab: Tab::Diets,
         rule: Some("diet_meat_step"),
         ..NUMBER
     },
@@ -1211,7 +1227,7 @@ const BASE_FIELDS: [Field; 57] = [
         shown: 100.0,
         unit: " %",
         decimals: 3,
-        tab: Tab::Evolution,
+        tab: Tab::Diets,
         rule: Some("diet_leap_carnivore"),
         ..NUMBER
     },
@@ -1227,7 +1243,7 @@ const BASE_FIELDS: [Field; 57] = [
         shown: 100.0,
         unit: " %",
         decimals: 3,
-        tab: Tab::Evolution,
+        tab: Tab::Diets,
         rule: Some("diet_leap_scavenger"),
         ..NUMBER
     },
@@ -1400,8 +1416,9 @@ impl Settings {
     /// Return the defaults on one tab.
     pub fn reset(&mut self, tab: Tab) {
         let default = Settings::default();
+        let page: Vec<Tab> = tab.pages().iter().map(|(t, _)| *t).collect();
         for (i, f) in FIELDS.iter().enumerate() {
-            if f.tab == tab {
+            if page.contains(&f.tab) {
                 self.values[i] = default.values[i];
             }
         }

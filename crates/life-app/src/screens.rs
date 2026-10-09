@@ -136,17 +136,21 @@ impl LifeApp {
         egui::CentralPanel::default().frame(egui::Frame::central_panel(ui.style()).fill(theme::BG)).show(ui, |ui| {
             // the deep water behind the settings: lighter at the top
             theme::gradient(ui.painter(), ui.clip_rect(), theme::PANEL_TOP, theme::BG);
+            // the title and the tabs stay put; only the tab's contents scroll
+            ui.vertical_centered(|ui| {
+                ui.set_max_width(760.0);
+                ui.label(theme::heading("Новый мир", theme::TITLE));
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    for (tab, name) in std::iter::once((Tab::World, "Мир")).chain(Tab::RULES) {
+                        ui.selectable_value(&mut self.setup_tab, tab, RichText::new(name).size(16.0));
+                    }
+                });
+                ui.separator();
+            });
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.set_max_width(760.0);
-                    ui.label(theme::heading("Новый мир", theme::TITLE));
-                    ui.add_space(6.0);
-                    ui.horizontal_wrapped(|ui| {
-                        for (tab, name) in std::iter::once((Tab::World, "Мир")).chain(Tab::RULES) {
-                            ui.selectable_value(&mut self.setup_tab, tab, RichText::new(name).size(16.0));
-                        }
-                    });
-                    ui.separator();
                     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                         match self.setup_tab {
                             Tab::World => self.world_tab(ui, measured),
@@ -177,8 +181,20 @@ impl LifeApp {
                             });
                         } else if self.setup_tab == Tab::Diets {
                             diet_table(ui, &mut self.settings);
+                            ui.add_space(theme::GAP_WIDE);
+                            ui.label(theme::strong("Как меняется питание у потомков"));
+                            fields(ui, &mut self.settings, Tab::Diets);
                         } else {
-                            fields(ui, &mut self.settings, self.setup_tab);
+                            if self.setup_tab == Tab::Water {
+                                ui.label(WATER_NOTE);
+                            }
+                            for (i, (tab, heading)) in self.setup_tab.pages().iter().enumerate() {
+                                if let Some(heading) = heading.filter(|_| i > 0) {
+                                    ui.add_space(theme::GAP_WIDE);
+                                    ui.label(theme::strong(heading));
+                                }
+                                fields(ui, &mut self.settings, *tab);
+                            }
                         }
                     });
                 });
@@ -475,6 +491,10 @@ fn fast_cores_exist() -> bool {
     *HYBRID.get_or_init(life_sim::cores::has_fast_cores)
 }
 
+/// What the «Вода» tab is about.
+pub const WATER_NOTE: &str = "Сверху вода тёплая, ниже термоклина — холодная. Хладнокровным в холоде жить \
+                              дешевле, но плавают они медленнее; теплокровным всё равно.";
+
 /// The game's keys and mouse, for the help and the keys' card.
 pub const CONTROLS: [(&str, &str); 14] = [
     ("Пробел", "пауза"),
@@ -671,7 +691,8 @@ fn food_preview(ui: &mut egui::Ui, rules: &Rules, space: Space, seed: u64) {
 fn fields(ui: &mut egui::Ui, s: &mut Settings, tab: Tab) {
     let default = Settings::default();
     egui::Grid::new(("поля", tab as u8)).num_columns(4).spacing([12.0, 8.0]).show(ui, |ui| {
-        for f in FIELDS.iter().filter(|f| f.tab == tab) {
+        // the diets' edges are the table's cells, not rows of their own
+        for f in FIELDS.iter().filter(|f| f.tab == tab && !matches!(f.key, Key::Diet(..))) {
             if !(f.visible)(s) {
                 continue;
             }
