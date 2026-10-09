@@ -915,3 +915,221 @@ fn поведение_выбранного_помещается_в_окно() {
         assert_eq!(h.state().screen, Screen::Game);
     });
 }
+
+// ── A gallery of states the tests above do not picture ─────────────────────────────────────
+// These only take pictures (with LIFEGAME_SHOTS, which CI sets and uploads as `ui-shots`): the
+// user's own world, the endings, windows over the open side panel, a bigger interface scale.
+// Without LIFEGAME_SHOTS they return at once.
+
+fn shots_wanted() -> bool {
+    std::env::var_os("LIFEGAME_SHOTS").is_some()
+}
+
+/// Step the window until `done` holds, a bounded number of times.
+fn wait_for(h: &mut Harness<'static, LifeApp>, done: impl Fn(&LifeApp) -> bool) {
+    for _ in 0..200 {
+        h.step();
+        if done(h.state()) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// Select the biggest creature drawn in the frame; whether one was selected.
+fn pick_biggest(h: &mut Harness<'static, LifeApp>) -> bool {
+    let Some(f) = h.state().view.frame.as_ref() else { return false };
+    let (world_gen, frame, origin) = (f.world_gen, f.number, f.origin);
+    let Some((x, y)) = h
+        .state()
+        .view
+        .instances()
+        .iter()
+        .filter(|v| (v.meta >> 16) & 3 == crate::motion::KIND_CREATURE)
+        .max_by(|a, b| a.r.total_cmp(&b.r))
+        .map(|i| (origin.0 + i.x as f64, origin.1 + i.y as f64))
+    else {
+        return false;
+    };
+    h.state_mut().sim.send(Command::Pick { x, y, radius: 1.0, world_gen, frame, k: 1.0 });
+    wait_for(h, |s| s.view.frame.as_ref().is_some_and(|f| f.selected.is_some()));
+    h.state().view.frame.as_ref().is_some_and(|f| f.selected.is_some())
+}
+
+/// The user's world: ×20, 2:1, the game's rules and founders 55/25/10/10, as they play it
+/// (CLAUDE.md, «The game»). Whole, close up with a creature selected, at the deepest zoom.
+#[test]
+fn gallery_the_users_world() {
+    if !shots_wanted() {
+        return;
+    }
+    let _gpu = gpu();
+    let mut settings = crate::settings::Settings::default();
+    for (key, share) in
+        [(Key::Herbivores, 55.0), (Key::Omnivores, 25.0), (Key::Scavengers, 10.0), (Key::Carnivores, 10.0)]
+    {
+        settings.set(key, share);
+    }
+    let cfg = settings.world_config(7).expect("the game's defaults make a world");
+    for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
+        let mut h = harness_with(size, cfg.clone());
+        settle(&mut h);
+        shot(&mut h, &format!("галерея-мир-игрока-весь-{tag}"));
+        if pick_biggest(&mut h) {
+            h.state_mut().side_tab = SideTab::Creature;
+            settle(&mut h);
+            shot(&mut h, &format!("галерея-мир-игрока-выбран-издали-{tag}"));
+            let (x, y) = {
+                let s = h.state().view.frame.as_ref().and_then(|f| f.selected).expect("selected");
+                (s.x, s.y)
+            };
+            for (zoom, name) in [(0.3, "вблизи"), (crate::camera::MAX_ZOOM, "максимум")] {
+                if let Some(cam) = h.state_mut().view.camera.as_mut() {
+                    cam.zoom = zoom;
+                    cam.center_on(x, y);
+                }
+                for _ in 0..60 {
+                    h.step();
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                shot(&mut h, &format!("галерея-мир-игрока-выбран-{name}-{tag}"));
+            }
+        }
+        // a diet's hint: hover its row on the panel
+        h.state_mut().side_tab = SideTab::Charts;
+        settle(&mut h);
+        if let Some(row) = h.query_by_label("мясоеды").map(|n| n.rect()) {
+            h.hover_at(row.center());
+            for _ in 0..60 {
+                h.step();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            shot(&mut h, &format!("галерея-подсказка-питания-{tag}"));
+        }
+    }
+}
+
+/// Both endings: a world that died out and one that exploded.
+#[test]
+fn gallery_the_endings() {
+    use life_core::{CreatureGenome, Rules, World};
+    if !shots_wanted() {
+        return;
+    }
+    let _gpu = gpu();
+    let empty = WorldConfig {
+        seed: 9,
+        n_creatures: Some(0),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
+        ..Default::default()
+    };
+    let extinct = World::new(&empty);
+    let mut crowded = World::new(&empty);
+    let limit = crowded.space.per_area(crate::sim::EXPLOSION_LIMIT);
+    for i in 0..limit + 50 {
+        let (x, y) = (200.0 + (i % 80) as f64 * 70.0, 200.0 + (i / 80) as f64 * 70.0);
+        crowded.spawn(CreatureGenome::BASE, x.min(5900.0), y.min(3900.0), Some(90.0));
+    }
+    for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
+        for (world, name) in [(&extinct, "вымерли"), (&crowded, "взрыв")] {
+            let mut h = harness(size);
+            let generation = h.state().view.frame.as_ref().unwrap().world_gen;
+            h.state_mut().sim.send(Command::TestWorld(Box::new(world.clone())));
+            h.state_mut().sim.send(Command::Step);
+            wait_for(&mut h, |s| {
+                s.view.frame.as_ref().is_some_and(|f| f.world_gen > generation && f.status.ended.is_some())
+            });
+            settle(&mut h);
+            shot(&mut h, &format!("галерея-финал-{name}-{tag}"));
+        }
+    }
+}
+
+/// The floating windows over the open side panel: the lab on every tab, the statistics.
+#[test]
+fn gallery_windows_over_the_side_panel() {
+    if !shots_wanted() {
+        return;
+    }
+    let _gpu = gpu();
+    each_size(|h, _size, tag| {
+        h.state_mut().side_open = true;
+        h.state_mut().lab_open = true;
+        for tab in Tab::RULES.map(|(tab, _)| tab) {
+            h.state_mut().lab_tab = tab;
+            settle(h);
+            shot(h, &format!("галерея-лаборатория-с-панелью-{tab:?}-{tag}"));
+        }
+        h.state_mut().lab_open = false;
+        h.state_mut().stats_open = true;
+        for tab in [StatsTab::Energy, StatsTab::Where] {
+            h.state_mut().stats_tab = tab;
+            settle(h);
+            shot(h, &format!("галерея-статистика-с-панелью-{tab:?}-{tag}"));
+        }
+        h.state_mut().stats_open = false;
+    });
+}
+
+/// A middle window size and an interface scale of 150% on a usual one.
+#[test]
+fn gallery_other_sizes_and_scale() {
+    if !shots_wanted() {
+        return;
+    }
+    let _gpu = gpu();
+    for (size, scale, tag) in [(Vec2::new(1280.0, 720.0), 0.0, "1280x720"), (NORMAL, 1.5, "1600x900-150")] {
+        let mut h = harness(size);
+        h.state_mut().settings.ui_scale = scale;
+        settle(&mut h);
+        shot(&mut h, &format!("галерея-игра-{tag}"));
+        h.state_mut().screen = Screen::Menu;
+        settle(&mut h);
+        shot(&mut h, &format!("галерея-меню-{tag}"));
+        h.state_mut().screen = Screen::Setup;
+        for tab in [Tab::World, Tab::Body] {
+            h.state_mut().setup_tab = tab;
+            settle(&mut h);
+            shot(&mut h, &format!("галерея-новый-мир-{tab:?}-{tag}"));
+        }
+        h.state_mut().screen = Screen::Menu;
+        h.state_mut().help_open = true;
+        settle(&mut h);
+        shot(&mut h, &format!("галерея-справка-{tag}"));
+    }
+}
+
+/// So many plants in sight that the world turns into a density map.
+#[test]
+fn gallery_the_density_map() {
+    use life_core::{Rules, World, plant::Plant};
+    if !shots_wanted() {
+        return;
+    }
+    let _gpu = gpu();
+    let cfg = WorldConfig {
+        seed: 11,
+        scale: 200.0,
+        n_creatures: Some(0),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
+        ..Default::default()
+    };
+    let mut scene = World::new(&cfg);
+    let (w, hh) = (scene.space.width, scene.space.height);
+    let mut rng = life_core::rng::Rng::new(3);
+    for _ in 0..crate::frame::MAX_INSTANCES + 20_000 {
+        // denser near the surface, as the default profile grows them
+        let (x, y) = (rng.random() * w, rng.random().powi(2) * hh);
+        scene.plants.push(Plant::at(x, y));
+    }
+    for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
+        let mut h = harness_with(size, WorldConfig { scale: 200.0, ..cfg.clone() });
+        let generation = h.state().view.frame.as_ref().unwrap().world_gen;
+        h.state_mut().sim.send(Command::TestWorld(Box::new(scene.clone())));
+        wait_for(&mut h, |s| {
+            s.view.frame.as_ref().is_some_and(|f| f.world_gen > generation && f.density.is_some())
+        });
+        settle(&mut h);
+        shot(&mut h, &format!("галерея-карта-плотности-{tag}"));
+    }
+}

@@ -1,5 +1,6 @@
 # Checks on every push and PR, on Windows (where the game runs and the references are recorded):
-# fmt, clippy, tests (including the game's screen tests) and the balance vs both references.
+# fmt, clippy, tests (including the game's screen tests, their pictures uploaded) and the balance vs
+# both references.
 name: CI
 
 on:
@@ -17,8 +18,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      # every test binary runs even after one fails: a failure must not hide the others
+      # every test binary runs even after one fails: a failure must not hide the others; the
+      # screen tests save a picture of every screen, kept as the `ui-shots` artifact
       - run: cargo test --workspace --no-fail-fast
+        env:
+          LIFEGAME_SHOTS: ${{ github.workspace }}/target/shots
+      - name: Screens
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-shots
+          path: target/shots/*.png
+          if-no-files-found: warn
+          retention-days: 14
       - name: Balance vs the reference
         run: cargo run -p life-report --release -- --compare reference/fingerprint.json
       - name: Balance vs the calm reference

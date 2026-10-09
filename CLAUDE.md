@@ -182,7 +182,10 @@ new default.
   `creatures.wgsl` (one instanced draw), `view.rs`, `game.rs`, `behaviour.rs` (programs as
   flowcharts), `stats.rs`, `census.rs`, `settings.rs` (`FIELDS` — the single spec of every field;
   the file atomic, clamped, unknown keys ignored).
-- `ui_tests.rs` — kittest at 960×600 and 1600×900 under one GPU lock; CI renders through WARP.
+- `ui_tests.rs` — kittest at 960×600 and 1600×900 under one GPU lock; CI renders through WARP and
+  uploads every screen's picture as the `ui-shots` artifact (14 days; the `gallery_*` tests only
+  take pictures). A cloud session reads them through the GitHub tools
+  (`download_workflow_run_artifact`).
 - Looking at the game from an agent: never screenshot the desktop or inject input; render headless
   with `LIFEGAME_SHOTS` and drive state through `LifeApp` fields / `sim::Command`.
 
