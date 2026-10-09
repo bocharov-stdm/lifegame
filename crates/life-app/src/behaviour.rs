@@ -8,7 +8,9 @@
 //! but on the tick it grew up) the path of the current tick is lit: the settings that applied, the
 //! blocks whose condition held but whose action could not be done («не вышло»), and the block that
 //! decided. Deciding blocks after one that always fires are faded: their turn never comes. Hovering
-//! a box tells what it checks or does.
+//! a box tells what it checks or does. «Список» shows the same as a line a block, for a long program;
+//! blocks that never act are folded away until asked for; opening a creature or a track scrolls to
+//! the block that decided.
 
 use eframe::egui::text::LayoutJob;
 use eframe::egui::{self, Align2, Color32, FontId, Galley, Pos2, Rect, Sense, Shape, Stroke, Vec2};
@@ -54,10 +56,29 @@ pub(crate) fn behaviour_window(ctx: &egui::Context, area: Rect, open: &mut bool,
             if who != s.id {
                 (who, tab) = (s.id, s.stage);
             }
+            // the view, the flowchart or a line a block, is remembered between games; the blocks
+            // that never act are shown on request
+            let (as_list, as_dead) = (egui::Id::new("поведение-список"), egui::Id::new("поведение-все"));
+            let mut list = ctx.data_mut(|d| *d.get_persisted_mut_or_default::<bool>(as_list));
+            let mut all = ctx.data(|d| d.get_temp::<bool>(as_dead)).unwrap_or(false);
             let template =
                 STRATEGIES.get(s.genome[Gene::Strategy as usize] as usize).map_or("?", |v| v.label);
             ui.horizontal(|ui| {
-                ui.label(format!("Шаблон: {template} · дорожка:"));
+                ui.label(format!("Шаблон: {template}"));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let hint = "Блок — строка: длинная программа видна целиком";
+                    if ui.selectable_label(list, "Список").on_hover_text(hint).clicked() {
+                        list = true;
+                    }
+                    let hint = "Блок-схема: условия, стрелки «да» и «нет»";
+                    if ui.selectable_label(!list, "Схема").on_hover_text(hint).clicked() {
+                        list = false;
+                    }
+                });
+            });
+            let dead = |p: &Program| (0..p.blocks().len()).filter(|&i| !p.live(i)).count();
+            ui.horizontal(|ui| {
+                ui.label("Дорожка:");
                 for (stage, name) in [(JUVENILE, "детская"), (ADULT, "взрослая")] {
                     let text = if stage == s.stage { format!("{name} ●") } else { name.to_string() };
                     let hint = match stage {
@@ -68,8 +89,33 @@ pub(crate) fn behaviour_window(ctx: &egui::Context, area: Rect, open: &mut bool,
                         tab = stage;
                     }
                 }
+                let n = dead(&s.programs[tab]);
+                if n > 0 {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let text = if all {
+                            format!("▾ {n} не работают — скрыть")
+                        } else {
+                            format!("▸ ещё {n} не работают")
+                        };
+                        if ui
+                            .selectable_label(all, text)
+                            .on_hover_text(
+                                "Блоки, которые не действуют: выключены условием «никогда», стоят после \
+                                 блока, что срабатывает всегда, или это установка после безусловной \
+                                 того же рода. Мутация может их вернуть.",
+                            )
+                            .clicked()
+                        {
+                            all = !all;
+                        }
+                    });
+                }
             });
-            ctx.data_mut(|d| d.insert_temp(memory, (who, tab)));
+            ctx.data_mut(|d| {
+                d.insert_temp(memory, (who, tab));
+                d.insert_persisted(as_list, list);
+                d.insert_temp(as_dead, all);
+            });
             let p = &s.programs[tab];
             let n = p.blocks().len();
             ui.label(format!(
@@ -114,15 +160,53 @@ pub(crate) fn behaviour_window(ctx: &egui::Context, area: Rect, open: &mut bool,
                  возможно. Сейчас живёт по другой дорожке (●)."
             };
             ui.add(egui::Label::new(egui::RichText::new(note).color(MUTED)).wrap());
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                for (name, color) in legend() {
+                    ui.label(egui::RichText::new(format!("● {name}")).color(color).size(11.5));
+                }
+            });
             ui.add_space(4.0);
             // as tall as the program, up to what the world's area allows, scrolling a long one
-            let height = (area.height() - 270.0).clamp(120.0, 1200.0);
+            let height = (area.height() - 300.0).clamp(120.0, 1200.0);
             let path = live.then_some(Path { fired: s.fired, applied: s.applied, tried: s.tried });
-            egui::ScrollArea::vertical()
-                .id_salt(tab)
-                .max_height(height)
-                .show(ui, |ui| flowchart(ui, p, path));
+            let order = order(p, all);
+            // a creature or a track opened anew scrolls to the block that decided, once: after that
+            // the scroll is the player's
+            let scrolled = egui::Id::new("поведение-прокрутка");
+            let key = (s.id, tab, list);
+            let fresh = ctx.data(|d| d.get_temp::<(u64, usize, bool)>(scrolled)) != Some(key);
+            ctx.data_mut(|d| d.insert_temp(scrolled, key));
+            egui::ScrollArea::vertical().id_salt((tab, list)).max_height(height).show(ui, |ui| {
+                let at = if list { lines(ui, p, path, &order) } else { flowchart(ui, p, path, &order) };
+                if fresh && let Some(rect) = at {
+                    ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                }
+            });
         });
+}
+
+/// The legend of the action boxes' colours, as `action_color` paints them.
+fn legend() -> [(&'static str, Color32); 7] {
+    [
+        ("бой", DANGER),
+        ("охота", rgb(DIET_COLORS[3])),
+        ("падаль", rgb(DIET_COLORS[2])),
+        ("растения", rgb(DIET_COLORS[0])),
+        ("на месте", crate::theme::FLOW_STILL),
+        ("ход", crate::theme::FLOW_MOVE),
+        ("установка", SETTING),
+    ]
+}
+
+/// The blocks shown, in the engine's order: the settings first, then the deciding blocks; the
+/// ones that never act only with `all`.
+fn order(p: &Program, all: bool) -> Vec<usize> {
+    let blocks = p.blocks();
+    let shown = |i: &usize| all || p.live(*i);
+    let settings = (0..blocks.len()).filter(|&i| blocks[i].action.is_setting()).filter(shown);
+    let deciders = (0..blocks.len()).filter(|&i| !blocks[i].action.is_setting()).filter(shown);
+    settings.chain(deciders).collect()
 }
 
 /// This tick's way through the program it lives by (bit i: block i).
@@ -139,8 +223,95 @@ impl Path {
     }
 }
 
+/// What a block is for good and what it was on this tick's path.
+#[derive(Clone, Copy)]
+struct Mark {
+    setting: bool,
+    /// a deciding block after one that always fires: its turn never comes
+    unreached: bool,
+    /// a «never» test switches it off
+    off: bool,
+    decided: bool,
+    /// a setting that applied
+    applied: bool,
+    /// its condition held but its action could not be done
+    tried: bool,
+    /// a setting not looked at: one of its kind above it applied
+    skipped: bool,
+}
+
+impl Mark {
+    fn of(p: &Program, i: usize, path: Option<Path>) -> Self {
+        let blocks = p.blocks();
+        let b = &blocks[i];
+        let setting = b.action.is_setting();
+        let decided = path.and_then(|p| p.fired) == Some(i as u8);
+        Mark {
+            setting,
+            unreached: !setting && i >= p.reachable(),
+            off: b.off(),
+            decided,
+            applied: path.is_some_and(|p| setting && Path::has(p.applied, i)),
+            tried: !decided && path.is_some_and(|p| !setting && Path::has(p.tried, i)),
+            skipped: path.is_some_and(|p| {
+                setting
+                    && (0..i).any(|j| {
+                        blocks[j].action.is_setting()
+                            && blocks[j].setting_kind() == b.setting_kind()
+                            && Path::has(p.applied, j)
+                    })
+            }),
+        }
+    }
+
+    fn dead(self) -> bool {
+        self.unreached || self.off
+    }
+}
+
+/// What a block's condition checks, and why it stands as it does.
+fn condition_hint(b: &Block, m: Mark) -> String {
+    let about: Vec<String> =
+        b.when.iter().filter(|t| !t.always()).map(|t| format!("{}: {}", t.label(), t.cond.about())).collect();
+    let mut hint = if about.is_empty() {
+        "Условия нет: блок пробует действие всегда.".into()
+    } else {
+        about.join("\n")
+    };
+    hint.push_str(if m.unreached {
+        "\nСюда очередь не доходит: блок выше срабатывает всегда."
+    } else if m.off {
+        "\nБлок выключен: одно из условий — «никогда». Мутация может включить его снова."
+    } else if m.tried {
+        "\nЭтот тик: условие выполнено, но сделать не вышло — решал следующий блок."
+    } else if m.skipped {
+        "\nЭтот тик: пропущена — выше уже сработала установка того же рода."
+    } else {
+        ""
+    });
+    hint
+}
+
+/// What a block's action does, with its parameters here.
+fn action_hint(b: &Block) -> String {
+    let mut hint = b.action.about().to_string();
+    let args = b.args_label();
+    if !args.is_empty() {
+        hint.push_str(&format!("\nЗдесь: {args}."));
+    }
+    if b.action.is_setting() {
+        hint.push_str(
+            "\nУстановка не решает, что делать в этот тик, и действует, где бы ни стояла в программе; из установок \
+             одного рода действует первая, чьё условие выполнено.",
+        );
+    } else if !b.action.never_fails() {
+        hint.push_str("\nЕсли сделать нельзя — решает следующий блок.");
+    }
+    hint
+}
+
 /// The colour of an action's box: fights red, food by the diet that lives on it, standing still
-/// violet, settings teal, moves blue.
+/// amber, settings indigo, moves silver (`legend`).
 fn action_color(a: Action) -> Color32 {
     match a {
         Action::FightBack | Action::Flee => DANGER,
@@ -198,14 +369,13 @@ impl ActionText {
     }
 }
 
-fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
+/// The flowchart of the blocks `order` (`order()`). Returns where the block that decided this tick
+/// stands (or the end, when none did), for the scroll.
+fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>, order: &[usize]) -> Option<Rect> {
     let blocks = p.blocks();
-    let reachable = p.reachable();
     let ending = p.ending();
-    // the settings first, as the engine applies them, then the deciding blocks in order
-    let settings: Vec<usize> = (0..blocks.len()).filter(|&i| blocks[i].action.is_setting()).collect();
-    let deciders: Vec<usize> = (0..blocks.len()).filter(|&i| !blocks[i].action.is_setting()).collect();
-    let order: Vec<usize> = settings.iter().chain(&deciders).copied().collect();
+    // the settings come first in `order`, then the deciding blocks
+    let settings = order.iter().take_while(|&&i| blocks[i].action.is_setting()).count();
     let texts: Vec<ActionText> =
         order.iter().map(|&i| ActionText::of(ui, &blocks[i], if p.live(i) { TEXT } else { MUTED })).collect();
     // a condition of three tests wraps to more lines: its box grows, and the row with it
@@ -213,8 +383,7 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
         .iter()
         .map(|&i| {
             let b = &blocks[i];
-            let dead = (!b.action.is_setting() && i >= reachable) || b.off();
-            let color = if dead { MUTED } else { TEXT };
+            let color = if Mark::of(p, i, None).dead() { MUTED } else { TEXT };
             layout(ui, format!("{}?", b.condition_label()), 13.0, color, COND_W - 30.0)
         })
         .collect();
@@ -222,7 +391,7 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
     let box_h: Vec<f32> =
         texts.iter().zip(&cond_h).map(|(t, &c)| c.max(BOX_H.max(t.height() + 12.0))).collect();
     // the sections' captions: above the settings, if any, and above the decisions
-    let captions = usize::from(!settings.is_empty()) + 1;
+    let captions = usize::from(settings > 0) + 1;
     let rows: f32 = box_h.iter().map(|h| h + ARROW_H).sum();
     let height = START_H + 14.0 + captions as f32 * CAPTION_H + rows + END_H + 4.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(WIDTH, height), Sense::hover());
@@ -243,14 +412,14 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
     let mut caption_at = Vec::new();
     let mut y = rect.top() + START_H + 14.0;
     for (k, h) in box_h.iter().enumerate() {
-        if k == 0 || k == settings.len() {
-            caption_at.push((y, k < settings.len()));
+        if k == 0 || k == settings {
+            caption_at.push((y, k < settings));
             y += CAPTION_H;
         }
         tops.push(y);
         y += h + ARROW_H;
     }
-    if deciders.is_empty() {
+    if settings == order.len() {
         caption_at.push((y, false));
         y += CAPTION_H;
     }
@@ -277,30 +446,16 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
         );
     }
 
+    let mut decided_at = None;
     for (k, ((&i, text), galley)) in order.iter().zip(texts).zip(conditions).enumerate() {
         let b = &blocks[i];
         let h = box_h[k];
         let ch = cond_h[k];
         let top = tops[k];
         let next = tops.get(k + 1).copied().unwrap_or(end_top);
-        let setting = b.action.is_setting();
-        // a deciding block after one that always fires is never reached; a «never» test switches
-        // a block off
-        let unreached = !setting && i >= reachable;
-        let off = b.off();
-        let dead = unreached || off;
-        let decided = fired == Some(i as u8);
-        let applied = path.is_some_and(|p| setting && Path::has(p.applied, i));
-        let tried = !decided && path.is_some_and(|p| !setting && Path::has(p.tried, i));
-        // a setting is skipped, its condition not looked at, when one of its kind above it applied
-        let skipped = path.is_some_and(|p| {
-            setting
-                && (0..i).any(|j| {
-                    blocks[j].action.is_setting()
-                        && blocks[j].setting_kind() == b.setting_kind()
-                        && Path::has(p.applied, j)
-                })
-        });
+        let m = Mark::of(p, i, path);
+        let Mark { setting, unreached, decided, applied, tried, skipped, .. } = m;
+        let dead = m.dead();
         // the settings are looked at but the skipped; the deciding blocks down to the one that
         // decided
         let on_path = depth.is_some_and(|d| if setting { !skipped } else { i <= d });
@@ -317,6 +472,7 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
             number_color,
         );
         if decided {
+            decided_at = Some(cond.union(action));
             let (x, y) = (cond.left() - 5.0, cond.center().y);
             painter.add(Shape::convex_polygon(
                 vec![Pos2::new(x - 7.0, y - 6.0), Pos2::new(x, y), Pos2::new(x - 7.0, y + 6.0)],
@@ -345,30 +501,7 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
         painter.add(Shape::convex_polygon(hexagon, CARD, cond_stroke));
         let text_color = if dead { MUTED } else { TEXT };
         painter.galley(Pos2::new(cond.center().x, cy - galley.size().y / 2.0), galley, text_color);
-        let about: Vec<String> = b
-            .when
-            .iter()
-            .filter(|t| !t.always())
-            .map(|t| format!("{}: {}", t.label(), t.cond.about()))
-            .collect();
-        let cond_hint = if about.is_empty() {
-            "Условия нет: блок пробует действие всегда.".into()
-        } else {
-            about.join("\n")
-        };
-        let dead_hint = if unreached {
-            "\nСюда очередь не доходит: блок выше срабатывает всегда."
-        } else if off {
-            "\nБлок выключен: одно из условий — «никогда». Мутация может включить его снова."
-        } else if tried {
-            "\nЭтот тик: условие выполнено, но сделать не вышло — решал следующий блок."
-        } else if skipped {
-            "\nЭтот тик: пропущена — выше уже сработала установка того же рода."
-        } else {
-            ""
-        };
-        ui.interact(cond, ui.id().with(("условие", i)), Sense::hover())
-            .on_hover_text(format!("{cond_hint}{dead_hint}"));
+        ui.interact(cond, ui.id().with(("условие", i)), Sense::hover()).on_hover_text(condition_hint(b, m));
 
         // «да» → the action
         let yes = if decided || applied {
@@ -402,20 +535,7 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
         let rounding = if setting { h.min(40.0) / 2.0 } else { 5.0 };
         painter.rect(action, rounding, fill, border, egui::StrokeKind::Inside);
         text.paint(&painter, action);
-        let mut action_hint = b.action.about().to_string();
-        let args = b.args_label();
-        if !args.is_empty() {
-            action_hint.push_str(&format!("\nЗдесь: {args}."));
-        }
-        if setting {
-            action_hint.push_str(
-                "\nУстановка не решает, что делать в этот тик, и действует, где бы ни стояла в программе; из установок \
-                 одного рода действует первая, чьё условие выполнено.",
-            );
-        } else if !b.action.never_fails() {
-            action_hint.push_str("\nЕсли сделать нельзя — решает следующий блок.");
-        }
-        ui.interact(action, ui.id().with(("действие", i)), Sense::hover()).on_hover_text(action_hint);
+        ui.interact(action, ui.id().with(("действие", i)), Sense::hover()).on_hover_text(action_hint(b));
 
         // «нет» («дальше» after a setting, «не вышло» after a failed action) ↓ the next row; never
         // taken past an unreached block or the one that always fires
@@ -459,4 +579,78 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>) {
     painter.galley(Pos2::new(end.center().x, end.center().y - galley.size().y / 2.0), galley, TEXT);
     ui.interact(end, ui.id().with("конец"), Sense::hover())
         .on_hover_text("Ни один блок не решил: существо стоит на месте, как в засаде.");
+    decided_at.or((path.is_some() && fired.is_none()).then_some(end))
+}
+
+/// The blocks `order` a line each: the number, the condition, the action with its parameters in
+/// its colour; this tick's path marked at the left (▶ decided, ● a setting applied, ↷ could not
+/// do it). Returns where the block that decided stands (or the end), for the scroll.
+fn lines(ui: &mut egui::Ui, p: &Program, path: Option<Path>, order: &[usize]) -> Option<Rect> {
+    let blocks = p.blocks();
+    let settings = order.iter().take_while(|&&i| blocks[i].action.is_setting()).count();
+    let caption = |ui: &mut egui::Ui, text: &str| {
+        ui.label(egui::RichText::new(text).color(MUTED).size(11.5));
+    };
+    let mut decided_at = None;
+    for (k, &i) in order.iter().enumerate() {
+        if k == 0 && settings > 0 {
+            caption(ui, "сначала — установки");
+        }
+        if k == settings {
+            caption(ui, "потом — первый, кто смог");
+        }
+        let b = &blocks[i];
+        let m = Mark::of(p, i, path);
+        let (mark, mark_color) = if m.decided {
+            ("▶", ACCENT)
+        } else if m.applied {
+            ("●", ACCENT)
+        } else if m.tried {
+            ("↷", crate::theme::WARN)
+        } else {
+            ("", MUTED)
+        };
+        let lit = m.decided || m.applied;
+        let fill = if lit { crate::theme::ACCENT_DEEP } else { Color32::TRANSPARENT };
+        let row = egui::Frame::new().fill(fill).corner_radius(4).inner_margin(egui::Margin::symmetric(4, 1));
+        let row = row.show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let mono = |text: String, color| egui::RichText::new(text).monospace().color(color);
+                ui.add_sized([14.0, 18.0], egui::Label::new(mono(mark.into(), mark_color)));
+                let number = if lit { ACCENT } else { MUTED };
+                ui.add_sized([20.0, 18.0], egui::Label::new(mono(format!("{:>2}", i + 1), number)));
+                let text = if m.dead() { MUTED } else { TEXT };
+                let condition = egui::RichText::new(b.condition_label()).color(text);
+                // a column of its own, read from the left
+                let size = Vec2::new(COND_W - 6.0, 18.0);
+                ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.set_width(size.x);
+                    ui.add(egui::Label::new(condition).truncate()).on_hover_text(condition_hint(b, m));
+                });
+                ui.label(egui::RichText::new("→").color(MUTED));
+                let args = b.args_label();
+                let action = if args.is_empty() {
+                    b.action.label().to_string()
+                } else {
+                    format!("{} · {args}", b.action.label())
+                };
+                let color = if m.dead() { MUTED } else { action_color(b.action) };
+                ui.add(egui::Label::new(egui::RichText::new(action).color(color)).truncate())
+                    .on_hover_text(action_hint(b));
+            });
+        });
+        if m.decided {
+            decided_at = Some(row.response.rect);
+        }
+    }
+    if settings == order.len() {
+        caption(ui, "потом — первый, кто смог");
+    }
+    let stood = path.is_some() && path.and_then(|p| p.fired).is_none();
+    let end = egui::RichText::new(format!("{}иначе — стоит", if stood { "▶ " } else { "" }))
+        .color(if stood { ACCENT } else { MUTED });
+    let end = ui.label(end).on_hover_text("Ни один блок не решил: существо стоит на месте, как в засаде.");
+    decided_at.or(stood.then_some(end.rect))
 }

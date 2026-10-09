@@ -90,10 +90,11 @@ pub const VARIANT_COLORS: [Color32; 5] = [
 /// The body's three stats on the price chart: size, speed, sight.
 pub const STAT_COLORS: [Color32; 3] =
     [Color32::from_rgb(242, 184, 84), Color32::from_rgb(70, 200, 255), Color32::from_rgb(180, 150, 255)];
-/// The flowchart's boxes: a setting, standing still, any other move.
+/// The flowchart's boxes: a setting indigo, standing still amber, any other move silver. None is
+/// the accent, which lights this tick's path.
 pub const FLOW_SETTING: Color32 = Color32::from_rgb(110, 116, 246);
-pub const FLOW_STILL: Color32 = Color32::from_rgb(150, 160, 205);
-pub const FLOW_MOVE: Color32 = Color32::from_rgb(70, 200, 255);
+pub const FLOW_STILL: Color32 = Color32::from_rgb(226, 180, 110);
+pub const FLOW_MOVE: Color32 = Color32::from_rgb(196, 206, 222);
 
 /// Diet colours, in `Diet` order: herbivore aquamarine, omnivore pale yellow, scavenger violet,
 /// carnivore orange. Bright on the dark ground and apart under every kind of colour blindness.

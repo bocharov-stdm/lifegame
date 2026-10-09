@@ -927,6 +927,17 @@ fn поведение_выбранного_помещается_в_окно() {
                     ),
                 );
             }
+            // a line a block: the long program whole, the same texts in the window
+            h.get_by_label("Список").click();
+            settle(h);
+            for text in ["Поведение №", "Шаблон:", "Каждый тик"] {
+                let r = h.get_by_label_contains(text).rect();
+                assert!(window.contains_rect(r), "{name}, {tag}, list: «{text}» out of the window: {r:?}");
+            }
+            check_layout(h, size, &format!("поведение списком, {name}, {tag}"), Some(panel));
+            shot(h, &format!("поведение-{name}-список-{tag}"));
+            h.get_by_label("Схема").click();
+            settle(h);
             h.get_by_label("Поведение (B)").click();
             settle(h);
             assert!(!h.state().behaviour_open, "{name}, {tag}: the button closes it");
