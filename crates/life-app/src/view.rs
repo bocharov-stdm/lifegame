@@ -91,7 +91,9 @@ fn paint_patches(painter: &egui::Painter, cam: &Camera, rect: Rect, patches: &[P
         // slots per area: how dense the patch grows when full, relative to an even circle
         let area = std::f64::consts::FRAC_PI_4 * (p.left + p.right) * (p.up + p.down);
         let dense = (p.slots as f64 / area.max(1.0) * 1.2e3).clamp(0.3, 1.0);
-        for (scale, alpha) in [(1.15, 7.0), (0.95, 9.0), (0.6, 8.0)] {
+        // three layers, so the rim is soft and the heart deeper; strong enough to read on the
+        // dark water, faint beside the sprouts
+        for (scale, alpha) in [(1.15, 11.0), (0.95, 15.0), (0.6, 14.0)] {
             let points = (0..SIDES)
                 .map(|i| {
                     let (sin, cos) = (i as f64 / SIDES as f64 * std::f64::consts::TAU).sin_cos();
