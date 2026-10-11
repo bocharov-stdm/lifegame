@@ -3,7 +3,7 @@
 //!     cargo run -p life-app --release                        # the menu
 //!     cargo run -p life-app --release -- --scale 10 --seed 3 # straight into a world
 //!
-//! The world's flags mean what they mean in `life-report`; `game::report_command` gives the whole
+//! The world's flags mean what they mean in `life-report`; `game::side::report_command` gives the whole
 //! line that repeats a game without the window.
 
 // A release build on Windows has no black console window: the game is launched by a double click.
@@ -20,6 +20,7 @@ mod game;
 mod history;
 mod motion;
 mod render;
+mod rules_ui;
 mod screens;
 mod settings;
 mod sim;

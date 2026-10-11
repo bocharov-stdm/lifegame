@@ -2,7 +2,7 @@
 //! divides.
 //!
 //! The neighbour search is the world's concern. The creature gets it in the form of senses
-//! (`senses.rs`): «where is the nearest plant», «who nearby is dangerous». So it knows nothing
+//! (`senses/`): «where is the nearest plant», «who nearby is dangerous». So it knows nothing
 //! of the grid, and the tests slip in plain closures instead of it.
 
 mod actions;
@@ -108,11 +108,11 @@ pub struct Creature {
     /// Everything derived from the genome and the rules at birth (`phenotype.rs`).
     pub pheno: Phenotype,
 
-    /// Its behaviour (`program.rs`) while it grows (`JUVENILE`) and once grown (`ADULT`):
+    /// Its behaviour (`program/`) while it grows (`JUVENILE`) and once grown (`ADULT`):
     /// inherited apart from the gene table, drifting and mutating on their own; shared with the
     /// relatives that inherited them unchanged.
     pub programs: Programs,
-    /// The memory between moves: the wander target, the flight (`strategy.rs`).
+    /// The memory between moves: the wander target, the flight (`strategy/`).
     pub mind: Mind,
     pub rng: Rng,
     /// The last bite (`Meal`); only the window reads it.

@@ -68,7 +68,7 @@ Commit and push only when the user asks.
 
 The model in brief is in `CLAUDE.md`, its numbers in `config.rs`. What a change most often breaks:
 
-- All behaviour is a program (`creature/program.rs`): ≤ 32 blocks «if up to three tests → an
+- All behaviour is a program (`creature/program/`): ≤ 32 blocks «if up to three tests → an
   action with its parameters». Settings apply first, the first of each kind whose tests hold;
   without a setting of a kind the creature does not do it (no «делиться» — no division). Then the
   first deciding block whose tests hold and whose action can be done decides.

@@ -85,7 +85,7 @@ const SCALE: Mutation = Mutation::Scale { floor: -0.9 };
 ///
 /// Percent genes are held in 0‒100 when they mutate. The layer, the division, the shooting and the
 /// care for children were genes until `life-behavior/14`: they are settings of the behaviour
-/// programs now (`program.rs`).
+/// programs now (`program/`).
 pub const GENES: [GeneSpec; N] = [
     GeneSpec {
         key: "size",

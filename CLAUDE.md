@@ -2,7 +2,7 @@
 
 Working rules for Claude Code in this repository. Numbers live in the code, not here: `config.rs`
 (every constant with why), `Rules::default()` (the same, bit for bit), the program templates in
-`creature/program.rs`. `README.md` is the overview, `BEHAVIOR.md` the model's history, newest first.
+`creature/program/mod.rs`. `README.md` is the overview, `BEHAVIOR.md` the model's history, newest first.
 
 ## Project
 
@@ -57,7 +57,7 @@ settings labels and hints, gene `label`/`about`, chronicle texts (`life_sim::obs
 - **The body's genes** beyond size, speed and sight: `cold_blood` — cheaper and slower in cold
   water (`Phenotype::temper`); `burst` — faster in a chase or flight, then winded; `lifespan` —
   weakening late in life (`phenotype::vigour`); `maturation` — food into growth while young.
-- **Programs** (`creature/program.rs`): ≤ 32 blocks «if up to three tests → an action(params)».
+- **Programs** (`creature/program/`): ≤ 32 blocks «if up to three tests → an action(params)».
   Each tick the **settings** apply first, wherever they stand — of each kind (each mode its own
   kind) only the first whose tests hold; then the first **deciding** block whose tests hold and
   whose action can be done decides; nothing decides → it stands. Without a setting a creature
@@ -99,11 +99,12 @@ one variant is inert.
 - **A gene**: a variant at the end of `enum Gene` and a row at the end of `GENES`; its effect only
   in `Phenotype::of`, any cost at the end of the upkeep sum; a test; check the genome panel and
   card at 960×600 with `LIFEGAME_SHOTS`; re-record golden and references in a separate commit.
-- **A test or action**: a variant at the end of `Cond`/`Action` and their `ALL`, a `ParamSpec`
-  table (a new sense = trait method + query + brute-force check), its `Scene::test` or
-  `actions::act` arm, window labels, tests in `strategy.rs`, re-record golden.
+- **A test or action**: a variant at the end of `Cond`/`Action` and their `ALL` (`program/cond.rs`,
+  `program/action.rs`), a `ParamSpec` table (a new sense = trait method + query + brute-force
+  check), its `Scene::test` or `actions::act` arm, window labels, tests in `strategy/tests.rs`,
+  re-record golden.
 - **A template**: a variant at the end of `Strategy`/`VARIANTS` (≤ 8) and its `Program::template`.
-- **A rule**: `RULE_KEYS` + `with`/`get` + a `FIELDS` entry in `life-app/src/settings.rs`.
+- **A rule**: `RULE_KEYS` + `with`/`get` + a `FIELDS` entry in `life-app/src/settings/fields.rs`.
   `with()` rejects unknown keys, non-finite and senseless values (an exponent over 10, an upkeep
   that leaves f64), never merely unbalanced ones. Several rules at once go through
   `with_all`/`with_texts`: checked as a whole, so their order does not matter; the game shows a
@@ -115,10 +116,11 @@ one variant is inert.
 I/O; `life-app` alone knows the screen.
 
 - `life-core/src`: `config.rs`, `rules.rs`, `world.rs` (`World::step` — the phase order only),
-  `genome/`, `creature/` (`mod.rs` act/feed/divide, `phenotype.rs`, `program.rs`, `scene.rs`
-  perception, `actions.rs`, `strategy.rs` `plan`, `steer.rs`), `flora.rs` + `plant.rs`,
-  `combat.rs`, `corpse.rs`, `senses.rs` + `grid.rs`, `par.rs`, `profile.rs`, `space.rs` +
-  `units.rs`, `rng.rs`.
+  `genome/`, `creature/` (`mod.rs` act/feed/divide, `phenotype.rs`, `program/` — the program,
+  its tests, actions, blocks and mutations a file each — `scene.rs` perception, `actions.rs`,
+  `strategy/` the decision, `steer.rs`), `flora.rs` + `plant.rs`, `combat.rs`, `corpse.rs`,
+  `senses/` + `grid.rs`, `par.rs`, `profile.rs`, `space.rs` + `units.rs`, `rng.rs`. A module with
+  parts is a folder with `mod.rs`; long unit tests sit beside it in `tests.rs`.
 - **Tick order**: plants → corpses decay → old age, the last tick's kinship kept
   (`Creature::remember_kin`) → neighbour snapshot → decisions, healing, ageing, movement →
   eating plants → simultaneous strikes and shots → survivors eat corpses → reproduction → removing
@@ -180,10 +182,12 @@ new default.
   progress too, and picks the bodies where that frame drew them at that moment.
 - `frame.rs` (32-byte instances relative to an f64 origin), `motion.rs`, `render.rs` +
   `creatures.wgsl` (one instanced draw; the diets' colours come in its uniforms), `view.rs`,
-  `game.rs` (top bar, tool rail, side panel with the docked lab, bottom «Мир ▾» and timeline),
-  `behaviour.rs` (programs as a flowchart or a list), `charts.rs`, `stats.rs`, `census.rs`,
-  `settings.rs` (`FIELDS` — the single spec of every field; the file atomic, clamped, unknown keys
-  ignored; `details` gates the researcher's extras).
+  `game/` (`bars.rs` the top bar, tool rail and bottom «Мир ▾» with the timeline, `side.rs` the
+  side panel, `card.rs` the creature's tab, `lab.rs` the docked lab), `screens.rs` (menu, «Новый
+  мир», settings, help), `rules_ui.rs` (the rule widgets both share), `behaviour.rs` (programs as
+  a flowchart or a list), `charts.rs`, `stats.rs`, `census.rs`, `settings/` (`fields.rs`: `FIELDS`,
+  the single spec of every field; `mod.rs`: the file, atomic, clamped, unknown keys ignored;
+  `details` gates the researcher's extras).
 - `theme.rs` — the one palette, sizes, fonts (Inter, JetBrains Mono under `assets/fonts`, OFL),
   icons and button styles; no colour literal elsewhere. `life-progress` includes it as a module.
   Its tests keep the diets apart for colour-blind eyes and the text readable on the panels.
