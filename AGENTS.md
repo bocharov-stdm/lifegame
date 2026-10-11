@@ -11,9 +11,13 @@ is kept at the `python-final` tag. `CLAUDE.md` holds the full set of working rul
   feature (per-creature phases, same world on any thread count).
 - `crates/life-sim`: bounded runs, statistics snapshots and the chronicle.
 - `crates/life-report`: CLI, JSON reports (`life-report/12`), balance comparison and `life-sweep`.
-- `crates/life-app`: window, rendering, settings, the simulation thread, the sweep's progress window.
+- `crates/life-app`: window, rendering, settings, the simulation thread, the sweep's progress
+  window.
 - `reference/*.json`: balance references (`life-behavior/15`).
 - `Relict/`: frozen archive; never change anything in it.
+
+A module with parts is a folder with `mod.rs`; long unit tests sit beside it in `tests.rs`. The
+map of the modules is in `CLAUDE.md` («Architecture and invariants», «The game»).
 
 ## Commands
 
@@ -80,7 +84,7 @@ The model in brief is in `CLAUDE.md`, its numbers in `config.rs`. What a change 
   omnivores. Upkeep is the body and eyes plus the speed of the step actually taken.
 - A creature strikes and shoots only what its program chose; others read it by the blocks whose
   tests held on its last move. Family is a parent and its growing child while «щадить детей»
-  holds; every creature is a loner. A torpid creature eats nothing.
+  holds. A torpid creature eats nothing.
 
 Graphs and summaries are limited to the last 10 000 ticks. World rendering can be turned off;
 this doesn't change the simulation, statistics or the selected card.

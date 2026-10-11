@@ -2,7 +2,8 @@
 
 Working rules for Claude Code in this repository. Numbers live in the code, not here: `config.rs`
 (every constant with why), `Rules::default()` (the same, bit for bit), the program templates in
-`creature/program/mod.rs`. `README.md` is the overview, `BEHAVIOR.md` the model's history, newest first.
+`creature/program/mod.rs`. `README.md` is the overview, `BEHAVIOR.md` the model's history, newest
+first.
 
 ## Project
 
@@ -18,12 +19,12 @@ scripted. Rust only, model `life-behavior/15`:
 Removed things live under tags: `python-final`, `predators-final` (old names still read:
 `--vegetarians`, `--veg-mix`, `n_vegetarians`), `flocks-final`.
 
-**Language.** Code, comments, docs, CLI/report output, test names and commits in **English** (the
-user's rule since 2026-09-25; the project was Russian before). Much is still Russian from then —
-`life-report`'s story, tables and refusals, about half the test names and assertion messages:
-translate them only where you edit, never mass-rewrite; a new message or test is English even among
-Russian neighbours. Only the **game UI is Russian**: window texts (the `life-progress` window too),
-settings labels and hints, gene `label`/`about`, chronicle texts (`life_sim::observe`).
+**Language.** Code, comments, docs, CLI/report output, test names and commits in **English**. Much
+is still Russian from before 2026-09-25 — `life-report`'s story, tables and refusals, about half
+the test names and assertion messages: translate them only where you edit, never mass-rewrite; a
+new message or test is English even among Russian neighbours. Only the **game UI is Russian**:
+window texts (the `life-progress` window too), settings labels and hints, gene `label`/`about`,
+chronicle texts (`life_sim::observe`).
 
 ## The user's standing rules
 
@@ -172,9 +173,9 @@ I/O; `life-app` alone knows the screen.
 
 **The window never waits for the simulation.** Defaults are the user's world (×20, 2:1,
 `Settings::default`, `settings::GAME_*`) but for the founders' diet mix, which is the engine's
-(`DIET_START_MIX`: no scavengers or carnivores); the user plays ×100 and 55/25/10/10. Settings show common
-factors per 100. A settings file carries `DEFAULTS_VERSION`: keys in `CHANGED_DEFAULTS` take the
-new default.
+(`DIET_START_MIX`: no scavengers or carnivores); the user plays ×100 and 55/25/10/10. Settings
+show common factors per 100. A settings file carries `DEFAULTS_VERSION`: keys in
+`CHANGED_DEFAULTS` take the new default.
 
 - `sim.rs` — the simulation thread owns `World`; `Command`s apply between ticks; frames go through
   a one-slot mailbox, never dropped, so history, log and snapshots travel as deltas. Commands built

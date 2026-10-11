@@ -7,7 +7,7 @@ Python and pygame version is kept under the tag `python-final`.
 
 The current model is `life-behavior/15`. [CLAUDE.md](CLAUDE.md) holds the project's working rules
 and the model in brief (its exact numbers live in the code, `config.rs` above all);
-[BEHAVIOR.md](BEHAVIOR.md) records how the model got here and how each stage was checked.
+[BEHAVIOR.md](BEHAVIOR.md) records how the model got here, stage by stage.
 
 ## The world in short
 
@@ -39,7 +39,6 @@ and the model in brief (its exact numbers live in the code, `config.rs` above al
   selected creature's programs as a flowchart or a list (B).
 - **Energy is never made from nothing**: it enters the world only in plants and passes along the
   chain, losing some at every step.
-- Every creature is a loner: flocks were removed (the tag `flocks-final` keeps them).
 
 ## How to run
 
@@ -154,6 +153,20 @@ screen**, and the crate boundary enforces it.
 | `reference/` | balance references |
 | `docs/` | real units (`scale.md`) |
 | `Relict/` | a frozen 2025 archive of early prototypes; never edited |
+
+Inside the crates a module with parts is a folder with `mod.rs`, and long unit tests sit beside
+the code in `tests.rs`. Where most changes start:
+
+- `life-core/src/config.rs` every constant with why, `rules.rs` the world's rules, `world.rs` the
+  tick's phases in order, `genome/` the gene table and heredity.
+- `life-core/src/creature/`: the creature itself (`mod.rs`), its body from the genes
+  (`phenotype.rs`), its behaviour programs (`program/`: the tests, actions, blocks and mutations a
+  file each), what it perceives (`scene.rs`), how it decides (`strategy/`) and acts
+  (`actions.rs`); the spatial queries it perceives through are `life-core/src/senses/`.
+- `life-app/src/game/`: the game screen (its bars, side panel, creature card and lab);
+  `screens.rs` the menu and «Новый мир»; `settings/fields.rs` every slider; `sim.rs` the
+  simulation thread; `view.rs`, `render.rs` and `creatures.wgsl` the world on screen; `theme.rs`
+  the look.
 
 ## Scale and shape
 
