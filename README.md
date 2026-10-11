@@ -64,7 +64,8 @@ cargo run -p life-app --release -- --scale 100 --seed 7  # straight into a world
   mixes, and every world rule by topic: food, water (the thermocline), body, diets (with how they
   change in the young), combat and corpses, evolution.
 - **The screen**: a top bar (the menu, time — pause, a step, slower and faster — the tick and
-  the counts, chips for a pause, a lag or an edited world, and buttons for the panel, the keys,
+  the counts, the ticks a second the world actually makes (beside the arrows is the chosen speed),
+  chips for a pause, a lag or an edited world, and buttons for the panel, the keys,
   the lab, behaviour and statistics); a tool rail at the left (select, plant a creature, drag an
   area, the whole world, follow the selected one); a side panel with tabs «Обзор» (populations by
   diet, who kills whom, the genome), «Существо» (the card), «Хроника» and «Лаборатория» (the rules

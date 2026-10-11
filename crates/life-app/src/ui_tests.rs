@@ -1309,3 +1309,27 @@ fn the_ending_can_be_closed_and_offers_a_new_seed() {
     assert!(h.query_by_label("Новый сид").is_none(), "the window is closed");
     assert_eq!(h.state().screen, Screen::Game);
 }
+
+/// While the world runs, the top bar shows how many ticks a second actually come out (the label
+/// beside the arrows is only the chosen speed), clear of the buttons on the right.
+#[test]
+fn the_top_bar_shows_the_actual_tick_rate() {
+    let _gpu = gpu();
+    let mut h = harness(SMALL);
+    // «1920 тиков/с», the longest speed label: the bar at its widest
+    h.state_mut().sim.send(Command::SetSpeed(crate::sim::SPEEDS.len() - 2));
+    h.state_mut().sim.send(Command::SetPaused(false));
+    wait_for(&mut h, |s| s.view.frame.as_ref().is_some_and(|f| !f.status.paused && f.status.tps > 0.0));
+    settle(&mut h);
+    // the chosen speed and the actual one: the actual is the one to the right
+    let rates: Vec<Rect> = h.query_all_by_label_contains("тиков/с").map(|n| n.rect()).collect();
+    assert_eq!(rates.len(), 2, "the chosen speed and the actual one: {rates:?}");
+    let actual = rates.iter().copied().max_by(|a, b| a.left().total_cmp(&b.left())).unwrap();
+    let buttons = h.get_by_label("Статистика (I)").rect();
+    assert!(
+        actual.right() < buttons.left(),
+        "the actual rate {actual:?} runs into the buttons on the right {buttons:?}"
+    );
+    shot(&mut h, "скорость-на-ходу-960x600");
+    h.state_mut().sim.send(Command::SetPaused(true));
+}

@@ -375,6 +375,11 @@ impl LifeApp {
                 );
             } else if st.paused {
                 theme::chip(ui, "пауза", theme::WARN).on_hover_text("Пробел — пуск");
+            } else if st.ended.is_none() {
+                // the speed beside the arrows is the chosen one; this is what comes out
+                ui.add_space(theme::GAP);
+                ui.label(RichText::new(format!("{:.0} тиков/с", st.tps)).monospace().color(MUTED))
+                    .on_hover_text("Сколько тиков в секунду мир делает на самом деле");
             }
             if edited {
                 theme::chip(ui, "мир изменён", MUTED).on_hover_text(
@@ -386,9 +391,8 @@ impl LifeApp {
                 ui.colored_label(
                     MUTED,
                     format!(
-                        "{:.0} к/с · {:.0} тиков/с · тик {tick_ms:.1} · срез {snapshot_ms:.1} · сборка {build_ms:.1} · рисунок {draw_ms:.1} мс",
-                        self.fps(),
-                        st.tps
+                        "{:.0} к/с · тик {tick_ms:.1} · срез {snapshot_ms:.1} · сборка {build_ms:.1} · рисунок {draw_ms:.1} мс",
+                        self.fps()
                     ),
                 );
             }
