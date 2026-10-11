@@ -5,7 +5,7 @@
 use life_core::genome::{GeneKind, GeneSpec, creature};
 use life_core::rules::{DIETS, RULE_KEYS};
 use life_core::world::DietCounters;
-use life_core::{Counters, Rules, WorldConfig};
+use life_core::{Counters, WorldConfig};
 use life_sim::SimResult;
 use life_sim::observe::{Event, GeneStat, MAP_LEGEND, Snapshot, Spread};
 use serde_json::{Map, Value, json};
@@ -144,8 +144,8 @@ pub struct Run<'a> {
     pub pace: &'a [(u64, f64)],
 }
 
-pub fn report(cfg: &WorldConfig, rules: &Rules, ticks: u64, sample_every: u64, runs: &[Run]) -> Value {
-    let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(rules.get(k)))).collect();
+pub fn report(cfg: &WorldConfig, ticks: u64, sample_every: u64, runs: &[Run]) -> Value {
+    let rules: Map<_, _> = RULE_KEYS.iter().map(|k| (k.to_string(), json!(cfg.rules.get(k)))).collect();
     let space = cfg.space();
     json!({
         "format": "life-report/12",
@@ -194,7 +194,7 @@ mod tests {
         let res = run(world, &Limits { ticks: 0, ..Limits::default() }, &mut |_| {});
         let runs =
             [Run { seed: cfg.seed, res: &res, events: &[], maps: &[], pace: &[(500, 2.5), (1000, 7.25)] }];
-        let data = report(&cfg, &cfg.rules, 0, 1, &runs);
+        let data = report(&cfg, 0, 1, &runs);
         assert_eq!(data["format"], "life-report/12");
         let run = &data["runs"][0];
         assert_eq!(run["pace"], json!([[500, 2.5], [1000, 7.25]]), "the tick rate by laps");

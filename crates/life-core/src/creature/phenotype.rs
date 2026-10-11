@@ -6,7 +6,6 @@
 //! The only place where a gene acts and pays: a new gene gets its effect here, and its price is
 //! appended to the end of the upkeep sum.
 
-use super::Strategy;
 use crate::config::{
     BURST_MAX, BURST_UPKEEP_SHARE, COLD_SAVING, COLD_SLOWING, DIET_OWN, ENERGY_PER_SIZE, LIFESPAN_MAX,
     LIFESPAN_MIN, OLD_AGE_FROM, OLD_AGE_FULL, OLD_AGE_VIGOUR,
@@ -111,12 +110,8 @@ pub struct Phenotype {
     /// `BURST_MAX`).
     pub burst: f64,
     pub vision2: f64,
-    pub size2: f64,
     /// Body radius: contact is the sum of two radii.
     pub half: f64,
-
-    /// The template its program started from (`strategy.rs`).
-    pub strategy: Strategy,
 }
 
 impl Phenotype {
@@ -148,7 +143,6 @@ impl Phenotype {
         let [plants, fresh, rot, bones] = edges.digestion;
         let diet_upkeep = [edges.size_upkeep, edges.speed_upkeep];
         let [_, own_meat, own_rot, own_bones] = diet.own();
-        let strategy = Strategy::from_gene(genome[Gene::Strategy]);
         let burst = genome[Gene::Burst].clamp(1.0, BURST_MAX);
         // the size and sight terms once, the speed term at each speed needed below
         let parts = rules.upkeep_parts(size, vision, diet_upkeep);
@@ -195,9 +189,7 @@ impl Phenotype {
             speed_power: rules.speed_power,
             burst,
             vision2: vision * vision,
-            size2: size * size,
             half: size / 2.0,
-            strategy,
         }
     }
 }

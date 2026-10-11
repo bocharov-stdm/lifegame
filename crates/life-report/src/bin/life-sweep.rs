@@ -52,7 +52,7 @@ use clap::Parser;
 use life_core::rules::DIETS;
 use serde_json::{Value, json};
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 #[command(about = "Run a plan of variants x seeds through life-report and summarise each variant")]
 struct Args {
     /// The plan file: one "seeds:" line, one "args:" line shared by every variant, then "variant
@@ -92,7 +92,7 @@ struct Args {
     viewer: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 struct Variant {
     name: String,
     /// What the variant tries, from the plan's comments.
@@ -101,7 +101,7 @@ struct Variant {
     args: Vec<String>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 struct Plan {
     /// What the whole plan is about: its first comment block.
     about: String,
@@ -279,7 +279,7 @@ fn tick_of(out: &Path, variant: &str, seed: u64) -> Option<(u64, u64, f64)> {
 const SLOWDOWN_WARN: f64 = 3.0;
 
 /// A run's tick rate from the report's `pace` laps (every 500 ticks).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Pace {
     /// The median lap's ms a tick.
     median: f64,
@@ -297,7 +297,6 @@ fn pace_of(run: &Value) -> Option<Pace> {
 }
 
 /// How a run ended, from the sweep's side.
-#[derive(Clone, Debug)]
 enum Outcome {
     Reused,
     Exited(Duration),
@@ -416,7 +415,7 @@ fn read_json(path: &Path) -> Option<Value> {
 }
 
 /// What one run tells about the balance.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 struct RunMetrics {
     seed: u64,
     stop: String,
@@ -737,9 +736,7 @@ struct Progress {
     about: String,
     total: usize,
     jobs: usize,
-    worst_case: Duration,
     started: Instant,
-    started_unix: u64,
     finished: Vec<Finished>,
     running: Vec<(String, u64, Instant)>,
     /// Where the runs write their ticks, and a run's deadline, seconds.
@@ -847,13 +844,10 @@ impl Progress {
             "about": self.about,
             "total": self.total,
             "done": self.finished.len(),
-            "reused": self.finished.iter().filter(|f| matches!(f.outcome, Outcome::Reused)).count(),
             "cut": self.finished.iter().filter(|f| f.cut()).count(),
             "jobs": self.jobs,
             "elapsed_s": self.started.elapsed().as_secs_f64().round(),
             "left_s": self.left(&ticks).map(f64::round),
-            "worst_case_s": self.worst_case.as_secs(),
-            "started_unix": self.started_unix,
             "updated_unix": unix_now(),
             "progress": self.share(&ticks),
             "limit_s": self.limit_s,
@@ -976,9 +970,7 @@ fn main() {
         about: plan.about.clone(),
         total,
         jobs: jobs_at_once,
-        worst_case,
         started: Instant::now(),
-        started_unix: unix_now(),
         finished: Vec::new(),
         running: Vec::new(),
         out: args.out.clone(),
@@ -1173,9 +1165,7 @@ mod tests {
             about: String::new(),
             total: 10,
             jobs: 2,
-            worst_case: Duration::ZERO,
             started: Instant::now(),
-            started_unix: 0,
             finished: Vec::new(),
             running: Vec::new(),
             out: PathBuf::from("nowhere"),
@@ -1243,9 +1233,7 @@ mod tests {
             about: String::new(),
             total: 4,
             jobs: 2,
-            worst_case: Duration::ZERO,
             started: Instant::now(),
-            started_unix: 0,
             finished: Vec::new(),
             running: vec![
                 ("a".into(), 1, Instant::now() - Duration::from_secs(10)),

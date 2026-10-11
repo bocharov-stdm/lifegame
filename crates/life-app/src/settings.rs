@@ -64,16 +64,16 @@ impl Tab {
         (Tab::Evolution, "Эволюция"),
     ];
 
-    /// The tabs whose fields a page shows: «Бой и трупы» holds the corpses' too.
+    /// The tabs whose fields a page shows: «Бой и трупы» holds the corpses' too (so the corpses'
+    /// tab has no page of its own).
     pub fn pages(self) -> &'static [(Tab, Option<&'static str>)] {
         match self {
-            Tab::Combat => &[(Tab::Combat, None), (Tab::Corpses, Some("Трупы"))],
-            Tab::Diets => &[(Tab::Diets, Some("Как меняется питание у потомков"))],
+            Tab::Combat | Tab::Corpses => &[(Tab::Combat, None), (Tab::Corpses, Some("Трупы"))],
+            Tab::Diets => &[(Tab::Diets, None)],
             Tab::World => &[(Tab::World, None)],
             Tab::Food => &[(Tab::Food, None)],
             Tab::Water => &[(Tab::Water, None)],
             Tab::Body => &[(Tab::Body, None)],
-            Tab::Corpses => &[(Tab::Corpses, None)],
             Tab::Evolution => &[(Tab::Evolution, None)],
         }
     }

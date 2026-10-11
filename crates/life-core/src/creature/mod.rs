@@ -126,21 +126,19 @@ pub struct Creature {
 }
 
 impl Creature {
-    /// A new creature with the programs of its strategy's template. A coordinate None is random in
-    /// its home band; a given one is clamped only to the world: the child is born next to its
-    /// parent, and its layer is its own, mutated — it will walk home by itself, a teleport would be
-    /// a jump. energy None — half a tank; a given one no more than the tank.
+    /// A new creature with the programs of its strategy's template at (x, y), clamped only to the
+    /// world. energy None — half a tank; a given one no more than the tank.
     pub fn new(
         space: &Space,
         rules: &Rules,
         genome: CreatureGenome,
-        x: Option<f64>,
-        y: Option<f64>,
+        x: f64,
+        y: f64,
         energy: Option<f64>,
         rng: Rng,
     ) -> Self {
         let programs = Programs::both(Program::template(Strategy::from_gene(genome[Gene::Strategy])));
-        Self::made(space, rules, genome, programs, (x, y), energy, rng)
+        Self::made(space, rules, genome, programs, (Some(x), Some(y)), energy, rng)
     }
 
     /// A founder with its own programs (`Program::founder`), placed at random in its adult
@@ -164,6 +162,9 @@ impl Creature {
         energy: Option<f64>,
         mut rng: Rng,
     ) -> Self {
+        // A coordinate None is random in its home band; a given one is clamped only to the world:
+        // the child is born next to its parent, and its layer is its own, mutated — it will walk
+        // home by itself, a teleport would be a jump.
         let pheno = Phenotype::of(&genome, rules, space);
         let energy = match energy {
             Some(e) => e.min(pheno.max_energy),
@@ -498,9 +499,16 @@ impl Creature {
         let cy = self.y + self.rng.uniform(-span, span);
         let rng = self.rng.fork();
         let baby_genome = genome.with(Gene::Size, genome[Gene::Size] * 0.5);
-        let mut child = Creature::new(space, rules, baby_genome, Some(cx), Some(cy), Some(child_energy), rng);
+        let mut child = Creature::made(
+            space,
+            rules,
+            baby_genome,
+            programs,
+            (Some(cx), Some(cy)),
+            Some(child_energy),
+            rng,
+        );
         child.genome = genome;
-        child.programs = programs;
         child.parent = self.id;
         child.reproduction_wait = DIVIDE_PERIOD;
         child.birth_size = child.genome[Gene::Size] * 0.5;

@@ -16,8 +16,8 @@ fn parent() -> Creature {
         &Space::default(),
         &Rules::default(),
         CreatureGenome::BASE,
-        Some(1000.0),
-        Some(1000.0),
+        1000.0,
+        1000.0,
         Some(100.0),
         Rng::new(7),
     );

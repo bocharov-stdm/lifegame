@@ -22,7 +22,7 @@ use serde_json::{Map, Value, json};
 pub const REFERENCE_SAMPLE: u64 = 60;
 
 /// The series of one run: the tick and the counts plus the mean size.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct Point {
     tick: u64,
     plants: f64,
@@ -271,13 +271,11 @@ pub fn save_reference(
                 "seed": seed,
                 "stop": r.stop.to_string(),
                 "ticks_done": r.ticks_done,
-                "ms_per_tick": r.ms_per_tick(),
                 "series": series,
             })
         })
         .collect();
     let data = json!({
-        "source": "rust",
         "model": "life-behavior/15",
         "sample_every": sample_every,
         "ticks": ticks,

@@ -408,7 +408,7 @@ impl WorldView {
             );
         } else if !self.instances.is_empty() {
             let (ox, oy) = cam.to_screen(f.origin.0, f.origin.1);
-            let since = f.built.map_or(ANIMATION, |b| b.elapsed().as_secs_f32());
+            let since = f.built.elapsed().as_secs_f32();
             let fading = f.blend.is_some_and(|b| !b.done());
             if (!f.dots && (k < 1.0 || since < ANIMATION)) || fading {
                 ui.ctx().request_repaint();
@@ -436,7 +436,7 @@ impl WorldView {
         }
         let shot_painter = painter.with_clip_rect(world_rect.intersect(rect));
         for shot in &f.shots {
-            let age = shot.age + f.built.map_or(0.0, |built| built.elapsed().as_secs_f32());
+            let age = shot.age + f.built.elapsed().as_secs_f32();
             if age >= 0.25 {
                 continue;
             }

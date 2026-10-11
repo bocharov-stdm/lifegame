@@ -218,8 +218,9 @@ struct Path {
 }
 
 impl Path {
+    /// Block `i` of a program (fewer than `MAX_BLOCKS`, at most 32) in a path's bits.
     fn has(bits: u32, i: usize) -> bool {
-        i < 32 && bits & (1 << i) != 0
+        bits & (1 << i) != 0
     }
 }
 

@@ -2,7 +2,6 @@
 
 use std::collections::VecDeque;
 
-use life_core::genome::creature;
 use life_sim::observe::Snapshot;
 
 /// The visible window of the history, measured in world ticks, not in the number of samples.
@@ -17,7 +16,6 @@ pub struct Sample {
     /// Creatures of each diet, smoothed the same way, in `Diet` order.
     pub diets: [f64; 4],
     pub shots: u64,
-    pub genom: Option<[f64; creature::N]>,
 }
 
 #[derive(Clone, Debug)]
@@ -107,7 +105,7 @@ mod tests {
     fn число_выстрелов_относится_к_видимому_окну() {
         let mut h = History::default();
         for (tick, shots) in [(0, 2), (10_000, 7), (10_010, 12)] {
-            h.add_sample(Sample { tick, plants: 0.0, creatures: 0.0, diets: [0.0; 4], shots, genom: None });
+            h.add_sample(Sample { tick, plants: 0.0, creatures: 0.0, diets: [0.0; 4], shots });
         }
         assert_eq!(h.shots_in_window(), 5);
     }

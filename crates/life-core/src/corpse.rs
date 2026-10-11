@@ -334,8 +334,8 @@ mod tests {
             &Space::default(),
             &Rules::default(),
             CreatureGenome::BASE,
-            Some(1000.0),
-            Some(1000.0),
+            1000.0,
+            1000.0,
             Some(40.0),
             Rng::new(1),
         );

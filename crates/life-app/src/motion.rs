@@ -370,7 +370,8 @@ impl Motion {
 
         for v in &world.creatures {
             let fullness = (v.energy / v.pheno.max_energy).clamp(0.0, 1.0) as f32;
-            let color = frame::rgba(frame::CREATURE_COLOR, (fullness * 255.0) as u8);
+            // only the fullness: the shader paints a body by its diet and never reads the rgb
+            let color = frame::rgba([0; 3], (fullness * 255.0) as u8);
             if !body(v.id, v.x, v.y, v.pheno.half, color, fullness, feeding_bits(v, world.tick)) {
                 return false;
             }
@@ -476,7 +477,7 @@ mod tests {
         let mut out = Vec::new();
         motion.collect(&world, ALL, &mut out);
         assert_eq!(out.len(), 3);
-        assert!(out.iter().all(|v| v.color & 0xFFFFFF == frame::rgba(frame::CREATURE_COLOR, 0)));
+        assert!(out.iter().all(|v| v.color & 0xFFFFFF == 0));
         assert_eq!(world.tick, 0);
     }
 

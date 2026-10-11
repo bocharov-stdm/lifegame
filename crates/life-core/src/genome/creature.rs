@@ -1,10 +1,7 @@
 //! A creature's genome.
 
 use super::{GeneKind, GeneSpec, Genome, Mutation, Variant, bases};
-use crate::config::{
-    COLD_BLOOD_STEP, DIET_JUMP_CHANCE, DIET_MEAT_STEP_CHANCE, DIET_STEP_CHANCE, HERBIVORE_LEAP_CARNIVORE,
-    HERBIVORE_LEAP_SCAVENGER, LIFESPAN_BASE, LIFESPAN_MAX, LIFESPAN_MIN, STRATEGY_SWITCH_CHANCE,
-};
+use crate::config::{COLD_BLOOD_STEP, LIFESPAN_BASE, LIFESPAN_MAX, LIFESPAN_MIN, STRATEGY_SWITCH_CHANCE};
 use crate::creature::Programs;
 use crate::creature::strategy::VARIANTS as STRATEGIES;
 use crate::rng::Rng;
@@ -55,12 +52,6 @@ pub const DIET_NEIGHBOURS: [&[usize]; 4] = [&[1], &[0, 2, 3], &[1, 3], &[1, 2]];
 /// founders starve before there is meat, so the meat diets arise from mutants.
 pub const DIET_TOWARDS_MEAT: [&[usize]; 4] = [&[1], &[2, 3], &[], &[]];
 
-/// A diet's own leaps past its neighbours, with their chances: the herbivore may leap straight to
-/// the carnivore or the scavenger (`HERBIVORE_LEAP_*`), so the meat diets do not hang on the
-/// omnivores alone, who dwindle to 1–2% of a world. The others keep the general jump.
-pub const DIET_LEAPS: [&[(usize, f64)]; 4] =
-    [&[(3, HERBIVORE_LEAP_CARNIVORE), (2, HERBIVORE_LEAP_SCAVENGER)], &[], &[], &[]];
-
 /// What a creature can digest (`config::DIET_DIGESTION`). A mutation steps to a neighbour in
 /// `DIET_NEIGHBOURS`. Labels are game UI.
 pub const DIET_VARIANTS: [Variant; 4] = [
@@ -88,7 +79,7 @@ pub const DIET_VARIANTS: [Variant; 4] = [
 
 /// A creature's mutation: the multiplier is no lower than 0.1, and one that falls lower is drawn
 /// again, as in the Python version. The sigma comes from the world's rules.
-const SCALE: Mutation = Mutation::Scale { keep_above: None, reject_below: Some(-0.9) };
+const SCALE: Mutation = Mutation::Scale { floor: -0.9 };
 
 /// The gene table. Only append to the end (see `genome/mod.rs`).
 ///
@@ -154,14 +145,7 @@ pub const GENES: [GeneSpec; N] = [
         about: "Что ест и как усваивает. Потомок изредка сдвигается на шаг: травоядный ↔ всеядный ↔ падальщик или мясоед, падальщик ↔ мясоед; травоядный изредка сразу становится мясоедом, ещё реже падальщиком, остальные совсем редко — любым. Мясоед бьёт сильнее всех, за ним всеядный и падальщик.",
         kind: GeneKind::Choice(&DIET_VARIANTS),
         base: 0.0,
-        mutation: Mutation::Neighbours {
-            chance: DIET_STEP_CHANCE,
-            rise: DIET_MEAT_STEP_CHANCE,
-            jump: DIET_JUMP_CHANCE,
-            of: &DIET_NEIGHBOURS,
-            up: &DIET_TOWARDS_MEAT,
-            leaps: &DIET_LEAPS,
-        },
+        mutation: Mutation::Neighbours { of: &DIET_NEIGHBOURS, up: &DIET_TOWARDS_MEAT },
     },
     GeneSpec {
         key: "lifespan",
@@ -212,10 +196,6 @@ impl CreatureGenome {
     /// The starting genome: the table's bases.
     pub const BASE: Self = Self(bases(&GENES));
 
-    pub const fn from_values(values: [f64; N]) -> Self {
-        Self(values)
-    }
-
     pub const fn to_values(&self) -> [f64; N] {
         self.0
     }
@@ -265,7 +245,9 @@ impl CreatureGenome {
     fn mutated(&self, h: &super::Heredity, rng: &mut Rng) -> Self {
         let mut child = *self;
         let mutability = super::mutability_of(self[Gene::Mutability], h.min_mutability);
-        // `DIET_LEAPS` with the world's chances, in the same order
+        // A diet's own leaps past its neighbours: the herbivore may leap straight to the carnivore
+        // or the scavenger, so the meat diets do not hang on the omnivores alone, who dwindle to
+        // 1–2% of a world. The others keep the general jump.
         let herbivore = [(3, h.diet_leap_carnivore), (2, h.diet_leap_scavenger)];
         let diet = super::DietChances {
             step: h.diet_step,
@@ -273,7 +255,7 @@ impl CreatureGenome {
             jump: h.diet_jump,
             leaps: [&herbivore, &[], &[], &[]],
         };
-        super::mutate_values(&mut child.0, &GENES, h.sigma, mutability, rng, Some(diet));
+        super::mutate_values(&mut child.0, &GENES, h.sigma, mutability, rng, &diet);
         child.0[Gene::Mutability as usize] = super::mutability_of(child[Gene::Mutability], h.min_mutability);
         child.0[Gene::ProgramMutability as usize] =
             super::mutability_of(child[Gene::ProgramMutability], h.min_mutability);
@@ -292,20 +274,18 @@ impl core::ops::Index<Gene> for CreatureGenome {
 }
 
 impl Genome for CreatureGenome {
-    const GENES: &'static [GeneSpec] = &GENES;
-
     fn values(&self) -> &[f64] {
         &self.0
-    }
-
-    fn values_mut(&mut self) -> &mut [f64] {
-        &mut self.0
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{
+        DIET_JUMP_CHANCE, DIET_MEAT_STEP_CHANCE, DIET_STEP_CHANCE, HERBIVORE_LEAP_CARNIVORE,
+        HERBIVORE_LEAP_SCAVENGER,
+    };
 
     #[test]
     fn номера_генов_совпадают_с_таблицей() {
@@ -316,7 +296,7 @@ mod tests {
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), N, "имена генов не повторяются");
-        assert_eq!(CreatureGenome::BASE.get("vision"), Some(400.0));
+        assert_eq!(CreatureGenome::BASE[Gene::Vision], 400.0);
         assert_eq!(CreatureGenome::BASE[Gene::Diet], 0.0, "a spawned creature is a herbivore");
     }
 

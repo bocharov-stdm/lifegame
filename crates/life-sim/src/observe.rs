@@ -405,7 +405,7 @@ impl EventTracker {
 
         // ── the population: a collapse and a rise are counted from the peak/bottom since the previous
         // event, the causes are the counters between them
-        let swing = self.swing.get_or_insert_with(|| Swing { peak: prev.clone(), trough: prev.clone() });
+        let swing = self.swing.as_mut().expect("set with prev on the first sample");
         let min = cur.area * SWING_MIN;
         let n = cur.creatures;
         if swing.peak.creatures < n {

@@ -65,12 +65,12 @@ impl Rng {
         a + (self.next_u64() % span) as i64
     }
 
-    /// The normal distribution (Box–Muller). The second value of the pair is thrown away: this way
+    /// The normal distribution around zero (Box–Muller). The second value of the pair is thrown away: this way
     /// the state stays a single u64.
-    pub fn gauss(&mut self, mu: f64, sigma: f64) -> f64 {
+    pub fn gauss(&mut self, sigma: f64) -> f64 {
         let u1 = 1.0 - self.random(); // (0, 1] — we do not take the logarithm of zero
         let u2 = self.random();
-        mu + sigma * (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
+        sigma * (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
     }
 }
 
@@ -85,7 +85,7 @@ mod tests {
         let mean = (0..n).map(|_| r.random()).sum::<f64>() / n as f64;
         assert!((mean - 0.5).abs() < 0.005, "среднее random() = {mean}");
 
-        let g: Vec<f64> = (0..n).map(|_| r.gauss(0.0, 1.0)).collect();
+        let g: Vec<f64> = (0..n).map(|_| r.gauss(1.0)).collect();
         let m = g.iter().sum::<f64>() / n as f64;
         let var = g.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / n as f64;
         assert!(m.abs() < 0.01 && (var - 1.0).abs() < 0.02, "gauss: среднее {m}, дисперсия {var}");

@@ -69,14 +69,12 @@ impl LifeApp {
         ui.colored_label(MUTED, self.history.span_label());
         self.diets_line(ui);
         let snaps = self.history.snapshots.points();
-        if let Some(s) = snaps.last() {
+        if let (Some(first), Some(s)) = (snaps.first(), snaps.last()) {
             ui.label(format!("Молодых {:.0}%", 100.0 * s.juveniles as f64 / s.creatures.max(1) as f64));
-            if let Some(first) = snaps.first() {
-                ui.label(life_sim::observe::describe_flows(&s.counters.since(&first.counters)));
-            }
+            ui.label(life_sim::observe::describe_flows(&s.counters.since(&first.counters)));
         }
         ui.label(crate::theme::strong("Сытость"));
-        charts::energy(ui, &snaps, 190.0);
+        charts::energy(ui, &snaps);
         ui.add_space(4.0);
         ui.colored_label(
             MUTED,
@@ -89,7 +87,7 @@ impl LifeApp {
         ui.colored_label(MUTED, self.history.span_label());
         let snaps = self.history.snapshots.points();
         ui.label(crate::theme::strong("Глубина существ во времени"));
-        let hovered = charts::depth_map(ui, &snaps, 170.0);
+        let hovered = charts::depth_map(ui, &snaps);
         let Some(&at) = hovered.and_then(|i| snaps.get(i)).or(snaps.last()) else { return };
         let layer = at.depth.map_or("существ нет".into(), |d| {
             format!("80% существ на глубине {:.0}‒{:.0}%, медиана {:.0}%", d.p10, d.p90, d.p50)
@@ -236,7 +234,7 @@ impl LifeApp {
                     .on_hover_text(axis);
             }
         });
-        charts::scatter(ui, census, g, self.census_axes, 170.0);
+        charts::scatter(ui, census, g, self.census_axes);
         ui.colored_label(
             MUTED,
             "Отдельные облака — отдельные подвиды; цвет — питание, яркость — сколько их там.",
@@ -333,7 +331,7 @@ fn compare<const N: usize>(
             ui.colored_label(MUTED, there);
             let color = match diff.chars().next() {
                 Some('+') => GOOD,
-                Some('−') | Some('-') => DANGER,
+                Some('-') => DANGER,
                 _ => MUTED,
             };
             ui.colored_label(color, diff);

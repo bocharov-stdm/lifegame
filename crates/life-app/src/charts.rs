@@ -12,8 +12,10 @@ use life_sim::observe::{GeneStat, MAX_VARIANTS, Snapshot, Spread};
 use crate::census::{self, Census, Group};
 use crate::frame::{CREATURE_COLOR, PLANT_COLOR};
 use crate::history::{History, Sample};
-pub use crate::theme::VARIANT_COLORS;
-use crate::theme::{DIET_COLORS, DIET_NAMES, LINE, MUTED, PLANT_LINE, TEXT, rgb, spaced};
+use crate::theme::{DIET_COLORS, DIET_NAMES, LINE, MUTED, PLANT_LINE, TEXT, VARIANT_COLORS, rgb, spaced};
+
+/// The bottom strip's timeline's height.
+const TIMELINE_HEIGHT: f32 = 26.0;
 
 /// The bottom strip's timeline: the creatures over the charts' span as a lit line with a faint
 /// fill, and the chronicle's events as marks in their colours (a fall red, a rise green, a shift of
@@ -24,10 +26,10 @@ pub fn timeline(
     history: &History,
     log: &[crate::frame::LogEntry],
     width: f32,
-    height: f32,
 ) -> Option<u64> {
     use life_sim::observe::EventKind;
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width.max(60.0), height), Sense::click());
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(width.max(60.0), TIMELINE_HEIGHT), Sense::click());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 5.0, crate::theme::BG.gamma_multiply(0.6));
     let points = history.counts.points();
@@ -245,8 +247,11 @@ fn draw_run(painter: &egui::Painter, run: &mut Vec<Pos2>, color: Color32, dashed
     run.clear();
 }
 
+/// The populations chart's height.
+const POPULATIONS_HEIGHT: f32 = 112.0;
+
 /// Populations: plants on their own scale, the diets on one scale between them.
-pub fn populations(ui: &mut egui::Ui, history: &History, height: f32) {
+pub fn populations(ui: &mut egui::Ui, history: &History) {
     let points = history.counts.points();
     let diet = |d: usize, value: fn(&Sample) -> Option<f64>| Line {
         label: DIET_NAMES[d],
@@ -263,11 +268,14 @@ pub fn populations(ui: &mut egui::Ui, history: &History, height: f32) {
         diet(2, |s| Some(s.diets[2])),
         diet(3, |s| Some(s.diets[3])),
     ];
-    lines(ui, &points, |s| s.tick, &all, Scale::Own, height);
+    lines(ui, &points, |s| s.tick, &all, Scale::Own, POPULATIONS_HEIGHT);
 }
 
+/// The fullness chart's height.
+const ENERGY_HEIGHT: f32 = 190.0;
+
 /// Fullness: the mean tank fullness of the creatures and how far the plants have run into the ceiling.
-pub fn energy(ui: &mut egui::Ui, snaps: &[&Snapshot], height: f32) {
+pub fn energy(ui: &mut egui::Ui, snaps: &[&Snapshot]) {
     let all = [
         Line {
             label: "сытость существ",
@@ -282,7 +290,7 @@ pub fn energy(ui: &mut egui::Ui, snaps: &[&Snapshot], height: f32) {
             shared: false,
         },
     ];
-    lines(ui, snaps, |s| s.tick, &all, Scale::Share, height);
+    lines(ui, snaps, |s| s.tick, &all, Scale::Share, ENERGY_HEIGHT);
 }
 
 /// A genome chart's point: the tick and the summary of each of the species' genes.
@@ -617,11 +625,14 @@ pub fn shares(ui: &mut egui::Ui, spec: &GeneSpec, column: &census::Column) {
 /// The side of a scatter's cell, in points.
 const SCATTER_CELL: f32 = 5.0;
 
+/// The census scatter's height.
+const SCATTER_HEIGHT: f32 = 170.0;
+
 /// Two characteristics of a census group against each other, as a density: separate clouds are
 /// separate kinds. A cell takes the colour of the diet most of its creatures have (a blend of four
 /// colours reads as a fifth diet); its brightness is how many are there.
-pub fn scatter(ui: &mut egui::Ui, census: &Census, group: usize, axes: [usize; 2], height: f32) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+pub fn scatter(ui: &mut egui::Ui, census: &Census, group: usize, axes: [usize; 2]) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), SCATTER_HEIGHT), Sense::hover());
     let painter = ui.painter_at(rect.expand(2.0));
     painter.rect_stroke(rect, 3.0, Stroke::new(1.0, LINE), egui::StrokeKind::Inside);
     let columns = &census.groups[group].columns;
@@ -702,12 +713,15 @@ pub fn energy_color(frac: f64, base: Color32) -> Color32 {
     if frac < 0.25 { crate::theme::DANGER } else { base }
 }
 
+/// The depth map's height.
+const DEPTH_MAP_HEIGHT: f32 = 170.0;
+
 /// Where the creatures live in time: along x — samples, along y — bands of depth (the top is
 /// the surface), the brightness is the share of creatures in a band. On top — the median depth
 /// and the borders of the layer where 80% live (10‒90%). Returns the sample under the cursor,
 /// so that the histogram beside it shows exactly that one.
-pub fn depth_map(ui: &mut egui::Ui, snaps: &[&Snapshot], height: f32) -> Option<usize> {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+pub fn depth_map(ui: &mut egui::Ui, snaps: &[&Snapshot]) -> Option<usize> {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), DEPTH_MAP_HEIGHT), Sense::hover());
     let painter = ui.painter_at(rect.expand(2.0));
     painter.rect_stroke(rect, 3.0, Stroke::new(1.0, LINE), egui::StrokeKind::Inside);
     let n = snaps.len();

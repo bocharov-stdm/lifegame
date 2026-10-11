@@ -50,7 +50,7 @@ fn game_world(seed: u64) -> WorldConfig {
 }
 
 fn creature(x: f64, y: f64, g: CreatureGenome) -> Creature {
-    Creature::new(&Space::default(), &Rules::default(), g, Some(x), Some(y), None, Rng::new(0))
+    Creature::new(&Space::default(), &Rules::default(), g, x, y, None, Rng::new(0))
 }
 
 /// Its programs: the template in the layer from `lo` to `hi` % of the depth.
@@ -463,7 +463,7 @@ fn родитель_сохраняет_резерв() {
     let (s, r) = (Space::default(), Rules::default().with("mutation_sigma", 0.0).unwrap());
     let (mut divided, mut blocked) = (0, 0);
     for share in [10.0, 30.0, 50.0, 70.0, 90.0] {
-        let mut p = Creature::new(&s, &r, BASE, Some(1000.0), Some(1000.0), Some(60.0), Rng::new(0));
+        let mut p = Creature::new(&s, &r, BASE, 1000.0, 1000.0, Some(60.0), Rng::new(0));
         dividing(&mut p, 0.3, share / 100.0);
         p.reproduction_wait = 0;
         match p.maybe_divide(&s, &r) {
@@ -512,7 +512,7 @@ fn огромное_тело_не_прыгает() {
 #[test]
 fn ребёнок_рождается_у_родителя() {
     let (s, r) = (Space::default(), Rules::default());
-    let mut parent = Creature::new(&s, &r, BASE, Some(3000.0), Some(3900.0), None, Rng::new(0));
+    let mut parent = Creature::new(&s, &r, BASE, 3000.0, 3900.0, None, Rng::new(0));
     dividing(&mut parent, 0.3, 0.4);
     let (mut diagonal, mut outside) = (0, 0);
     for _ in 0..300 {
@@ -689,7 +689,7 @@ fn a_child_inherits_its_parents_program_and_it_mutates_now_and_then() {
     let s = Space::default();
     let r = Rules::default().with("program_mutation", 0.2).unwrap();
     let g = BASE.with(Gene::Strategy, 1.0);
-    let mut parent = Creature::new(&s, &r, g, Some(3000.0), Some(1000.0), None, Rng::new(7));
+    let mut parent = Creature::new(&s, &r, g, 3000.0, 1000.0, None, Rng::new(7));
     dividing(&mut parent, 0.3, 0.4);
     assert_eq!(parent.programs, [Program::LURKER; 2], "a creature starts from its strategy's template");
     let n = 4000;

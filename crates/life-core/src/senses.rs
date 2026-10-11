@@ -97,8 +97,11 @@ pub trait Senses {
     }
 
     /// The nearest stranger (not kin) that can eat me and whose body's edge is closer than
-    /// `within` — by the herd's snapshot at the start of the phase.
-    fn nearest_threat(&self, me: &Me, within: f64) -> Option<Threat>;
+    /// `within` — by the herd's snapshot at the start of the phase. Asked only by the default
+    /// `threats_near`: the world's senses answer that themselves.
+    fn nearest_threat(&self, _me: &Me, _within: f64) -> Option<Threat> {
+        None
+    }
 
     /// The nearest threat and the nearest one hunting somebody now, closer than `within`. The
     /// default takes every threat for a hunter, enough for test senses.
@@ -217,12 +220,11 @@ pub struct Threat {
 pub(crate) struct GridSenses<'a> {
     pub food: &'a Grid,
     pub plants: &'a [Plant],
-    /// The corpse grid; None — no corpses to look for (tests of the other queries).
-    pub corpse_grid: Option<&'a Grid>,
+    pub corpse_grid: &'a Grid,
     pub corpses: &'a [Corpse],
     pub now: u64,
-    /// The snapshot of the herd; None — nobody to hunt or fear (tests of the corpse queries).
-    pub herd: Option<&'a Herd>,
+    /// The snapshot of the herd.
+    pub herd: &'a Herd,
 }
 
 impl Senses for GridSenses<'_> {
@@ -234,7 +236,7 @@ impl Senses for GridSenses<'_> {
         let mut best: Option<CorpseFood> = None;
         // what it can still take in: a corpse bigger than the empty part of its tank is worth no more
         let room = (me.pheno.max_energy - me.energy).max(0.0);
-        self.corpse_grid?.for_each_near(me.x, me.y, me.pheno.smell, |i, cx, cy| {
+        self.corpse_grid.for_each_near(me.x, me.y, me.pheno.smell, |i, cx, cy| {
             let c = &self.corpses[i];
             let distance = (cx - me.x).hypot(cy - me.y);
             let efficiency = me.pheno.corpse_efficiency(c.stage(self.now), taste.foreign);
@@ -259,7 +261,7 @@ impl Senses for GridSenses<'_> {
     }
 
     fn visible_enemy(&self, me: &Me, id: u64) -> Option<Threat> {
-        let herd = self.herd?;
+        let herd = self.herd;
         let i = herd.seen.binary_search_by_key(&id, |s| s.kinship.id).ok()?;
         let s = &herd.seen[i];
         let distance = (s.x - me.x).hypot(s.y - me.y);
@@ -272,7 +274,7 @@ impl Senses for GridSenses<'_> {
         if !me.pheno.hunts_now(hunt.taste.foreign) {
             return None; // fresh meat is worth nothing to it, or meat is not its own this tick
         }
-        let herd = self.herd?;
+        let herd = self.herd;
         let max_size = me.pheno.size / hunt.ratio;
         let range = hunt.range.min(me.pheno.vision);
         // (kept first, distance², id, index): the order in which a full buffer keeps candidates
@@ -339,7 +341,7 @@ impl Senses for GridSenses<'_> {
     }
 
     fn nearest_prey(&self, me: &Me, ratio: f64, taste: Taste, within: f64) -> Option<Threat> {
-        nearest_prey(self.herd?, me, ratio, taste, within)
+        nearest_prey(self.herd, me, ratio, taste, within)
     }
 
     fn child_in_need(
@@ -350,7 +352,7 @@ impl Senses for GridSenses<'_> {
         window: u64,
         prefer: Option<u64>,
     ) -> Option<(u64, Threat)> {
-        child_in_need(self.herd?, me, within, tick, window, prefer)
+        child_in_need(self.herd, me, within, tick, window, prefer)
     }
 
     fn best_plant(&self, me: &Me, taste: Taste) -> Option<(f64, f64)> {
@@ -384,16 +386,8 @@ impl Senses for GridSenses<'_> {
     }
 
     #[inline(always)]
-    fn nearest_threat(&self, me: &Me, within: f64) -> Option<Threat> {
-        self.threats_near(me, within).0
-    }
-
-    #[inline(always)]
     fn threats_near(&self, me: &Me, within: f64) -> (Option<Threat>, Option<Threat>) {
-        match self.herd {
-            Some(herd) => nearest_threats(herd, me.kinship, me.x, me.y, me.pheno.size, within),
-            None => (None, None),
-        }
+        nearest_threats(self.herd, me.kinship, me.x, me.y, me.pheno.size, within)
     }
 }
 
@@ -437,10 +431,6 @@ pub struct Blind;
 
 impl Senses for Blind {
     fn nearest_plant(&self, _: f64, _: f64, _: f64) -> Option<(f64, f64)> {
-        None
-    }
-
-    fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
         None
     }
 }
@@ -881,10 +871,10 @@ mod tests {
         let mut view = GridSenses {
             food: &food,
             plants: &[],
-            corpse_grid: Some(&cgrid),
+            corpse_grid: &cgrid,
             corpses: &corpses,
             now: 1,
-            herd: None,
+            herd: &Herd::new(),
         };
         assert!(view.best_corpse(&me, Taste::OWN).is_none());
         view.now = 2;
@@ -927,10 +917,10 @@ mod tests {
             let view = GridSenses {
                 food: &food,
                 plants: &[],
-                corpse_grid: Some(&cgrid),
+                corpse_grid: &cgrid,
                 corpses: &corpses,
                 now,
-                herd: None,
+                herd: &Herd::new(),
             };
             assert_eq!(view.best_corpse(&me, Taste::OWN).map(|c| c.owner), want, "diet {diet}");
         }
@@ -964,10 +954,10 @@ mod tests {
         let view = GridSenses {
             food: &food,
             plants: &[],
-            corpse_grid: Some(&cgrid),
+            corpse_grid: &cgrid,
             corpses: &corpses,
             now,
-            herd: None,
+            herd: &Herd::new(),
         };
         view.best_corpse(&me, Taste { foreign, ..Taste::OWN }).is_some()
     }
@@ -1086,7 +1076,7 @@ mod tests {
                         .enumerate()
                         .filter(|(_, p)| p.alive())
                         .map(|(i, p)| (i, dist2(p.x, p.y, v.x, v.y)))
-                        .filter(|(_, d2)| *d2 <= v.pheno.size2)
+                        .filter(|(_, d2)| *d2 <= v.pheno.size * v.pheno.size)
                         .min_by(|(ia, da), (ib, db)| da.total_cmp(db).then(ia.cmp(ib)))
                         .map(|(i, _)| i);
                     let mut bitten = plants.clone();
@@ -1139,10 +1129,10 @@ mod tests {
                 let view = GridSenses {
                     food: &food,
                     plants: &plants,
-                    corpse_grid: None,
+                    corpse_grid: &Grid::new(GRID_CELL),
                     corpses: &[],
                     now: tick,
-                    herd: Some(&snapshot),
+                    herd: &snapshot,
                 };
                 for v in &w.creatures {
                     let me = Me {
@@ -1278,10 +1268,10 @@ mod tests {
         let view = GridSenses {
             food: &food,
             plants: &[],
-            corpse_grid: None,
+            corpse_grid: &Grid::new(GRID_CELL),
             corpses: &[],
             now: 1,
-            herd: Some(&herd),
+            herd: &herd,
         };
         let v = &w.creatures[0];
         let me = Me {
@@ -1316,10 +1306,10 @@ mod tests {
             let view = GridSenses {
                 food: &food,
                 plants: &[],
-                corpse_grid: None,
+                corpse_grid: &Grid::new(GRID_CELL),
                 corpses: &[],
                 now: 1,
-                herd: Some(&herd),
+                herd: &herd,
             };
             let v = &w.creatures[0];
             let me = Me {

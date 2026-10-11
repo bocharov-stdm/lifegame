@@ -1,17 +1,18 @@
 # The world in real units
 
 The mechanics run in pixels and ticks. `life_core::units` translates them for the player (the
-creature card, the «Новый мир» preview) with three constants in `config.rs`. Nothing in the
+creature card, the «Новый мир» preview) with two constants in `config.rs`. Nothing in the
 simulation reads them.
 
 | Constant | Value | Chosen from |
 |---|---|---|
 | `CM_PER_PX` | 0.5 | the base body (`size` 40) is a 20 cm fish |
-| `SECONDS_PER_TICK` | 0.25 | the base speed 10 is a body length a second, a cruising fish |
 | `TICKS_PER_YEAR` | 1000 | the base lifespan 3000 ticks is three years, a small fish of that size |
 
-There are two clocks because no single one fits. A tick is a quarter of a second of swimming and
-about nine hours of life. The life cycle is compressed about 126 000 times more than swimming.
+There are two clocks because no single one fits. A tick is a quarter of a second of swimming (the
+base speed 10 is then a body length a second, a cruising fish; no constant, since nothing shows
+speeds in seconds) and about nine hours of life. The life cycle is compressed about 126 000 times
+more than swimming.
 
 ## What our numbers are
 

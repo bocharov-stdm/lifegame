@@ -19,15 +19,7 @@ fn world() -> World {
 
 /// A base creature (size 40, a store of 100) at (1000, y) with `energy`.
 fn creature(y: f64, energy: f64) -> Creature {
-    Creature::new(
-        &Space::default(),
-        &Rules::default(),
-        BASE,
-        Some(1000.0),
-        Some(y),
-        Some(energy),
-        Rng::new(1),
-    )
+    Creature::new(&Space::default(), &Rules::default(), BASE, 1000.0, y, Some(energy), Rng::new(1))
 }
 
 fn living_by(v: &mut Creature, blocks: &[Block]) {

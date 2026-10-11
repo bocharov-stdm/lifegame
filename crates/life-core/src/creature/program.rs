@@ -158,7 +158,7 @@ impl ParamSpec {
 
     /// The number moved by gauss(0, `sigma`), held in range.
     fn moved(&self, raw: u16, sigma: f64, rng: &mut Rng) -> u16 {
-        let moved = f64::from(raw) + rng.gauss(0.0, sigma);
+        let moved = f64::from(raw) + rng.gauss(sigma);
         moved.round().clamp(f64::from(self.lo), f64::from(self.hi)) as u16
     }
 

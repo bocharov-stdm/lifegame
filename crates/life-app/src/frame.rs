@@ -70,7 +70,7 @@ pub struct Instance {
 }
 
 /// An RGBA picture stretched over the world's rectangle `rect` (x0, y0, x1, y1).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Raster {
     pub w: usize,
     pub h: usize,
@@ -109,7 +109,7 @@ pub enum Ending {
 }
 
 /// The tempo and the game's state — for the top panel.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct Status {
     pub paused: bool,
     pub speed_index: usize,
@@ -308,7 +308,7 @@ pub struct ShotTrail {
     pub age: f32,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Frame {
     /// The world's number: grows at «Заново» and at a new world. By it the window understands that
     /// the history and the chronicle should start from a clean sheet.
@@ -366,7 +366,7 @@ pub struct Frame {
     pub census: Option<crate::census::Census>,
     pub log: Vec<LogEntry>,
     /// When the frame was assembled: from that moment the window counts the circles' age.
-    pub built: Option<std::time::Instant>,
+    pub built: std::time::Instant,
     /// How much of the simulation thread's time went into assembling the frame, ms.
     pub build_ms: f64,
     /// The mean price of a tick, ms.
@@ -459,14 +459,7 @@ const DIM_PLANT: f64 = 0.45;
 /// creatures are visible. With diets `highlight`ed (a bit per diet) it paints as the circles'
 /// shader does: their creatures in their diets' colours on top, at full brightness however few,
 /// the other creatures and the plants dimmed.
-pub fn density(
-    world: &World,
-    rect: (f64, f64, f64, f64),
-    w: usize,
-    h: usize,
-    highlight: u32,
-    out: Raster,
-) -> Raster {
+pub fn density(world: &World, rect: (f64, f64, f64, f64), w: usize, h: usize, highlight: u32) -> Raster {
     use crate::theme::DIET_COLORS;
 
     let (x0, y0, x1, y1) = rect;
@@ -500,9 +493,7 @@ pub fn density(
     }
     let dim = if highlight == 0 { [1.0; 3] } else { [DIM_PLANT, DIM_CREATURE, 1.0] };
 
-    let mut rgba = out.rgba;
-    rgba.clear();
-    rgba.reserve(w * h * 4);
+    let mut rgba = Vec::with_capacity(w * h * 4);
     for (i, (c, hue)) in counts.iter().zip(&hues).enumerate() {
         let mean = |sums: &[u64; 3], n: u32| sums.map(|sum| (sum / n.max(1) as u64) as u8);
         let colors = [PLANT_COLOR, mean(hue, c[1]), lit.get(i).map_or([0; 3], |l| mean(l, c[2]))];
@@ -579,7 +570,7 @@ mod tests {
         // the whole world: more circles than the ceiling — a density map the size of the screen
         assert!(!motion.collect(&world, (0.0, 0.0, w, h), &mut out));
         let start = std::time::Instant::now();
-        let r = density(&world, (0.0, 0.0, w, h), 960, 300, 0, Raster::default());
+        let r = density(&world, (0.0, 0.0, w, h), 960, 300, 0);
         let ms = start.elapsed().as_secs_f64() * 1000.0;
         eprintln!("  [плотность] {}x{} за {ms:.1} мс", r.w, r.h);
         assert!(r.rgba.len() <= 2 * 1024 * 1024);
@@ -590,8 +581,7 @@ mod tests {
     fn плотность_считает_всех() {
         let world = World::new(&WorldConfig { scale: 10.0, ..Default::default() });
         let (w, h) = minimap_size(world.space.width, world.space.height);
-        let r =
-            density(&world, (0.0, 0.0, world.space.width, world.space.height), w, h, 0, Raster::default());
+        let r = density(&world, (0.0, 0.0, world.space.width, world.space.height), w, h, 0);
         assert_eq!(r.rgba.len(), w * h * 4);
         let lit = r.rgba.chunks(4).filter(|p| p[3] > 0).count();
         assert!(lit >= 1, "стартовые существа видны на миникарте");
@@ -610,7 +600,7 @@ mod tests {
         world.plants = (0..250_001).map(|i| Plant::at((i % 1000) as f64 * w / 1000.0, h / 2.0)).collect();
         world.spawn(life_core::CreatureGenome::BASE, w / 2.0, h / 4.0, None);
         assert_eq!(world.creatures[0].pheno.diet as usize, 0, "a herbivore");
-        let map = |highlight| density(&world, (0.0, 0.0, w, h), 100, 100, highlight, Raster::default()).rgba;
+        let map = |highlight| density(&world, (0.0, 0.0, w, h), 100, 100, highlight).rgba;
         let (plain, herbivores, carnivores) = (map(0), map(1), map(1 << 3));
         let at = |rgba: &[u8], x: usize, y: usize| rgba[(y * 100 + x) * 4..][..4].to_vec();
         assert_eq!(at(&herbivores, 50, 25), [DIET_COLORS[0][0], DIET_COLORS[0][1], DIET_COLORS[0][2], 255]);

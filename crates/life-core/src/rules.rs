@@ -164,7 +164,7 @@ const WORLD_RULE_KEYS: [&str; 50] = [
 /// Patches per base world — no more than this: at 1500 slots that is three places a patch at the
 /// default share (five with every slot in patches), and with fewer a patch is a lone plant, not an
 /// island.
-pub const MAX_PATCHES: f64 = 300.0;
+const MAX_PATCHES: f64 = 300.0;
 
 /// The parameters of the food profiles while none have been chosen (config.rs).
 const FOOD_AXIS: FoodAxis = FoodAxis {

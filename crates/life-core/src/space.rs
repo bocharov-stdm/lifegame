@@ -109,11 +109,6 @@ impl Space {
         }
     }
 
-    /// A strip: a world `scale` times bigger than the base by area (the width grows).
-    pub fn scaled(scale: f64) -> Self {
-        Space::new(scale, Shape::Strip)
-    }
-
     /// How many times the area is bigger than the base world 6000x4000.
     pub fn area_ratio(&self) -> f64 {
         self.width * self.height / (WORLD_WIDTH * WORLD_HEIGHT)

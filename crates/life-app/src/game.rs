@@ -6,7 +6,7 @@ use life_core::flora::Profile;
 use life_core::genome::creature::N;
 use life_core::genome::{GeneSpec, creature};
 use life_core::{Rules, WorldConfig, units};
-use life_sim::observe::{EventKind, GeneStat};
+use life_sim::observe::EventKind;
 
 use crate::app::{LifeApp, SideTab, Tool};
 use crate::charts;
@@ -39,18 +39,11 @@ fn speed_label(index: usize) -> String {
     }
 }
 
-/// What the world eats and how it shoots in the last snapshot: diet shares in % and the share of
-/// shooters in %.
-pub(crate) fn hunting_summary(history: &History) -> Option<([f64; 4], f64)> {
+/// The share of shooters in the last snapshot, %; None while its genes are unknown (no creatures).
+pub(crate) fn shooters_share(history: &History) -> Option<f64> {
     let last = history.snapshots.last()?;
-    let genes = last.genes.as_ref()?;
-    let shares = |gene: creature::Gene| match genes[gene as usize] {
-        GeneStat::Shares(shares) => Some(shares),
-        _ => None,
-    };
-    let diets = shares(creature::Gene::Diet)?;
-    let diets = [0, 1, 2, 3].map(|k| diets[k] * 100.0);
-    Some((diets, last.shooters as f64 / last.creatures as f64 * 100.0))
+    last.genes.as_ref()?;
+    Some(last.shooters as f64 / last.creatures as f64 * 100.0)
 }
 
 /// The `life-report` command that repeats a game without a window.
@@ -514,7 +507,7 @@ impl LifeApp {
                 }
             });
             let width = ui.available_width();
-            if let Some(tick) = charts::timeline(ui, &self.history, &self.log, width, 26.0) {
+            if let Some(tick) = charts::timeline(ui, &self.history, &self.log, width) {
                 self.sim.send(Command::SetPaused(true));
                 self.toast(format!("пауза у события тика {}", spaced(tick)));
             }
@@ -549,7 +542,7 @@ impl LifeApp {
     /// Hunting and shooting: minor facts, folded away.
     fn other_facts(&self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("Прочее").default_open(false).show(ui, |ui| {
-            if let Some((_, shooters)) = hunting_summary(&self.history) {
+            if let Some(shooters) = shooters_share(&self.history) {
                 ui.label(format!(
                     "Умеют стрелять {shooters:.1}% · выстрелов за 10 000 тиков {}",
                     spaced(self.history.shots_in_window())
@@ -568,7 +561,7 @@ impl LifeApp {
                  Наведите на график — под ним будут числа в этой точке.",
             );
             ui.colored_label(MUTED, self.history.span_label());
-            charts::populations(ui, &self.history, 112.0);
+            charts::populations(ui, &self.history);
             ui.add_space(4.0);
             self.kills_table(ui);
             egui::CollapsingHeader::new("Геном всех существ").default_open(false).show(ui, |ui| {
@@ -841,117 +834,109 @@ impl LifeApp {
             taken.take_rules(&current);
             lab.rules_over(&current, &taken)
         };
-        {
-            {
-                let body = self.lab_tab == Tab::Body;
-                let diets = self.lab_tab == Tab::Diets;
-                ui.horizontal_wrapped(|ui| {
-                    for (tab, name) in Tab::RULES {
-                        ui.selectable_value(&mut self.lab_tab, tab, name);
-                    }
-                });
-                let food = self.lab_tab == Tab::Food;
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(
-                            "Правила действуют после «Применить»; гены существ не меняются. Наведите на \
-                             название — что это и в каких пределах; справа — значение по умолчанию.",
-                        )
-                        .color(MUTED),
-                    )
-                    .wrap(),
-                );
-                let default = settings::Settings::default();
-                // the buttons stay in sight under the scrolled rules; the diets' table scrolls across
-                let height = (ui.available_height() - 76.0).max(120.0);
-                egui::ScrollArea::both().max_height(height).auto_shrink([false, true]).show(ui, |ui| {
-                    if diets {
-                        ui.add_space(5.0);
-                        crate::screens::diet_table(ui, &mut self.lab);
-                        ui.add_space(theme::GAP_WIDE);
-                        ui.label(theme::strong("Как меняется питание у потомков"));
-                        self.lab_grid(ui, Tab::Diets, &default);
-                        return;
-                    }
-                    // the body's formula under its fields, so the panel keeps its width
-                    ui.vertical(|ui| {
-                        if self.lab_tab == Tab::Water {
-                            ui.label(crate::screens::WATER_NOTE);
-                        }
-                        for (i, (tab, heading)) in self.lab_tab.pages().iter().enumerate() {
-                            if let Some(heading) = heading.filter(|_| i > 0) {
-                                ui.add_space(theme::GAP_WIDE);
-                                ui.label(theme::strong(heading));
-                            }
-                            self.lab_grid(ui, *tab, &default);
-                        }
-                        if body && self.settings.details {
-                            ui.add_space(8.0);
-                            crate::screens::body_formula(ui, &applied(&self.lab));
-                        }
-                    });
-                    if food {
-                        ui.add_space(6.0);
-                        crate::screens::rules_preview(ui, &applied(&self.lab), space, seed);
-                    }
-                });
-                let mut now = self.lab.clone();
-                now.take_rules(&current);
-                let change = settings::describe_change(&now, &self.lab);
-                ui.add_space(6.0);
-                ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .add_enabled_ui(change.is_some(), |ui| theme::primary_button(ui, "Применить"))
-                        .inner
-                        .clicked()
-                        && let Some(note) = change.clone()
-                    {
-                        match self.lab.rules_over(&current, &now) {
-                            Ok(rules) => {
-                                self.sim.send(Command::SetRules { rules, note, world_gen });
-                                self.toast("правила применены к этому миру".into());
-                            }
-                            Err(e) => self.error(format!("правила не применены: {e}")),
-                        }
-                    }
-                    if ui
-                        .add_enabled(change.is_some(), egui::Button::new("Вернуть как в мире"))
-                        .on_hover_text("Забыть несохранённые правки: как сейчас в мире")
-                        .clicked()
-                    {
-                        self.lab.take_rules(&current);
-                    }
-                    if ui
-                        .add_enabled(
-                            !self.lab_reset_selected.is_empty(),
-                            egui::Button::new("Сбросить отмеченные"),
-                        )
-                        .clicked()
-                    {
-                        for key in self.lab_reset_selected.drain() {
-                            self.lab.set(key, default.get(key));
-                        }
-                    }
-                    // «Применить» changes this world only; new worlds start from the settings
-                    let saved =
-                        FIELDS.iter().all(|f| !f.live() || self.settings.get(f.key) == self.lab.get(f.key));
-                    if ui
-                        .add_enabled(!saved, egui::Button::new("Сохранить для новых миров"))
-                        .on_hover_text(
-                            "Записать эти правила в настройки «Нового мира»: с ними начнутся новые \
-                             партии. «Заново» и «Новый сид» повторяют начало этой.",
-                        )
-                        .clicked()
-                    {
-                        for f in FIELDS.iter().filter(|f| f.live()) {
-                            self.settings.set(f.key, self.lab.get(f.key));
-                        }
-                        self.save_settings();
-                        self.toast("правила сохранены для новых миров".into());
-                    }
-                });
+        let body = self.lab_tab == Tab::Body;
+        let diets = self.lab_tab == Tab::Diets;
+        ui.horizontal_wrapped(|ui| {
+            for (tab, name) in Tab::RULES {
+                ui.selectable_value(&mut self.lab_tab, tab, name);
             }
-        }
+        });
+        let food = self.lab_tab == Tab::Food;
+        ui.add(
+            egui::Label::new(
+                RichText::new(
+                    "Правила действуют после «Применить»; гены существ не меняются. Наведите на \
+                     название — что это и в каких пределах; справа — значение по умолчанию.",
+                )
+                .color(MUTED),
+            )
+            .wrap(),
+        );
+        let default = settings::Settings::default();
+        // the buttons stay in sight under the scrolled rules; the diets' table scrolls across
+        let height = (ui.available_height() - 76.0).max(120.0);
+        egui::ScrollArea::both().max_height(height).auto_shrink([false, true]).show(ui, |ui| {
+            if diets {
+                ui.add_space(5.0);
+                crate::screens::diet_table(ui, &mut self.lab);
+                ui.add_space(theme::GAP_WIDE);
+                ui.label(theme::strong("Как меняется питание у потомков"));
+                self.lab_grid(ui, Tab::Diets, &default);
+                return;
+            }
+            // the body's formula under its fields, so the panel keeps its width
+            ui.vertical(|ui| {
+                if self.lab_tab == Tab::Water {
+                    ui.label(crate::screens::WATER_NOTE);
+                }
+                for (i, (tab, heading)) in self.lab_tab.pages().iter().enumerate() {
+                    if let Some(heading) = heading.filter(|_| i > 0) {
+                        ui.add_space(theme::GAP_WIDE);
+                        ui.label(theme::strong(heading));
+                    }
+                    self.lab_grid(ui, *tab, &default);
+                }
+                if body && self.settings.details {
+                    ui.add_space(8.0);
+                    crate::screens::body_formula(ui, &applied(&self.lab));
+                }
+            });
+            if food {
+                ui.add_space(6.0);
+                crate::screens::rules_preview(ui, &applied(&self.lab), space, seed);
+            }
+        });
+        let mut now = self.lab.clone();
+        now.take_rules(&current);
+        let change = settings::describe_change(&now, &self.lab);
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled_ui(change.is_some(), |ui| theme::primary_button(ui, "Применить"))
+                .inner
+                .clicked()
+                && let Some(note) = change.clone()
+            {
+                match self.lab.rules_over(&current, &now) {
+                    Ok(rules) => {
+                        self.sim.send(Command::SetRules { rules, note, world_gen });
+                        self.toast("правила применены к этому миру".into());
+                    }
+                    Err(e) => self.error(format!("правила не применены: {e}")),
+                }
+            }
+            if ui
+                .add_enabled(change.is_some(), egui::Button::new("Вернуть как в мире"))
+                .on_hover_text("Забыть несохранённые правки: как сейчас в мире")
+                .clicked()
+            {
+                self.lab.take_rules(&current);
+            }
+            if ui
+                .add_enabled(!self.lab_reset_selected.is_empty(), egui::Button::new("Сбросить отмеченные"))
+                .clicked()
+            {
+                for key in self.lab_reset_selected.drain() {
+                    self.lab.set(key, default.get(key));
+                }
+            }
+            // «Применить» changes this world only; new worlds start from the settings
+            let saved = FIELDS.iter().all(|f| !f.live() || self.settings.get(f.key) == self.lab.get(f.key));
+            if ui
+                .add_enabled(!saved, egui::Button::new("Сохранить для новых миров"))
+                .on_hover_text(
+                    "Записать эти правила в настройки «Нового мира»: с ними начнутся новые \
+                     партии. «Заново» и «Новый сид» повторяют начало этой.",
+                )
+                .clicked()
+            {
+                for f in FIELDS.iter().filter(|f| f.live()) {
+                    self.settings.set(f.key, self.lab.get(f.key));
+                }
+                self.save_settings();
+                self.toast("правила сохранены для новых миров".into());
+            }
+        });
     }
 
     /// The end of a game: what happened and what to do — a new seed (the same one would only end

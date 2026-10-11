@@ -74,14 +74,13 @@ impl WorldConfig {
     }
 }
 
-/// A summary of the population; `avg_genom` and `avg_energy` are None if there are no creatures.
+/// A summary of the population; `avg_genom` is None if there are no creatures.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stats {
     pub tick: u64,
     pub plants: usize,
     pub creatures: usize,
     pub avg_genom: Option<[f64; creature::N]>,
-    pub avg_energy: Option<f64>,
 }
 
 /// How many have grown, been born and died in all since the world began. The population says
@@ -280,7 +279,7 @@ impl World {
         id
     }
 
-    pub fn add_creature(&mut self, mut v: Creature) {
+    fn add_creature(&mut self, mut v: Creature) {
         v.id = self.take_id();
         self.creatures.push(v);
     }
@@ -288,7 +287,7 @@ impl World {
     /// A new creature with a given genome at a given place (for tests and the game).
     pub fn spawn(&mut self, genome: CreatureGenome, x: f64, y: f64, energy: Option<f64>) -> u64 {
         let rng = self.rng.fork();
-        let v = Creature::new(&self.space, &self.rules, genome, Some(x), Some(y), energy, rng);
+        let v = Creature::new(&self.space, &self.rules, genome, x, y, energy, rng);
         self.add_creature(v);
         self.next_id - 1
     }
@@ -399,26 +398,18 @@ impl World {
         let mut offspring = Vec::new();
         // Each creature moves by the same snapshot and writes only itself: any number of threads
         // gives the same world (`par.rs`).
-        let senses = GridSenses {
-            food: food_grid,
-            plants,
-            corpse_grid: Some(&*corpse_grid),
-            corpses,
-            now,
-            herd: Some(&*herd),
-        };
+        let senses =
+            GridSenses { food: food_grid, plants, corpse_grid: &*corpse_grid, corpses, now, herd: &*herd };
         crate::par::for_each_mut(threads, creatures, |v| v.step(&senses));
-        for v in creatures.iter() {
-            if !v.alive {
-                let death = v.death.unwrap_or(crate::creature::Death::Starved);
-                if death == crate::creature::Death::OldAge {
-                    counters.old_age += 1;
-                } else {
-                    counters.starved += 1;
-                }
-                counters.by_diet.deaths[v.pheno.diet as usize][death as usize] += 1;
-                continue; // starved to death on this move: neither eats nor divides
+        // Died on this move (the later phases skip them: they neither eat nor divide).
+        for v in creatures.iter().filter(|v| !v.alive) {
+            let death = v.death.unwrap_or(crate::creature::Death::Starved);
+            if death == crate::creature::Death::OldAge {
+                counters.old_age += 1;
+            } else {
+                counters.starved += 1;
             }
+            counters.by_diet.deaths[v.pheno.diet as usize][death as usize] += 1;
         }
         clock.lap(Phase::Decisions);
         // One bite per creature and no more than one portion from a plant per tick.
@@ -576,20 +567,16 @@ impl World {
     // ── statistics ──────────────────────────────────────────────────────────
     pub fn stats(&self) -> Stats {
         let n = self.creatures.len();
-        let (avg_genom, avg_energy) = if n == 0 {
-            (None, None)
-        } else {
+        let avg_genom = (n > 0).then(|| {
             let mut sum = [0.0; creature::N];
-            let mut energy = 0.0;
             for v in &self.creatures {
                 for (s, g) in sum.iter_mut().zip(v.genome.to_values()) {
                     *s += g;
                 }
-                energy += v.energy;
             }
-            (Some(sum.map(|s| s / n as f64)), Some(energy / n as f64))
-        };
-        Stats { tick: self.tick, plants: self.plants.len(), creatures: n, avg_genom, avg_energy }
+            sum.map(|s| s / n as f64)
+        });
+        Stats { tick: self.tick, plants: self.plants.len(), creatures: n, avg_genom }
     }
 
     /// New rules in the middle of a game (the lab on the fly). Living creatures recompute

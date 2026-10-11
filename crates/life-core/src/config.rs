@@ -21,9 +21,9 @@ pub const WORLD_HEIGHT: f64 = 4000.0;
 /// base fish (`size` 40) is a 20 cm fish, so the base world is 30 × 20 m. Two clocks, since life is
 /// compressed far more than swimming: by the swimming clock the base speed 10 is a body length a
 /// second (a cruising fish), by the life clock the base lifespan 3000 ticks is three years (a small
-/// fish of that size) — a tick of life is about nine hours.
+/// fish of that size) — a tick of life is about nine hours. The swimming clock (a tick a quarter of a
+/// second) only explains the speeds: nothing shows them in seconds.
 pub const CM_PER_PX: f64 = 0.5;
-pub const SECONDS_PER_TICK: f64 = 0.25;
 pub const TICKS_PER_YEAR: f64 = 1000.0;
 
 /// Ticks a creature waits after its birth and after each division before it may divide again.
@@ -246,8 +246,8 @@ pub const DIET_STEP_CHANCE: f64 = 0.005;
 /// at 0.5% a world saw about three in 20 000 ticks, too few to take hold.
 pub const DIET_MEAT_STEP_CHANCE: f64 = 0.02;
 /// Chances that a mutating herbivore's child leaps straight to the carnivore or the scavenger,
-/// past the omnivore (`genome::creature::DIET_LEAPS`, rules `diet_leap_carnivore` and
-/// `diet_leap_scavenger`; they replace its general jump): the omnivores
+/// past the omnivore (rules `diet_leap_carnivore` and `diet_leap_scavenger`; they replace its
+/// general jump): the omnivores
 /// dwindle to 1–2% of a world, and the meat diets hung on them alone (user's choice, 2026-09-27).
 pub const HERBIVORE_LEAP_CARNIVORE: f64 = 0.001;
 pub const HERBIVORE_LEAP_SCAVENGER: f64 = 0.0001;

@@ -95,10 +95,6 @@ impl SimResult {
         self.history.last().expect("в истории всегда есть хотя бы стартовый снимок")
     }
 
-    pub fn peak(&self, key: impl Fn(&Stats) -> usize) -> usize {
-        self.history.iter().map(key).max().unwrap_or(0)
-    }
-
     pub fn ms_per_tick(&self) -> f64 {
         if self.ticks_done == 0 { 0.0 } else { self.elapsed.as_secs_f64() * 1000.0 / self.ticks_done as f64 }
     }

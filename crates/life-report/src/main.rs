@@ -42,7 +42,7 @@ use life_sim::{Limits, SimResult, run};
 /// The «creatures x plants» budget per tick: the default work budget is this × ticks.
 const WORK_PER_TICK: f64 = 60_000.0;
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 #[command(about = "Отчёт о балансе lifegame без окна")]
 struct Args {
     /// One seed (if --seeds is not given).
@@ -228,7 +228,7 @@ fn main() {
         seed: 0,
         scale: args.scale,
         shape: args.shape,
-        rules: rules.clone(),
+        rules,
         n_creatures: args.creatures,
         strategies: args.mix.clone(),
         diets: if args.diet_mix.is_empty() { WorldConfig::default().diets } else { args.diet_mix.clone() },
@@ -353,7 +353,7 @@ fn main() {
             .zip(&paces)
             .map(|((((seed, res), events), maps), pace)| json::Run { seed: *seed, res, events, maps, pace })
             .collect();
-        let text = serde_json::to_string_pretty(&json::report(&base_cfg, &rules, ticks, sample, &runs))
+        let text = serde_json::to_string_pretty(&json::report(&base_cfg, ticks, sample, &runs))
             .expect("JSON собирается всегда");
         if quiet {
             println!("{text}");

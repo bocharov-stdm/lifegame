@@ -21,8 +21,8 @@ use life_sim::observe::{EventTracker, Snapshot};
 use crate::app::LOG_LIMIT;
 use crate::census::Census;
 use crate::frame::{
-    self, Area, CorpseMark, Ending, Frame, Instance, LogEntry, Lost, Raster, RegionStats, Selected,
-    ShotTrail, Status, ViewRequest,
+    self, Area, CorpseMark, Ending, Frame, Instance, LogEntry, Lost, RegionStats, Selected, ShotTrail,
+    Status, ViewRequest,
 };
 use crate::history::{Sample, WINDOW_TICKS};
 use crate::motion::Motion;
@@ -238,6 +238,13 @@ fn drop_beyond_window<T>(points: &mut VecDeque<T>, tick: u64, at: impl Fn(&T) ->
     }
 }
 
+/// A shot still on screen: where it flew and when it was fired.
+struct RecentShot {
+    from: (f64, f64),
+    to: (f64, f64),
+    at: Instant,
+}
+
 struct Sim {
     cfg: WorldConfig,
     world: World,
@@ -309,7 +316,8 @@ struct Sim {
     last_minimap: Option<Instant>,
     /// The memory of the previous frame: motion, births, ghosts.
     motion: Motion,
-    recent_shots: VecDeque<(ShotTrail, Instant)>,
+    /// The shots of the last quarter second.
+    recent_shots: VecDeque<RecentShot>,
     /// Tick of the last built frame: sinking corpses are drawn from where they lay then.
     last_frame_tick: u64,
     /// The food patches changed since the last frame: a new world or new rules.
@@ -499,8 +507,11 @@ impl Sim {
                 self.patches_due = true;
                 self.recent_shots.clear();
                 for shot in &self.world.shots {
-                    self.recent_shots
-                        .push_back((ShotTrail { from: shot.from, to: shot.to, age: 0.0 }, Instant::now()));
+                    self.recent_shots.push_back(RecentShot {
+                        from: shot.from,
+                        to: shot.to,
+                        at: Instant::now(),
+                    });
                 }
                 self.world_gen += 1;
                 self.edits = 0;
@@ -719,9 +730,9 @@ impl Sim {
         let now = Instant::now();
         if self.render_world {
             for shot in self.world.shots.iter().filter(|shot| shot.tick == self.world.tick) {
-                self.recent_shots.push_back((ShotTrail { from: shot.from, to: shot.to, age: 0.0 }, now));
+                self.recent_shots.push_back(RecentShot { from: shot.from, to: shot.to, at: now });
             }
-            self.recent_shots.retain(|(_, at)| now.duration_since(*at).as_secs_f32() < 0.25);
+            self.recent_shots.retain(|s| now.duration_since(s.at).as_secs_f32() < 0.25);
             while self.recent_shots.len() > 512 {
                 self.recent_shots.pop_front();
             }
@@ -802,14 +813,12 @@ impl Sim {
         }
         let n = self.window.len() as f64;
         let avg = |k: usize| self.window.iter().map(|c| c[k] as f64).sum::<f64>() / n;
-        let stats = w.stats();
         self.pending.samples.push_back(Sample {
             tick: w.tick,
             plants: avg(0),
             creatures: avg(1),
             diets: std::array::from_fn(|d| avg(2 + d)),
             shots: w.counters.ranged_shots,
-            genom: stats.avg_genom,
         });
         drop_beyond_window(&mut self.pending.samples, w.tick, |s| s.tick);
     }
@@ -982,7 +991,7 @@ impl Sim {
                 let (dw, dh) =
                     ((view.px_w as usize / 2).clamp(1, 1024), (view.px_h as usize / 2).clamp(1, 1024));
                 let area = (view.x0, view.y0, view.x1, view.y1);
-                density = Some(frame::density(w, area, dw, dh, view.highlight, Raster::default()));
+                density = Some(frame::density(w, area, dw, dh, view.highlight));
             }
         } else {
             instances.clear();
@@ -992,7 +1001,7 @@ impl Sim {
                 self.last_minimap = Some(Instant::now());
                 let (mw, mh) = frame::minimap_size(w.space.width, w.space.height);
                 let whole = (0.0, 0.0, w.space.width, w.space.height);
-                Some(frame::density(w, whole, mw, mh, 0, Raster::default()))
+                Some(frame::density(w, whole, mw, mh, 0))
             } else {
                 None
             };
@@ -1034,8 +1043,8 @@ impl Sim {
         let shots = if self.render_world {
             self.recent_shots
                 .iter()
-                .filter(|(_, at)| at.elapsed().as_secs_f32() < 0.25)
-                .map(|(s, at)| ShotTrail { age: at.elapsed().as_secs_f32(), ..*s })
+                .filter(|s| s.at.elapsed().as_secs_f32() < 0.25)
+                .map(|s| ShotTrail { from: s.from, to: s.to, age: s.at.elapsed().as_secs_f32() })
                 .collect()
         } else {
             Vec::new()
@@ -1061,7 +1070,7 @@ impl Sim {
                 ended: self.ended,
             },
             render_world: self.render_world,
-            dots: self.dots && self.render_world,
+            dots: self.dots,
             blend,
             origin,
             instances,
@@ -1077,7 +1086,7 @@ impl Sim {
             region: pending.region,
             census: pending.census,
             log: pending.log,
-            built: Some(Instant::now()),
+            built: Instant::now(),
             build_ms: start.elapsed().as_secs_f64() * 1000.0,
             tick_ms: self.tick_ms,
             snapshot_ms: self.snapshot_ms,
@@ -1100,8 +1109,8 @@ mod tests {
         use life_core::rng::Rng;
         fn measure(sim: &mut Sim, count: usize) -> (f64, Frame) {
             let start = Instant::now();
-            let mut last = Frame::default();
-            for _ in 0..count {
+            let mut last = sim.build_frame();
+            for _ in 1..count {
                 last = sim.build_frame();
             }
             (start.elapsed().as_secs_f64() * 1000.0 / count as f64, last)

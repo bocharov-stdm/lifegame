@@ -533,10 +533,6 @@ mod tests {
             eats_corpses.then_some(CorpseFood { owner: 2, x: 900.0, y: 1000.0, half: 10.0, score: 3.0 })
         }
 
-        fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
-            None
-        }
-
         fn prey(&self, me: &Me, _: Option<u64>, _: Option<u64>, hunt: Hunting) -> Option<Prey> {
             self.prey.filter(|_| me.pheno.hunts_now(hunt.taste.foreign))
         }
@@ -555,8 +551,8 @@ mod tests {
                 &Space::default(),
                 &Rules::default(),
                 CreatureGenome::BASE.with(Gene::Diet, diet as usize as f64),
-                Some(1000.0),
-                Some(1000.0),
+                1000.0,
+                1000.0,
                 Some(30.0),
                 Rng::new(1),
             );
@@ -606,10 +602,6 @@ mod tests {
             None
         }
 
-        fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
-            None
-        }
-
         fn prey(&self, me: &Me, _: Option<u64>, avoid: Option<u64>, _: Hunting) -> Option<Prey> {
             let x = me.x + me.pheno.half + 10.0 + self.gap;
             (avoid != Some(9)).then_some(Prey { id: 9, x, y: me.y, half: 10.0, score: 1.0 })
@@ -624,8 +616,8 @@ mod tests {
             &Space::default(),
             &Rules::default(),
             CreatureGenome::BASE.with(Gene::Diet, Diet::Carnivore as usize as f64),
-            Some(1000.0),
-            Some(1000.0),
+            1000.0,
+            1000.0,
             Some(30.0),
             Rng::new(1),
         );
@@ -677,8 +669,8 @@ mod tests {
             &Space::default(),
             &Rules::default(),
             CreatureGenome::BASE.with(Gene::Diet, Diet::Carnivore as usize as f64),
-            Some(1000.0),
-            Some(1000.0),
+            1000.0,
+            1000.0,
             Some(30.0),
             Rng::new(1),
         );
@@ -709,8 +701,8 @@ mod tests {
             &Space::default(),
             &Rules::default(),
             CreatureGenome::BASE,
-            Some(1080.0),
-            Some(1000.0),
+            1080.0,
+            1000.0,
             Some(30.0),
             Rng::new(1),
         );
@@ -735,9 +727,8 @@ mod tests {
     use crate::senses::{Blind, senses_from};
 
     /// A base creature at (1000, y) with `energy` of its store.
-    fn body(genome: CreatureGenome, y: Option<f64>, energy: f64) -> Creature {
-        let v =
-            Creature::new(&Space::default(), &Rules::default(), genome, Some(1000.0), y, None, Rng::new(1));
+    fn body(genome: CreatureGenome, y: f64, energy: f64) -> Creature {
+        let v = Creature::new(&Space::default(), &Rules::default(), genome, 1000.0, y, None, Rng::new(1));
         let energy = v.pheno.max_energy * energy;
         Creature { energy, ..v }
     }
@@ -748,7 +739,7 @@ mod tests {
 
     #[test]
     fn an_ambusher_stands_a_diver_goes_to_its_layer_edge_a_torpid_one_sleeps() {
-        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let v = body(CreatureGenome::BASE, 1000.0, 0.5);
         let ambush = Program::of(&[Block::does(Action::Ambush)]);
         let mut mind = Mind::default();
         let (intent, _) = run(&v, &ambush, &mut mind, &Blind);
@@ -769,7 +760,7 @@ mod tests {
             // decides
             let (lo, hi) = v.pheno.band((0.0, 1.0));
             let edge = if down { hi } else { lo };
-            let there = body(CreatureGenome::BASE, Some(edge), 0.5);
+            let there = body(CreatureGenome::BASE, edge, 0.5);
             let mut mind = Mind::default();
             let (intent, _) = run(&there, &program, &mut mind, &Blind);
             assert_eq!(mind.fired, Some(1), "{action:?} at the edge");
@@ -783,13 +774,13 @@ mod tests {
         for (negate, share, fired) in [(false, 0.3, 1), (false, 0.7, 0), (true, 0.3, 0), (true, 0.7, 1)] {
             let test = if negate { hungry } else { hungry.not() };
             let program = Program::of(&[Block::when(test, Action::Ambush), Block::does(Action::Wander)]);
-            let v = body(CreatureGenome::BASE, Some(1000.0), share);
+            let v = body(CreatureGenome::BASE, 1000.0, share);
             let mut mind = Mind::default();
             run(&v, &program, &mut mind, &Blind);
             assert_eq!(mind.fired, Some(fired), "{} at fullness {share}", test.label());
         }
         // depth: the world is 4000 deep, it stands at 1000 = 25%
-        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let v = body(CreatureGenome::BASE, 1000.0, 0.5);
         for (param, fired) in [(20, 0), (30, 1)] {
             let program = Program::of(&[
                 Block::when(Test::at(Cond::Depth, param), Action::Ambush),
@@ -804,7 +795,7 @@ mod tests {
     /// Nothing to do: no block decides, and it stands.
     #[test]
     fn when_no_block_decides_it_stands() {
-        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let v = body(CreatureGenome::BASE, 1000.0, 0.5);
         let program = Program::of(&[Block::does(Action::EatPlant), Block::does(Action::Hunt)]);
         let mut mind = Mind::default();
         let (intent, _) = run(&v, &program, &mut mind, &Blind);
@@ -824,7 +815,7 @@ mod tests {
             Block::does(Action::Reach).with(0, 10),
             Block::does(Action::Wander),
         ]);
-        let v = body(CreatureGenome::BASE, Some(1000.0), 0.2);
+        let v = body(CreatureGenome::BASE, 1000.0, 0.2);
         let mut mind = Mind::default();
         run(&v, &program, &mut mind, &Blind);
         assert_eq!(mind.fired, Some(4), "a setting does not decide");
@@ -832,7 +823,7 @@ mod tests {
         assert!(mind.stance.foreign);
         assert_eq!(mind.stance.rival, 2.5);
         assert!((mind.stance.reach - 0.1 * v.pheno.height).abs() < 1e-9);
-        let starving = body(CreatureGenome::BASE, Some(1000.0), 0.05);
+        let starving = body(CreatureGenome::BASE, 1000.0, 0.05);
         let mut mind = Mind::default();
         run(&starving, &program, &mut mind, &Blind);
         assert_eq!(mind.applied, 0b1011, "the first rival that applies wins, the later is not lit");
@@ -859,7 +850,7 @@ mod tests {
         assert_eq!(Menace::of(&program), shape);
         assert_eq!((shape.hunt(), shape.fight()), (Some(1.5), Some((1.5, 0.5))));
         let carnivore = CreatureGenome::BASE.with(Gene::Diet, Diet::Carnivore as usize as f64);
-        let mut fed = body(carnivore, Some(1000.0), 0.5);
+        let mut fed = body(carnivore, 1000.0, 0.5);
         fed.programs = Programs::both(program);
         assert_eq!(fed.menace(), shape, "before its first move: by the shape");
         let mut mind = Mind::default();
@@ -868,18 +859,18 @@ mod tests {
         assert_eq!(mind.stance.menace, fight_only, "fed: its hunt and defence blocks were not reached");
         fed.mind = mind;
         assert_eq!(fed.menace(), fight_only, "after a move: by the move");
-        let hungry = body(carnivore, Some(1000.0), 0.2);
+        let hungry = body(carnivore, 1000.0, 0.2);
         let mut mind = Mind::default();
         run(&hungry, &program, &mut mind, &Blind);
         assert_eq!(mind.stance.menace, shape, "hungry: they were tried, though nothing was in sight");
         assert_eq!(mind.fired, Some(3));
         // a hunt that could take nothing is no threat: a grazer's, a full hunter's
-        let grazer = body(CreatureGenome::BASE, Some(1000.0), 0.2);
+        let grazer = body(CreatureGenome::BASE, 1000.0, 0.2);
         let mut mind = Mind::default();
         run(&grazer, &program, &mut mind, &Blind);
         assert_eq!(mind.stance.menace, Menace { hunt: 0, ..shape }, "fresh meat is not a grazer's food");
         let hunter = Program::of(&[Block::does(Action::Hunt), Block::does(Action::Wander)]);
-        let full = body(carnivore, Some(1000.0), 1.0);
+        let full = body(carnivore, 1000.0, 1.0);
         let mut mind = Mind::default();
         run(&full, &hunter, &mut mind, &Blind);
         assert_eq!(mind.stance.menace.hunt(), None, "a full tank takes no prey");
@@ -892,7 +883,7 @@ mod tests {
     /// (no strikes, a burst) while the threat is in sight.
     #[test]
     fn a_flight_without_a_memory_is_still_a_flight() {
-        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let v = body(CreatureGenome::BASE, 1000.0, 0.5);
         let threat = Threat { id: 7, x: 1030.0, y: 1000.0, gap: 5.0, half: 40.0 };
         let senses = senses_from(|_, _, _| None).with_threat(threat);
         let flight = Program::of(&[
@@ -910,7 +901,7 @@ mod tests {
     /// expires, and a time of 0 switches it off; both tracks share the modes.
     #[test]
     fn modes_are_switched_on_seen_and_expire() {
-        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let v = body(CreatureGenome::BASE, 1000.0, 0.5);
         let program = Program::of(&[
             Block::when(Test::at(Cond::Fullness, 40), Action::Mode).with(0, 2).with(1, 5),
             Block::when(Test::at(Cond::Mode, 2), Action::Ambush),
@@ -919,7 +910,7 @@ mod tests {
         let mut mind = Mind { tick: 100, ..Mind::default() };
         run(&v, &program, &mut mind, &Blind);
         assert_eq!((mind.fired, mind.modes), (Some(1), [0, 105, 0, 0]), "on this tick, seen at once");
-        let hungry = body(CreatureGenome::BASE, Some(1000.0), 0.2);
+        let hungry = body(CreatureGenome::BASE, 1000.0, 0.2);
         for (tick, fired) in [(104, 1), (105, 2)] {
             mind.tick = tick;
             run(&hungry, &program, &mut mind, &Blind);
@@ -951,15 +942,15 @@ mod tests {
             run(v, &program, &mut mind, &Blind);
             mind.fired == Some(0)
         };
-        let mut v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let mut v = body(CreatureGenome::BASE, 1000.0, 0.5);
         v.age = v.pheno.lifespan * 0.75;
         assert!(fires(&v, Test::at(Cond::Age, 70)) && !fires(&v, Test::at(Cond::Age, 80)));
         assert!(!fires(&v, Test::is(Cond::Winded)));
         v.winded = 3;
         assert!(fires(&v, Test::is(Cond::Winded)));
         // the thermocline: warm to 15% of the depth, cold from 45%
-        let deep = body(CreatureGenome::BASE, Some(v.pheno.height * 0.6), 0.5);
-        let shallow = body(CreatureGenome::BASE, Some(v.pheno.height * 0.05), 0.5);
+        let deep = body(CreatureGenome::BASE, v.pheno.height * 0.6, 0.5);
+        let shallow = body(CreatureGenome::BASE, v.pheno.height * 0.05, 0.5);
         assert!(fires(&deep, Test::at(Cond::Cold, 100)) && !fires(&shallow, Test::at(Cond::Cold, 1)));
         // a layer setting from 5% to 50% of the depth: the tests after it see its band
         let layered = |v: &Creature, test: Test| {
@@ -976,12 +967,12 @@ mod tests {
         for (y, above, inside, below) in
             [(lo - 5.0, true, false, false), (lo + 5.0, false, true, false), (hi + 5.0, false, false, true)]
         {
-            let w = body(CreatureGenome::BASE, Some(y), 0.5);
+            let w = body(CreatureGenome::BASE, y, 0.5);
             assert_eq!(layered(&w, Test::is(Cond::AboveLayer)), above, "y {y}");
             assert_eq!(layered(&w, Test::is(Cond::InLayer)), inside, "y {y}");
             assert_eq!(layered(&w, Test::is(Cond::BelowLayer)), below, "y {y}");
         }
-        let low = body(CreatureGenome::BASE, Some(hi + 5.0), 0.5);
+        let low = body(CreatureGenome::BASE, hi + 5.0, 0.5);
         assert!(layered(&low, Test::is(Cond::InLayer).not()), "a negated test");
         assert!(fires(&low, Test::is(Cond::InLayer)), "without the setting the whole depth is its layer");
     }
@@ -995,7 +986,7 @@ mod tests {
                 Block::does(Action::Wander),
             ])
         };
-        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let v = body(CreatureGenome::BASE, 1000.0, 0.5);
         for (third, fired) in
             [(Test::ALWAYS, 0), (Test::at(Cond::Depth, 90), 1), (Test::is(Cond::Winded).not(), 0)]
         {
@@ -1023,9 +1014,6 @@ mod tests {
                     .any(|stage| me.pheno.corpse_efficiency(stage, taste.foreign) > 0.0);
                 eats.then_some(CorpseFood { owner: 2, x: me.x - 120.0, y: me.y, half: 10.0, score: 1.0 })
             }
-            fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
-                None
-            }
             fn nearest_prey(&self, me: &Me, ratio: f64, taste: Taste, within: f64) -> Option<Threat> {
                 let t = Threat { id: 4, x: me.x + 50.0, y: me.y, gap: self.prey_gap, half: 5.0 };
                 (me.pheno.hunts_now(taste.foreign) && ratio == 1.5 && t.gap < within).then_some(t)
@@ -1042,9 +1030,9 @@ mod tests {
             run(v, &program, &mut mind, &Around { prey_gap: gap });
             mind.fired == Some(0)
         };
-        let grazer = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let grazer = body(CreatureGenome::BASE, 1000.0, 0.5);
         let carnivore =
-            body(CreatureGenome::BASE.with(Gene::Diet, Diet::Carnivore as usize as f64), Some(1000.0), 0.5);
+            body(CreatureGenome::BASE.with(Gene::Diet, Diet::Carnivore as usize as f64), 1000.0, 0.5);
         assert!(fires(&grazer, Test::is(Cond::PlantSeen), false, 0.0));
         assert!(!fires(&grazer, Test::is(Cond::CorpseSeen), false, 0.0));
         assert!(fires(&carnivore, Test::is(Cond::CorpseSeen), false, 0.0));
@@ -1058,7 +1046,7 @@ mod tests {
     /// A flight at its block's pace, tilted down or up; straight by default.
     #[test]
     fn a_flight_keeps_its_pace_and_tilt() {
-        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let v = body(CreatureGenome::BASE, 1000.0, 0.5);
         let threat = Threat { id: 7, x: 1030.0, y: 1000.0, gap: 5.0, half: 40.0 };
         let senses = senses_from(|_, _, _| None).with_threat(threat);
         let flee = |tilt: u16, pace: u16| {
@@ -1088,9 +1076,6 @@ mod tests {
         fn nearest_plant(&self, _: f64, _: f64, _: f64) -> Option<(f64, f64)> {
             None
         }
-        fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
-            None
-        }
         fn child_in_need(
             &self,
             _: &Me,
@@ -1113,7 +1098,7 @@ mod tests {
         let enemy = Threat { id: 9, x: 1200.0, y: 1000.0, gap: 150.0, half: 50.0 };
         let needs = Needs { child: Some((5, enemy)), asked: std::cell::Cell::new(0.0) };
         let program = Program::of(&[Block::does(Action::DefendChild), Block::does(Action::Wander)]);
-        let v = body(CreatureGenome::BASE, Some(1000.0), 0.8);
+        let v = body(CreatureGenome::BASE, 1000.0, 0.8);
         let mut mind = Mind { tick: 100, ..Mind::default() };
         let (intent, mode) = run(&v, &program, &mut mind, &needs);
         assert_eq!((mind.fired, mode, intent.attack), (Some(0), Mode::Defend, Some(9)));
@@ -1135,7 +1120,7 @@ mod tests {
         run(&v, &program, &mut mind, &needs);
         assert_eq!(mind.fired, Some(0), "a new episode");
         // a poor tank does not defend
-        let poor = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let poor = body(CreatureGenome::BASE, 1000.0, 0.5);
         let mut mind = Mind::default();
         run(&poor, &program, &mut mind, &needs);
         assert_eq!(mind.fired, Some(1));
@@ -1145,7 +1130,7 @@ mod tests {
             Block::does(Action::DefendChild),
         ]);
         let mut mind = Mind { tick: 10, ..Mind::default() };
-        run(&body(CreatureGenome::BASE, Some(1000.0), 0.95), &hungry, &mut mind, &needs);
+        run(&body(CreatureGenome::BASE, 1000.0, 0.95), &hungry, &mut mind, &needs);
         assert!(mind.aid.is_some());
         run(&v, &hungry, &mut mind, &needs);
         assert_eq!((mind.fired, mind.aid, mind.aid_cooldown), (Some(0), None, 70));
@@ -1164,16 +1149,12 @@ mod tests {
             fn nearest_plant(&self, _: f64, _: f64, _: f64) -> Option<(f64, f64)> {
                 None
             }
-            fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
-                None
-            }
             fn prey(&self, me: &Me, _: Option<u64>, _: Option<u64>, hunt: Hunting) -> Option<Prey> {
                 self.0.set(hunt.range);
                 Some(Prey { id: 9, x: me.x + 200.0, y: me.y, half: 5.0, score: 1.0 })
             }
         }
-        let v =
-            body(CreatureGenome::BASE.with(Gene::Diet, Diet::Carnivore as usize as f64), Some(1000.0), 0.5);
+        let v = body(CreatureGenome::BASE.with(Gene::Diet, Diet::Carnivore as usize as f64), 1000.0, 0.5);
         let program =
             Program::of(&[Block::does(Action::Hunt).with(6, 40).with(7, 60), Block::does(Action::Wander)]);
         let asks = Asks(std::cell::Cell::new(0.0));
@@ -1200,8 +1181,7 @@ mod tests {
                 Some(Prey { id: 9, x: me.x, y: me.y, half: 5.0, score: 1.0 })
             }
         }
-        let v =
-            body(CreatureGenome::BASE.with(Gene::Diet, Diet::Carnivore as usize as f64), Some(1000.0), 0.5);
+        let v = body(CreatureGenome::BASE.with(Gene::Diet, Diet::Carnivore as usize as f64), 1000.0, 0.5);
         for (action, activity) in [(Action::Hunt, Activity::Feeding), (Action::FightBack, Activity::Alarm)] {
             let program = Program::of(&[Block::does(action), Block::does(Action::Wander)]);
             let mut mind = Mind::default();
@@ -1224,14 +1204,11 @@ mod tests {
                     .filter(|&(px, py)| (px - x).powi(2) + (py - y).powi(2) < r2)
                     .min_by(|a, b| (a.0 - x).abs().total_cmp(&(b.0 - x).abs()))
             }
-            fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
-                None
-            }
             fn best_plant(&self, _: &Me, _: Taste) -> Option<(f64, f64)> {
                 Some((1200.0, 1000.0))
             }
         }
-        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let v = body(CreatureGenome::BASE, 1000.0, 0.5);
         let goes = |keep: u16, best: u16, kept: Option<(f64, f64)>| {
             let program = Program::of(&[Block::does(Action::EatPlant).with(1, keep).with(2, best)]);
             let mut mind = Mind { personal_food: kept, ..Mind::default() };
@@ -1250,7 +1227,7 @@ mod tests {
     /// deciding blocks were tried and could not act.
     #[test]
     fn settings_apply_wherever_they_stand() {
-        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let v = body(CreatureGenome::BASE, 1000.0, 0.5);
         let program = Program::of(&[
             Block::does(Action::Hunt),
             Block::when(Test::at(Cond::Fullness, 90), Action::Rest),
@@ -1271,7 +1248,7 @@ mod tests {
     /// templates flee under their alarm mode; here the flight is kept by its own memory.)
     #[test]
     fn a_far_threat_steers_a_flight_but_does_not_renew_it() {
-        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let v = body(CreatureGenome::BASE, 1000.0, 0.5);
         let vision = v.pheno.vision;
         let program =
             Program::of(&[Block::when(Test::is(Cond::Fleeing), Action::Flee), Block::does(Action::Wander)]);
@@ -1299,14 +1276,11 @@ mod tests {
             fn nearest_plant(&self, _: f64, _: f64, _: f64) -> Option<(f64, f64)> {
                 None
             }
-            fn nearest_threat(&self, _: &Me, _: f64) -> Option<Threat> {
-                None
-            }
             fn visible_enemy(&self, _: &Me, id: u64) -> Option<Threat> {
                 Some(Threat { id, x: 1300.0, y: 1000.0, gap: 280.0, half: 20.0 })
             }
         }
-        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let v = body(CreatureGenome::BASE, 1000.0, 0.5);
         for (window, ago, fired) in [(1, 1, 0), (1, 4, 1), (5, 4, 0), (5, 6, 1)] {
             let program = Program::of(&[
                 Block::when(Test::at(Cond::Struck, window), Action::Ambush),
@@ -1326,7 +1300,7 @@ mod tests {
     /// with its business and keeps no flight in its memory.
     #[test]
     fn only_a_program_with_a_flight_block_flees() {
-        let v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let v = body(CreatureGenome::BASE, 1000.0, 0.5);
         let threat = Threat { id: 7, x: 1030.0, y: 1000.0, gap: 5.0, half: 40.0 };
         let senses = senses_from(|_, _, _| None).with_threat(threat);
         let mut mind = Mind::default();
@@ -1358,7 +1332,7 @@ mod tests {
     /// that test fights back at any health, but not an enemy past its block's ratio.
     #[test]
     fn fighting_back_follows_the_block() {
-        let mut v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let mut v = body(CreatureGenome::BASE, 1000.0, 0.5);
         v.health = v.max_health() * 0.3;
         let close = |half: f64| {
             senses_from(|_, _, _| None).with_threat(Threat {
@@ -1386,7 +1360,7 @@ mod tests {
     fn standing_still_or_torpid_only_loses_energy() {
         let mut costs = Vec::new();
         for action in [Action::Ambush, Action::Torpor] {
-            let mut v = body(CreatureGenome::BASE, Some(1000.0), 0.9);
+            let mut v = body(CreatureGenome::BASE, 1000.0, 0.9);
             v.programs = Programs::both(Program::of(&[Block::does(action)]));
             let (x, y) = (v.x, v.y);
             let mut energy = v.energy;
@@ -1405,14 +1379,14 @@ mod tests {
     /// A growing creature lives by its juvenile program, a grown one by its adult program.
     #[test]
     fn a_creature_lives_by_the_program_of_its_stage() {
-        let mut v = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let mut v = body(CreatureGenome::BASE, 1000.0, 0.5);
         v.programs =
             [Program::of(&[Block::does(Action::Ambush)]), Program::of(&[Block::does(Action::Wander)])].into();
         assert_eq!(v.stage(), ADULT_STAGE);
         let x = v.x;
         v.step(&Blind);
         assert_ne!((v.x, v.y), (x, 1000.0), "grown: it wanders");
-        let mut young = body(CreatureGenome::BASE, Some(1000.0), 0.5);
+        let mut young = body(CreatureGenome::BASE, 1000.0, 0.5);
         young.pheno = Phenotype::at_size(&young.genome, &Rules::default(), &Space::default(), 20.0);
         young.programs = v.programs.clone();
         assert_eq!(young.stage(), JUVENILE);
@@ -1472,7 +1446,7 @@ mod tests {
             let diet = rng.randint(0, 3) as f64;
             let size = if case % 3 == 0 { 80.0 } else { 40.0 };
             let genome = CreatureGenome::BASE.with(Gene::Diet, diet).with(Gene::Size, size);
-            let mut v = body(genome, Some(rng.uniform(300.0, 3700.0)), rng.uniform(0.05, 1.0));
+            let mut v = body(genome, rng.uniform(300.0, 3700.0), rng.uniform(0.05, 1.0));
             v.programs = programs.into();
             let senses = Everything { threat: case % 2 == 0 };
             for _ in 0..20 {

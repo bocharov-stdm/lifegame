@@ -44,21 +44,6 @@ impl Phase {
     ];
     pub const N: usize = Phase::ALL.len();
 
-    pub fn key(self) -> &'static str {
-        [
-            "plants",
-            "ageing",
-            "grids",
-            "herd",
-            "decisions",
-            "eat_plants",
-            "combat",
-            "eat_corpses",
-            "division",
-            "sweep",
-        ][self as usize]
-    }
-
     /// The game's and the report's name.
     pub fn label(self) -> &'static str {
         ["растения", "старость", "сетки", "стадо", "решения", "еда", "бой", "трупы", "деление", "уборка"]

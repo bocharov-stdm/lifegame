@@ -524,9 +524,9 @@ pub fn keys_grid(ui: &mut egui::Ui) {
     });
 }
 
-/// 0 and 1 are the same scale (the system's): a file saved with 1 shows it as the system's.
+/// 0 is the system's scale (a file saved with 1 reads as 0: `Settings::from_json`).
 fn ui_scale_label(v: f64) -> String {
-    if v == 0.0 || v == 1.0 { "как в системе".into() } else { format!("{:.0}%", v * 100.0) }
+    if v == 0.0 { "как в системе".into() } else { format!("{:.0}%", v * 100.0) }
 }
 
 /// A field from `FIELDS`: a slider or, if the field has variants, a drop-down list. true — the
