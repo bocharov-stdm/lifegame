@@ -316,6 +316,8 @@ struct Sim {
     last_minimap: Option<Instant>,
     /// The memory of the previous frame: motion, births, ghosts.
     motion: Motion,
+    /// The same for the far scale's dots: while the scale fades both ways are built in one frame.
+    far: Motion,
     /// The shots of the last quarter second.
     recent_shots: VecDeque<RecentShot>,
     /// Tick of the last built frame: sinking corpses are drawn from where they lay then.
@@ -406,6 +408,7 @@ impl Sim {
             blocked: false,
             last_minimap: None,
             motion: Motion::default(),
+            far: Motion::default(),
             recent_shots: VecDeque::new(),
             last_frame_tick: 0,
             patches_due: true,
@@ -519,6 +522,7 @@ impl Sim {
                 self.paused = true;
                 self.ended = None;
                 self.motion = Motion::default();
+                self.far = Motion::default();
                 self.mode_scale = f64::NAN;
                 self.blend = None;
                 self.last_minimap = None;
@@ -540,6 +544,7 @@ impl Sim {
             Command::RenderWorld(enabled) => {
                 if self.render_world != enabled {
                     self.motion = Motion::default();
+                    self.far = Motion::default();
                     self.dots = false;
                     self.mode_scale = f64::NAN;
                     self.blend = None;
@@ -692,6 +697,7 @@ impl Sim {
         self.last_time = Instant::now();
         self.last_minimap = None;
         self.motion = Motion::default();
+        self.far = Motion::default();
         self.mode_scale = f64::NAN;
         self.blend = None;
         self.recent_shots.clear();
@@ -912,6 +918,7 @@ impl Sim {
         let w = &self.world;
         let mut instances = self.recycled.try_iter().last().unwrap_or_default();
         let mut density = None;
+        let mut haze = None;
         let mut blend = None;
         let mut origin = (0.0, 0.0);
         if self.render_world
@@ -932,14 +939,18 @@ impl Sim {
                 let dots = if self.dots { px_size < 3.5 } else { px_size <= 2.5 };
                 if dots != self.dots {
                     self.dots = dots;
-                    if !dots {
+                    // the way switched to starts its memory afresh: an old one would slide every
+                    // body from where it was long ago
+                    if dots {
+                        self.far = Motion::default();
+                    } else {
                         self.motion = Motion::default();
                     }
                     self.blend = (!first).then(|| frame::Blend { since: Instant::now(), to_dots: dots });
                 }
             }
             let collected = if self.dots {
-                frame::dots(w, rect, &mut instances)
+                self.far.collect_far(w, rect, &mut instances)
             } else {
                 self.motion.collect(w, rect, &mut instances)
             };
@@ -951,21 +962,7 @@ impl Sim {
                     Vec::new()
                 };
                 spots.clear();
-                if self.dots {
-                    // motionless squares: drawn where they are
-                    let (x0, y0, x1, y1) = rect;
-                    spots.extend(
-                        w.creatures
-                            .iter()
-                            .filter(|v| {
-                                let h = v.pheno.half;
-                                v.x + h >= x0 && v.x - h <= x1 && v.y + h >= y0 && v.y - h <= y1
-                            })
-                            .map(|v| (v.id, v.x, v.y, v.x, v.y, v.pheno.half)),
-                    );
-                } else {
-                    spots.extend(self.motion.drawn());
-                }
+                spots.extend(if self.dots { self.far.drawn() } else { self.motion.drawn() });
                 self.shown.push_back((self.frames_built + 1, spots));
                 // while the far scale fades, the old way of drawing goes first, under the new
                 if let Some(b) = self.blend.filter(|b| !b.done()) {
@@ -973,7 +970,7 @@ impl Sim {
                     let fits = if b.to_dots {
                         self.motion.collect(w, rect, &mut old)
                     } else {
-                        frame::dots(w, rect, &mut old)
+                        self.far.collect_far(w, rect, &mut old)
                     };
                     if fits && old.len() + instances.len() <= frame::MAX_INSTANCES {
                         old.extend_from_slice(&instances);
@@ -984,6 +981,10 @@ impl Sim {
                     self.blend_buf = old;
                 } else {
                     self.blend = None;
+                }
+                // far away the plants are a haze; while the scale fades it is weighed with the dots
+                if self.dots || blend.is_some() {
+                    haze = Some(frame::haze(w, rect, px_per_unit));
                 }
             } else {
                 instances.clear();
@@ -1078,6 +1079,7 @@ impl Sim {
             corpses,
             shots,
             density,
+            haze,
             minimap,
             selected: self.selected.and_then(|id| Selected::of(w, id)),
             lost: pending.lost,
@@ -1137,9 +1139,12 @@ mod tests {
         let (normal_ms, normal) = measure(&mut sim, 20);
         assert_eq!(normal.instances.len(), 8_000);
         sim.view.as_mut().unwrap().px_w = 300;
+        // the zoom switched the far scale on: its fade would hold both ways of drawing
+        sim.build_frame();
+        sim.blend = None;
         let (dots_ms, dots) = measure(&mut sim, 20);
-        assert!(dots.dots);
-        assert_eq!(dots.instances.len(), 8_000);
+        assert!(dots.dots && dots.haze.is_some());
+        assert_eq!(dots.instances.len(), 4_000, "far away only the creatures: the plants are a haze");
         sim.render_world = false;
         sim.selected = Some(1);
         let (off_ms, off) = measure(&mut sim, 20);

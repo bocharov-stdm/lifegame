@@ -64,6 +64,9 @@ const HALO_PX: f32 = 3.0;
 const TEETH: f32 = 12.0;
 const TOOTH_DEPTH: f32 = 0.12;
 const DASHES: f32 = 10.0;
+// A far dot's least radius, px: a soft disc whose edge spreads over a pixel, so a dot moving by a
+// fraction of a pixel glides from pixel to pixel instead of hopping.
+const DOT_PX: f32 = 1.1;
 
 @vertex
 fn vs_main(
@@ -115,11 +118,15 @@ fn vs_main(
         alpha = 1.0 - a;
     }
 
-    let p = select(mix(prev, pos, u.k), pos, dot);
-    let r_px = select(r * u.zoom * scale * u.pixels_per_point, 1.0, dot);
-    // smaller than a pixel: we draw a pixel, but with a brightness by area
+    // a far dot moves between the frames as a body does, but keeps its size: it is born and dies
+    // by its brightness alone
+    let p = mix(prev, pos, u.k);
+    let body_px = r * u.zoom * u.pixels_per_point;
+    let r_px = select(body_px * scale, max(body_px, DOT_PX), dot);
+    // smaller than a pixel: we draw a pixel, but with a brightness by area; a far dot stays bright,
+    // to be seen
     let drawn = max(r_px, select(0.7, HL_MIN_PX, hl == 1u));
-    alpha = select(alpha * min(1.0, r_px * r_px / (drawn * drawn)), 1.0, dot);
+    alpha = select(alpha * min(1.0, r_px * r_px / (drawn * drawn)), alpha, dot);
     // while the far scale fades in or out the frame holds both ways of drawing: weigh each (by the
     // dot bit, which a highlighted creature keeps though it is drawn as a body)
     alpha = alpha * select(1.0 - u.dots_weight, u.dots_weight, (flags & (1u << 20u)) != 0u);
@@ -144,7 +151,7 @@ fn vs_main(
 
     let halo_px = select(0.0, HALO_PX, hl == 1u);
     let half_px =
-        select(drawn + 1.0 + max(halo_px, select(0.0, length_px + max(1.5, 0.2 * drawn), length_px > 0.0)), 1.0, dot);
+        drawn + 1.0 + select(max(halo_px, select(0.0, length_px + max(1.5, 0.2 * drawn), length_px > 0.0)), 0.0, dot);
     let corner = corners[vi];
     let at = u.origin + p * u.zoom + corner * (half_px / u.pixels_per_point);
 
@@ -178,7 +185,12 @@ fn diet_color(diet: u32) -> vec3<f32> {
 @fragment
 fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     if in.dot != 0u {
-        return vec4(in.color.rgb * in.alpha, in.alpha);
+        // a soft disc of its diet's colour, lit by its fullness as a far body is (below), so the
+        // dots and the bodies blend without a seam
+        var far = diet_color(in.diet) * (0.55 + 0.45 * in.color.a);
+        far = mix(far, vec3(dot(far, vec3(0.3, 0.59, 0.11)) * 0.6), in.grey);
+        let a = inside(length(in.local) - in.r_px) * in.alpha;
+        return vec4(far * a, a);
     }
     let r = in.r_px;
     let q = in.local;

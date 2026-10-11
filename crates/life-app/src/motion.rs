@@ -12,6 +12,9 @@
 //!   needed; a creature that rode into the frame while panning is not «born» — its id is old;
 //! - plants do not move and have no ids: we recognise them by (birth tick, x).
 //!
+//! Far away (`collect_far`) only the creatures come, as soft dots with the same memory: they glide
+//! between frames, a newborn fades in and a dead one out; the plants are a haze (`frame::haze`).
+//!
 //! Lives in the simulation thread; a new world has a new one.
 
 use std::collections::VecDeque;
@@ -52,7 +55,7 @@ const MEAL_TICKS: u64 = 3;
 pub const GHOST: u32 = 1 << 18;
 /// A `meta` bit: the ghost starved to death (goes grey), not eaten (shrinks).
 pub const STARVED_BIT: u32 = 1 << 19;
-/// A simplified two-pixel square without animation and without a search for the previous frame.
+/// A `meta` bit: a far dot of the creature's diet colour, not its body.
 pub const DOT_BIT: u32 = 1 << 20;
 
 /// A creature of the previous frame (coordinates in the world).
@@ -192,6 +195,40 @@ impl Motion {
     /// drawn in this order; ghosts at the end of their kind). false — more than `MAX_INSTANCES`
     /// are visible: a density map is needed, the frame's memory is dropped.
     pub fn collect(&mut self, world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) -> bool {
+        let now = self.begin(world);
+        out.clear();
+        let full =
+            self.collect_plants(world, rect, now, out) && self.collect_creatures(world, rect, now, out);
+        if !full {
+            // The frame is half assembled: there is nothing to match the next one against.
+            self.creatures.clear();
+            self.plants.clear();
+            self.ghosts.clear();
+        }
+        full
+    }
+
+    /// The far scale: only the creatures, each a dot (`DOT_BIT`) that still glides from its last
+    /// frame's place, fades in at birth and out at death. false — more than `MAX_INSTANCES`.
+    pub fn collect_far(
+        &mut self,
+        world: &World,
+        rect: (f64, f64, f64, f64),
+        out: &mut Vec<Instance>,
+    ) -> bool {
+        let now = self.begin(world);
+        out.clear();
+        let full = self.collect_creatures(world, rect, now, out);
+        if !full {
+            self.creatures.clear();
+            self.ghosts.clear();
+        }
+        out.iter_mut().for_each(|i| i.meta |= DOT_BIT);
+        full
+    }
+
+    /// The rings' marks and the ghosts' ageing at a new frame; its moment.
+    fn begin(&mut self, world: &World) -> Instant {
         let now = Instant::now();
         let max_id = world.creatures.last().map_or(0, |v| v.id).max(self.max_id);
         self.max_id = max_id;
@@ -204,17 +241,7 @@ impl Motion {
         self.ids.push(max_id, now);
         self.ticks.push(world.tick, now);
         self.ghosts.retain(|g| now.duration_since(g.died) < GHOST_LIFE);
-
-        out.clear();
-        let full =
-            self.collect_plants(world, rect, now, out) && self.collect_creatures(world, rect, now, out);
-        if !full {
-            // The frame is half assembled: there is nothing to match the next one against.
-            self.creatures.clear();
-            self.plants.clear();
-            self.ghosts.clear();
-        }
-        full
+        now
     }
 
     /// The creatures the last full frame drew: (id, from x, from y, x, y, half) — the window draws
@@ -585,5 +612,36 @@ mod tests {
             grown > 0 && young == grown,
             "растут ровно выросшие за 10 тиков: {young} из {grown} (было {old})"
         );
+    }
+
+    /// Far dots carry each creature's diet (the shader's diet highlight reads it at any zoom), and
+    /// only the creatures come: the plants are a haze.
+    #[test]
+    fn far_dots_carry_the_diet_and_leave_the_plants_out() {
+        let world = World::new(&WorldConfig { diets: vec![1.0; 4], seed: 3, ..Default::default() });
+        let mut out = Vec::new();
+        assert!(Motion::default().collect_far(&world, ALL, &mut out));
+        assert!(out.iter().all(|i| kind(i) == KIND_CREATURE && i.meta & DOT_BIT != 0));
+        let diets: Vec<u32> = out.iter().map(|i| (i.meta >> DIET_SHIFT) & 3).collect();
+        let expected: Vec<u32> = world.creatures.iter().map(|v| v.pheno.diet as u32).collect();
+        assert_eq!(diets, expected);
+        assert!(expected.iter().any(|&d| d != 0), "the founders are of several diets");
+    }
+
+    /// A far dot glides from where the last frame had it, and a dead one fades as a ghost.
+    #[test]
+    fn far_dots_glide_and_fade() {
+        let mut world = empty_world();
+        let id = world.spawn(BASE, 3000.0, 2000.0, None);
+        world.spawn(BASE, 1000.0, 2000.0, None);
+        let mut m = Motion::default();
+        let mut out = Vec::new();
+        m.collect_far(&world, ALL, &mut out);
+        world.creatures[0].x += 10.0;
+        world.creatures.retain(|v| v.id == id);
+        m.collect_far(&world, ALL, &mut out);
+        assert_eq!((out[0].px, out[0].x), (3000.0, 3010.0), "from the last frame's place");
+        assert!(out.iter().all(|i| i.meta & DOT_BIT != 0));
+        assert_eq!(out.iter().filter(|i| i.meta & GHOST != 0).count(), 1, "the dead one fades");
     }
 }

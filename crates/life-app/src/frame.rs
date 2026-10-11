@@ -333,7 +333,7 @@ pub struct Frame {
     pub status: Status,
     /// With the render off the thread does not collect the world's content.
     pub render_world: bool,
-    /// A far scale: motionless two-pixel squares without animation.
+    /// A far scale: the creatures are dots in their diets' colours, the plants a haze.
     pub dots: bool,
     /// Just after `dots` switched: both ways of drawing are in `instances`, to fade between.
     pub blend: Option<Blend>,
@@ -349,6 +349,8 @@ pub struct Frame {
     pub shots: Vec<ShotTrail>,
     /// Instead of circles, when more than `MAX_INSTANCES` are visible.
     pub density: Option<Raster>,
+    /// The far scale's plants: a green haze over the frame's area (`haze`), while it holds dots.
+    pub haze: Option<Raster>,
     /// The whole world in big cells; comes not in every frame.
     pub minimap: Option<Raster>,
     pub selected: Option<Selected>,
@@ -380,56 +382,6 @@ pub struct Frame {
     pub fast_cores: bool,
 }
 
-/// How bright a far dot of an empty tank is, of its diet's colour; a full one is the colour itself.
-const DOT_HUNGRY: f64 = 0.45;
-
-/// Light instances for a far scale: no matching of frames, ghosts, headings and sorting. Plants
-/// keep their colour; a creature is its diet's, dimmer when hungry.
-pub fn dots(world: &World, rect: (f64, f64, f64, f64), out: &mut Vec<Instance>) -> bool {
-    use crate::motion::{DIET_SHIFT, DOT_BIT, KIND_CREATURE, KIND_PLANT, OLD};
-
-    let (x0, y0, x1, y1) = rect;
-    out.clear();
-    // `bits`: the diet for a creature (the shader's highlight reads it), nothing for a plant
-    let mut add = |x: f64, y: f64, color: u32, kind: u32, bits: u32| {
-        if x < x0 || x > x1 || y < y0 || y > y1 {
-            return true;
-        }
-        out.push(Instance {
-            x: (x - x0) as f32,
-            y: (y - y0) as f32,
-            px: (x - x0) as f32,
-            py: (y - y0) as f32,
-            r: 1.0,
-            color,
-            age: OLD,
-            meta: (kind << 16) | DOT_BIT | bits,
-        });
-        out.len() <= MAX_INSTANCES
-    };
-    let plant = rgba(plant_color(), 255);
-    for p in &world.plants {
-        if !add(p.x, p.y, plant, KIND_PLANT, 0) {
-            out.clear();
-            return false;
-        }
-    }
-    // far away every creature is a dot in its diet's colour, dimmer when hungry, as a body's core
-    for v in &world.creatures {
-        let diet = ((v.pheno.diet as u32) & 3) << DIET_SHIFT;
-        let fullness = (v.energy / v.pheno.max_energy).clamp(0.0, 1.0);
-        let lit = |c: u8| (f64::from(c) * (DOT_HUNGRY + (1.0 - DOT_HUNGRY) * fullness)).round() as u8;
-        // the alpha carries the fullness, as a body's does (the hover reads it; a dot's shader not)
-        let color =
-            rgba(crate::theme::DIET_COLORS[v.pheno.diet as usize & 3].map(lit), (fullness * 255.0) as u8);
-        if !add(v.x, v.y, color, KIND_CREATURE, diet) {
-            out.clear();
-            return false;
-        }
-    }
-    true
-}
-
 // ── colours ─────────────────────────────────────────────────────────────────
 
 // the palette is `theme.rs`'s; the frame builds the world's colours from it
@@ -452,7 +404,7 @@ pub fn plant_color() -> [u8; 3] {
 /// How much of a dimmed creature and plant stays visible while some diets are highlighted: as the
 /// circles' shader dims them (`creatures.wgsl`).
 const DIM_CREATURE: f64 = 0.2;
-const DIM_PLANT: f64 = 0.45;
+pub const DIM_PLANT: f64 = 0.45;
 
 /// The density map: how many plants and creatures are in each cell of the world's rectangle,
 /// in colour. Computed in one pass over the world, so its price does not depend on how many
@@ -519,6 +471,76 @@ pub fn density(world: &World, rect: (f64, f64, f64, f64), w: usize, h: usize, hi
     Raster { w, h, rgba, rect }
 }
 
+/// A haze cell, physical pixels: the plants are counted in cells this big, then blurred.
+const HAZE_CELL: f64 = 6.0;
+/// The blur's reach, cells each way: a tent this wide.
+const HAZE_BLUR: usize = 2;
+/// No more haze cells than this along a side: a huge view takes bigger cells.
+const HAZE_SIDE: f64 = 1024.0;
+/// The haze's opacity where the food grows densest.
+const HAZE_MAX: f64 = 0.45;
+/// The plants' density, as a share of a full world's mean (its `PLANT_MAX` slots over its area),
+/// at which the haze reaches 63% of `HAZE_MAX`. The haze grows with the square of the density: a
+/// few scattered sprouts stay dark, so the patches and the rich layers stand out.
+const HAZE_Q: f64 = 0.4;
+
+/// The far scale's plants: a soft green haze where food grows thick, instead of thousands of
+/// sprouts a pixel or two wide that blink out as they are eaten and in as they grow. A cell is
+/// `HAZE_CELL` pixels at `px_per_unit`, the grid is the world's (a pan moves no cell's edge), and
+/// the brightness is the plants' density against the world's own, never against the frame: it
+/// does not change with the zoom or flicker as the densest cell changes.
+pub fn haze(world: &World, rect: Area, px_per_unit: f64) -> Raster {
+    use crate::theme::SPROUT_COLOR;
+
+    let cell = (HAZE_CELL / px_per_unit).max((rect.2 - rect.0).max(rect.3 - rect.1) / HAZE_SIDE);
+    let (x0, y0) = ((rect.0 / cell).floor() * cell, (rect.1 / cell).floor() * cell);
+    let side = |from: f64, to: f64| (((to - from) / cell).ceil() as usize).clamp(1, HAZE_SIDE as usize + 1);
+    let (w, h) = (side(x0, rect.2), side(y0, rect.3));
+
+    let mut counts = vec![0.0f32; w * h];
+    for p in &world.plants {
+        let (cx, cy) = ((p.x - x0) / cell, (p.y - y0) / cell);
+        if cx >= 0.0 && cy >= 0.0 && (cx as usize) < w && (cy as usize) < h {
+            counts[cy as usize * w + cx as usize] += 1.0;
+        }
+    }
+    // a tent blur, along the rows and then the columns: one plant eaten moves a cell a little
+    let weights: Vec<f32> =
+        (0..=2 * HAZE_BLUR).map(|i| (HAZE_BLUR + 1 - i.abs_diff(HAZE_BLUR)) as f32).collect();
+    let total: f32 = weights.iter().sum();
+    let blur = |from: &[f32], step: usize, len: usize, lines: usize, across: usize| {
+        let mut to = vec![0.0f32; from.len()];
+        for line in 0..lines {
+            for i in 0..len {
+                let mut sum = 0.0;
+                for (k, wt) in weights.iter().enumerate() {
+                    let j = i as isize + k as isize - HAZE_BLUR as isize;
+                    if j >= 0 && (j as usize) < len {
+                        sum += wt * from[line * across + j as usize * step];
+                    }
+                }
+                to[line * across + i * step] = sum / total;
+            }
+        }
+        to
+    };
+    let rows = blur(&counts, 1, w, h, w);
+    let counts = blur(&rows, w, h, w, 1);
+
+    let full =
+        world.space.per_area(life_core::config::PLANT_MAX) as f64 / (world.space.width * world.space.height);
+    let per_cell = cell * cell * full;
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for n in counts {
+        let q = n as f64 / per_cell / HAZE_Q;
+        let a = HAZE_MAX * (1.0 - (-q * q).exp());
+        // a premultiplied colour: that is how egui blends it
+        rgba.extend(SPROUT_COLOR.map(|c| (c as f64 * a).round() as u8));
+        rgba.push((a * 255.0).round() as u8);
+    }
+    Raster { w, h, rgba, rect: (x0, y0, x0 + w as f64 * cell, y0 + h as f64 * cell) }
+}
+
 /// The minimap's size in cells: 480 across, in height by the world's proportions, but no fewer
 /// than 8 rows (at ×1000 the world is 1500 times wider than tall).
 pub fn minimap_size(world_w: f64, world_h: f64) -> (usize, usize) {
@@ -575,6 +597,13 @@ mod tests {
         eprintln!("  [плотность] {}x{} за {ms:.1} мс", r.w, r.h);
         assert!(r.rgba.len() <= 2 * 1024 * 1024);
         assert!(ms < 60.0, "карта плотности {ms:.1} мс");
+
+        // the far scale over the whole world: its plants as a haze, from a 1600-pixel view
+        let start = std::time::Instant::now();
+        let r = haze(&world, (0.0, 0.0, w, h), 1600.0 / w);
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        eprintln!("  [haze] {}x{} in {ms:.1} ms", r.w, r.h);
+        assert!(ms < 60.0, "the haze took {ms:.1} ms");
     }
 
     #[test]
@@ -626,21 +655,29 @@ mod tests {
         }
     }
 
-    /// Far dots carry each creature's diet: the shader's diet highlight reads it at any zoom.
+    /// The haze lights where the plants grow and stays clear where none do, and its cells are the
+    /// world's: a view shifted by less than a cell keeps every cell's edge.
     #[test]
-    fn far_dots_carry_the_diet() {
-        use crate::motion::{DIET_SHIFT, KIND_CREATURE};
+    fn the_haze_lights_the_food_on_the_worlds_grid() {
+        use life_core::plant::Plant;
 
-        let world = World::new(&WorldConfig { diets: vec![1.0; 4], ..Default::default() });
-        let mut out = Vec::new();
-        assert!(dots(&world, (0.0, 0.0, world.space.width, world.space.height), &mut out));
-        let diets: Vec<u32> = out
-            .iter()
-            .filter(|i| (i.meta >> 16) & 3 == KIND_CREATURE)
-            .map(|i| (i.meta >> DIET_SHIFT) & 3)
+        let mut world = World::new(&WorldConfig { n_creatures: Some(0), ..Default::default() });
+        world.plants = (0..40)
+            .map(|i| Plant::at(1000.0 + (i % 8) as f64 * 20.0, 1000.0 + (i / 8) as f64 * 20.0))
             .collect();
-        let expected: Vec<u32> = world.creatures.iter().map(|v| v.pheno.diet as u32).collect();
-        assert_eq!(diets, expected);
-        assert!(expected.iter().any(|&d| d != 0), "the founders are of several diets");
+        // 0.25 px a unit
+        let cell = HAZE_CELL / 0.25;
+        let alpha = |r: &Raster, x: f64, y: f64| {
+            let cell = (r.rect.2 - r.rect.0) / r.w as f64;
+            let (cx, cy) = (((x - r.rect.0) / cell) as usize, ((y - r.rect.1) / cell) as usize);
+            r.rgba[(cy * r.w + cx) * 4 + 3]
+        };
+        for shift in [0.0, 0.2, 0.9, 1.5].map(|share| share * cell) {
+            let r = haze(&world, (shift, 7.0, 6000.0 + shift, 4000.0), 0.25);
+            assert_eq!((r.rect.0 / cell).fract(), 0.0, "the grid is the world's at shift {shift}");
+            assert_eq!((r.rect.1 / cell).fract(), 0.0);
+            assert!(alpha(&r, 1070.0, 1040.0) > 0, "lit over the plants");
+            assert_eq!(alpha(&r, 4000.0, 3000.0), 0, "clear where none grow");
+        }
     }
 }

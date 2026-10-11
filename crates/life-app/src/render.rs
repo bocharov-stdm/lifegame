@@ -11,6 +11,9 @@
 //!   and fades (the circle's age plus `since`, the time since it was assembled);
 //! - smaller than a pixel it draws a pixel, but dimmer by area: a dot in motion neither flashes
 //!   nor goes out;
+//! - far away (the dot bit) a creature is a soft disc of its diet's colour, a pixel or so wide,
+//!   that glides between the frames like a body: its edge spreads over a pixel, so a fraction of a
+//!   pixel's move never hops a whole one;
 //! - it draws the rim, the fullness core and the eye only when the creature is bigger than a few
 //!   pixels on the screen: small details would shimmer.
 //!

@@ -43,6 +43,8 @@ pub struct WorldView {
     instances: Arc<Vec<Instance>>,
     generation: u64,
     density: Option<(TextureHandle, (f64, f64, f64, f64))>,
+    /// The far scale's plants (`frame::haze`) and the world's rectangle it covers.
+    haze: Option<(TextureHandle, Area)>,
     minimap: Option<TextureHandle>,
     pub camera: Option<Camera>,
     last_view: Option<ViewRequest>,
@@ -157,6 +159,16 @@ impl WorldView {
                     tex
                 }
                 None => ctx.load_texture("плотность", image(&r), TextureOptions::LINEAR),
+            };
+            (tex, r.rect)
+        });
+        self.haze = f.haze.take().map(|r| {
+            let tex = match self.haze.take() {
+                Some((mut tex, _)) => {
+                    tex.set(image(&r), TextureOptions::LINEAR);
+                    tex
+                }
+                None => ctx.load_texture("дымка", image(&r), TextureOptions::LINEAR),
             };
             (tex, r.rect)
         });
@@ -337,6 +349,24 @@ impl WorldView {
         if !f.dots {
             paint_patches(&world_painter, cam, rect, &self.patches);
         }
+        // how much the far dots weigh against the bodies: 1 or 0 but while the far scale fades
+        let dots_weight = match f.blend {
+            Some(b) => b.dots_weight(),
+            None => f32::from(u8::from(f.dots)),
+        };
+        // far away the plants are a haze, weighed with the dots; dimmed as the sprouts are while
+        // some diets are highlighted
+        if let Some((tex, r)) = &self.haze {
+            let (x0, y0) = cam.to_screen(r.0, r.1);
+            let (x1, y1) = cam.to_screen(r.2, r.3);
+            let dim = if self.highlight == 0 { 1.0 } else { frame::DIM_PLANT as f32 };
+            world_painter.image(
+                tex.id(),
+                Rect::from_min_max(pos(x0, y0), pos(x1, y1)),
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE.gamma_multiply(dots_weight * dim),
+            );
+        }
 
         for corpse in &f.corpses {
             let (x, y) = cam.to_screen(corpse.x, corpse.py + (corpse.y - corpse.py) * k as f64);
@@ -410,13 +440,9 @@ impl WorldView {
             let (ox, oy) = cam.to_screen(f.origin.0, f.origin.1);
             let since = f.built.elapsed().as_secs_f32();
             let fading = f.blend.is_some_and(|b| !b.done());
-            if (!f.dots && (k < 1.0 || since < ANIMATION)) || fading {
+            if k < 1.0 || since < ANIMATION || fading {
                 ui.ctx().request_repaint();
             }
-            let dots_weight = match f.blend {
-                Some(b) => b.dots_weight(),
-                None => f32::from(u8::from(f.dots)),
-            };
             painter.add(egui_wgpu::Callback::new_paint_callback(
                 rect,
                 Circles {
