@@ -101,6 +101,10 @@ const fn founders(pace: u16) -> Program {
         // spared until grown
         Block::does(Action::Layer),
         Block::does(Action::Smooth),
+        // it mates from half its tank, divides from 70% (both keep `REPRO_RESERVE` besides) and goes
+        // to a partner it sees from 70% fullness: a body of the base tank (100) seeks from 70% and
+        // divides alone at 90%, a meat founder twice its size (200) at 80% (`life-behavior/16`)
+        Block::does(Action::Mate),
         Block::does(Action::Divide),
         Block::does(Action::Heal),
         Block::does(Action::Graze),
@@ -123,6 +127,8 @@ const fn founders(pace: u16) -> Program {
         Block::when(Test::at(Cond::Mode, ALARM_MODE), Action::Flee),
         // the old parent's cover, while it stood firm: 10 points above its fight-back threshold
         Block::when(Test::at(Cond::Health, 60), Action::DefendChild),
+        // nearly ready to bear, it goes to a partner it sees, before it would divide alone
+        Block::when2(Test::at(Cond::Fullness, 70), Test::is(Cond::MateSeen), Action::SeekMate),
         Block::does(Action::Hunt),
         // the rest is given up 10 points below where it began
         Block::when2(Test::at(Cond::Mode, FULL_MODE), Test::at(Cond::Fullness, 85), Action::Rest),

@@ -54,7 +54,12 @@ impl LifeApp {
     /// worlds with another.
     pub(super) fn lab_page(&mut self, ui: &mut egui::Ui) {
         let Some((current, space, seed, world_gen)) = self.view.frame.as_ref().map(|f| {
-            (f.rules.clone(), life_core::Space { width: f.world_w, height: f.world_h }, f.seed, f.world_gen)
+            (
+                f.rules.clone(),
+                life_core::Space { width: f.world_w, height: f.world_h, terrain: f.terrain },
+                f.seed,
+                f.world_gen,
+            )
         }) else {
             return;
         };
@@ -69,6 +74,7 @@ impl LifeApp {
         let diets = self.lab_tab == Tab::Diets;
         ui.horizontal_wrapped(|ui| {
             for (tab, name) in Tab::RULES {
+                let name = crate::rules_ui::tab_name(ui.ctx(), tab, name);
                 ui.selectable_value(&mut self.lab_tab, tab, name);
             }
         });
@@ -98,7 +104,7 @@ impl LifeApp {
             // the body's formula under its fields, so the panel keeps its width
             ui.vertical(|ui| {
                 if self.lab_tab == Tab::Water {
-                    ui.label(crate::rules_ui::WATER_NOTE);
+                    ui.label(crate::rules_ui::water_note(ui.ctx()));
                 }
                 for (i, (tab, heading)) in self.lab_tab.pages().iter().enumerate() {
                     if let Some(heading) = heading.filter(|_| i > 0) {

@@ -72,6 +72,14 @@ pub enum Action {
     /// and strikes it whatever its size (`Stance::defending`), while the child is this near, its
     /// tank fuller than this share, for at most this many ticks, then not again for a pause.
     DefendChild,
+    /// Setting: this tick it mates — with a willing partner of a near enough genome touching it —
+    /// from this share of its tank, giving the child this share of its energy; it pays for the
+    /// child alone, the partner gives only its genes. Without it it neither mates nor is a partner;
+    /// without a partner in touch it divides, if it divides.
+    Mate,
+    /// Goes to the nearest partner it could mate with in sight: grown, willing (its «спариваться»
+    /// held on its last move), of a near enough genome, no family. Not done while young.
+    SeekMate,
 }
 
 pub(super) const PACE: ParamSpec = ParamSpec::percent("темп", 10, 100, 100);
@@ -144,10 +152,16 @@ const DEFEND_PARAMS: [ParamSpec; 5] = [
     ParamSpec::ticks("потом пауза", 0, 1000, 60),
     ParamSpec::ticks("ребёнка ударили за", 1, 300, 30),
 ];
+/// The founders mate earlier than they divide (`Program::STANDARD`), so a partner has a window;
+/// the child's share is the division's.
+const MATE_PARAMS: [ParamSpec; 2] =
+    [ParamSpec::percent("с бака", 0, 100, 50), ParamSpec::percent("потомку", 1, 100, 40)];
+const SEEK_MATE_PARAMS: [ParamSpec; 2] =
+    [PACE, ParamSpec::sight("пара не дальше", 10, 100, 100, PROGRAM_NUDGE_POINTS)];
 const NO_PARAMS: [ParamSpec; 0] = [];
 
 impl Action {
-    pub const ALL: [Action; 23] = [
+    pub const ALL: [Action; 25] = [
         Action::FightBack,
         Action::Flee,
         Action::Hunt,
@@ -171,6 +185,8 @@ impl Action {
         Action::Spare,
         Action::Shoot,
         Action::DefendChild,
+        Action::Mate,
+        Action::SeekMate,
     ];
 
     /// The parameters the action reads, in the order of `Block::args`.
@@ -195,6 +211,8 @@ impl Action {
             Action::Spare => &SPARE_PARAMS,
             Action::Shoot => &SHOOT_PARAMS,
             Action::DefendChild => &DEFEND_PARAMS,
+            Action::Mate => &MATE_PARAMS,
+            Action::SeekMate => &SEEK_MATE_PARAMS,
             Action::Ambush | Action::Torpor | Action::EatForeign => &NO_PARAMS,
         }
     }
@@ -240,6 +258,7 @@ impl Action {
                 | Action::Graze
                 | Action::Spare
                 | Action::Shoot
+                | Action::Mate
         )
     }
 
@@ -275,6 +294,8 @@ impl Action {
             Action::Spare => "щадить детей",
             Action::Shoot => "стрелять",
             Action::DefendChild => "защищать детёныша",
+            Action::Mate => "спариваться",
+            Action::SeekMate => "идти к паре",
         }
     }
 
@@ -375,6 +396,19 @@ impl Action {
                  этой доли зрения, бак полнее этой доли, не дольше столько тиков — потом пауза. \
                  Охотники считают его защитником детей, пока условие блока выполнено на его \
                  последнем ходу."
+            }
+            Action::Mate => {
+                "Установка: спаривается, когда бак полон на эту долю, с готовым партнёром, который \
+                 касается его: выросшим, со своей установкой «спариваться» и с близким геномом \
+                 (порог близости — правило мира, другое питание — никогда). Потомку достаются гены \
+                 обоих: каждый ген и каждая дорожка программы — от одного из родителей. Платит за \
+                 потомка только он, партнёр отдаёт лишь гены. Без партнёра рядом делится, если \
+                 делится. Без неё не спаривается и сам партнёром не бывает."
+            }
+            Action::SeekMate => {
+                "Идёт к ближайшему партнёру не дальше этой доли зрения, с которым мог бы спариться: \
+                 выросшему, готовому (на его последнем ходу действовала «спариваться»), с близким \
+                 геномом, не родне. Пока не вырос, не срабатывает. Ход — доля скорости."
             }
         }
     }

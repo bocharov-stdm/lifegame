@@ -1,11 +1,11 @@
 # lifegame
 
-An evolutionary sandbox: plants and creatures in a 2D sea. Every creature carries a genome, a
-table of genes that mutates when it divides. Nobody scripts selection: the genomes that pay for
+An evolutionary sandbox: plants and creatures in a 2D sea, or on land. Every creature carries a
+genome, a table of genes that mutates when it divides or mates. Nobody scripts selection: the genomes that pay for
 themselves survive. The game, the headless runs and the balance report are Rust; the earlier
 Python and pygame version is kept under the tag `python-final`.
 
-The current model is `life-behavior/15`. [CLAUDE.md](CLAUDE.md) holds the project's working rules
+The current model is `life-behavior/16`. [CLAUDE.md](CLAUDE.md) holds the project's working rules
 and the model in brief (its exact numbers live in the code, `config.rs` above all);
 [BEHAVIOR.md](BEHAVIOR.md) records how the model got here, stage by stage.
 
@@ -14,8 +14,11 @@ and the model in brief (its exact numbers live in the code, `config.rs` above al
 - **Plants** grow in patches over a depth profile. By default the profile is «океаническое»: 60%
   of the food at the surface, a peak at 15% of the depth, then an exponential fall to a nearly dead
   bottom. The world holds `PLANT_MAX` places for plants, one plant each, so growth is logistic.
-- **Creatures** eat plants and corpses in portions, grow from food to their size gene, divide when
-  grown and fed, and die of hunger, in a fight or of old age. A body's upkeep is its size and eyes
+- **Creatures** eat plants and corpses in portions, grow from food to their size gene, divide or
+  mate when grown and fed, and die of hunger, in a fight or of old age. Two may mate when they
+  touch, both mate this tick and their genes are near enough (the rule `mate_distance`; another diet
+  never): the child takes each gene and each program track from either parent, the mother alone
+  pays for it. Groups that could mate are **species**, followed with their tree in the statistics. A body's upkeep is its size and eyes
   plus the speed of the step it actually takes.
 - **Diets** are a gene: herbivore, omnivore, scavenger and carnivore. Each has a body of its own
   (the strike, health, the price of size and speed, the sense of smell) and its own foods among
@@ -25,6 +28,9 @@ and the model in brief (its exact numbers live in the code, `config.rs` above al
   decays down to the bones; bones feed only the scavenger.
 - **The deep is cold** below a thermocline. The `cold_blood` gene makes a body cheaper and slower
   there.
+- **Land** is the other world («Новый мир», `--terrain land`): the same physics seen from above —
+  the warm edge on top, the cold one below, a layer is a climate belt — and the dead lie where they
+  fell.
 - **Behaviour is a program that evolves**: an ordered list of blocks «if up to three tests → an
   action with its parameters», such as: flee a hunter closer than a third of its sight, hunt prey
   1.5 times smaller with some caution, defend its child, rest when full, wander at a third of its
@@ -124,7 +130,7 @@ cargo run -p life-report --release -- --compare reference/fingerprint.json
 cargo run -p life-report --release -- --save-reference reference/fingerprint.json
 ```
 
-`reference/*.json` are balance fingerprints (8 seeds × 20 000 ticks) of `life-behavior/15`. The
+`reference/*.json` are balance fingerprints (8 seeds × 20 000 ticks) of `life-behavior/16`. The
 comparison repeats the same seeds and checks the statistics; a reference of another model is
 refused.
 

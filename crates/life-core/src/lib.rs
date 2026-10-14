@@ -24,7 +24,7 @@ pub mod world;
 
 pub use genome::{CreatureGenome, Genome};
 pub use rules::Rules;
-pub use space::{Shape, Space};
+pub use space::{Shape, Space, Terrain};
 pub use world::{Counters, DietCounters, Stats, World, WorldConfig};
 
 mod combat;

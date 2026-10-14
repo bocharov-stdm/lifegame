@@ -88,6 +88,7 @@ fn падаль_выбирается_по_порциям_и_дороге_но_н
         health_share: 1.0,
         health: v.pheno.size,
         pheno: &v.pheno,
+        mate: &v.mate_key,
     };
     let mut near = Corpse::from_creature(v, 1);
     near.owner = 2;
@@ -133,6 +134,7 @@ fn падальщик_выбирает_гниль_мясоед_свежее() {
             health_share: 1.0,
             health: v.pheno.size,
             pheno: &v.pheno,
+            mate: &v.mate_key,
         };
         let corpse = |owner: u64, x: f64, born: u64| {
             let mut c = Corpse::from_creature(v, born);
@@ -176,6 +178,7 @@ fn finds_corpse(diet: f64, foreign: bool, born: u64, far: f64) -> bool {
         health_share: 1.0,
         health: v.pheno.size,
         pheno: &v.pheno,
+        mate: &v.mate_key,
     };
     let mut c = Corpse::from_creature(v, born);
     (c.owner, c.x, c.bottom) = (1, 1000.0 + far * v.pheno.vision, c.y0);
@@ -248,7 +251,7 @@ fn запросы_к_сеткам_совпадают_с_перебором_в_ж
         let mut food = Grid::new(GRID_CELL);
         let mut snapshot = Herd::new();
         let (mut checked, mut threats, mut spared, mut hunters) = (0, 0, 0, 0);
-        let (mut hunts, mut guarded, mut seen_prey, mut richer) = (0, 0, 0, 0);
+        let (mut hunts, mut guarded, mut seen_prey, mut richer, mut mates) = (0, 0, 0, 0, 0);
         for tick in 0..1500 {
             w.step();
             if tick % 50 != 0 {
@@ -368,6 +371,7 @@ fn запросы_к_сеткам_совпадают_с_перебором_в_ж
                     energy: v.energy,
                     kinship: v.kinship(),
                     pheno: &v.pheno,
+                    mate: &v.mate_key,
                     health_share: v.health / v.max_health(),
                     health: v.health,
                 };
@@ -397,6 +401,24 @@ fn запросы_к_сеткам_совпадают_с_перебором_в_ж
                     .filter(|&gap| gap < within));
                 assert_eq!(got, want, "seed {seed}, tick {tick}: prey in sight");
                 seen_prey += got.is_some() as usize;
+                // a partner: grown and willing on its last move, near enough in its genes, no kin
+                let got = nearest_mate(&snapshot, &me, within).map(|t| (t.gap, t.id));
+                let want = w
+                    .creatures
+                    .iter()
+                    .filter(|u| {
+                        v.adult()
+                            && u.id != v.id
+                            && u.adult()
+                            && u.mind.stance.mate.is_some()
+                            && !v.kinship().kin(u.kinship())
+                            && v.mate_key.distance(&u.mate_key) <= v.pheno.mate_distance
+                    })
+                    .map(|u| ((u.x - v.x).hypot(u.y - v.y) - u.pheno.half, u.id))
+                    .filter(|&(gap, _)| gap < within)
+                    .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+                assert_eq!(got, want, "seed {seed}, tick {tick}: a partner in sight");
+                mates += got.is_some() as usize;
                 let strike = |u: &Creature| u.pheno.strike_on(v.pheno.size);
                 let mut candidates: Vec<usize> = (0..w.creatures.len())
                     .filter(|&j| {
@@ -464,6 +486,7 @@ fn запросы_к_сеткам_совпадают_с_перебором_в_ж
         assert!(guarded > 10, "seed {seed}: only {guarded} candidates covered by a parent");
         assert!(seen_prey > 100, "seed {seed}: prey in sight only {seen_prey} times");
         assert!(richer > 10, "seed {seed}: the most profitable plant was the nearest but {richer} times");
+        assert!(mates > 100, "seed {seed}: a partner in sight only {mates} times");
         if seed == 4 {
             let biggest = w.creatures.iter().fold(0.0_f64, |m, v| m.max(v.pheno.size));
             assert!(biggest > 100.0, "гиганты не выросли ({biggest:.0}) — вторая часть теста бессмысленна");
@@ -500,6 +523,7 @@ fn best_prey(hunt: Hunting, energy_share: f64, setup: impl Fn(&mut World)) -> Op
         energy: v.energy,
         kinship: v.kinship(),
         pheno: &v.pheno,
+        mate: &v.mate_key,
         health_share: 1.0,
         health: v.health,
     };
@@ -538,6 +562,7 @@ fn a_hunter_leaves_prey_past_its_layers_reach() {
             energy: v.energy,
             kinship: v.kinship(),
             pheno: &v.pheno,
+            mate: &v.mate_key,
             health_share: 1.0,
             health: v.health,
         };

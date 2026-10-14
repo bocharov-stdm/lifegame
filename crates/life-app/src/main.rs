@@ -18,6 +18,7 @@ mod diets;
 mod frame;
 mod game;
 mod history;
+mod lineages;
 mod motion;
 mod render;
 mod rules_ui;
@@ -29,10 +30,11 @@ mod theme;
 #[cfg(test)]
 mod ui_tests;
 mod view;
+mod words;
 
 use clap::Parser;
 use life_core::space::parse_scale;
-use life_core::{Rules, Shape, WorldConfig};
+use life_core::{Rules, Shape, Terrain, WorldConfig};
 
 #[derive(Parser)]
 #[command(
@@ -50,6 +52,9 @@ struct Args {
     /// The world's shape: 1:1, 3:2 (default), 2:1 or strip — a strip 4000 high.
     #[arg(long, value_parser = Shape::parse)]
     shape: Option<Shape>,
+    /// The world's terrain: ocean (default) or land.
+    #[arg(long, value_parser = Terrain::parse)]
+    terrain: Option<Terrain>,
     /// Creatures at the start (by default by the world's area); the old name is
     /// `--vegetarians`.
     #[arg(long, alias = "vegetarians")]
@@ -116,12 +121,14 @@ fn main() -> eframe::Result {
     let direct = args.seed.is_some()
         || args.scale != 1.0
         || args.shape.is_some()
+        || args.terrain.is_some()
         || args.creatures.is_some()
         || !args.rules.is_empty();
     let start = direct.then(|| WorldConfig {
         seed: args.seed.unwrap_or_else(app::random_seed),
         scale: args.scale,
         shape: args.shape.unwrap_or(WorldConfig::default().shape),
+        terrain: args.terrain.unwrap_or_default(),
         rules,
         n_creatures: args.creatures,
         ..Default::default()

@@ -14,6 +14,7 @@
 
 use eframe::egui::text::LayoutJob;
 use eframe::egui::{self, Align2, Color32, FontId, Galley, Pos2, Rect, Sense, Shape, Stroke, Vec2};
+use life_core::Terrain;
 use life_core::creature::program::{MODES, ticks_word};
 use life_core::creature::strategy::VARIANTS as STRATEGIES;
 use life_core::creature::{ADULT, Action, Block, JUVENILE, Program};
@@ -178,7 +179,11 @@ pub(crate) fn behaviour_window(ctx: &egui::Context, area: Rect, open: &mut bool,
             let fresh = ctx.data(|d| d.get_temp::<(u64, usize, bool)>(scrolled)) != Some(key);
             ctx.data_mut(|d| d.insert_temp(scrolled, key));
             egui::ScrollArea::vertical().id_salt((tab, list)).max_height(height).show(ui, |ui| {
-                let at = if list { lines(ui, p, path, &order) } else { flowchart(ui, p, path, &order) };
+                let at = if list {
+                    lines(ui, p, path, &order, s.terrain)
+                } else {
+                    flowchart(ui, p, path, &order, s.terrain)
+                };
                 if fresh && let Some(rect) = at {
                     ui.scroll_to_rect(rect, Some(egui::Align::Center));
                 }
@@ -271,7 +276,7 @@ impl Mark {
 }
 
 /// What a block's condition checks, and why it stands as it does.
-fn condition_hint(b: &Block, m: Mark) -> String {
+fn condition_hint(b: &Block, m: Mark, t: Terrain) -> String {
     let about: Vec<String> =
         b.when.iter().filter(|t| !t.always()).map(|t| format!("{}: {}", t.label(), t.cond.about())).collect();
     let mut hint = if about.is_empty() {
@@ -290,11 +295,11 @@ fn condition_hint(b: &Block, m: Mark) -> String {
     } else {
         ""
     });
-    hint
+    t.say(&hint).into_owned()
 }
 
 /// What a block's action does, with its parameters here.
-fn action_hint(b: &Block) -> String {
+fn action_hint(b: &Block, t: Terrain) -> String {
     let mut hint = b.action.about().to_string();
     let args = b.args_label();
     if !args.is_empty() {
@@ -308,7 +313,7 @@ fn action_hint(b: &Block) -> String {
     } else if !b.action.never_fails() {
         hint.push_str("\nЕсли сделать нельзя — решает следующий блок.");
     }
-    hint
+    t.say(&hint).into_owned()
 }
 
 /// The colour of an action's box: fights red, food by the diet that lives on it, standing still
@@ -340,12 +345,13 @@ struct ActionText {
 }
 
 impl ActionText {
-    fn of(ui: &egui::Ui, b: &Block, color: Color32) -> Self {
+    fn of(ui: &egui::Ui, b: &Block, color: Color32, t: Terrain) -> Self {
         let width = ACTION_W - 14.0;
         let caption = b.action.is_setting().then(|| layout(ui, "установка".into(), 10.5, MUTED, width));
-        let label = layout(ui, b.action.label().into(), 14.0, color, width);
+        let label = layout(ui, t.say(b.action.label()).into(), 14.0, color, width);
         let lines: Vec<String> = b.action.params().iter().zip(b.args).map(|(p, raw)| p.show(raw)).collect();
-        let params = (!lines.is_empty()).then(|| layout(ui, lines.join("\n"), 11.5, MUTED, width));
+        let params =
+            (!lines.is_empty()).then(|| layout(ui, t.say(&lines.join("\n")).into(), 11.5, MUTED, width));
         ActionText { caption, label, params }
     }
 
@@ -372,20 +378,28 @@ impl ActionText {
 
 /// The flowchart of the blocks `order` (`order()`). Returns where the block that decided this tick
 /// stands (or the end, when none did), for the scroll.
-fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>, order: &[usize]) -> Option<Rect> {
+fn flowchart(
+    ui: &mut egui::Ui,
+    p: &Program,
+    path: Option<Path>,
+    order: &[usize],
+    terrain: Terrain,
+) -> Option<Rect> {
     let blocks = p.blocks();
     let ending = p.ending();
     // the settings come first in `order`, then the deciding blocks
     let settings = order.iter().take_while(|&&i| blocks[i].action.is_setting()).count();
-    let texts: Vec<ActionText> =
-        order.iter().map(|&i| ActionText::of(ui, &blocks[i], if p.live(i) { TEXT } else { MUTED })).collect();
+    let texts: Vec<ActionText> = order
+        .iter()
+        .map(|&i| ActionText::of(ui, &blocks[i], if p.live(i) { TEXT } else { MUTED }, terrain))
+        .collect();
     // a condition of three tests wraps to more lines: its box grows, and the row with it
     let conditions: Vec<Arc<Galley>> = order
         .iter()
         .map(|&i| {
             let b = &blocks[i];
             let color = if Mark::of(p, i, None).dead() { MUTED } else { TEXT };
-            layout(ui, format!("{}?", b.condition_label()), 13.0, color, COND_W - 30.0)
+            layout(ui, format!("{}?", terrain.say(&b.condition_label())), 13.0, color, COND_W - 30.0)
         })
         .collect();
     let cond_h: Vec<f32> = conditions.iter().map(|g| BOX_H.max(g.size().y + 14.0)).collect();
@@ -502,7 +516,8 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>, order: &[usize]
         painter.add(Shape::convex_polygon(hexagon, CARD, cond_stroke));
         let text_color = if dead { MUTED } else { TEXT };
         painter.galley(Pos2::new(cond.center().x, cy - galley.size().y / 2.0), galley, text_color);
-        ui.interact(cond, ui.id().with(("условие", i)), Sense::hover()).on_hover_text(condition_hint(b, m));
+        ui.interact(cond, ui.id().with(("условие", i)), Sense::hover())
+            .on_hover_text(condition_hint(b, m, terrain));
 
         // «да» → the action
         let yes = if decided || applied {
@@ -536,7 +551,8 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>, order: &[usize]
         let rounding = if setting { h.min(40.0) / 2.0 } else { 5.0 };
         painter.rect(action, rounding, fill, border, egui::StrokeKind::Inside);
         text.paint(&painter, action);
-        ui.interact(action, ui.id().with(("действие", i)), Sense::hover()).on_hover_text(action_hint(b));
+        ui.interact(action, ui.id().with(("действие", i)), Sense::hover())
+            .on_hover_text(action_hint(b, terrain));
 
         // «нет» («дальше» after a setting, «не вышло» after a failed action) ↓ the next row; never
         // taken past an unreached block or the one that always fires
@@ -586,7 +602,7 @@ fn flowchart(ui: &mut egui::Ui, p: &Program, path: Option<Path>, order: &[usize]
 /// The blocks `order` a line each: the number, the condition, the action with its parameters in
 /// its colour; this tick's path marked at the left (▶ decided, ● a setting applied, ↷ could not
 /// do it). Returns where the block that decided stands (or the end), for the scroll.
-fn lines(ui: &mut egui::Ui, p: &Program, path: Option<Path>, order: &[usize]) -> Option<Rect> {
+fn lines(ui: &mut egui::Ui, p: &Program, path: Option<Path>, order: &[usize], t: Terrain) -> Option<Rect> {
     let blocks = p.blocks();
     let settings = order.iter().take_while(|&&i| blocks[i].action.is_setting()).count();
     let caption = |ui: &mut egui::Ui, text: &str| {
@@ -623,23 +639,23 @@ fn lines(ui: &mut egui::Ui, p: &Program, path: Option<Path>, order: &[usize]) ->
                 let number = if lit { ACCENT } else { MUTED };
                 ui.add_sized([20.0, 18.0], egui::Label::new(mono(format!("{:>2}", i + 1), number)));
                 let text = if m.dead() { MUTED } else { TEXT };
-                let condition = egui::RichText::new(b.condition_label()).color(text);
+                let condition = egui::RichText::new(t.say(&b.condition_label())).color(text);
                 // a column of its own, read from the left
                 let size = Vec2::new(COND_W - 6.0, 18.0);
                 ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.set_width(size.x);
-                    ui.add(egui::Label::new(condition).truncate()).on_hover_text(condition_hint(b, m));
+                    ui.add(egui::Label::new(condition).truncate()).on_hover_text(condition_hint(b, m, t));
                 });
                 ui.label(egui::RichText::new("→").color(MUTED));
-                let args = b.args_label();
+                let args = t.say(&b.args_label()).into_owned();
                 let action = if args.is_empty() {
-                    b.action.label().to_string()
+                    t.say(b.action.label()).into_owned()
                 } else {
-                    format!("{} · {args}", b.action.label())
+                    format!("{} · {args}", t.say(b.action.label()))
                 };
                 let color = if m.dead() { MUTED } else { action_color(b.action) };
                 ui.add(egui::Label::new(egui::RichText::new(action).color(color)).truncate())
-                    .on_hover_text(action_hint(b));
+                    .on_hover_text(action_hint(b, t));
             });
         });
         if m.decided {

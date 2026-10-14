@@ -66,6 +66,10 @@ pub(super) fn apply_setting(b: &Block, scene: &mut Scene, me: &Me, mind: &mut Mi
             scene.stance.shoot = Some(Shoot { from: b.arg(0), keep: b.arg(1) });
             return;
         }
+        Action::Mate => {
+            scene.stance.mate = Some(Divide { tank: b.arg(0), share: b.arg(1) });
+            return;
+        }
         _ => unreachable!("not a setting: {:?}", b.action),
     }
     scene.retaste();
@@ -118,6 +122,12 @@ pub(super) fn act(
         Action::Rest => rest(b, me, mind, me.pheno.band(scene.stance.layer)),
         Action::Torpor => Some((Intent { torpor: true, ..stand(me) }, Mode::Rest)),
         Action::DefendChild => defend_child(b, scene, me, mind, senses),
+        Action::SeekMate => {
+            let m = scene.mate(me, senses, b.arg(1) * me.pheno.vision)?;
+            // touching is enough: it stops where a bite of food would
+            let (tx, ty) = approach(me, m.x, m.y, me.pheno.half + m.half);
+            Some((go(tx, ty, b.arg(0)), Mode::Wander))
+        }
         _ => unreachable!("a setting decides nothing: {:?}", b.action),
     }
 }

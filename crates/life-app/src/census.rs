@@ -161,14 +161,14 @@ fn group(members: &[usize], rows: &[[f32; COLUMNS]], chains: &[Vec<Action>]) -> 
     Group { count: members.len(), columns: (0..COLUMNS).map(column).collect(), behaviours }
 }
 
-/// The label of a census column.
-pub fn label(c: usize) -> &'static str {
-    creature::GENES.get(c).map_or_else(|| EXTRAS[c - creature::N].0, |s| s.label)
+/// The label of a census column, said for the world's terrain (`words::say`).
+pub fn label(ctx: &eframe::egui::Context, c: usize) -> String {
+    crate::words::say(ctx, creature::GENES.get(c).map_or_else(|| EXTRAS[c - creature::N].0, |s| s.label))
 }
 
-/// The hint of a census column.
-pub fn about(c: usize) -> &'static str {
-    creature::GENES.get(c).map_or_else(|| EXTRAS[c - creature::N].1, |s| s.about)
+/// The hint of a census column, said for the world's terrain.
+pub fn about(ctx: &eframe::egui::Context, c: usize) -> String {
+    crate::words::say(ctx, creature::GENES.get(c).map_or_else(|| EXTRAS[c - creature::N].1, |s| s.about))
 }
 
 /// Whether a column is in % (the extras are).
@@ -218,7 +218,12 @@ mod tests {
             let n = group.count as u32;
             for (col, column) in group.columns.iter().enumerate() {
                 if n > 0 {
-                    assert_eq!(column.bins.iter().sum::<u32>(), n, "группа {g}, признак {}", label(col));
+                    assert_eq!(
+                        column.bins.iter().sum::<u32>(),
+                        n,
+                        "группа {g}, признак {}",
+                        label(&eframe::egui::Context::default(), col)
+                    );
                 }
                 assert!(column.p10 <= column.p50 && column.p50 <= column.p90);
             }
@@ -244,7 +249,10 @@ mod tests {
         assert_eq!(Column::bin(0.0, 10.0, 10.0), BINS - 1);
         assert_eq!(Column::bin(0.0, 10.0, 0.0), 0);
         assert_eq!(Column::bin(5.0, 5.0, 5.0), BINS / 2);
-        assert_eq!(label(creature::N), "глубина");
+        let ctx = eframe::egui::Context::default();
+        assert_eq!(label(&ctx, creature::N), "глубина");
+        crate::words::set(&ctx, life_core::Terrain::Land);
+        assert_eq!(label(&ctx, creature::N), "широта", "on land the depth is latitude");
         assert!(numeric().all(|c| c != Gene::Diet as usize && c != Gene::Strategy as usize));
         assert_eq!(choices().collect::<Vec<_>>(), vec![Gene::Strategy as usize]);
         assert_eq!(number(Gene::Size as usize, 42.4), "42");

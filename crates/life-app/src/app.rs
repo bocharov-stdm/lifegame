@@ -110,6 +110,8 @@ pub struct LifeApp {
     /// The «Внутри видов» tab: the last census, the (world, tick, edits) it was asked for, the
     /// group looked at (0 everybody, then the diets) and the two characteristics of its scatter.
     pub census: Option<Census>,
+    /// The «Виды» tab: the species as last followed (`life_sim::species`).
+    pub species: Option<life_sim::species::View>,
     pub census_asked: Option<(u64, u64, u64)>,
     pub census_group: usize,
     pub census_axes: [usize; 2],
@@ -191,6 +193,7 @@ impl LifeApp {
             stats_tab: StatsTab::Energy,
             region: None,
             census: None,
+            species: None,
             census_asked: None,
             census_group: 0,
             census_axes: [Gene::Size as usize, Gene::Speed as usize],
@@ -220,11 +223,13 @@ impl LifeApp {
             self.history = History::default();
             self.log.clear();
             self.lab.take_rules(&f.rules);
+            self.lab.terrain = f.terrain;
             self.lab_reset_selected.clear();
             // the region is from the previous world; the thread has already forgotten it
             self.region = None;
             self.view.area = None;
             self.census = None;
+            self.species = None;
             self.census_asked = None;
             self.lost = None;
             self.pick_pending = 0;
@@ -260,6 +265,9 @@ impl LifeApp {
         }
         if let Some(c) = f.census.take() {
             self.census = Some(c);
+        }
+        if let Some(delta) = f.species.take() {
+            self.species.get_or_insert_with(Default::default).apply(delta);
         }
         for s in f.samples.drain(..) {
             self.history.add_sample(s);
@@ -519,6 +527,11 @@ impl eframe::App for LifeApp {
             self.save_settings();
         }
         self.receive(&ctx);
+        let terrain = match (&self.screen, &self.view.frame) {
+            (Screen::Game, Some(f)) => f.terrain,
+            _ => self.settings.terrain,
+        };
+        crate::words::set(&ctx, terrain);
         let dt = ctx.input(|i| i.stable_dt).min(0.1) as f64;
         if dt > 0.0 {
             self.fps = self.fps * 0.9 + 0.1 / dt;

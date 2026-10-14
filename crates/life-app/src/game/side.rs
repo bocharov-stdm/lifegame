@@ -32,6 +32,9 @@ pub fn report_command(cfg: &WorldConfig, ticks: u64) -> String {
     if cfg.shape != base.shape {
         cmd += &format!(" --shape {}", cfg.shape.key());
     }
+    if cfg.terrain != base.terrain {
+        cmd += &format!(" --terrain {}", cfg.terrain.key());
+    }
     cmd += &format!(" --creatures {}", cfg.creatures_at_start());
     if !cfg.strategies.is_empty() {
         let shares: Vec<String> = cfg.strategies.iter().map(|s| s.to_string()).collect();

@@ -154,6 +154,8 @@ pub struct Snapshot {
     pub tick: u64,
     /// How many times the world is bigger than the base one: the events' thresholds grow with the area.
     pub area: f64,
+    /// Sea or land: how the chronicle names the depth (`Terrain::say`).
+    pub terrain: life_core::Terrain,
     pub plants: usize,
     pub corpses: usize,
     /// This world's plant ceiling.
@@ -212,6 +214,7 @@ impl Snapshot {
         }
 
         Snapshot {
+            terrain: world.space.terrain,
             activities,
             tick: world.tick,
             area: world.space.area_ratio(),
@@ -249,6 +252,9 @@ pub enum EventKind {
     LayerNarrow,
     LayerWide,
     StrategyShift,
+    /// A group that could mate grew to a species (`species.rs`), or a species died out.
+    SpeciesNew,
+    SpeciesExtinct,
 }
 
 impl EventKind {
@@ -263,6 +269,8 @@ impl EventKind {
             EventKind::LayerNarrow => "layer_narrow",
             EventKind::LayerWide => "layer_wide",
             EventKind::StrategyShift => "strategy_shift",
+            EventKind::SpeciesNew => "species_new",
+            EventKind::SpeciesExtinct => "species_extinct",
         }
     }
 }
@@ -481,10 +489,11 @@ impl EventTracker {
         if let Some(d) = cur.depth {
             let width = d.p90 - d.p10;
             let text = |what: &str| {
-                format!(
+                let text = format!(
                     "существа {what}: 80% живут на глубине {:.0}‒{:.0}% (медиана {:.0}%)",
                     d.p10, d.p90, d.p50
-                )
+                );
+                cur.terrain.say(&text).into_owned()
             };
             if !self.narrow && width < LAYER_NARROW {
                 self.narrow = true;

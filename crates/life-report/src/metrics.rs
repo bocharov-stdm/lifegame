@@ -13,7 +13,7 @@ use std::path::Path;
 use life_core::genome::creature::{GENES, Gene};
 use life_core::rules::RULE_KEYS;
 use life_core::space::{MAX_SCALE, MIN_SCALE};
-use life_core::{Rules, Shape, Space, Stats, WorldConfig};
+use life_core::{Rules, Shape, Space, Stats, Terrain, WorldConfig};
 use life_sim::{SimResult, StopReason};
 use serde_json::{Map, Value, json};
 
@@ -60,7 +60,7 @@ impl Reference {
     pub fn load(path: &Path) -> Result<Reference, String> {
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         let data: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-        if data["model"].as_str() != Some("life-behavior/15") {
+        if data["model"].as_str() != Some("life-behavior/16") {
             return Err("Эталон другой модели поведения. Пересоздайте его через --save-reference после проверки баланса.".into());
         }
         let field = |v: &Value, k: &str| v.get(k).cloned().ok_or(format!("нет поля {k}"));
@@ -129,6 +129,8 @@ impl Reference {
         let num = |v: &Value, default: f64| v.as_f64().unwrap_or(default);
         let scale = num(&data["scale"], 1.0);
         let shape = Shape::parse(data["shape"].as_str().ok_or("нет поля shape")?)?;
+        // references from before the land were all the ocean
+        let terrain = Terrain::parse(data["terrain"].as_str().unwrap_or("ocean"))?;
         if !(MIN_SCALE..=MAX_SCALE).contains(&scale) {
             return Err(format!("масштаб {scale} вне пределов {MIN_SCALE}‒{MAX_SCALE}"));
         }
@@ -138,7 +140,7 @@ impl Reference {
             sample_every,
             runs,
             scale,
-            space: Space::new(scale, shape),
+            space: Space::new(scale, shape).on(terrain),
             rules,
             start: num(&start["creatures"], world.creatures_at_start() as f64) as usize,
             strategies: mix(&start["strategies"])?,
@@ -160,7 +162,14 @@ impl Reference {
     pub fn check_same_world(&self, cfg: &WorldConfig) -> Result<(), String> {
         let mut diff = Vec::new();
         let space = cfg.space();
-        if space != self.space {
+        if space.terrain != self.space.terrain {
+            diff.push(format!(
+                "terrain {} (the reference's {})",
+                space.terrain.key(),
+                self.space.terrain.key()
+            ));
+        }
+        if (space.width, space.height) != (self.space.width, self.space.height) {
             diff.push(format!(
                 "мир x{} {:.0}x{:.0} (в эталоне x{} {:.0}x{:.0})",
                 cfg.scale, space.width, space.height, self.scale, self.space.width, self.space.height
@@ -276,12 +285,13 @@ pub fn save_reference(
         })
         .collect();
     let data = json!({
-        "model": "life-behavior/15",
+        "model": "life-behavior/16",
         "sample_every": sample_every,
         "ticks": ticks,
         "genes": GENES.iter().map(|g| g.key).collect::<Vec<_>>(),
         "scale": cfg.scale,
         "shape": cfg.shape.key(),
+        "terrain": cfg.terrain.key(),
         "rules": rules,
         "start": {
             "creatures": cfg.creatures_at_start(),
@@ -409,7 +419,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("life-rules-reference-{}.json", std::process::id()));
         let reference = |rules: &str| {
             format!(
-                r#"{{"model":"life-behavior/15","ticks":1,"sample_every":1,"shape":"3:2","runs":[],"rules":{{{rules}}}}}"#
+                r#"{{"model":"life-behavior/16","ticks":1,"sample_every":1,"shape":"3:2","runs":[],"rules":{{{rules}}}}}"#
             )
         };
         std::fs::write(&path, reference(r#""cost_scale":3"#)).unwrap();
@@ -428,7 +438,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("life-founders-reference-{}.json", std::process::id()));
         let reference = |start: &str| {
             format!(
-                r#"{{"model":"life-behavior/15","ticks":1,"sample_every":1,"shape":"3:2","runs":[],"start":{{{start}}}}}"#
+                r#"{{"model":"life-behavior/16","ticks":1,"sample_every":1,"shape":"3:2","runs":[],"start":{{{start}}}}}"#
             )
         };
         let cfg = WorldConfig::default();
@@ -484,7 +494,7 @@ mod tests {
         let reference = |stop: StopReason, done: u64, last: Option<u64>| {
             let series = last.map_or(String::new(), |t| format!(r#"{{"tick":0}},{{"tick":{t}}}"#));
             format!(
-                r#"{{"model":"life-behavior/15","ticks":100,"sample_every":1,"shape":"3:2",
+                r#"{{"model":"life-behavior/16","ticks":100,"sample_every":1,"shape":"3:2",
                     "runs":[{{"seed":7,"stop":"{stop}","ticks_done":{done},"series":[{series}]}}]}}"#
             )
         };

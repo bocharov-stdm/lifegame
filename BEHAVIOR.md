@@ -6,7 +6,33 @@ brief and in the code exactly (`config.rs`, `Rules::default()`, the templates in
 stage (the review rounds, the measurements and acceptance runs of models long gone) are in git:
 `git show fbb85ba:BEHAVIOR.md`.
 
-## `life-behavior/15`: the programs reviewed (current)
+## `life-behavior/16`: two parents, land, species (current)
+
+Golden (ten configs now) and both references re-recorded with this stage. The balance is unmeasured
+until the stage's sweep.
+
+- **Mating beside division.** A setting «спариваться» (`Action::Mate`) lets a creature mate with a
+  partner touching it that is grown, mates this tick too, is no family and lies within the world's
+  `mate_distance` of its genes (`MateKey`: the mean over the numeric genes of the mutation steps
+  between them at the world's `mutation_sigma`, kept by every creature from birth; another diet
+  never mates). The one law serves the reproduction, the sense of a partner and the species. The mother pays for the child as a
+  division does; the father gives only his genes, so energy is made from nothing no more than
+  before. The child takes each gene from either parent and each program track whole from either
+  (`CreatureGenome::cross`) — a whole track is a working program, so the mixing bears no junk —
+  and then mutates as any child. Without a partner in touch it divides, if it divides. A deciding
+  block «идти к паре» and a test «пара ближе» find a partner (`Senses::nearest_mate`). The
+  templates mate from half the tank, divide from 70% (both keep `REPRO_RESERVE` besides) and go to
+  a partner they see from 70% fullness, so mating has a window for bodies up to the meat founders'
+  and selection decides between the two.
+- **Land beside the ocean** (`Terrain`, «Новый мир», `--terrain land`). The same physics: the y axis
+  is latitude, the warm edge on top, a layer a climate belt, the thermocline the cold's border. The
+  dead lie where they fell instead of sinking. The texts say it the land's way (`Terrain::say`).
+- **Species and novelty**, observed and never inside a tick (`life_sim::species`): groups of
+  creatures that could mate, followed from sample to sample, the tree of which split from which,
+  the program shapes alive and new, the share of births of two parents — in the report
+  (`METRIC species_*`, `shapes_*`, `mated_share`), the chronicle and the statistics' «Виды» tab.
+
+## `life-behavior/15`: the programs reviewed
 
 Format `life-report/12`. Golden and both references were last re-recorded in `25e3bbc`
 (2026-10-07). The balance is unmeasured at this stage: the last sweep is `/14`'s.

@@ -56,6 +56,8 @@ pub(super) struct Scene {
     /// between two asks) and what was found.
     prey: Option<(Hunting, Option<u64>, Option<Prey>)>,
     plant_score: Option<f64>,
+    /// The partner found: the radius asked and the nearest within it.
+    mate: Option<(f64, Option<Threat>)>,
 }
 
 impl Scene {
@@ -79,7 +81,22 @@ impl Scene {
             corpse: None,
             prey: None,
             plant_score: None,
+            mate: None,
         }
+    }
+
+    /// The nearest partner it could mate with closer than `within` to its body's edge
+    /// (`Senses::nearest_mate`): a farther ask than the last looks again, a nearer one filters it.
+    pub fn mate(&mut self, me: &Me, senses: &impl Senses, within: f64) -> Option<Threat> {
+        let found = match self.mate {
+            Some((r, found)) if within <= r => found,
+            _ => {
+                let found = senses.nearest_mate(me, within);
+                self.mate = Some((within, found));
+                found
+            }
+        };
+        found.filter(|m| m.gap < within)
     }
 
     /// The nearest plant in sight, whatever its reach; none for one that digests no plants. Plants
@@ -267,6 +284,7 @@ impl Scene {
                 let k = usize::from(t.param).clamp(1, MODES) - 1;
                 mind.modes[k] > mind.tick
             }
+            Cond::MateSeen => self.mate(me, senses, value * me.pheno.vision).is_some(),
         };
         holds != t.negate
     }

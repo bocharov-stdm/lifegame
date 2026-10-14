@@ -60,6 +60,11 @@ const NUMBER: Field = Field {
 const PROFILES: [&str; 7] =
     ["равномерно", "линейно", "экспонента", "логарифм", "волны", "игровое", "океаническое"];
 
+/// The fields of how the dead sink: on land they lie where they fell (`Terrain`).
+fn in_water(s: &Settings) -> bool {
+    s.terrain == life_core::Terrain::Ocean
+}
+
 fn profile_label(v: f64) -> String {
     Profile::of(v).label().into()
 }
@@ -94,8 +99,8 @@ fn per100(v: f64) -> String {
 
 /// Every field: the world's and the rules' (`BASE_FIELDS`), then the diet edges, diet by diet
 /// (`diet_field`).
-pub const FIELDS: [Field; 97] = {
-    let mut all = [NUMBER; 97];
+pub const FIELDS: [Field; 98] = {
+    let mut all = [NUMBER; 98];
     let mut i = 0;
     while i < BASE_FIELDS.len() {
         all[i] = BASE_FIELDS[i];
@@ -248,7 +253,7 @@ const fn diet_field(d: usize, e: usize) -> Field {
     }
 }
 
-const BASE_FIELDS: [Field; 57] = [
+const BASE_FIELDS: [Field; 58] = [
     // ── World: what a game begins with ──────────────────────────────────────────
     Field {
         key: Key::Creatures,
@@ -847,6 +852,7 @@ const BASE_FIELDS: [Field; 57] = [
         decimals: 1,
         tab: Tab::Corpses,
         rule: Some("corpse_sink"),
+        visible: in_water,
         ..NUMBER
     },
     Field {
@@ -876,6 +882,7 @@ const BASE_FIELDS: [Field; 57] = [
         unit: " %",
         tab: Tab::Corpses,
         rule: Some("corpse_rest"),
+        visible: in_water,
         ..NUMBER
     },
     Field {
@@ -891,6 +898,7 @@ const BASE_FIELDS: [Field; 57] = [
         decimals: 1,
         tab: Tab::Corpses,
         rule: Some("corpse_bones_sink"),
+        visible: in_water,
         ..NUMBER
     },
     // ── Cold ────────────────────────────────────────────────────────────────────
@@ -995,6 +1003,22 @@ const BASE_FIELDS: [Field; 57] = [
         shown: 100.0,
         tab: Tab::Evolution,
         rule: Some("program_drift"),
+        ..NUMBER
+    },
+    Field {
+        key: Key::MateDistance,
+        label: "Близость для спаривания",
+        hint: "Насколько могут различаться геномы, чтобы двое спарились: среднее по числовым генам \
+               число шагов мутации между ними. Ребёнок-не-копия отстоит от родителя примерно на 0,8. \
+               Меньше — виды расходятся быстрее; больше — скрещиваются и дальние линии. Разное \
+               питание не спаривается никогда.",
+        lo: 0.1,
+        hi: 10.0,
+        step: 0.05,
+        format: |v| format!("{v:.2}"),
+        decimals: 2,
+        tab: Tab::Evolution,
+        rule: Some("mate_distance"),
         ..NUMBER
     },
     Field {

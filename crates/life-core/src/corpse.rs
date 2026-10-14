@@ -20,7 +20,7 @@ use crate::config::{
 use crate::creature::Creature;
 use crate::grid::Grid;
 use crate::plant::PORTIONS;
-use crate::space::Space;
+use crate::space::{Space, Terrain};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Corpse {
@@ -132,7 +132,13 @@ impl Corpse {
             x: v.x,
             y: v.y,
             y0: v.y,
-            bottom: resting_place(v.space(), v.id, v.pheno.half, clock.rest, 0xB077_0000_0000_0000).max(v.y),
+            // on land the dead lie where they fell (`Terrain`)
+            bottom: match v.space().terrain {
+                Terrain::Ocean => {
+                    resting_place(v.space(), v.id, v.pheno.half, clock.rest, 0xB077_0000_0000_0000).max(v.y)
+                }
+                Terrain::Land => v.y,
+            },
             size: v.pheno.size,
             initial,
             remaining: initial,

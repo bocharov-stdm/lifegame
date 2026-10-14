@@ -49,6 +49,9 @@ pub enum Cond {
     InLayer,
     /// Its mode of the threshold's number is on (`Action::Mode`).
     Mode,
+    /// A partner it could mate with (`Action::SeekMate`) closer to its body's edge than the
+    /// threshold of its sight.
+    MateSeen,
 }
 
 const FULLNESS: ParamSpec = ParamSpec::percent("сытость", 0, 100, 50);
@@ -63,9 +66,10 @@ const PREY: ParamSpec = ParamSpec::sight("добыча ближе", 0, 100, 100,
 const AGE: ParamSpec = ParamSpec::percent("возраст", 0, 100, 70);
 const COLD: ParamSpec = ParamSpec::percent("холод", 0, 100, 50);
 pub(super) const MODE: ParamSpec = ParamSpec::index("режим", MODES as u16);
+const MATE: ParamSpec = ParamSpec::sight("пара ближе", 0, 100, 100, PROGRAM_NUDGE_POINTS);
 
 impl Cond {
-    pub const ALL: [Cond; 20] = [
+    pub const ALL: [Cond; 21] = [
         Cond::Always,
         Cond::Fullness,
         Cond::Health,
@@ -86,6 +90,7 @@ impl Cond {
         Cond::BelowLayer,
         Cond::InLayer,
         Cond::Mode,
+        Cond::MateSeen,
     ];
 
     /// The threshold a test reads, if it has one.
@@ -101,6 +106,7 @@ impl Cond {
             Cond::Age => Some(AGE),
             Cond::Cold => Some(COLD),
             Cond::Mode => Some(MODE),
+            Cond::MateSeen => Some(MATE),
             _ => None,
         }
     }
@@ -128,6 +134,7 @@ impl Cond {
             Cond::BelowLayer => ("ниже своего слоя", "не ниже своего слоя"),
             Cond::InLayer => ("в своём слое", "вне своего слоя"),
             Cond::Mode => ("включён режим", "выключен режим"),
+            Cond::MateSeen => ("пара ближе", "пары нет ближе"),
         }
     }
 
@@ -166,6 +173,11 @@ impl Cond {
             Cond::Mode => {
                 "Режим с этим номером включён установкой «включить режим» и ещё не истёк: память \
                  существа о том, что оно начало."
+            }
+            Cond::MateSeen => {
+                "Ближе этой доли зрения (до края тела) есть партнёр, с которым оно могло бы \
+                 спариться: выросший, готовый (на его последнем ходу действовала «спариваться»), с \
+                 близким геномом, не родня."
             }
         }
     }

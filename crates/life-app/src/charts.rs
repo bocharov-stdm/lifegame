@@ -333,8 +333,9 @@ pub fn genome(ui: &mut egui::Ui, table: &[GeneSpec], points: &[GenePoint], color
         let galley = painter.layout_job(label);
         painter.galley(Pos2::new(row.left(), row.center().y - galley.size().y / 2.0), galley, MUTED);
         let label_rect = Rect::from_min_size(row.left_top(), Vec2::new(label_w, row_h));
+        let about = crate::words::say(ui.ctx(), spec.about);
         ui.interact(label_rect, ui.id().with(("ген", row_i)), Sense::hover())
-            .on_hover_text(format!("{} — {}", spec.label, spec.about));
+            .on_hover_text(format!("{} — {about}", spec.label));
         let spark = Rect::from_min_max(
             Pos2::new(spark_rect.left(), top + 3.0),
             Pos2::new(spark_rect.right(), top + row_h - 3.0),
@@ -497,12 +498,12 @@ pub fn histograms(ui: &mut egui::Ui, group: &Group, columns: &[usize], color: Co
         let min =
             Pos2::new(rect.left() + (k % 2) as f32 * (col_w + gap), rect.top() + (k / 2) as f32 * cell_h);
         let cell = Rect::from_min_size(min, Vec2::new(col_w, cell_h - 6.0));
-        painter.text(cell.left_top(), Align2::LEFT_TOP, census::label(c), font.clone(), MUTED);
+        painter.text(cell.left_top(), Align2::LEFT_TOP, census::label(ui.ctx(), c), font.clone(), MUTED);
         let label_rect = Rect::from_min_size(cell.left_top(), Vec2::new(col_w * 0.5, 15.0));
         ui.interact(label_rect, ui.id().with(("признак", c)), Sense::hover()).on_hover_text(format!(
             "{} — {}",
-            census::label(c),
-            census::about(c)
+            census::label(ui.ctx(), c),
+            census::about(ui.ctx(), c)
         ));
         if group.count == 0 {
             continue;
@@ -578,7 +579,7 @@ pub fn histograms(ui: &mut egui::Ui, group: &Group, columns: &[usize], color: Co
             );
             hint = Some(format!(
                 "{} {}‒{}: {} существ, {share:.0}%\n80% — от {} до {}",
-                census::label(c),
+                census::label(ui.ctx(), c),
                 census::number(c, from),
                 census::number(c, to),
                 spaced(u64::from(column.bins[b])),
@@ -601,7 +602,7 @@ pub fn shares(ui: &mut egui::Ui, spec: &GeneSpec, column: &census::Column) {
             [118.0, 16.0],
             egui::Label::new(egui::RichText::new(spec.label).color(MUTED)).truncate(),
         )
-        .on_hover_text(format!("{} — {}", spec.label, spec.about));
+        .on_hover_text(format!("{} — {}", spec.label, crate::words::say(ui.ctx(), spec.about)));
         let (rect, _) =
             ui.allocate_exact_size(Vec2::new(ui.available_width().min(260.0), 12.0), Sense::hover());
         let painter = ui.painter_at(rect);
@@ -671,7 +672,7 @@ pub fn scatter(ui: &mut egui::Ui, census: &Census, group: usize, axes: [usize; 2
     // the axes' ranges in the corners where each axis starts: up the left side, along the bottom
     let small = FontId::proportional(10.5);
     let range = |c: usize, col: &census::Column| {
-        format!("{} {}‒{}", census::label(c), census::number(c, col.lo), census::number(c, col.hi))
+        format!("{} {}‒{}", census::label(ui.ctx(), c), census::number(c, col.lo), census::number(c, col.hi))
     };
     painter.text(
         rect.right_bottom() + Vec2::new(-4.0, -2.0),
@@ -699,9 +700,9 @@ pub fn scatter(ui: &mut egui::Ui, census: &Census, group: usize, axes: [usize; 2
         }
         ui.interact(rect, ui.id().with("разброс"), Sense::hover()).on_hover_text(format!(
             "{} ≈ {}, {} ≈ {}: {} существ",
-            census::label(cx),
+            census::label(ui.ctx(), cx),
             census::number(cx, at(i, w, ax.lo, ax.hi)),
-            census::label(cy),
+            census::label(ui.ctx(), cy),
             census::number(cy, at(h - 1 - j, h, ay.lo, ay.hi)),
             spaced(u64::from(n)),
         ));

@@ -949,7 +949,7 @@ fn energy_is_never_made_from_nothing() {
         living + w.corpses.iter().map(|c| c.remaining).sum::<f64>()
     };
     // a seed whose world takes the whole chain in (`the_chain_by_seed`)
-    let mut w = World::new(&game_world(3));
+    let mut w = World::new(&game_world(8));
     let bite = w.rules.plant_energy * w.rules.plant_bite_yield / f64::from(life_core::plant::PORTIONS);
     for _ in 0..3000 {
         let (before, bites) = (held(&w), w.counters.plant_bites);

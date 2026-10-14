@@ -24,7 +24,7 @@ use crate::profile::{Phase, PhaseTimes, Stopwatch};
 use crate::rng::{Rng, mix};
 use crate::rules::Rules;
 use crate::senses::{GridSenses, Herd, bite_plant};
-use crate::space::{Shape, Space};
+use crate::space::{Shape, Space, Terrain};
 
 /// What the world begins with. None for creatures — the value from the config, recomputed for
 /// the world's area.
@@ -35,6 +35,8 @@ pub struct WorldConfig {
     /// The world's shape. By default 3:2: at x1 it is the base world 6000x4000, the same as the
     /// strip's, and a big world grows both ways, not into a ribbon.
     pub shape: Shape,
+    /// Sea or land (`Terrain`): the ocean by default.
+    pub terrain: Terrain,
     pub rules: Rules,
     pub n_creatures: Option<usize>,
     /// The starting mix of strategies: the shares of the variants in the order of `VARIANTS` (an
@@ -53,6 +55,7 @@ impl Default for WorldConfig {
             seed: 1,
             scale: 1.0,
             shape: Shape::R3x2,
+            terrain: Terrain::Ocean,
             rules: Rules::default(),
             n_creatures: None,
             strategies: Vec::new(),
@@ -63,9 +66,9 @@ impl Default for WorldConfig {
 }
 
 impl WorldConfig {
-    /// The world's dimensions: the scale sets the area, the shape the proportions.
+    /// The world's dimensions: the scale sets the area, the shape the proportions; and its terrain.
     pub fn space(&self) -> Space {
-        Space::new(self.scale, self.shape)
+        Space::new(self.scale, self.shape).on(self.terrain)
     }
 
     /// How many creatures there will be at the start: the given number or the config's for the world's area.
@@ -98,11 +101,13 @@ pub struct Counters {
     pub bone_bites: u64,
     pub ranged_shots: u64,
     pub born: u64,
+    /// Of the births, how many were of two parents (`Action::Mate`).
+    pub born_mated: u64,
     pub starved: u64,
     pub old_age: u64,
     pub combat: u64,
     /// Corpses that appeared, and of those removed: how many had lain on the bottom with flesh
-    /// left, how many had come to bones (eaten or rotted away), and their lifetimes summed.
+    /// left (in the sea only), how many had come to bones (eaten or rotted away), and their lifetimes summed.
     pub corpses: u64,
     pub corpses_gone: u64,
     pub corpses_bottom: u64,
@@ -153,6 +158,7 @@ impl Counters {
             bone_bites: self.bone_bites - earlier.bone_bites,
             ranged_shots: self.ranged_shots - earlier.ranged_shots,
             born: self.born - earlier.born,
+            born_mated: self.born_mated - earlier.born_mated,
             starved: self.starved - earlier.starved,
             old_age: self.old_age - earlier.old_age,
             combat: self.combat - earlier.combat,
@@ -350,11 +356,13 @@ impl World {
         let now = self.tick + 1;
         self.shots.retain(|s| now.saturating_sub(s.tick) <= 8);
         let counters = &mut self.counters;
+        // on land the dead lie where they fell: none came to rest on a bottom
+        let sea = self.space.terrain == Terrain::Ocean;
         self.corpses.retain_mut(|c| {
             let keep = c.decay(now);
             if !keep {
                 counters.corpses_gone += 1;
-                counters.corpses_bottom += c.settled as u64;
+                counters.corpses_bottom += (sea && c.settled) as u64;
                 counters.skeletons += c.skeleton.is_some() as u64;
                 counters.corpse_ticks += now - c.born;
             }
@@ -532,10 +540,31 @@ impl World {
             }
         }
         clock.lap(Phase::EatCorpses);
-        for v in creatures.iter_mut().filter(|v| v.alive) {
-            if let Some(child) = v.maybe_divide(space, rules) {
-                offspring.push(child);
+        // A mother looks for her partner on the fight's grid: everyone where the moves left them,
+        // by index. A father gives only his genes, so who is willing stays as it is while the
+        // mothers, in the order of ID, bear.
+        let mut max_half = None;
+        for i in 0..creatures.len() {
+            if !creatures[i].alive {
+                continue;
             }
+            let mut child = None;
+            if creatures[i].ready_to_mate()
+                && let Some(j) = {
+                    let max_half = *max_half.get_or_insert_with(|| {
+                        creatures.iter().filter(|v| v.alive).fold(0.0_f64, |m, v| m.max(v.pheno.half))
+                    });
+                    partner(creatures, prey_grid, i, max_half)
+                }
+            {
+                let father = (creatures[j].genome, creatures[j].programs.clone());
+                child = creatures[i].maybe_mate((&father.0, &father.1), space, rules);
+                counters.born_mated += child.is_some() as u64;
+            }
+            if child.is_none() {
+                child = creatures[i].maybe_divide(space, rules);
+            }
+            offspring.extend(child);
         }
         clock.lap(Phase::Division);
         let before = corpses.len();
@@ -624,6 +653,32 @@ impl World {
     pub fn creature(&self, id: u64) -> Option<&Creature> {
         self.creatures.binary_search_by_key(&id, |v| v.id).ok().map(|i| &self.creatures[i])
     }
+}
+
+/// The partner of mother `i` (`Action::Mate`) on the fight's `grid` (every creature by index, the
+/// biggest radius alive `max_half`): the nearest one touching her that is alive, grown and mates
+/// this tick, no family of hers and of a genome within her `mate_distance`; ties to the lower ID.
+/// Contact is measured where they stand now: a corpse's bite after the fight may have grown a body
+/// off a wall by a fraction of a unit, so the grid is asked a unit wider.
+fn partner(creatures: &[Creature], grid: &Grid, i: usize, max_half: f64) -> Option<usize> {
+    let v = &creatures[i];
+    let kin = v.kinship();
+    let mut best: Option<(f64, usize)> = None;
+    grid.for_each_near(v.x, v.y, v.pheno.half + max_half + 1.0, |j, _, _| {
+        let u = &creatures[j];
+        if j == i || !u.alive || u.mind.stance.mate.is_none() || !u.adult() {
+            return;
+        }
+        let d2 = (u.x - v.x).powi(2) + (u.y - v.y).powi(2);
+        let touch = v.pheno.half + u.pheno.half;
+        if d2 > touch * touch || best.is_some_and(|(b, k)| (b, k) < (d2, j)) {
+            return;
+        }
+        if !kin.kin(u.kinship()) && v.mate_key.distance(&u.mate_key) <= v.pheno.mate_distance {
+            best = Some((d2, j));
+        }
+    });
+    best.map(|(_, j)| j)
 }
 
 /// Occupied slots (`flora.rs`) as a bitset, updated per birth and per eaten

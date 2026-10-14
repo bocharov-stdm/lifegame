@@ -780,3 +780,80 @@ fn corpses_follow_the_rules_clock() {
     assert_eq!(c.y_at(21) - c.y_at(20), 7.0, "sinking at the rules' speed");
     assert!(c.decay(49) && !c.decay(50), "gone by the rules");
 }
+
+/// Two founders side by side, full and rested, the second of `diet`; the second never bears when
+/// `barren`. Returns the world after one tick.
+fn a_pair(diet: Diet, barren: bool) -> life_core::World {
+    use life_core::{World, WorldConfig};
+    let mut w = World::new(&WorldConfig {
+        n_creatures: Some(0),
+        rules: Rules::default().with("plant_rate", 0.0).unwrap(),
+        ..Default::default()
+    });
+    w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(100.0));
+    w.spawn(with_diet(CreatureGenome::BASE, diet), 1010.0, 1000.0, Some(100.0));
+    w.creatures[0].reproduction_wait = 0;
+    w.creatures[1].reproduction_wait = if barren { 1000 } else { 0 };
+    w.step();
+    w
+}
+
+/// The template mates with a partner of its kind touching it and pays for the child alone: the
+/// father gives his genes, not his energy. Two who may both bear each have a child.
+#[test]
+fn a_pair_in_touch_mates_and_the_mother_alone_pays() {
+    let w = a_pair(Diet::Herbivore, true);
+    assert_eq!((w.counters.born, w.counters.born_mated), (1, 1));
+    let (mother, father, child) = (&w.creatures[0], &w.creatures[1], &w.creatures[2]);
+    assert_eq!(child.parent, mother.id);
+    assert!(father.energy > 99.0, "the father paid for nothing but his tick: {}", father.energy);
+    assert!(mother.energy < 100.0 - child.energy - Rules::default().repro_cost + 1.0, "{}", mother.energy);
+    let w = a_pair(Diet::Herbivore, false);
+    assert_eq!((w.counters.born, w.counters.born_mated), (2, 2));
+}
+
+/// Another diet never mates: each divides alone, as without a partner.
+#[test]
+fn another_diet_does_not_mate_and_each_divides() {
+    let w = a_pair(Diet::Carnivore, false);
+    assert_eq!((w.counters.born, w.counters.born_mated), (2, 0));
+}
+
+/// In the sea the dead sink to the bottom; on land they lie where they fell, through rot to the
+/// bones.
+#[test]
+fn on_land_the_dead_lie_where_they_fell() {
+    use life_core::{Terrain, World, WorldConfig};
+    for terrain in Terrain::ALL {
+        let mut w = World::new(&WorldConfig {
+            n_creatures: Some(0),
+            terrain,
+            // a quick rot, so it is gone within the run
+            rules: Rules::default()
+                .with_all([("plant_rate", 0.0), ("corpse_decay", 300.0), ("corpse_bones", 300.0)])
+                .unwrap(),
+            ..Default::default()
+        });
+        w.spawn(CreatureGenome::BASE, 1000.0, 1000.0, Some(0.01));
+        // a body it grew is meat: the starved one leaves a corpse
+        w.creatures[0].birth_size = 20.0;
+        w.step();
+        assert_eq!(w.corpses.len(), 1, "{terrain:?}");
+        let mut lowest = 1000.0_f64;
+        for _ in 0..3000 {
+            w.step();
+            lowest = w.corpses.iter().fold(lowest, |m, c| m.max(c.y));
+        }
+        match terrain {
+            Terrain::Ocean => assert!(lowest > 2000.0, "it sank: {lowest}"),
+            Terrain::Land => {
+                assert_eq!(lowest, 1000.0, "it lay where it fell");
+                assert_eq!(
+                    (w.counters.corpses_gone, w.counters.corpses_bottom),
+                    (1, 0),
+                    "gone, never on a bottom"
+                );
+            }
+        }
+    }
+}

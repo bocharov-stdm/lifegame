@@ -7,12 +7,12 @@ first.
 
 ## Project
 
-lifegame — an evolutionary sandbox: plants and creatures in a 2D sea. A creature carries a genome
+lifegame — an evolutionary sandbox: plants and creatures in a 2D sea or on land. A creature carries a genome
 (a gene table) and two behaviour programs that mutate on division; selection is emergent, not
-scripted. Rust only, model `life-behavior/15`:
+scripted. Rust only, model `life-behavior/16`:
 
 - `crates/life-core` — the engine; no graphics, no I/O, threads only through rayon (`parallel`).
-- `crates/life-sim` — bounded headless runs, snapshots, the chronicle.
+- `crates/life-sim` — bounded headless runs, snapshots, the chronicle, the species (`species.rs`).
 - `crates/life-report` — the balance report, `--compare`, `life-sweep`.
 - `crates/life-app` — the game (wgpu/egui) and the sweep's progress window.
 
@@ -51,7 +51,7 @@ chronicle texts (`life_sim::observe`).
 ## The model in brief
 
 - **A creature** eats plants and corpses in portions, grows from food to its size gene, divides
-  when grown and its program allows, and dies of hunger, in a fight or of old age (one cause).
+  or mates when grown and its program allows, and dies of hunger, in a fight or of old age (one cause).
   Upkeep = body and eyes (`still_upkeep`) + the speed term of the step actually taken
   (`step_cost`). Cost exponents must stay steeper than benefit (~stat²) or stats run away. Combat
   is always on, but a creature strikes (and shoots) only what its program chose.
@@ -73,6 +73,15 @@ chronicle texts (`life_sim::observe`).
   block is **dead** when off, never reached, or a setting behind an unconditional one of its kind;
   **no junk is born** — an added block that would leave any block dead is not added. Past its end a
   program is padded with the same block, so equal blocks are equal programs.
+- **Mating** (`Action::Mate`, the reproduction phase): a ready mother mates with the nearest
+  partner touching her that is grown, mates this tick, is no family and within `mate_distance` of
+  her genes (`MateKey`: mean mutation steps over the numeric genes at the world's `mutation_sigma`,
+  kept by each creature, `Creature::set_genome`; another diet never); else she divides, if she
+  divides. She pays as a division does; the father gives only his genes.
+  `CreatureGenome::cross`: each gene and each program track whole from either parent, then
+  the usual inheritance. Partners are found on the fight's grid; `Senses::nearest_mate` finds one
+  in sight («идти к паре», «пара ближе»). `life_sim::species` groups by the same `MateKey`, at
+  most every `SPECIES_EVERY` ticks; a window takes it as deltas.
 - **Menace**: others read a creature by the hunt, fight-back and defence blocks whose tests held on
   its last move. Family is a parent and its growing child, only while «щадить детей» holds.
 - **Templates** (`Strategy`): the `strategy` gene picks the founders' template and never switches.
@@ -87,7 +96,9 @@ chronicle texts (`life_sim::observe`).
   for showing (`units.rs`). A layer is a preference, not a wall: physics clamps only to the world —
   never teleport. Plants live in `PLANT_MAX` slots, one each; the occupied slots are a bitset
   (`world::Occupancy`) rebuilt when the plant count stops matching — keep direct edits of `plants`
-  changing the count.
+  changing the count. A world is the ocean or land (`Terrain` in `Space`): the same physics, on land
+  the y axis is latitude and the dead lie where they fell; a text written for the sea is said for
+  land by `Terrain::say` (the game: `words::say`, the terrain kept in egui's memory).
 - **Corpses**: meat = the body grown since birth + the tank (`corpse::meat`); fresh, then rot that
   sinks and decays to bones (`corpse_*` rules).
 
@@ -124,14 +135,15 @@ I/O; `life-app` alone knows the screen.
   parts is a folder with `mod.rs`; long unit tests sit beside it in `tests.rs`.
 - **Tick order**: plants → corpses decay → old age, the last tick's kinship kept
   (`Creature::remember_kin`) → neighbour snapshot → decisions, healing, ageing, movement →
-  eating plants → simultaneous strikes and shots → survivors eat corpses → reproduction → removing
+  eating plants → simultaneous strikes and shots → survivors eat corpses → reproduction (mating,
+  else division) → removing
   the dead, adding children → tick number. Strikes are collected before damage (mutual death
   possible); a creature killed gets no prey and does not reproduce.
 - **Determinism**: no global RNG — each creature owns an `Rng` forked from its parent's, the world
   has its own stream. Results depend on the seed only, never on iteration order or thread count.
   Any change in how many numbers are drawn, or their order, shifts every seed. The plant spawner
   draws its fractional chance every tick, capped or not (a capped one plants nothing more).
-- **Golden** (`tests/golden.rs`): an FNV digest of nine configs at checkpoints, asserted on Windows
+- **Golden** (`tests/golden.rs`): an FNV digest of ten configs at checkpoints, asserted on Windows
   only. Minds, corpses and shots enter it as debug prints without type and field names, so a
   rename keeps the digest. A refactor must keep it; a deliberate behaviour change re-records it
   (the test prints the table) in its own commit.
@@ -180,13 +192,15 @@ show common factors per 100. A settings file carries `DEFAULTS_VERSION`: keys in
 - `sim.rs` — the simulation thread owns `World`; `Command`s apply between ticks; frames go through
   a one-slot mailbox, never dropped, so history, log and snapshots travel as deltas. Commands built
   from a frame carry its `world_gen`; a click (`Pick`) its `number` and the window's animation
-  progress too, and picks the bodies where that frame drew them at that moment.
+  progress too, and picks the bodies where that frame drew them at that moment. It also counts the
+  species on their schedule and sends them as deltas (`life_sim::species::Delta`).
 - `frame.rs` (32-byte instances relative to an f64 origin), `motion.rs`, `render.rs` +
   `creatures.wgsl` (one instanced draw; the diets' colours come in its uniforms), `view.rs`,
   `game/` (`bars.rs` the top bar, tool rail and bottom «Мир ▾» with the timeline, `side.rs` the
   side panel, `card.rs` the creature's tab, `lab.rs` the docked lab), `screens.rs` (menu, «Новый
   мир», settings, help), `rules_ui.rs` (the rule widgets both share), `behaviour.rs` (programs as
-  a flowchart or a list), `charts.rs`, `stats.rs`, `census.rs`, `settings/` (`fields.rs`: `FIELDS`,
+  a flowchart or a list), `charts.rs`, `stats.rs`, `census.rs`, `lineages.rs` (the «Виды» tab:
+  the count and the tree), `words.rs` (the sea's texts said for land), `settings/` (`fields.rs`: `FIELDS`,
   the single spec of every field; `mod.rs`: the file, atomic, clamped, unknown keys ignored;
   `details` gates the researcher's extras).
 - `theme.rs` — the one palette, sizes, fonts (Inter, JetBrains Mono under `assets/fonts`, OFL),

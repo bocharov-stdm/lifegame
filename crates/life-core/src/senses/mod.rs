@@ -16,6 +16,7 @@
 use crate::config::GRID_CELL;
 use crate::corpse::Corpse;
 use crate::creature::{Creature, Kinship, Me, Sighting};
+use crate::genome::MateKey;
 use crate::grid::Grid;
 use crate::plant::Plant;
 use crate::space::Space;
@@ -142,6 +143,13 @@ pub trait Senses {
     /// senses.
     fn best_plant(&self, me: &Me, taste: Taste) -> Option<(f64, f64)> {
         self.nearest_plant_where(me.x, me.y, me.pheno.vision2, |_, y| taste.admits(y))
+    }
+
+    /// The nearest partner `me` could mate with closer than `within` to its body's edge: grown,
+    /// willing on its last move (`Stance::mate`), of a genome no farther than `me`'s
+    /// `mate_distance`, no family; none while `me` is young (`Action::SeekMate`, `Cond::MateSeen`).
+    fn nearest_mate(&self, _me: &Me, _within: f64) -> Option<Threat> {
+        None
     }
 }
 
@@ -344,6 +352,10 @@ impl Senses for GridSenses<'_> {
         nearest_prey(self.herd, me, ratio, taste, within)
     }
 
+    fn nearest_mate(&self, me: &Me, within: f64) -> Option<Threat> {
+        nearest_mate(self.herd, me, within)
+    }
+
     fn child_in_need(
         &self,
         me: &Me,
@@ -466,6 +478,10 @@ pub(crate) struct Seen {
     /// parent sees of its need (`child_in_need`).
     hit: Option<Sighting>,
     alarm: Option<Sighting>,
+    /// Grown, and its «спариваться» held on its last move: a partner for the others; its genes are
+    /// `Herd::keys[mate]`.
+    willing: bool,
+    mate: u32,
 }
 
 impl Seen {
@@ -489,6 +505,9 @@ pub(crate) struct Herd {
     hunters: Vec<usize>,
     /// Indices into `seen` ordered by parent: a parent looks only at its own children.
     by_parent: Vec<usize>,
+    /// The partners' genes in mutation steps (`Seen::mate`): whom a partner query finds near enough
+    /// to mate.
+    keys: Vec<MateKey>,
     /// The biggest body anyone can eat. One bigger has nothing to fear, and does not look
     /// into the grid.
     max_eats: f64,
@@ -506,6 +525,7 @@ impl Herd {
             hunter_grid: Grid::new(GRID_CELL),
             hunters: Vec::new(),
             by_parent: Vec::new(),
+            keys: Vec::new(),
             max_eats: 0.0,
             max_half: 0.0,
             max_hunter_half: 0.0,
@@ -546,6 +566,8 @@ impl Herd {
                 defends: menace.defends,
                 hit: v.mind.hit,
                 alarm: if v.adult() { None } else { v.mind.alarm },
+                willing: v.mind.stance.mate.is_some() && v.adult(),
+                mate: u32::MAX,
             }
         });
         self.grid.rebuild(space, self.seen.iter().map(|s| (s.x, s.y)));
@@ -565,6 +587,12 @@ impl Herd {
         self.by_parent.clear();
         self.by_parent.extend(0..seen.len());
         self.by_parent.sort_unstable_by_key(|&i| (seen[i].kinship.parent, i));
+        // only the partners' genes: none are copied in a world that does not mate
+        self.keys.clear();
+        for (s, v) in self.seen.iter_mut().zip(creatures).filter(|(s, _)| s.willing) {
+            s.mate = self.keys.len() as u32;
+            self.keys.push(v.mate_key);
+        }
     }
 
     /// The indices into `seen` of `parent`'s children.
@@ -642,6 +670,30 @@ pub(crate) fn nearest_prey(herd: &Herd, me: &Me, ratio: f64, taste: Taste, withi
         }
         let gap = (sx - me.x).hypot(sy - me.y) - s.half;
         if gap < within && best.is_none_or(|b| gap < b.gap || (gap == b.gap && s.kinship.id < b.id)) {
+            best = Some(Threat { id: s.kinship.id, x: sx, y: sy, gap, half: s.half });
+        }
+    });
+    best
+}
+
+/// The nearest partner from the snapshot `me` could mate with (`Senses::nearest_mate`): grown and
+/// willing on its last move, its genome within `me`'s `mate_distance`, no family, closer than
+/// `within` to its body's edge; ties by id. None while `me` is young.
+pub(crate) fn nearest_mate(herd: &Herd, me: &Me, within: f64) -> Option<Threat> {
+    if me.kinship.growth < 1.0 {
+        return None;
+    }
+    let mut best: Option<Threat> = None;
+    herd.grid.for_each_near(me.x, me.y, within + herd.max_half, |j, sx, sy| {
+        let s = &herd.seen[j];
+        if !s.willing || s.kinship.id == me.kinship.id || me.kinship.kin(s.kinship) {
+            return;
+        }
+        let gap = (sx - me.x).hypot(sy - me.y) - s.half;
+        if gap < within
+            && best.is_none_or(|b| gap < b.gap || (gap == b.gap && s.kinship.id < b.id))
+            && me.mate.distance(&herd.keys[s.mate as usize]) <= me.pheno.mate_distance
+        {
             best = Some(Threat { id: s.kinship.id, x: sx, y: sy, gap, half: s.half });
         }
     });

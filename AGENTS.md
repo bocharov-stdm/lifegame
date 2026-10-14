@@ -2,18 +2,18 @@
 
 lifegame is an evolutionary simulation in Rust with a native wgpu/egui window. The Python version
 is kept at the `python-final` tag. `CLAUDE.md` holds the full set of working rules and the model
-(`life-behavior/15`) in brief, its numbers living in the code; this file is the short version.
+(`life-behavior/16`) in brief, its numbers living in the code; this file is the short version.
 
 ## Structure
 
 - `crates/life-core`: creatures, genome, behaviour programs, life cycle, diets, corpses, combat,
   plants, spatial queries. No graphics or I/O; threads only through rayon under the `parallel`
   feature (per-creature phases, same world on any thread count).
-- `crates/life-sim`: bounded runs, statistics snapshots and the chronicle.
+- `crates/life-sim`: bounded runs, statistics snapshots, the chronicle and the species.
 - `crates/life-report`: CLI, JSON reports (`life-report/12`), balance comparison and `life-sweep`.
 - `crates/life-app`: window, rendering, settings, the simulation thread, the sweep's progress
   window.
-- `reference/*.json`: balance references (`life-behavior/15`).
+- `reference/*.json`: balance references (`life-behavior/16`).
 - `Relict/`: frozen archive; never change anything in it.
 
 A module with parts is a folder with `mod.rs`; long unit tests sit beside it in `tests.rs`. The
@@ -85,6 +85,12 @@ The model in brief is in `CLAUDE.md`, its numbers in `config.rs`. What a change 
 - A creature strikes and shoots only what its program chose; others read it by the blocks whose
   tests held on its last move. Family is a parent and its growing child while «щадить детей»
   holds. A torpid creature eats nothing.
+- A grown creature divides or mates (the «спариваться» setting): the mother pays as a division
+  does, the father gives only genes; the child takes each gene and each program track whole from
+  either parent. Partners must be close in genes (`MateKey`, the world rule `mate_distance`) and
+  of the same diet; `life_sim::species` groups creatures by the same law, outside the tick.
+- A world is the ocean or land (`Terrain`): the same physics, on land the y axis is latitude and
+  the dead lie where they fell; texts written for the sea go through `Terrain::say`.
 
 Graphs and summaries are limited to the last 10 000 ticks. World rendering can be turned off;
 this doesn't change the simulation, statistics or the selected card.

@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use life_core::config::{CREATURES_AT_START, DIET_START_MIX, MEAT_FOUNDER_SIZE};
 use life_core::flora::{Along, Profile};
 use life_core::space::{MAX_SCALE, MIN_SCALE};
-use life_core::{Rules, Shape, Space, WorldConfig};
+use life_core::{Rules, Shape, Space, Terrain, WorldConfig};
 use serde_json::{Map, Value};
 
 pub use fields::{DIET_ROWS, FIELDS, Field, field};
@@ -143,6 +143,7 @@ pub enum Key {
     MeatFounders,
     ProgramMutation,
     ProgramDrift,
+    MateDistance,
     /// A diet's edge: (diet H/O/S/C, edge in `rules::DIET_EDGES` order).
     Diet(u8, u8),
 }
@@ -192,6 +193,8 @@ pub struct Settings {
     pub random_seed: bool,
     pub scale: f64,
     pub shape: Shape,
+    /// Sea or land (`Terrain`).
+    pub terrain: Terrain,
     /// The sliders' values, in the order of `FIELDS`.
     pub values: [f64; FIELDS.len()],
     // ── screen ───────────────────────────────────────────────────────────────
@@ -231,6 +234,7 @@ impl Default for Settings {
             // eaters), though the player deals 55/25/10/10
             scale: 20.0,
             shape: Shape::R2x1,
+            terrain: Terrain::Ocean,
             values: FIELDS.map(|f| match f.key {
                 Key::Creatures => CREATURES_AT_START as f64,
                 Key::CostScale => GAME_COST_SCALE,
@@ -318,7 +322,7 @@ impl Settings {
     /// with the area — the density, and with it the balance, do not depend on the scale. Refused
     /// when the rules are (`rules`).
     pub fn world_config(&self, seed: u64) -> Result<WorldConfig, String> {
-        let space = Space::new(self.scale, self.shape);
+        let space = Space::new(self.scale, self.shape).on(self.terrain);
         let per_area = |key| (self.get(key) * space.area_ratio()).round() as usize;
         // the shares of the variants (standard, the second); zero — an empty mix, as in the default world
         let mix = |key| {
@@ -329,6 +333,7 @@ impl Settings {
             seed,
             scale: self.scale,
             shape: self.shape,
+            terrain: self.terrain,
             rules: self.rules()?,
             n_creatures: Some(per_area(Key::Creatures)),
             strategies: mix(Key::Lurkers),
@@ -352,6 +357,7 @@ impl Settings {
             self.random_seed = default.random_seed;
             self.scale = default.scale;
             self.shape = default.shape;
+            self.terrain = default.terrain;
         }
     }
 
@@ -368,6 +374,7 @@ impl Settings {
         m.insert("random_seed".into(), self.random_seed.into());
         m.insert("scale".into(), self.scale.into());
         m.insert("shape".into(), self.shape.key().into());
+        m.insert("terrain".into(), self.terrain.key().into());
         for (f, v) in FIELDS.iter().zip(self.values) {
             m.insert(json_key(f.key).into(), v.into());
         }
@@ -401,6 +408,9 @@ impl Settings {
         }
         if let Some(shape) = m.get("shape").and_then(Value::as_str).and_then(|k| Shape::parse(k).ok()) {
             s.shape = shape;
+        }
+        if let Some(terrain) = m.get("terrain").and_then(Value::as_str).and_then(|k| Terrain::parse(k).ok()) {
+            s.terrain = terrain;
         }
         for (i, f) in FIELDS.iter().enumerate() {
             // before the rename to «существ» the key was different

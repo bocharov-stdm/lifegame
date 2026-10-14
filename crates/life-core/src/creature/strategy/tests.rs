@@ -55,6 +55,7 @@ fn мясоед_идёт_к_падали_травоядный_к_растени�
             energy: v.energy,
             kinship: v.kinship(),
             pheno: &v.pheno,
+            mate: &v.mate_key,
             health_share: 1.0,
             health: v.pheno.size,
         };
@@ -115,6 +116,7 @@ fn a_hopeless_chase_is_given_up() {
         energy: v.energy,
         kinship: v.kinship(),
         pheno: &v.pheno,
+        mate: &v.mate_key,
         health_share: 1.0,
         health: v.pheno.size,
     };
@@ -168,6 +170,7 @@ fn prey_given_up_is_not_found_again_within_the_tick() {
         energy: v.energy,
         kinship: v.kinship(),
         pheno: &v.pheno,
+        mate: &v.mate_key,
         health_share: 1.0,
         health: v.pheno.size,
     };
@@ -200,6 +203,7 @@ fn у_еды_стоит_а_не_залезает_на_неё() {
         energy: v.energy,
         kinship: v.kinship(),
         pheno: &v.pheno,
+        mate: &v.mate_key,
         health_share: 1.0,
         health: v.pheno.size,
     };
@@ -950,5 +954,59 @@ fn варианты_совпадают_со_стратегиями() {
     for (i, s) in Strategy::ALL.iter().enumerate() {
         assert_eq!(*s as usize, i);
         assert_eq!(Strategy::from_gene(i as f64), *s);
+    }
+}
+
+/// A partner `gap` beyond its body's edge, straight east (radius 20), or none.
+struct Partner {
+    gap: Option<f64>,
+}
+
+impl Senses for Partner {
+    fn nearest_plant(&self, _: f64, _: f64, _: f64) -> Option<(f64, f64)> {
+        None
+    }
+
+    fn nearest_mate(&self, me: &Me, within: f64) -> Option<Threat> {
+        let gap = self.gap.filter(|&gap| gap < within)?;
+        Some(Threat { id: 7, x: me.x + gap + 20.0, y: me.y, gap, half: 20.0 })
+    }
+}
+
+/// «спариваться» sets the terms of mating for this tick; «вижу пару» holds within its share of
+/// sight; «идти к паре» goes until it touches the partner, and with none falls through.
+#[test]
+fn a_creature_goes_to_a_partner_it_sees() {
+    use crate::config::EAT_STOP_SHARE;
+    let v = Creature::new(
+        &Space::default(),
+        &Rules::default(),
+        CreatureGenome::BASE,
+        1000.0,
+        1000.0,
+        Some(90.0),
+        Rng::new(1),
+    );
+    let me = v.me();
+    let program = Program::of(&[
+        Block::does(Action::Mate),
+        Block::when(Test::at(Cond::MateSeen, 50), Action::SeekMate),
+        Block::does(Action::Ambush),
+    ]);
+    let plan_with = |gap| {
+        let mut mind = Mind::default();
+        let (intent, _) = plan(&me, &program, &mut mind, &mut Rng::new(3), &Partner { gap });
+        (intent, mind)
+    };
+    let (intent, mind) = plan_with(Some(100.0));
+    assert_eq!(mind.stance.mate, Some(Divide { tank: 0.5, share: 0.4 }));
+    let touch = v.pheno.half + 20.0;
+    let stop = me.x + 100.0 + 20.0 - touch * EAT_STOP_SHARE;
+    assert!((intent.tx - stop).abs() < 1e-9 && intent.ty == me.y, "it stops touching: {intent:?}");
+    // past half its sight the test fails; with none in sight the block cannot be done
+    for gap in [Some(0.6 * me.pheno.vision), None] {
+        let (intent, mind) = plan_with(gap);
+        assert_eq!((intent.tx, intent.ty), (me.x, me.y), "{gap:?}: it waits");
+        assert_eq!(mind.fired, Some(2), "{gap:?}: the ambush decided");
     }
 }

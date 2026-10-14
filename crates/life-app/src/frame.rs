@@ -197,6 +197,8 @@ pub struct Selected {
     pub fired: Option<u8>,
     pub applied: u32,
     pub tried: u32,
+    /// Sea or land: how its blocks are named (`Terrain::say`).
+    pub terrain: life_core::Terrain,
 }
 
 /// The selected creature that died: the card shows it in place of the living one.
@@ -258,6 +260,7 @@ impl Selected {
                 fired: v.mind.fired,
                 applied: v.mind.applied,
                 tried: v.mind.tried,
+                terrain: world.space.terrain,
             }
         })
     }
@@ -330,6 +333,8 @@ pub struct Frame {
     pub creatures: usize,
     pub world_w: f64,
     pub world_h: f64,
+    /// Sea or land: how the world is drawn and named.
+    pub terrain: life_core::Terrain,
     pub status: Status,
     /// With the render off the thread does not collect the world's content.
     pub render_world: bool,
@@ -366,6 +371,9 @@ pub struct Frame {
     pub region: Option<RegionStats>,
     /// A census of the creatures, when the window asked for one (only while the world stands).
     pub census: Option<crate::census::Census>,
+    /// What changed of the species since the previous frame (`life_sim::species`, followed every
+    /// `SPECIES_EVERY` ticks or less often).
+    pub species: Option<life_sim::species::Delta>,
     pub log: Vec<LogEntry>,
     /// When the frame was assembled: from that moment the window counts the circles' age.
     pub built: std::time::Instant,

@@ -19,6 +19,8 @@ pub enum StatsTab {
     Energy,
     Where,
     Region,
+    /// The species that could mate, and their tree (`lineages.rs`).
+    Lineages,
     /// How the characteristics spread within each diet: a census, taken on pause or once a game
     /// has ended.
     Species,
@@ -49,6 +51,7 @@ impl LifeApp {
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Energy, "Энергия");
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Where, "Где живут");
                     ui.selectable_value(&mut self.stats_tab, StatsTab::Region, "Область");
+                    ui.selectable_value(&mut self.stats_tab, StatsTab::Lineages, "Виды");
                     // the census is a researcher's detail
                     if self.settings.details || self.stats_tab == StatsTab::Species {
                         ui.selectable_value(&mut self.stats_tab, StatsTab::Species, "Внутри видов");
@@ -59,6 +62,7 @@ impl LifeApp {
                     StatsTab::Energy => self.energy_tab(ui),
                     StatsTab::Where => self.where_tab(ui),
                     StatsTab::Region => self.region_tab(ui),
+                    StatsTab::Lineages => crate::lineages::tab(ui, self.species.as_ref()),
                     StatsTab::Species => self.species_tab(ui),
                 });
             });
@@ -86,17 +90,20 @@ impl LifeApp {
     fn where_tab(&mut self, ui: &mut egui::Ui) {
         ui.colored_label(MUTED, self.history.span_label());
         let snaps = self.history.snapshots.points();
-        ui.label(crate::theme::strong("Глубина существ во времени"));
+        let ctx = ui.ctx().clone();
+        let say = |text: &str| crate::words::say(&ctx, text);
+        ui.label(crate::theme::strong(say("Глубина существ во времени")));
         let hovered = charts::depth_map(ui, &snaps);
         let Some(&at) = hovered.and_then(|i| snaps.get(i)).or(snaps.last()) else { return };
         let layer = at.depth.map_or("существ нет".into(), |d| {
             format!("80% существ на глубине {:.0}‒{:.0}%, медиана {:.0}%", d.p10, d.p90, d.p50)
         });
-        ui.colored_label(MUTED, format!("тик {} · {layer}; верх — поверхность", spaced(at.tick)));
+        ui.colored_label(MUTED, say(&format!("тик {} · {layer}; верх — поверхность", spaced(at.tick))));
         ui.add_space(8.0);
-        ui.label(crate::theme::strong("Растения и существа по глубине"));
+        ui.label(crate::theme::strong(say("Растения и существа по глубине")));
         ui.colored_label(MUTED, "слева — доля растений, справа — доля существ");
-        charts::bands(ui, &at.plants_by_depth, &at.creatures_by_depth, ("поверхность", "дно"));
+        let (top, bottom) = (say("поверхность"), say("дно"));
+        charts::bands(ui, &at.plants_by_depth, &at.creatures_by_depth, (&top, &bottom));
         // across the width there is something to look at only if the food is uneven along it
         let uneven = self.view.frame.as_ref().is_some_and(|f| f.rules.plant_width.kind() != Profile::Uniform);
         if uneven {
@@ -122,11 +129,14 @@ impl LifeApp {
         let (w, h) = (r.area.2 - r.area.0, r.area.3 - r.area.1);
         let depth = self.view.frame.as_ref().map_or(1.0, |f| f.world_h).max(1.0);
         ui.horizontal_wrapped(|ui| {
-            ui.label(format!(
-                "Область {w:.0}×{h:.0}, глубина {:.0}‒{:.0}% · тик {}",
-                r.area.1 / depth * 100.0,
-                r.area.3 / depth * 100.0,
-                spaced(r.tick)
+            ui.label(crate::words::say(
+                ui.ctx(),
+                &format!(
+                    "Область {w:.0}×{h:.0}, глубина {:.0}‒{:.0}% · тик {}",
+                    r.area.1 / depth * 100.0,
+                    r.area.3 / depth * 100.0,
+                    spaced(r.tick)
+                ),
             ));
             if ui.button("Снять область").clicked() {
                 self.clear_region();
@@ -224,10 +234,10 @@ impl LifeApp {
             for (k, axis) in ["по горизонтали", "по вертикали"].into_iter().enumerate()
             {
                 egui::ComboBox::from_id_salt(("перепись-ось", k))
-                    .selected_text(census::label(self.census_axes[k]))
+                    .selected_text(census::label(ui.ctx(), self.census_axes[k]))
                     .show_ui(ui, |ui| {
                         for c in census::numeric() {
-                            ui.selectable_value(&mut self.census_axes[k], c, census::label(c));
+                            ui.selectable_value(&mut self.census_axes[k], c, census::label(ui.ctx(), c));
                         }
                     })
                     .response

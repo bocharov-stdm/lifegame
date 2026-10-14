@@ -122,23 +122,25 @@ fn creature_card(
         "Две программы поведения: детская — пока растёт, взрослая — когда вырос. Шаблон — с какой \
          программы начинал род. Блок-схемы — по кнопке «Поведение (B)».",
     );
+    let ctx = ui.ctx().clone();
+    let say = |text: String| crate::words::say(&ctx, &text);
     ui.colored_label(
         MUTED,
-        format!(
+        say(format!(
             "тело {:.1} из {:.1} · глубина {:.0}%",
             s.half * 2.0,
             s.genome[creature::Gene::Size as usize],
             s.y / world_h.max(1.0) * 100.0
-        ),
+        )),
     )
     // the same in real units (`life_core::units`): the life clock is compressed
-    .on_hover_text(format!(
+    .on_hover_text(say(format!(
         "Растёт до размера своего гена. В настоящих единицах: {:.0} см, {:.1} года, глубина {:.0} м \
          (базовое существо — рыба в 20 см; тик жизни ≈ 9 часов).",
         units::cm(s.half * 2.0),
         units::years(s.age),
         units::metres(s.y)
-    ));
+    )));
     ui.add_space(4.0);
     egui::CollapsingHeader::new("Гены").default_open(false).show(ui, |ui| {
         ui.colored_label(MUTED, format!("справа — к медиане: {}", theme::DIET_NAMES[diet_index]));

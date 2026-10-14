@@ -17,7 +17,7 @@ use super::actions::{self, Mode};
 use super::program::{Action, Block, MODES, Program};
 use super::scene::Scene;
 use super::{Kinship, Phenotype};
-use crate::genome::Variant;
+use crate::genome::{MateKey, Variant};
 use crate::rng::Rng;
 use crate::senses::Senses;
 
@@ -66,7 +66,7 @@ pub const VARIANTS: [Variant; 2] = [
 /// chose and the food its deciding block went for: the world's eating, fighting and dividing
 /// phases read it after the moves, the healing and the kinship of the next tick before them.
 /// Without a setting its default is «nothing»: the whole depth, no smoothing, no division, no
-/// healing, no eating on the move, no children spared, no shots.
+/// healing, no eating on the move, no children spared, no shots, no mating.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stance {
     /// It eats the other niche's food too (`Action::EatForeign`).
@@ -93,6 +93,9 @@ pub struct Stance {
     pub spare: f64,
     /// It shoots (`Action::Shoot`).
     pub shoot: Option<Shoot>,
+    /// It mates, at these terms of the tank and the child's share (`Action::Mate`); a willing
+    /// partner for the others.
+    pub mate: Option<Divide>,
     /// What its deciding block went for this tick: it eats that food on contact whether it eats on
     /// the move or not.
     pub goes_for: Option<Food>,
@@ -119,6 +122,7 @@ impl Default for Stance {
             graze: None,
             spare: 0.0,
             shoot: None,
+            mate: None,
             goes_for: None,
             defending: None,
             menace: Menace::NONE,
@@ -156,7 +160,8 @@ pub struct Smooth {
     pub turn: f64,
 }
 
-/// `Action::Divide`: from this share of the tank, giving the child this share of its energy.
+/// `Action::Divide` and `Action::Mate`: from this share of the tank, giving the child this share
+/// of its energy.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Divide {
     pub tank: f64,
@@ -369,6 +374,8 @@ pub struct Me<'a> {
     /// Its number and parent: the senses do not show family as a threat.
     pub kinship: Kinship,
     pub pheno: &'a Phenotype,
+    /// Its genes in mutation steps: whom it could mate with (`MateKey`).
+    pub mate: &'a MateKey,
     pub health_share: f64,
     /// Health now: a hunter weighs the strikes it expects against it.
     pub health: f64,

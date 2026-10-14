@@ -87,8 +87,8 @@ pub const DIET_RULE_KEYS: [[&str; 10]; 4] = [
 
 /// The names of the configurable rules — for the report (`--rule name=number`) and the settings.
 /// The food profiles — six per axis, in the order of `flora::AXIS_PARAMS`; the diet edges come last.
-pub const RULE_KEYS: [&str; 90] = {
-    let mut all = [""; 90];
+pub const RULE_KEYS: [&str; 91] = {
+    let mut all = [""; 91];
     let mut i = 0;
     while i < WORLD_RULE_KEYS.len() {
         all[i] = WORLD_RULE_KEYS[i];
@@ -108,7 +108,7 @@ pub const RULE_KEYS: [&str; 90] = {
 };
 
 /// The rules that are not a diet's edges.
-const WORLD_RULE_KEYS: [&str; 50] = [
+const WORLD_RULE_KEYS: [&str; 51] = [
     "plant_rate",
     "plant_energy",
     "mutation_sigma",
@@ -159,6 +159,7 @@ const WORLD_RULE_KEYS: [&str; 50] = [
     "diet_leap_scavenger",
     "program_mutation",
     "program_drift",
+    "mate_distance",
 ];
 
 /// Patches per base world — no more than this: at 1500 slots that is three places a patch at the
@@ -293,6 +294,9 @@ pub struct Rules {
     /// How far a mutating child's program numbers drift, a share of a mutation's nudge, times
     /// the parent's `program_mutability` (`config::PROGRAM_DRIFT`, `Program::drift`).
     pub program_drift: f64,
+    /// How far apart two genomes may be and still mate (`config::MATE_DISTANCE`,
+    /// `MateKey`): the physics of compatibility, not a behaviour.
+    pub mate_distance: f64,
     /// A corpse's clock, ticks from death: fresh until; how far it sinks a tick; rotted down to the
     /// bones at; and the lowest share of the depth, %, where it comes to rest (`corpse.rs`).
     pub corpse_fresh: f64,
@@ -353,6 +357,7 @@ impl Default for Rules {
             diet_leap_scavenger: HERBIVORE_LEAP_SCAVENGER,
             program_mutation: PROGRAM_MUTATION_CHANCE,
             program_drift: PROGRAM_DRIFT,
+            mate_distance: MATE_DISTANCE,
             corpse_fresh: CORPSE_FRESH_TICKS as f64,
             corpse_sink: CORPSE_SINK_SPEED,
             corpse_decay: CORPSE_DECAY_TICKS as f64,
@@ -465,6 +470,7 @@ impl Rules {
             "diet_leap_scavenger" => r.diet_leap_scavenger = value,
             "program_mutation" => r.program_mutation = value,
             "program_drift" => r.program_drift = value,
+            "mate_distance" => r.mate_distance = value,
             "corpse_fresh" => r.corpse_fresh = value,
             "corpse_bones" => r.corpse_bones = value,
             "corpse_bones_sink" => r.corpse_bones_sink = value,
@@ -501,7 +507,7 @@ impl Rules {
             "corpse_fresh" | "corpse_bones" | "corpse_decay" => {
                 (value >= 1.0 && whole, "целое число тиков не меньше 1".into())
             }
-            "corpse_sink" | "corpse_bones_sink" => (value > 0.0, "число больше 0".into()),
+            "corpse_sink" | "corpse_bones_sink" | "mate_distance" => (value > 0.0, "число больше 0".into()),
             "size_power" | "speed_power" | "sight_power" | "speed_mass_power" | "melee_size_power" => {
                 (shares(MAX_POWER), format!("число от 0 до {MAX_POWER}"))
             }
@@ -622,6 +628,7 @@ impl Rules {
             "diet_leap_scavenger" => self.diet_leap_scavenger,
             "program_mutation" => self.program_mutation,
             "program_drift" => self.program_drift,
+            "mate_distance" => self.mate_distance,
             "corpse_fresh" => self.corpse_fresh,
             "corpse_bones" => self.corpse_bones,
             "corpse_bones_sink" => self.corpse_bones_sink,

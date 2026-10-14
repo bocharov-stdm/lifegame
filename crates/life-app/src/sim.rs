@@ -224,6 +224,8 @@ struct Pending {
     snapshots: VecDeque<Snapshot>,
     region: Option<RegionStats>,
     census: Option<Census>,
+    /// What changed of the species since the window last took them (`Delta::merge`).
+    species: Option<life_sim::species::Delta>,
     log: Vec<LogEntry>,
     lost: Option<Lost>,
 }
@@ -282,6 +284,9 @@ struct Sim {
     tracker: EventTracker,
     snapshot_every: u64,
     next_snapshot: u64,
+    /// The species and when they are next followed.
+    species: life_sim::species::Tracker,
+    next_species: u64,
     pending: Pending,
 
     // ── tempo ───────────────────────────────────────────────────────────────
@@ -388,6 +393,8 @@ impl Sim {
             tracker: EventTracker::new(),
             snapshot_every: SNAPSHOT_EVERY,
             next_snapshot: 0,
+            species: Default::default(),
+            next_species: 0,
             pending: Pending::default(),
             due: 0.0,
             last_time: now,
@@ -526,6 +533,10 @@ impl Sim {
                 self.mode_scale = f64::NAN;
                 self.blend = None;
                 self.last_minimap = None;
+                // the species are another world's: followed anew from its next sample
+                self.species = Default::default();
+                self.next_species = 0;
+                self.pending.species = None;
                 self.dirty = true;
             }
             Command::TogglePause => self.set_paused(!self.paused),
@@ -716,6 +727,8 @@ impl Sim {
         self.window.clear();
         self.tracker = EventTracker::new();
         self.snapshot_every = SNAPSHOT_EVERY;
+        self.species = Default::default();
+        self.next_species = 0;
         self.record();
         self.snapshot();
     }
@@ -834,6 +847,8 @@ impl Sim {
     fn snapshot(&mut self) {
         let start = Instant::now();
         let snap = Snapshot::of(&self.world);
+        // the species at a sample too, their price in the sample's
+        let changes = (self.world.tick >= self.next_species).then(|| self.species.observe(&self.world));
         let ms = start.elapsed().as_secs_f64() * 1000.0;
         self.snapshot_ms = ms;
         if self.tick_ms > 0.0 {
@@ -846,6 +861,18 @@ impl Sim {
         self.tracker.observe(&snap, &mut events);
         for e in events {
             self.log(Some(e.kind), e.text);
+        }
+        if let Some(changes) = changes {
+            self.next_species = self.world.tick + self.snapshot_every.max(life_sim::species::SPECIES_EVERY);
+            for change in changes {
+                let (kind, text) = life_sim::species::describe(change);
+                self.log(Some(kind), text);
+            }
+            let delta = self.species.take_delta();
+            match &mut self.pending.species {
+                Some(pending) => pending.merge(delta),
+                None => self.pending.species = Some(delta),
+            }
         }
         if let Some(area) = self.region {
             self.pending.region = Some(RegionStats::of(&self.world, area, Some(snap.genes)));
@@ -1063,6 +1090,7 @@ impl Sim {
             creatures: w.creatures.len(),
             world_w: w.space.width,
             world_h: w.space.height,
+            terrain: w.space.terrain,
             status: Status {
                 paused: self.paused,
                 speed_index: self.speed_index,
@@ -1087,6 +1115,7 @@ impl Sim {
             snapshots: pending.snapshots.into(),
             region: pending.region,
             census: pending.census,
+            species: pending.species,
             log: pending.log,
             built: Instant::now(),
             build_ms: start.elapsed().as_secs_f64() * 1000.0,
@@ -1352,10 +1381,15 @@ mod tests {
         assert_eq!(genes.first(), Some(&0));
         assert!(genes.windows(2).all(|w| w[1] > w[0] && (w[1] - w[0]).is_multiple_of(SNAPSHOT_EVERY)));
 
-        // the chronicle is the report's on the same samples
+        // the chronicle is the report's on the same samples; the species' lines come from their own
+        // tracker (`life_sim::species`)
+        use life_sim::observe::EventKind;
+        let species = |k: &EventKind| matches!(k, EventKind::SpeciesNew | EventKind::SpeciesExtinct);
         let log: Vec<String> = fresh
             .iter()
-            .flat_map(|f| f.log.iter().filter(|e| e.kind.is_some()).map(|e| e.text.clone()))
+            .flat_map(|f| {
+                f.log.iter().filter(|e| e.kind.is_some_and(|k| !species(&k))).map(|e| e.text.clone())
+            })
             .collect();
         let mut w = World::new(&cfg());
         let mut snaps = vec![Snapshot::of(&w)];

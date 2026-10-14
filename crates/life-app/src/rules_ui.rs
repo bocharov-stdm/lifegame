@@ -12,8 +12,27 @@ use crate::settings::{DIET_ROWS, FIELDS, Field, Key, Settings, Tab, field};
 use crate::theme::{self, BG, DANGER, MUTED};
 
 /// What the «Вода» tab is about.
-pub const WATER_NOTE: &str = "Сверху вода тёплая, ниже термоклина — холодная. Хладнокровным в холоде жить \
-                              дешевле, но плавают они медленнее; теплокровным всё равно.";
+const WATER_NOTE: &str = "Сверху вода тёплая, ниже термоклина — холодная. Хладнокровным в холоде жить \
+                          дешевле, но плавают они медленнее; теплокровным всё равно.";
+/// The same tab on land, «Климат».
+const CLIMATE_NOTE: &str = "У верхнего края тепло, за границей холода — холодно. Хладнокровным в холоде \
+                            жить дешевле, но ходят они медленнее; теплокровным всё равно.";
+
+/// What the «Вода» tab is about, for the world's terrain.
+pub fn water_note(ctx: &egui::Context) -> &'static str {
+    match crate::words::terrain(ctx) {
+        life_core::Terrain::Ocean => WATER_NOTE,
+        life_core::Terrain::Land => CLIMATE_NOTE,
+    }
+}
+
+/// A rule tab's name for the world's terrain: on land the water is the climate.
+pub fn tab_name(ctx: &egui::Context, tab: Tab, name: &'static str) -> &'static str {
+    match (tab, crate::words::terrain(ctx)) {
+        (Tab::Water, life_core::Terrain::Land) => "Климат",
+        _ => name,
+    }
+}
 
 /// The fields of one tab by the `FIELDS` table — those visible now.
 pub fn fields(ui: &mut egui::Ui, s: &mut Settings, tab: Tab) {
@@ -24,7 +43,9 @@ pub fn fields(ui: &mut egui::Ui, s: &mut Settings, tab: Tab) {
             if !(f.visible)(s) {
                 continue;
             }
-            ui.label(f.label).on_hover_text(field_hint(f));
+            let ctx = ui.ctx().clone();
+            let say = |text: &str| crate::words::say(&ctx, text);
+            ui.label(say(f.label)).on_hover_text(say(&field_hint(f)));
             let mut v = s.get(f.key);
             if field_input(ui, f, &mut v) {
                 s.set(f.key, v);
@@ -107,7 +128,7 @@ pub fn field_input(ui: &mut egui::Ui, f: &Field, value: &mut f64) -> bool {
             }
         })
         .response
-        .on_hover_text(f.hint);
+        .on_hover_text(crate::words::say(ui.ctx(), f.hint));
     *value = k as f64;
     k != before
 }
@@ -336,7 +357,7 @@ fn food_preview(ui: &mut egui::Ui, rules: &Rules, space: Space, seed: u64) {
         } else {
             "вверху поверхность; ярче — гуще"
         };
-        ui.colored_label(MUTED, caption);
+        ui.colored_label(MUTED, crate::words::say(ui.ctx(), caption));
         // the world in real units (`life_core::units`): the base fish is 20 cm
         ui.colored_label(
             MUTED,

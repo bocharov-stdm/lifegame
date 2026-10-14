@@ -7,6 +7,7 @@
 
 pub mod cores;
 pub mod observe;
+pub mod species;
 
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -78,6 +79,8 @@ pub struct SimResult {
     /// Detailed samples at the same moments as `history`: the genes' spread, the depth, the
     /// counters of births and deaths (see `observe`).
     pub snapshots: Vec<Snapshot>,
+    /// The species, followed at the samples no oftener than `species::SPECIES_EVERY`, and at the end.
+    pub species: species::Tracker,
     pub ticks_done: u64,
     pub stop: StopReason,
     pub elapsed: Duration,
@@ -120,6 +123,10 @@ pub fn run(mut world: World, limits: &Limits, on_tick: &mut dyn FnMut(&World)) -
     let sample_every = limits.sample_every.max(1);
     let mut history = vec![world.stats()];
     let mut snapshots = vec![Snapshot::of(&world)];
+    let mut species = species::Tracker::default();
+    species.observe(&world);
+    // the species at a sample, and no oftener than `SPECIES_EVERY`: a census of everyone's genes
+    let mut next_species = species::SPECIES_EVERY;
     let mut stop = StopReason::Done;
     let started = Instant::now();
     let mut done = 0;
@@ -152,6 +159,10 @@ pub fn run(mut world: World, limits: &Limits, on_tick: &mut dyn FnMut(&World)) -
         if tick.is_multiple_of(sample_every) {
             history.push(world.stats());
             snapshots.push(Snapshot::of(&world));
+            if world.tick >= next_species {
+                species.observe(&world);
+                next_species = world.tick + species::SPECIES_EVERY;
+            }
         }
     }
 
@@ -159,5 +170,18 @@ pub fn run(mut world: World, limits: &Limits, on_tick: &mut dyn FnMut(&World)) -
         history.push(world.stats()); // the final snapshot is always in the history
         snapshots.push(Snapshot::of(&world));
     }
-    SimResult { history, snapshots, ticks_done: done, stop, elapsed: started.elapsed(), world, total_work }
+    // the species as the run ends, whatever the samples
+    if species.last().map(|p| p.tick) != Some(world.tick) {
+        species.observe(&world);
+    }
+    SimResult {
+        history,
+        snapshots,
+        species,
+        ticks_done: done,
+        stop,
+        elapsed: started.elapsed(),
+        world,
+        total_work,
+    }
 }

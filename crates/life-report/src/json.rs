@@ -149,7 +149,13 @@ pub fn report(cfg: &WorldConfig, ticks: u64, sample_every: u64, runs: &[Run]) ->
     let space = cfg.space();
     json!({
         "format": "life-report/12",
-        "world": { "scale": cfg.scale, "shape": cfg.shape.key(), "width": space.width, "height": space.height },
+        "world": {
+            "scale": cfg.scale,
+            "shape": cfg.shape.key(),
+            "terrain": cfg.terrain.key(),
+            "width": space.width,
+            "height": space.height
+        },
         "ticks": ticks,
         "sample_every": sample_every,
         "rules": rules,

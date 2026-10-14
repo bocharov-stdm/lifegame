@@ -55,18 +55,43 @@ const WATER_COLD: [u8; 3] = [5, 15, 30];
 /// thermocline's top (`top`, %), a smooth turn to the cold water at its bottom, then darker to the
 /// floor — so the layers that matter to the cold-blooded are seen.
 pub fn water(depth: f64, top: f64, bottom: f64) -> [u8; 3] {
+    layered([WORLD_TOP, WATER_WARM, WATER_COLD, WORLD_BOTTOM], depth, top, bottom)
+}
+
+/// The land from the warm edge down to the cold one: a warm dark green to the cold's top, a turn to
+/// a cold slate past it, then darker to the polar edge.
+const LAND_TOP: [u8; 3] = [24, 38, 20];
+const LAND_WARM: [u8; 3] = [20, 33, 19];
+const LAND_COLD: [u8; 3] = [17, 22, 27];
+const LAND_BOTTOM: [u8; 3] = [9, 11, 16];
+
+/// The land's colour at `latitude` % of the world, its belts as the water's (`water`).
+pub fn ground(latitude: f64, top: f64, bottom: f64) -> [u8; 3] {
+    layered([LAND_TOP, LAND_WARM, LAND_COLD, LAND_BOTTOM], latitude, top, bottom)
+}
+
+/// The world's colour at `pct` % of its height for the terrain.
+pub fn world(terrain: life_core::Terrain, pct: f64, top: f64, bottom: f64) -> [u8; 3] {
+    match terrain {
+        life_core::Terrain::Ocean => water(pct, top, bottom),
+        life_core::Terrain::Land => ground(pct, top, bottom),
+    }
+}
+
+/// Four colours at the top, at the cold's top and bottom (`top`, `bottom`, %) and at the bottom.
+fn layered([first, warm, cold, last]: [[u8; 3]; 4], depth: f64, top: f64, bottom: f64) -> [u8; 3] {
     let lerp = |a: [u8; 3], b: [u8; 3], t: f64| -> [u8; 3] {
         let t = t.clamp(0.0, 1.0);
         std::array::from_fn(|i| (a[i] as f64 + (b[i] as f64 - a[i] as f64) * t).round() as u8)
     };
     let (top, bottom) = (top.clamp(0.0, 100.0), bottom.clamp(top.clamp(0.0, 100.0), 100.0));
     if depth <= top {
-        lerp(WORLD_TOP, WATER_WARM, depth / top.max(1e-9))
+        lerp(first, warm, depth / top.max(1e-9))
     } else if depth < bottom {
         let t = (depth - top) / (bottom - top);
-        lerp(WATER_WARM, WATER_COLD, t * t * (3.0 - 2.0 * t))
+        lerp(warm, cold, t * t * (3.0 - 2.0 * t))
     } else {
-        lerp(WATER_COLD, WORLD_BOTTOM, (depth - bottom) / (100.0 - bottom).max(1e-9))
+        lerp(cold, last, (depth - bottom) / (100.0 - bottom).max(1e-9))
     }
 }
 /// Plants on the charts, the counters, the density map and the minimap: sage, apart from every

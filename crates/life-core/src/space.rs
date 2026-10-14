@@ -1,4 +1,4 @@
-//! The world's space: scale and shape.
+//! The world's space: scale, shape and terrain.
 //!
 //! Scale is the area at the former density. Everything set «per world» — the plants' pace,
 //! their ceiling, the starting population — is multiplied by `area_ratio`. The shape decides
@@ -79,15 +79,141 @@ impl Shape {
     }
 }
 
+/// What the world is. The same physics either way, and the y axis means the same to the engine:
+/// in the sea it is depth (warm and rich on top, the cold deep below), on land it is latitude (the
+/// warm edge on top, the cold one below). Only the dead differ: in water they sink to the bottom,
+/// on land they lie where they fell (`corpse.rs`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Terrain {
+    #[default]
+    Ocean,
+    Land,
+}
+
+impl Terrain {
+    pub const ALL: [Terrain; 2] = [Terrain::Ocean, Terrain::Land];
+
+    /// The name for flags and files: `--terrain land`.
+    pub fn key(self) -> &'static str {
+        match self {
+            Terrain::Ocean => "ocean",
+            Terrain::Land => "land",
+        }
+    }
+
+    /// Game UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            Terrain::Ocean => "океан",
+            Terrain::Land => "суша",
+        }
+    }
+
+    pub fn parse(s: &str) -> Result<Terrain, String> {
+        let s = s.trim();
+        Terrain::ALL.into_iter().find(|t| t.key() == s || t.label() == s).ok_or_else(|| {
+            let keys: Vec<&str> = Terrain::ALL.iter().map(|t| t.key()).collect();
+            format!("no such terrain: «{s}»; there are {}", keys.join(", "))
+        })
+    }
+
+    /// A game text written for the sea, said for this terrain: on land the water's phrases
+    /// (`LAND_PHRASES`) and then whole words (`LAND_WORDS`, a capital kept) are replaced — a layer is
+    /// a belt, depth latitude, the surface the warm edge, the bottom the cold one. Game UI.
+    pub fn say(self, text: &str) -> std::borrow::Cow<'_, str> {
+        if self == Terrain::Ocean {
+            return text.into();
+        }
+        let mut phrased = text.to_string();
+        for (sea, land) in LAND_PHRASES {
+            phrased = phrased.replace(sea, land);
+        }
+        let mut out = String::with_capacity(phrased.len() + 16);
+        let mut word = String::new();
+        let flush = |word: &mut String, out: &mut String| {
+            let lower = word.to_lowercase();
+            match LAND_WORDS.iter().find(|(sea, _)| *sea == lower) {
+                Some((_, land)) if word.starts_with(char::is_uppercase) => {
+                    let mut chars = land.chars();
+                    out.extend(chars.next().into_iter().flat_map(char::to_uppercase).chain(chars));
+                }
+                Some((_, land)) => out.push_str(land),
+                None => out.push_str(word),
+            }
+            word.clear();
+        };
+        for c in phrased.chars() {
+            if c.is_alphabetic() {
+                word.push(c);
+            } else {
+                flush(&mut word, &mut out);
+                out.push(c);
+            }
+        }
+        flush(&mut word, &mut out);
+        out.into()
+    }
+}
+
+/// The water's phrases on land, replaced before the words (`Terrain::say`).
+const LAND_PHRASES: [(&str, &str); 15] = [
+    ("ко дну", "к холодному краю"),
+    ("к верху слоя", "к тёплому краю слоя"),
+    ("Поднимается к верхнему краю", "Идёт к тёплому краю"),
+    ("Опускается к нижнему краю", "Идёт к холодному краю"),
+    ("наверху не срабатывает", "там не срабатывает"),
+    ("внизу не срабатывает", "там не срабатывает"),
+    ("вместе с водой", "вместе с воздухом"),
+    ("В холодной глубине", "В холодных широтах"),
+    ("в холодной глубине", "в холодных широтах"),
+    ("в самой холодной воде", "в самом холодном краю"),
+    ("В тёплой воде", "В тепле"),
+    ("холод глубины", "холод полюса"),
+    ("тёплая вода наверху", "тепло наверху"),
+    ("Насколько холодна вода", "Насколько там холодно"),
+    ("медленнее плавает", "медленнее ходит"),
+];
+
+/// The sea's words on land, whole words in lower case (`Terrain::say`).
+const LAND_WORDS: [(&str, &str); 26] = [
+    ("слой", "пояс"),
+    ("слоя", "пояса"),
+    ("слою", "поясу"),
+    ("слоем", "поясом"),
+    ("слое", "поясе"),
+    ("слои", "пояса"),
+    ("слоёв", "поясов"),
+    ("глубина", "широта"),
+    ("глубины", "широты"),
+    ("глубине", "широте"),
+    ("глубину", "широту"),
+    ("глубиной", "широтой"),
+    ("глубже", "холоднее"),
+    ("поверхность", "тёплый край"),
+    ("поверхности", "тёплого края"),
+    ("дно", "холодный край"),
+    ("дна", "холодного края"),
+    ("дну", "холодному краю"),
+    ("дне", "холодном крае"),
+    ("термоклин", "граница холода"),
+    ("термоклина", "границы холода"),
+    ("термоклине", "границе холода"),
+    ("всплывает", "уходит к теплу"),
+    ("тонут", "лежат"),
+    ("тонет", "лежит"),
+    ("плавают", "ходят"),
+];
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Space {
     pub width: f64,
     pub height: f64,
+    pub terrain: Terrain,
 }
 
 impl Default for Space {
     fn default() -> Self {
-        Space { width: WORLD_WIDTH, height: WORLD_HEIGHT }
+        Space { width: WORLD_WIDTH, height: WORLD_HEIGHT, terrain: Terrain::Ocean }
     }
 }
 
@@ -98,15 +224,21 @@ impl Space {
             (MIN_SCALE..=MAX_SCALE).contains(&scale),
             "масштаб мира должен быть от {MIN_SCALE} до {MAX_SCALE}, а не {scale}"
         );
+        let terrain = Terrain::Ocean;
         match shape.ratio() {
-            None => Space { width: WORLD_WIDTH * scale, height: WORLD_HEIGHT },
+            None => Space { width: WORLD_WIDTH * scale, height: WORLD_HEIGHT, terrain },
             // At 3:2 and x1: 24e6 / 1.5 = 16e6, the root is exactly 4000, the width exactly 6000. The
             // base world comes out bit for bit.
             Some(r) => {
                 let height = (WORLD_WIDTH * WORLD_HEIGHT * scale / r).sqrt();
-                Space { width: r * height, height }
+                Space { width: r * height, height, terrain }
             }
         }
+    }
+
+    /// The same space as another terrain.
+    pub fn on(self, terrain: Terrain) -> Self {
+        Space { terrain, ..self }
     }
 
     /// How many times the area is bigger than the base world 6000x4000.
@@ -153,5 +285,23 @@ mod tests {
             assert_eq!(Shape::parse(shape.label()), Ok(shape));
         }
         assert!(Shape::parse("круг").is_err());
+        for terrain in Terrain::ALL {
+            assert_eq!(Terrain::parse(terrain.key()), Ok(terrain));
+            assert_eq!(Terrain::parse(terrain.label()), Ok(terrain));
+        }
+        assert!(Terrain::parse("болото").is_err());
+    }
+
+    /// On land the sea's words become the land's, whole words only, a capital kept; the sea's
+    /// texts stay as they are.
+    #[test]
+    fn land_says_the_seas_words_its_own_way() {
+        let text = "Слой глубины: одно дно и ко дну слоя, медленно.";
+        assert_eq!(Terrain::Ocean.say(text), text);
+        assert_eq!(
+            Terrain::Land.say(text),
+            "Пояс широты: одно холодный край и к холодному краю пояса, медленно."
+        );
+        assert_eq!(Terrain::Land.say("В холодной глубине вода"), "В холодных широтах вода");
     }
 }

@@ -45,11 +45,16 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
         "Питание: порций растений {}, трупов {} (из них гнили {}, костей {}). Выстрелов {}.",
         c.plant_bites, c.meat_bites, c.rot_bites, c.bone_bites, c.ranged_shots
     );
+    // on land the dead lie where they fell: no bottom to come to rest on
+    let bottom = if last.terrain == life_core::Terrain::Ocean {
+        format!("лежали на дне с мясом {}, ", percent(c.corpses_bottom, c.corpses_gone))
+    } else {
+        String::new()
+    };
     println!(
-        "Трупы: появилось {}, убрано {}; из убранных лежали на дне с мясом {}, дошли до костей {}, лежали в среднем {:.0} тиков.",
+        "Трупы: появилось {}, убрано {}; из убранных {bottom}дошли до костей {}, лежали в среднем {:.0} тиков.",
         c.corpses,
         c.corpses_gone,
-        percent(c.corpses_bottom, c.corpses_gone),
         percent(c.skeletons, c.corpses_gone),
         c.corpse_ticks as f64 / c.corpses_gone.max(1) as f64
     );
@@ -62,6 +67,7 @@ pub fn print_story(seed: u64, res: &SimResult, events: &[Event], maps: &[Map], r
     print_intervals(snaps, rows);
     print_genome(first, last);
     print_programs(&res.world);
+    print_species(&res.species);
     print_depth(last);
     // across the width there is something to look at only if the food is uneven along it
     if res.world.rules.plant_width.kind() != Profile::Uniform {
@@ -287,10 +293,49 @@ fn shares(spec: &GeneSpec, s: &[f64; MAX_VARIANTS]) -> String {
     parts.join(", ")
 }
 
+/// Species — groups of creatures that could mate (`life_sim::species`) — and novelty: how many live
+/// at the end and arose in all, the biggest alive, how many program shapes live and were new, the
+/// share of births of two parents. `METRIC` lines give a sweep the same.
+fn print_species(t: &life_sim::species::Tracker) {
+    let Some(last) = t.last() else { return };
+    let new_shapes: usize = t.history.iter().skip(1).map(|p| p.new_shapes).sum();
+    let mated = t.history.iter().skip(1).map(|p| p.mated_share).sum::<f64>()
+        / t.history.len().saturating_sub(1).max(1) as f64;
+    println!(
+        "\nSpecies: {} alive of {} that arose (groups that could mate, of {}+ creatures); program shapes \
+         alive {}, new over the run {}; births of two parents {:.0}%.",
+        last.species,
+        t.shown_ever(),
+        life_sim::species::SPECIES_MIN,
+        last.shapes,
+        new_shapes,
+        mated * 100.0
+    );
+    let mut alive: Vec<_> = t.species().iter().filter(|s| s.died.is_none() && s.shown()).collect();
+    alive.sort_by_key(|s| std::cmp::Reverse(s.count));
+    for s in alive.iter().take(5) {
+        let parent = t.shown_parent(s.id).map_or("a founders' one".into(), |p| format!("from #{p}"));
+        println!(
+            "  #{:<4} {:<11} {:>6} now, peak {:>6}, since tick {}, {parent}",
+            s.id,
+            life_core::rules::DIETS[s.diet.min(3)],
+            s.count,
+            s.peak,
+            s.born
+        );
+    }
+    println!("METRIC species_alive {}", last.species);
+    println!("METRIC species_arisen {}", t.shown_ever());
+    println!("METRIC shapes_alive {}", last.shapes);
+    println!("METRIC shapes_new {new_shapes}");
+    println!("METRIC mated_share {mated:.4}");
+}
+
 /// Who is where by depth: the shares of creatures and plants in each tenth.
 fn print_depth(last: &Snapshot) {
-    println!("\nГлубина в конце (0% — поверхность):");
-    print_bands(last, "глубина", &last.creatures_by_depth, &last.plants_by_depth);
+    let say = |text: &str| last.terrain.say(text).into_owned();
+    println!("\n{}", say("Глубина в конце (0% — поверхность):"));
+    print_bands(last, &say("глубина"), &last.creatures_by_depth, &last.plants_by_depth);
 }
 
 /// The same by width, from left to right.

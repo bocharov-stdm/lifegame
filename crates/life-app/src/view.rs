@@ -339,7 +339,7 @@ impl WorldView {
             painter.rect_filled(
                 band.intersect(rect),
                 0.0,
-                rgb(crate::theme::water(t * 100.0, f.rules.thermo_top, f.rules.thermo_bottom)),
+                rgb(crate::theme::world(f.terrain, t * 100.0, f.rules.thermo_top, f.rules.thermo_bottom)),
             );
         }
 
@@ -526,7 +526,7 @@ impl WorldView {
                             overlay.text(
                                 Pos2::new(clip.left() + 44.0, y - 2.0),
                                 Align2::LEFT_BOTTOM,
-                                label,
+                                f.terrain.say(label),
                                 small.clone(),
                                 ACCENT.gamma_multiply(0.8),
                             );

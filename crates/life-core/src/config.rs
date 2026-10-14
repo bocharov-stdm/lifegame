@@ -114,6 +114,12 @@ pub const GROWTH_ENERGY_PER_SIZE: f64 = 2.25;
 pub const REPRO_RESERVE: f64 = 20.0;
 /// A fixed penalty for reproduction.
 pub const REPRO_COST: f64 = 10.0;
+/// How far apart two genomes may be and still mate (`MateKey`, the rule `mate_distance`): the mean
+/// over the numeric genes of how many mutation steps (the world's `mutation_sigma` a factor, its
+/// share of `COLD_BLOOD_STEP` points) part them; another diet never mates. A child that is no
+/// copy lies about 0.8 from its parent, so at 2 a lineage mates within a few generations of
+/// drift, and lines that drifted apart further — new species — no longer do.
+pub const MATE_DISTANCE: f64 = 2.0;
 /// A healing creature (`Action::Heal`) gains this share of its full health a tick, paid one for
 /// one from its tank: physiology, not a choice — whether and when it heals is its program's.
 pub const HEAL_SHARE: f64 = 0.002;

@@ -266,6 +266,45 @@ fn квадратный_мир_помещается_в_окно() {
     }
 }
 
+/// A world on land fits the window and speaks of belts and latitude: the water's tab is the
+/// climate, in the game and on «Новый мир».
+#[test]
+fn land_fits_the_window_and_speaks_its_own_words() {
+    let _gpu = gpu();
+    for (size, tag) in [(SMALL, "960x600"), (NORMAL, "1600x900")] {
+        let cfg = WorldConfig {
+            seed: 4,
+            scale: 10.0,
+            shape: Shape::R2x1,
+            terrain: life_core::Terrain::Land,
+            ..Default::default()
+        };
+        let mut h = harness_with(size, cfg);
+        settle(&mut h);
+        // the side panel scrolls: from its tabs to the bottom panel
+        let top = h.get_by_label("Обзор").rect();
+        let bottom = h.get_by_label("Мир ▾").rect().top() - 4.0;
+        let panel = Rect::from_min_max(Pos2::new(top.left() - 12.0, top.top()), Pos2::new(size.x, bottom));
+        check_layout(&h, size, &format!("суша, {tag}"), Some(panel));
+        shot(&mut h, &format!("суша-{tag}"));
+        h.state_mut().side_open = true;
+        h.state_mut().side_tab = SideTab::Lab;
+        h.state_mut().lab_tab = Tab::Water;
+        settle(&mut h);
+        assert!(h.query_by_label("Климат").is_some(), "{tag}: the lab's water tab is the climate on land");
+        shot(&mut h, &format!("суша-климат-{tag}"));
+        h.state_mut().screen = Screen::Setup;
+        h.state_mut().setup_tab = Tab::World;
+        h.state_mut().settings.terrain = life_core::Terrain::Land;
+        settle(&mut h);
+        let page =
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(size.x, h.get_by_label("Начать").rect().top() - 4.0));
+        check_layout(&h, size, &format!("новый мир на суше, {tag}"), Some(page));
+        assert!(h.query_by_label("Суша").is_some() && h.query_by_label("Климат").is_some(), "{tag}");
+        shot(&mut h, &format!("новый-мир-суша-{tag}"));
+    }
+}
+
 #[test]
 fn лаборатория_на_ходу_помещается_в_окно() {
     let _gpu = gpu();
@@ -490,6 +529,15 @@ fn статистика_помещается_в_окно() {
             check_layout(h, size, &format!("статистика, {tab:?}, {tag}"), None);
             shot(h, &format!("статистика-{tab:?}-{tag}"));
         }
+        // the species came with the first sample, and their tree fits
+        h.state_mut().stats_tab = StatsTab::Lineages;
+        settle(h);
+        assert!(h.state().species.is_some(), "the species came with a frame");
+        assert!(h.query_by_label("Древо видов").is_some());
+        let tabs = h.get_by_label("Виды").rect();
+        let scroll = Rect::from_min_max(Pos2::new(0.0, tabs.bottom()), size.to_pos2());
+        check_layout(h, size, &format!("статистика, виды, {tag}"), Some(scroll));
+        shot(h, &format!("статистика-Lineages-{tag}"));
         // the census comes on pause, on request, and its tab fits too
         h.state_mut().stats_tab = StatsTab::Species;
         for _ in 0..200 {

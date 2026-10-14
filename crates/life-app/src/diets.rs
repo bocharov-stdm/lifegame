@@ -277,7 +277,9 @@ fn details(ui: &mut egui::Ui, d: usize, last: &Snapshot, flows: &DietCounters) {
 }
 
 fn row(ui: &mut egui::Ui, label: &str, hint: &str, me: String, all: String) {
-    ui.colored_label(MUTED, label).on_hover_text(hint);
+    let ctx = ui.ctx().clone();
+    let say = |text| crate::words::say(&ctx, text);
+    ui.colored_label(MUTED, say(label)).on_hover_text(say(hint));
     ui.label(me);
     ui.colored_label(MUTED, all);
     ui.end_row();

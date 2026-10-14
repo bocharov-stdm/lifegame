@@ -17,8 +17,8 @@ pub use program::{ADULT, Action, Block, Cond, JUVENILE, Program, Programs, Test}
 pub use strategy::{Activity, Aid, Chase, Food, Intent, Me, Menace, Mind, Sighting, Stance, Strategy};
 
 use crate::config::*;
-use crate::genome::CreatureGenome;
 use crate::genome::creature::Gene;
+use crate::genome::{CreatureGenome, MateKey};
 use crate::rng::Rng;
 use crate::rules::Rules;
 use crate::senses::Senses;
@@ -105,6 +105,9 @@ pub struct Creature {
     pub death: Option<Death>,
 
     pub genome: CreatureGenome,
+    /// Its genes in mutation steps at the world's sigma: whom it could mate with (`MateKey`). Kept
+    /// with the genome (`set_genome`) and the rules (`apply_rules`).
+    pub mate_key: MateKey,
     /// Everything derived from the genome and the rules at birth (`phenotype.rs`).
     pub pheno: Phenotype,
 
@@ -188,6 +191,7 @@ impl Creature {
             peaceful_ticks: 60,
             reproduction_wait: DIVIDE_PERIOD,
             death: None,
+            mate_key: genome.mate_key(rules.mutation_sigma),
             genome,
             programs,
             pheno,
@@ -263,6 +267,7 @@ impl Creature {
             age: self.age,
             winded: self.winded > 0,
             pheno: &self.pheno,
+            mate: &self.mate_key,
         };
         let stage = self.stage();
         let intent = strategy::decide(&me, &self.programs[stage], &mut self.mind, &mut self.rng, senses);
@@ -360,7 +365,15 @@ impl Creature {
     }
 
     /// The new rules recompute the phenotype for the same actual body.
+    /// Another genome for this body (tests, tools): its key for mating goes with it; the phenotype
+    /// waits for `apply_rules`.
+    pub fn set_genome(&mut self, genome: CreatureGenome, rules: &Rules) {
+        self.genome = genome;
+        self.mate_key = genome.mate_key(rules.mutation_sigma);
+    }
+
     pub fn apply_rules(&mut self, rules: &Rules, space: &Space) {
+        self.mate_key = self.genome.mate_key(rules.mutation_sigma);
         self.pheno = Phenotype::aged(&self.genome, rules, space, self.pheno.size, self.pheno.vigour);
         self.space = *space;
     }
@@ -394,6 +407,7 @@ impl Creature {
             age: self.age,
             winded: self.winded > 0,
             pheno: &self.pheno,
+            mate: &self.mate_key,
         };
         strategy::after_eating(&me, &mut self.mind, &mut self.rng, reach);
     }
@@ -410,6 +424,7 @@ impl Creature {
             age: self.age,
             winded: self.winded > 0,
             pheno: &self.pheno,
+            mate: &self.mate_key,
         }
     }
 
@@ -468,13 +483,57 @@ impl Creature {
     }
 
     /// A child, if its program divides this tick (`Action::Divide`) and the parent keeps a reserve
-    /// after the division. The world gives the child its number.
+    /// after the division (`bear`).
     pub fn maybe_divide(&mut self, space: &Space, rules: &Rules) -> Option<Creature> {
         let divide = self.mind.stance.divide?;
-        if !self.alive || !self.adult() || self.reproduction_wait > 0 {
+        self.bear(divide, space, rules, |me, rng| {
+            me.genome.inherit(&me.programs, &crate::genome::Heredity::of(rules), rng)
+        })
+    }
+
+    /// Whether its program mates this tick and it could pay for a child now (`Action::Mate`):
+    /// grown, rested since its last child, its tank full to the setting's share and the reserve.
+    /// The world looks for a partner only then.
+    pub fn ready_to_mate(&self) -> bool {
+        self.mind
+            .stance
+            .mate
+            .is_some_and(|m| self.fertile() && self.energy >= self.pheno.max_energy * m.tank + REPRO_RESERVE)
+    }
+
+    /// A child of it and `father` (`Action::Mate`, `CreatureGenome::cross`): it pays for the child
+    /// as a division does, the father gives only his genes. The world has checked that the father
+    /// touches it, is grown, willing, no family and near enough in his genes (`MateKey`).
+    pub fn maybe_mate(
+        &mut self,
+        father: (&CreatureGenome, &Programs),
+        space: &Space,
+        rules: &Rules,
+    ) -> Option<Creature> {
+        let mate = self.mind.stance.mate?;
+        self.bear(mate, space, rules, |me, rng| {
+            me.genome.cross(father.0, &me.programs, father.1, &crate::genome::Heredity::of(rules), rng)
+        })
+    }
+
+    /// Grown, alive and rested since its last child.
+    fn fertile(&self) -> bool {
+        self.alive && self.adult() && self.reproduction_wait == 0
+    }
+
+    /// A child at `terms` with the genes and programs `inherit` draws, if it can pay for it and
+    /// keep a reserve; the world gives the child its number.
+    fn bear(
+        &mut self,
+        terms: strategy::Divide,
+        space: &Space,
+        rules: &Rules,
+        inherit: impl FnOnce(&Creature, &mut Rng) -> (CreatureGenome, Programs),
+    ) -> Option<Creature> {
+        if !self.fertile() {
             return None;
         }
-        let threshold = self.pheno.max_energy * divide.tank;
+        let threshold = self.pheno.max_energy * terms.tank;
         if self.energy < threshold + REPRO_RESERVE {
             return None;
         }
@@ -483,9 +542,8 @@ impl Creature {
         // We try the inheritance on a copy of the generator: a failed attempt at birth
         // spends no random numbers, and the child's capacity is already known.
         let mut next_rng = self.rng.clone();
-        let (genome, programs) =
-            self.genome.inherit(&self.programs, &crate::genome::Heredity::of(rules), &mut next_rng);
-        let child_energy = (self.energy * divide.share).min(genome[Gene::Size] * 0.5 * ENERGY_PER_SIZE);
+        let (genome, programs) = inherit(self, &mut next_rng);
+        let child_energy = (self.energy * terms.share).min(genome[Gene::Size] * 0.5 * ENERGY_PER_SIZE);
         let left = self.energy - child_energy - rules.repro_cost;
         if left < REPRO_RESERVE {
             return None;
@@ -508,7 +566,7 @@ impl Creature {
             Some(child_energy),
             rng,
         );
-        child.genome = genome;
+        child.set_genome(genome, rules);
         child.parent = self.id;
         child.reproduction_wait = DIVIDE_PERIOD;
         child.birth_size = child.genome[Gene::Size] * 0.5;

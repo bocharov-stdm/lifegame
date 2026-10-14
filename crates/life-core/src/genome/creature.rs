@@ -192,6 +192,64 @@ pub const GENES: [GeneSpec; N] = [
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CreatureGenome([f64; N]);
 
+/// The genes that part two genomes for mating (`MateKey`): the factor and the point ones. The
+/// choice genes do not: a different diet never mates at all, and the template's name (`strategy`)
+/// never changes in a lineage.
+const STEP_GENES: usize = {
+    let mut n = 0;
+    let mut i = 0;
+    while i < N {
+        if matches!(GENES[i].mutation, Mutation::Scale { .. } | Mutation::Shift { .. }) {
+            n += 1;
+        }
+        i += 1;
+    }
+    n
+};
+
+/// A sigma of 0 (no mutation at all) still measures: any difference is then very far.
+const MIN_STEP_SIGMA: f64 = 1e-6;
+
+/// A genome as coordinates in mutation steps at the world's sigma (`CreatureGenome::mate_key`):
+/// a factor gene's logarithm over the sigma, a point gene over its step, a choice gene nothing,
+/// and the diet apart. The one law of who could mate (`config::MATE_DISTANCE`): the world's
+/// reproduction, a creature's sense of a partner and the species (`life_sim::species`) all read it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MateKey {
+    at: [f64; N],
+    diet: u8,
+}
+
+impl MateKey {
+    /// How far apart for mating: the mean over the numeric genes of the mutation steps between
+    /// them. Another diet is infinitely far: a diet is a body, and the bodies do not mix.
+    #[inline]
+    pub fn distance(&self, other: &MateKey) -> f64 {
+        if self.diet != other.diet { f64::INFINITY } else { self.steps(other) }
+    }
+
+    /// The mean steps whatever the diets: which species a diet's mutant split from.
+    #[inline]
+    pub fn steps(&self, other: &MateKey) -> f64 {
+        let sum: f64 = self.at.iter().zip(other.at).map(|(a, b)| (a - b).abs()).sum();
+        sum / STEP_GENES as f64
+    }
+
+    pub fn diet(&self) -> usize {
+        usize::from(self.diet)
+    }
+
+    /// The coordinates, to sum and average a group's (`centre`).
+    pub fn coordinates(&self) -> &[f64; N] {
+        &self.at
+    }
+
+    /// The centre of a group of one diet from the sum of its keys' coordinates and their count.
+    pub fn centre(sum: &[f64; N], count: usize, diet: usize) -> MateKey {
+        MateKey { at: sum.map(|x| x / count.max(1) as f64), diet: diet as u8 }
+    }
+}
+
 impl CreatureGenome {
     /// The starting genome: the table's bases.
     pub const BASE: Self = Self(bases(&GENES));
@@ -239,6 +297,57 @@ impl CreatureGenome {
         }
         let programs = if next == **programs { programs.clone() } else { Programs::new(next) };
         (child, programs)
+    }
+
+    /// A child of two parents (`Action::Mate`): each gene from either parent, one draw a gene in
+    /// the table's order; each program track (`JUVENILE`, then `ADULT`) whole from either, one draw
+    /// a track — a whole track is a working program, so no block is born dead of the mixing; then
+    /// the mixed genome and tracks are inherited as one parent's (`inherit`): the clone draw, the
+    /// mutation, the drift. `self` is the mother, who pays for the child.
+    pub fn cross(
+        &self,
+        father: &CreatureGenome,
+        programs: &Programs,
+        father_programs: &Programs,
+        h: &super::Heredity,
+        rng: &mut Rng,
+    ) -> (Self, Programs) {
+        let mut mixed = *self;
+        for (gene, theirs) in mixed.0.iter_mut().zip(father.0) {
+            if rng.random() < 0.5 {
+                *gene = theirs;
+            }
+        }
+        let from_father = [rng.random() < 0.5, rng.random() < 0.5];
+        let tracks = match from_father {
+            [false, false] => programs.clone(),
+            [true, true] => father_programs.clone(),
+            [juvenile, adult] => {
+                let pick = |theirs: bool, stage: usize| {
+                    if theirs { father_programs[stage] } else { programs[stage] }
+                };
+                Programs::new([
+                    pick(juvenile, crate::creature::JUVENILE),
+                    pick(adult, crate::creature::ADULT),
+                ])
+            }
+        };
+        mixed.inherit(&tracks, h, rng)
+    }
+
+    /// Its genes as coordinates in mutation steps at the world's `sigma` (`MateKey`): kept by a
+    /// creature from birth, so who could mate is a subtraction, not a logarithm, every time.
+    pub fn mate_key(&self, sigma: f64) -> MateKey {
+        let sigma = sigma.max(MIN_STEP_SIGMA);
+        MateKey {
+            at: std::array::from_fn(|i| match GENES[i].mutation {
+                Mutation::Scale { .. } => self.0[i].max(0.01).ln() / sigma,
+                // a point gene's step at this sigma, as `mutate_values` draws it
+                Mutation::Shift { points } => self.0[i] / (points * sigma / crate::config::MUTATION_SIGMA),
+                Mutation::Switch { .. } | Mutation::Neighbours { .. } => 0.0,
+            }),
+            diet: self.0[Gene::Diet as usize] as u8,
+        }
     }
 
     /// Every gene by its law, no clone draw.
@@ -418,6 +527,70 @@ mod tests {
         );
         let capped = CreatureGenome::BASE.with(Gene::Mutability, 1e300).mutate(0.3, &mut Rng::new(1));
         assert!(capped.to_values().iter().all(|v| v.is_finite()), "the ceiling: the genome stays finite");
+    }
+
+    /// The distance counts mutation steps: none to itself, the same both ways, a factor of
+    /// e^0.3 in one gene a step over the genes counted; another diet never mates, the template's
+    /// name parts nobody.
+    #[test]
+    fn the_mating_distance_counts_mutation_steps() {
+        let base = CreatureGenome::BASE;
+        let d = |a: &CreatureGenome, b: &CreatureGenome| a.mate_key(0.3).distance(&b.mate_key(0.3));
+        assert_eq!(d(&base, &base), 0.0);
+        let bigger = base.with(Gene::Size, 40.0 * (0.3_f64 * 9.0).exp());
+        assert!((d(&base, &bigger) - 1.0).abs() < 1e-9, "nine steps in one of nine counted genes");
+        assert_eq!(d(&base, &bigger), d(&bigger, &base));
+        let cold = base.with(Gene::ColdBlood, COLD_BLOOD_STEP * 9.0);
+        assert!((d(&base, &cold) - 1.0).abs() < 1e-9);
+        assert_eq!(d(&base, &base.with(Gene::Strategy, 1.0)), 0.0, "a template's name parts nobody");
+        assert_eq!(d(&base, &base.with(Gene::Diet, 1.0)), f64::INFINITY, "another diet never mates");
+        // the steps are the world's: at twice the sigma a gene's step is twice as long
+        let wide = base.mate_key(0.6).distance(&bigger.mate_key(0.6));
+        assert!((wide - 0.5).abs() < 1e-9, "{wide}");
+        let wide_cold = base.mate_key(0.6).distance(&cold.mate_key(0.6));
+        assert!((wide_cold - 0.5).abs() < 1e-9, "{wide_cold}");
+        // a child that is no copy lies about one step from its parent (`MATE_DISTANCE`); a diet's
+        // step would part them for good
+        let mut rng = Rng::new(7);
+        let h = super::super::Heredity {
+            clone_share: 0.0,
+            diet_step: 0.0,
+            diet_meat_step: 0.0,
+            diet_jump: 0.0,
+            diet_leap_carnivore: 0.0,
+            diet_leap_scavenger: 0.0,
+            ..super::super::Heredity::with_sigma(0.3)
+        };
+        let mean = (0..2000).map(|_| d(&base, &base.mutate_by(&h, &mut rng))).sum::<f64>() / 2000.0;
+        assert!((0.6..1.0).contains(&mean), "{mean}");
+    }
+
+    /// A child of two parents takes each gene from one of them and each track whole from one;
+    /// the same generator gives the same child.
+    #[test]
+    fn a_cross_takes_each_gene_and_each_track_from_a_parent() {
+        use crate::creature::{Action, Block, Program};
+        let h = super::super::Heredity { clone_share: 1.0, ..super::super::Heredity::with_sigma(0.3) };
+        let mother = CreatureGenome::BASE.with(Gene::Size, 30.0).with(Gene::Speed, 8.0);
+        let father = CreatureGenome::BASE.with(Gene::Size, 60.0).with(Gene::Speed, 14.0);
+        let mine = Programs::both(Program::STANDARD);
+        let theirs = Programs::both(Program::of(&[Block::does(Action::Ambush)]));
+        let mut rng = Rng::new(11);
+        let (mut from, mut tracks, mut mixed) = ([0; 2], [0; 2], 0);
+        for _ in 0..2000 {
+            let (child, programs) = mother.cross(&father, &mine, &theirs, &h, &mut rng);
+            assert!([30.0, 60.0].contains(&child[Gene::Size]) && [8.0, 14.0].contains(&child[Gene::Speed]));
+            from[(child[Gene::Size] == 60.0) as usize] += 1;
+            for (stage, p) in programs.iter().enumerate() {
+                assert!(*p == mine[stage] || *p == theirs[stage], "a track is whole");
+                tracks[(*p == theirs[stage]) as usize] += 1;
+            }
+            mixed += (programs[0] != programs[1]) as usize;
+        }
+        assert!(from.iter().all(|&n| n > 900) && tracks.iter().all(|&n| n > 1800), "{from:?} {tracks:?}");
+        assert!(mixed > 900, "the tracks come apart: {mixed}");
+        let child = |seed| mother.cross(&father, &mine, &theirs, &h, &mut Rng::new(seed));
+        assert_eq!(child(5), child(5));
     }
 
     /// The gene `program_mutability` sets how often the programs mutate and how far their numbers

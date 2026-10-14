@@ -87,6 +87,8 @@ pub struct Phenotype {
     pub melee_damage_share: f64,
     /// A bigger body's strike is times (size ratio) ** this (`Rules::melee_size_power`).
     pub melee_size_power: f64,
+    /// How far apart two genomes may be and still mate (`Rules::mate_distance`).
+    pub mate_distance: f64,
     pub vision: f64,
 
     // ── bounds ─────────────────────────────────────────────────────────────
@@ -176,6 +178,7 @@ impl Phenotype {
             plant_bite_yield: rules.plant_bite_yield,
             melee_damage_share: rules.melee_damage_share,
             melee_size_power: rules.melee_size_power,
+            mate_distance: rules.mate_distance,
             vision,
             x_lo,
             x_hi,

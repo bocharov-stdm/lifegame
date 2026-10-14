@@ -35,7 +35,7 @@ use life_core::genome::creature::Gene;
 use life_core::par::Threads;
 use life_core::profile::{Phase, PhaseTimes};
 use life_core::space::{MAX_SCALE, parse_scale};
-use life_core::{Rules, Shape, World, WorldConfig};
+use life_core::{Rules, Shape, Terrain, World, WorldConfig};
 use life_sim::observe::{self, Event, ascii_map};
 use life_sim::{Limits, SimResult, run};
 
@@ -65,6 +65,10 @@ struct Args {
     /// At scale 1 a strip and 3:2 are one and the same 6000x4000 world.
     #[arg(long, default_value = "3:2", value_parser = Shape::parse)]
     shape: Shape,
+    /// The world's terrain: ocean (the y axis is depth, the dead sink) or land (the y axis is
+    /// latitude, the dead lie where they fell).
+    #[arg(long, default_value = "ocean", value_parser = Terrain::parse)]
+    terrain: Terrain,
     /// Creatures at the start (by default by the world's area). The old name `--vegetarians` is
     /// understood too.
     #[arg(long, alias = "vegetarians")]
@@ -228,6 +232,7 @@ fn main() {
         seed: 0,
         scale: args.scale,
         shape: args.shape,
+        terrain: args.terrain,
         rules,
         n_creatures: args.creatures,
         strategies: args.mix.clone(),
@@ -275,9 +280,10 @@ fn main() {
     if !quiet {
         let space = base_cfg.space();
         println!(
-            "Мир x{} ({}): {:.0}x{:.0}, {} тиков, сиды {:?}, потоков {}",
+            "Мир x{} ({}, {}): {:.0}x{:.0}, {} тиков, сиды {:?}, потоков {}",
             args.scale,
             args.shape.label(),
+            args.terrain.label(),
             space.width,
             space.height,
             ticks,

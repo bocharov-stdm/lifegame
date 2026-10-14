@@ -4,10 +4,10 @@ use eframe::egui::{self, Align2, RichText, Vec2};
 
 use life_core::genome::creature;
 use life_core::space::{MAX_SCALE, MIN_SCALE};
-use life_core::{Shape, Space};
+use life_core::{Shape, Space, Terrain};
 
 use crate::app::{LifeApp, Screen};
-use crate::rules_ui::{WATER_NOTE, body_formula, diet_table, fields, rules_preview};
+use crate::rules_ui::{body_formula, diet_table, fields, rules_preview, tab_name, water_note};
 use crate::settings::{PRESETS, SEED_MAX, Settings, Tab, UI_SCALES, auto_threads, cpu_threads};
 use crate::theme::{self, ACCENT, DANGER, GOOD, MUTED, VEIL, spaced};
 
@@ -138,6 +138,7 @@ impl LifeApp {
                 ui.add_space(6.0);
                 ui.horizontal_wrapped(|ui| {
                     for (tab, name) in std::iter::once((Tab::World, "Мир")).chain(Tab::RULES) {
+                        let name = tab_name(ui.ctx(), tab, name);
                         ui.selectable_value(&mut self.setup_tab, tab, RichText::new(name).size(16.0));
                     }
                 });
@@ -181,7 +182,7 @@ impl LifeApp {
                             fields(ui, &mut self.settings, Tab::Diets);
                         } else {
                             if self.setup_tab == Tab::Water {
-                                ui.label(WATER_NOTE);
+                                ui.label(water_note(ui.ctx()));
                             }
                             for (i, (tab, heading)) in self.setup_tab.pages().iter().enumerate() {
                                 if let Some(heading) = heading.filter(|_| i > 0) {
@@ -247,14 +248,35 @@ impl LifeApp {
                 ui.selectable_value(&mut s.shape, shape, shape.label()).on_hover_text(hint);
             }
         });
+        ui.horizontal_wrapped(|ui| {
+            ui.label(crate::theme::strong("Мир"));
+            for terrain in Terrain::ALL {
+                let hint = match terrain {
+                    Terrain::Ocean => {
+                        "Море сбоку: вверху тёплая поверхность, внизу холодная глубина. Трупы тонут на дно."
+                    }
+                    Terrain::Land => {
+                        "Суша сверху: вверху тёплый край, внизу холодный, слой — климатический пояс. Трупы \
+                         лежат, где упали."
+                    }
+                };
+                let label = match terrain {
+                    Terrain::Ocean => "Океан",
+                    Terrain::Land => "Суша",
+                };
+                ui.selectable_value(&mut s.terrain, terrain, label).on_hover_text(hint);
+            }
+        });
         let space = Space::new(s.scale, s.shape);
         ui.colored_label(
             MUTED,
-            format!(
-                "мир {} × {}; глубина и еда по ней — в процентах, так что баланс от формы не зависит",
-                spaced(space.width.round() as u64),
-                spaced(space.height.round() as u64)
-            ),
+            s.terrain
+                .say(&format!(
+                    "мир {} × {}; глубина и еда по ней — в процентах, так что баланс от формы не зависит",
+                    spaced(space.width.round() as u64),
+                    spaced(space.height.round() as u64)
+                ))
+                .into_owned(),
         );
         ui.add_space(8.0);
 
@@ -352,14 +374,15 @@ impl LifeApp {
                 keys_grid(ui);
                 ui.add_space(6.0);
                 ui.label(crate::theme::strong("Что происходит"));
-                ui.label(
+                let say = |text: &str| crate::words::say(ctx, text);
+                ui.label(say(
                     "Растения по умолчанию растут гуще у поверхности (вверху). Существа едят их, растут, \
                      делятся и мутируют. Тело задают гены, поведение — две программы из блоков, детская \
                      и взрослая; мутируют и они. Питание — тоже ген: травоядные едят растения, \
                      всеядные — всё, мясоеды охотятся на тех, кто заметно мельче, падальщики едят гниль \
                      и кости на дне. Умершие оставляют трупы. Отбор никто не задаёт: выживают те, чьи \
                      тело и поведение окупаются.",
-                );
+                ));
                 ui.label(
                     "Светлое ядро существа — сколько у него энергии: у голодных оно маленькое. Глазок \
                      смотрит туда, куда существо идёт. Рамка на миникарте — то, что сейчас на экране.",
@@ -369,7 +392,7 @@ impl LifeApp {
                 egui::Grid::new("гены").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
                     for spec in creature::GENES.iter().filter(|s| crate::charts::shown(s)) {
                         ui.label(spec.label);
-                        ui.label(spec.about);
+                        ui.label(say(spec.about));
                         ui.end_row();
                         // for a choice gene — what each variant means
                         for v in spec.variants().unwrap_or_default() {
@@ -388,12 +411,12 @@ impl LifeApp {
                 );
                 ui.add_space(6.0);
                 ui.label(crate::theme::strong("Еда"));
-                ui.label(
+                ui.label(say(
                     "Где растут растения, задаётся по глубине и по ширине отдельно: равномерно, линейно, \
                      экспонентой, логарифмом или волнами-полосами. Слой глубины задают программы поведения, \
                      а не мир: выгодную глубину существа находят сами. Профиль можно менять и посреди партии: \
                      выросшее остаётся, новое растёт по-новому.",
-                );
+                ));
             });
         });
         self.help_open = open;

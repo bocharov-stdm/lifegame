@@ -18,7 +18,7 @@ pub mod creature;
 use crate::config::{MAX_MUTABILITY, MIN_MUTABILITY};
 use crate::rng::Rng;
 
-pub use creature::CreatureGenome;
+pub use creature::{CreatureGenome, MateKey};
 
 /// A variant of a choice gene: for example, a behaviour strategy.
 #[derive(Clone, Copy, Debug, PartialEq)]
