@@ -21,7 +21,7 @@
 use life_core::flora::Profile;
 use life_core::genome::CreatureGenome;
 use life_core::genome::creature::Gene;
-use life_core::{Rules, Shape, World, WorldConfig};
+use life_core::{Rules, Shape, Terrain, World, WorldConfig};
 
 mod chain;
 
@@ -256,9 +256,9 @@ fn cases() -> Vec<Case> {
         // food, 2:1, half lurkers and every diet among the founders — the hunters, the scavengers,
         // rot and bones, which the default world meets only through rare mutants.
         Case {
-            name: "I: seed 3, the game's world x3, every diet",
+            name: "I: seed 8, the game's world x3, every diet",
             cfg: WorldConfig {
-                seed: 3,
+                seed: 8,
                 scale: 3.0,
                 shape: Shape::R2x1,
                 rules: rules(&[
@@ -272,6 +272,27 @@ fn cases() -> Vec<Case> {
                 ..Default::default()
             },
             ticks: 3000,
+            before: |_| {},
+        },
+        // The same world on land: the dead lie where they fell.
+        Case {
+            name: "J: seed 4, the game's world x3 on land",
+            cfg: WorldConfig {
+                seed: 4,
+                scale: 3.0,
+                shape: Shape::R2x1,
+                terrain: Terrain::Land,
+                rules: rules(&[
+                    ("cost_scale", 2.0),
+                    ("speed_cost", 0.5),
+                    ("plant_rate", 0.5),
+                    ("plant_depth_steepness", 5.0),
+                ]),
+                strategies: vec![1.0, 1.0],
+                diets: vec![55.0, 25.0, 10.0, 10.0],
+                ..Default::default()
+            },
+            ticks: 2000,
             before: |_| {},
         },
     ]
@@ -302,23 +323,25 @@ fn run(case: &Case) -> (Vec<(u64, u64)>, World, Seen) {
 #[rustfmt::skip]
 const GOLDEN: &[&[(u64, u64)]] = &[
     // A: seed 1, default
-    &[(1, 0x255f168693cb966d), (2, 0x80bcc8bc523de579), (10, 0x238e1c466cf06e8c), (31, 0xb62cf07bf71cd8ba), (100, 0xfc27fc36230b78b4), (250, 0x7c5c7cd1df64f630), (500, 0x68af9b54c116ad32), (1000, 0x6e18c6379046c4cf), (2000, 0x15b87f92cede6431), (3000, 0x46bf37204f0ca06c), ],
+    &[(1, 0x37bf6ccfdb46f7b8), (2, 0x9fa77ba26e6628da), (10, 0x28798b85b5c4a617), (31, 0xd9ba88010d81751c), (100, 0xdd518517606bb2b0), (250, 0x3da4a9c234827423), (500, 0xb24e3c3f44171702), (1000, 0xe030f84fe0e5e86c), (2000, 0x5c724b9aa13e64ad), (3000, 0x0e8071407d4a56a5), ],
     // B: seed 3, giants
-    &[(1, 0xb688a6853fce93a1), (2, 0x44bd3c00579ad51b), (10, 0x42945fde5ec56688), (31, 0xc8a555195dfcc562), (100, 0x05135d6bb762208e), (250, 0x4fbd397f954235ca), (500, 0xdc59c3d746705af1), (1000, 0x599e5039db6c1f65), (2000, 0x5803ce3342812521), ],
+    &[(1, 0x91bc30e4b3aba68c), (2, 0xdf1ffd0beb740fda), (10, 0x7f1e22b1d572104d), (31, 0x154a2ddb4df8fd71), (100, 0x6879d5b694d0a35a), (250, 0x773929c214812725), (500, 0x99f61b05ef1cd64c), (1000, 0x0d90194ff10cb934), (2000, 0x5c58e747d6ae716d), ],
     // C: seed 7, lab
-    &[(1, 0x60bbec47e90a3d69), (2, 0xc028ef15cb3df708), (10, 0x897e5b8cabbb743f), (31, 0x126b4143552bdba9), (100, 0x938b04df6e8fa7a8), (250, 0x9f38692923c7060a), (500, 0x057cab437e5e94da), (1000, 0x0a445edda7ba96c3), (2000, 0xfc7670042e4b5666), (3000, 0x224cc23ab69c3b52), ],
+    &[(1, 0x85d8d55d6ba9976b), (2, 0x65d649b8f5c9b0e6), (10, 0x68e010cc7d438c6f), (31, 0xc4e842e48c26dbb7), (100, 0x47a706f85bc18dc3), (250, 0x9436e5ff859a5a34), (500, 0xf65a7ff09a0b43a7), (1000, 0xc9b099a9147660b9), (2000, 0x21a98a1a679da9f2), (3000, 0x04626505535b6b6b), ],
     // D: seed 2, scale 10
-    &[(1, 0x8314e308cd40c2fc), (2, 0x4e256505755ebcba), (10, 0x3a0510f77295ebae), (31, 0xd0987fc29d788d64), (100, 0xefe7c7b6bb73720c), (250, 0xb1604bf061f285c9), (500, 0x90f74435fdec8b4d), ],
+    &[(1, 0xe6c605854b6df25c), (2, 0x149542d6e69786c2), (10, 0x94e0acfc65da6240), (31, 0x2ab5b2009652dfa7), (100, 0xdcf1c89e2423a0ad), (250, 0x96f602b883c6cba3), (500, 0x914bd5977b26cccc), ],
     // E: seed 3, rules on the fly and a probe
-    &[(1, 0xb688a6853fce93a1), (2, 0x44bd3c00579ad51b), (10, 0xbf8e3b1ba0df9609), (31, 0x070fd404f21935ea), (100, 0xa71ccc0c09cedd15), (250, 0x4a6c919766893b8c), (500, 0xefc8fee7e4d2b706), (1000, 0x473f3c6c1ba2f8b9), ],
+    &[(1, 0x91bc30e4b3aba68c), (2, 0xdf1ffd0beb740fda), (10, 0xe645277be6f5eee0), (31, 0xa6ff11b5cf2985c1), (100, 0x06d3a09dd25a6e31), (250, 0x499a60a4805c02ab), (500, 0x8082836e98ceca41), (1000, 0xaafd8a474d44540c), ],
     // F: seed 5, a mix of strategies
-    &[(1, 0xce12de3af51bee2c), (2, 0x1092247f86c18d84), (10, 0x4962c7c32ac3d1d7), (31, 0xc5349916ede4b6ba), (100, 0xf59295781512ce7d), (250, 0x9fb8bc3663a7e0fb), (500, 0x57b8e1c1c3f4c28d), (1000, 0x5c1ee3023210567c), (2000, 0xe2cf2339fec17fab), ],
+    &[(1, 0x97e2db0c1dda6536), (2, 0x6a7ea7e0db431a18), (10, 0xff267befdcec2127), (31, 0x56ce033d34ed119e), (100, 0xab11906b806ef65c), (250, 0xbd68fcf93ca3e39a), (500, 0x7e1da75d172633a5), (1000, 0x86fbafe209f76779), (2000, 0x280726bfc9ad7be4), ],
     // G: seed 6, a x10 square, food linear and in waves
-    &[(1, 0xe72874eb2f6f4953), (2, 0x6f1a8751d333a2a3), (10, 0xd3cc57c872a6a459), (31, 0x0988fdad6e0d706b), (100, 0x6a51e37b1d7ab4c6), (250, 0x0f8948f2f1e130a7), (500, 0x74c510845f4d32dd), (1000, 0xac2bbfbae9fdd036), ],
+    &[(1, 0xc93fc6d9afd396f4), (2, 0x4c42429220a31865), (10, 0xe397e64a1edd007a), (31, 0x8da9ecb9bac5a0f0), (100, 0x2be51e8270cf3c69), (250, 0xe73bdb85f0c134a8), (500, 0xb5fe5592d87cbc09), (1000, 0x239cc99370dd6a05), ],
     // H: seed 8, fights
-    &[(1, 0x8a14fe730a7f0e33), (2, 0xb76b6ff7970cc4e9), (10, 0x3cdfd3709426e01c), (31, 0x1822af789c7586e8), (100, 0xc12de8c4d23e20e7), (250, 0x46285f8dcbad12eb), (500, 0x078199b8dacc7225), (1000, 0x6ed2e1e38a357454), (2000, 0x4fcce780444ccbe2), ],
-    // I: seed 3, the game's world x3, every diet
-    &[(1, 0x237f84b3fad4d982), (2, 0x919df0756a88e42d), (10, 0x06166c988440519a), (31, 0x730e03115b0197cd), (100, 0x82f86aeb412ecefc), (250, 0xff93c97a6ee458d6), (500, 0x0a63332fbe0aba91), (1000, 0xd338cd1a1785a7ef), (2000, 0xe526d4103f4ad490), (3000, 0x37d07b34575a4721), ],
+    &[(1, 0xa32665a81bf8ba49), (2, 0xd197e17b1fc8eb6f), (10, 0x0dc913569b14a7d6), (31, 0x152cb75f1df293a1), (100, 0x6d99710a67132ffe), (250, 0x24a503a2e6619762), (500, 0x450c704413b8f29f), (1000, 0x17fe40e09b67290d), (2000, 0x425e926210f92ae7), ],
+    // I: seed 8, the game's world x3, every diet
+    &[(1, 0x0c7e2f055381e24a), (2, 0xca068219502d9a20), (10, 0xe0ad4a488d35d4ad), (31, 0x99dc44d9ecc7e4db), (100, 0xeb842f6727b94252), (250, 0xf6c18c4b448b517f), (500, 0x345cf989e29a11a2), (1000, 0x62a4e58b0f6febe1), (2000, 0xb034910aba6b3858), (3000, 0x542a7618411a5d59), ],
+    // J: seed 4, the game's world x3 on land
+    &[(1, 0xe03e441a1153cbb8), (2, 0x0bcff4c6636b7372), (10, 0x2b8c23882342a2f7), (31, 0x4d47010fc565a55b), (100, 0x471efea4df75e658), (250, 0xfcff5ce46647163a), (500, 0xad84d708c29facb3), (1000, 0x1b1a3d30b9e1d4f8), (2000, 0x3a6b658949514089), ],
 ];
 
 #[cfg(not(windows))]
@@ -354,6 +377,11 @@ fn мир_ведёт_себя_как_при_записи() {
             8 => assert!(
                 chain::whole_chain(&w),
                 "{}: the whole food chain lives — hunts, shots, fresh meat, rot, bones, division: {c:?}",
+                case.name
+            ),
+            9 => assert!(
+                c.corpses > 0 && w.corpses.iter().all(|corpse| corpse.y == corpse.y0),
+                "{}: life goes on and the dead lie where they fell",
                 case.name
             ),
             _ => {}
