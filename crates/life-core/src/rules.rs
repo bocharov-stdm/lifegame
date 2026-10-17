@@ -87,8 +87,8 @@ pub const DIET_RULE_KEYS: [[&str; 10]; 4] = [
 
 /// The names of the configurable rules — for the report (`--rule name=number`) and the settings.
 /// The food profiles — six per axis, in the order of `flora::AXIS_PARAMS`; the diet edges come last.
-pub const RULE_KEYS: [&str; 91] = {
-    let mut all = [""; 91];
+pub const RULE_KEYS: [&str; 94] = {
+    let mut all = [""; 94];
     let mut i = 0;
     while i < WORLD_RULE_KEYS.len() {
         all[i] = WORLD_RULE_KEYS[i];
@@ -108,7 +108,7 @@ pub const RULE_KEYS: [&str; 91] = {
 };
 
 /// The rules that are not a diet's edges.
-const WORLD_RULE_KEYS: [&str; 51] = [
+const WORLD_RULE_KEYS: [&str; 54] = [
     "plant_rate",
     "plant_energy",
     "mutation_sigma",
@@ -160,6 +160,9 @@ const WORLD_RULE_KEYS: [&str; 51] = [
     "program_mutation",
     "program_drift",
     "mate_distance",
+    "day_length",
+    "night_sight",
+    "night_chill",
 ];
 
 /// Patches per base world — no more than this: at 1500 slots that is three places a patch at the
@@ -309,6 +312,12 @@ pub struct Rules {
     /// The thermocline, % of depth: warm water above `thermo_top`, cold below `thermo_bottom`.
     pub thermo_top: f64,
     pub thermo_bottom: f64,
+    /// Day and night on land (`World::night`): ticks a day lasts (0 — no days), the share of sight
+    /// left at deep night and how cold the whole land is then, 0‒1 (`config::DAY_LENGTH`, ...).
+    /// The ocean has no days whatever they are.
+    pub day_length: f64,
+    pub night_sight: f64,
+    pub night_chill: f64,
     /// What each diet is good at, by diet (H/O/S/C).
     pub diets: [DietEdges; 4],
     // derived coefficients — computed by `renormalize`
@@ -366,6 +375,9 @@ impl Default for Rules {
             corpse_bones_sink: SKELETON_SINK_SPEED,
             thermo_top: THERMO_TOP,
             thermo_bottom: THERMO_BOTTOM,
+            day_length: DAY_LENGTH,
+            night_sight: NIGHT_SIGHT,
+            night_chill: NIGHT_CHILL,
             diets: [DietEdges::of(0), DietEdges::of(1), DietEdges::of(2), DietEdges::of(3)],
             size_coef: 0.0,
             speed_coef: 0.0,
@@ -479,6 +491,9 @@ impl Rules {
             "corpse_sink" => r.corpse_sink = value,
             "corpse_decay" => r.corpse_decay = value,
             "corpse_rest" => r.corpse_rest = value,
+            "day_length" => r.day_length = value,
+            "night_sight" => r.night_sight = value,
+            "night_chill" => r.night_chill = value,
             _ => return Err(unknown(key)),
         }
         // The limits are only those past which a rule loses meaning, not «reasonable» ones: the lab
@@ -502,7 +517,10 @@ impl Rules {
             | "diet_meat_step"
             | "diet_leap_carnivore"
             | "diet_leap_scavenger"
-            | "program_mutation" => (shares(1.0), "доля от 0 до 1".into()),
+            | "program_mutation"
+            | "night_sight"
+            | "night_chill" => (shares(1.0), "доля от 0 до 1".into()),
+            "day_length" => (value >= 0.0 && whole, "целое число тиков, 0 — без смены дня и ночи".into()),
             "min_mutability" => (shares(MAX_MUTABILITY), format!("число от 0 до {MAX_MUTABILITY}")),
             "corpse_fresh" | "corpse_bones" | "corpse_decay" => {
                 (value >= 1.0 && whole, "целое число тиков не меньше 1".into())
@@ -637,6 +655,9 @@ impl Rules {
             "corpse_sink" => self.corpse_sink,
             "corpse_decay" => self.corpse_decay,
             "corpse_rest" => self.corpse_rest,
+            "day_length" => self.day_length,
+            "night_sight" => self.night_sight,
+            "night_chill" => self.night_chill,
             _ => return None,
         })
     }
@@ -760,8 +781,18 @@ mod tests {
             ("plant_patch_share", 100.5),
             ("diet_leap_carnivore", 1.5),
             ("diet_leap_scavenger", -0.1),
+            // a night sight past the day's would see farther than the eyes the upkeep pays for
+            ("night_sight", 1.1),
+            ("night_sight", -0.1),
+            ("night_chill", 1.5),
+            ("night_chill", -0.1),
+            ("day_length", -1.0),
+            ("day_length", 600.5),
         ] {
             assert!(rules.with(key, value).is_err(), "{key}={value}");
+        }
+        for (key, value) in [("night_sight", 1.0), ("night_chill", 0.0), ("day_length", 0.0)] {
+            assert!(rules.with(key, value).is_ok(), "{key}={value} is an edge, not senseless");
         }
     }
 

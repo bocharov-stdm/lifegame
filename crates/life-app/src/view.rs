@@ -23,6 +23,9 @@ const BANDS: usize = 32;
 /// How long after the last frame the animations still go on (growth, the ghosts' fading —
 /// `creatures.wgsl`): for that long the window redraws itself.
 const ANIMATION: f32 = 0.7;
+/// How fast the drawn night follows the world's, s: the light eases, so at a high speed, when a
+/// day passes in a second, the world dims a little instead of flickering.
+const DUSK_EASE: f32 = 0.8;
 /// By how much a click on a creature may miss, screen points.
 pub const PICK_RADIUS: f64 = 10.0;
 /// Less than this on a side, screen points — not a region, but a slip of the mouse.
@@ -68,6 +71,8 @@ pub struct WorldView {
     pub draw_ms: f64,
     /// Diets highlighted in the world, a bit per diet in `Diet` order (0 — none).
     pub highlight: u32,
+    /// How dark the drawn world is, 0‒1: the world's night (`night_at`), eased (`DUSK_EASE`).
+    pub dusk: f32,
 }
 
 fn pos(x: f64, y: f64) -> Pos2 {
@@ -186,6 +191,10 @@ impl WorldView {
             self.camera = None;
             self.prev_selected = None;
         }
+        // and its own sky at once: the last world's night does not fade over a new sea
+        if self.frame.as_ref().is_none_or(|old| old.world_gen != f.world_gen) {
+            self.dusk = life_core::world::night_at(f.tick, &f.rules, f.terrain).dark as f32;
+        }
         self.frame = Some(f);
     }
 
@@ -236,6 +245,13 @@ impl WorldView {
         };
         let cam = self.camera.get_or_insert_with(|| Camera::new(f.world_w, f.world_h, view));
         cam.set_view(view);
+        // the night falls on land only; the drawn one follows it softly
+        let night = life_core::world::night_at(f.tick, &f.rules, f.terrain).dark as f32;
+        let dt = ui.input(|i| i.stable_dt).min(0.1);
+        self.dusk += (night - self.dusk) * (1.0 - (-dt / DUSK_EASE).exp());
+        if (night - self.dusk).abs() > 0.004 {
+            ui.ctx().request_repaint();
+        }
 
         // ── mouse: dragging, wheel, click ───────────────────────────────────
         let mut click: Option<Click> = None;
@@ -414,17 +430,16 @@ impl WorldView {
             }
         }
 
-        // the selected creature's layer band — where it may live and eat
-        if let Some(s) = f.selected {
+        // the selected creature's layer band — where it may live and eat: its tint under the bodies,
+        // its edges over the night's veil with the other marks (below)
+        let layer_band = f.selected.map(|s| {
             let (lo, hi) = s.layer;
             let (_, y0) = cam.to_screen(0.0, lo);
             let (_, y1) = cam.to_screen(0.0, hi);
             let band = Rect::from_min_max(pos(left, y0), pos(right, y1.max(y0 + 1.0))).intersect(rect);
             painter.rect_filled(band, 0.0, rgb(CREATURE_COLOR).gamma_multiply(0.07));
-            let edge = Stroke::new(1.0, rgb(CREATURE_COLOR).gamma_multiply(0.35));
-            painter.hline(band.x_range(), y0 as f32, edge);
-            painter.hline(band.x_range(), y1 as f32, edge);
-        }
+            (band, y0, y1)
+        });
 
         // ── creatures: circles or a density map ──────────────────────────────
         if let Some((tex, r)) = &self.density {
@@ -473,7 +488,16 @@ impl WorldView {
             shot_painter.circle_filled(pos(x1, y1), 2.0, shot_color(alpha));
             ui.ctx().request_repaint();
         }
+        // the night: a veil over the ground and the bodies, under the marks the window draws
+        if self.dusk > 0.004 {
+            painter.rect_filled(world_rect.intersect(rect), 0.0, crate::theme::night_veil(self.dusk));
+        }
         painter.rect_stroke(world_rect, 0.0, Stroke::new(1.0, LINE), StrokeKind::Outside);
+        if let Some((band, y0, y1)) = layer_band {
+            let edge = Stroke::new(1.0, rgb(CREATURE_COLOR).gamma_multiply(0.35));
+            painter.hline(band.x_range(), y0 as f32, edge);
+            painter.hline(band.x_range(), y1 as f32, edge);
+        }
 
         // ── region: a given one as a frame, one being dragged as a filled frame ───
         let screen = |a: Area| {

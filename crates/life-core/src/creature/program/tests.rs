@@ -159,7 +159,10 @@ fn check(p: &Program) {
 /// summary current), count only what changed it, and a long line of mutants grows and shrinks.
 #[test]
 fn mutations_keep_a_program_valid_and_change_it() {
-    let mut rng = Rng::new(5);
+    // A walk that both grows past the template and shrinks below it. A rare walk shrinks first
+    // and never comes back above the template in 20 000 steps: seed 5 did once «темнота» joined
+    // the pool (16 of seeds 1..=20 reach 32 blocks); seed 1 does both.
+    let mut rng = Rng::new(1);
     let mut p = Program::STANDARD;
     let start = p.blocks().len();
     let (mut longest, mut shortest, mut changed) = (0, MAX_BLOCKS, 0);

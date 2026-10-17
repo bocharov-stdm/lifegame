@@ -2,7 +2,7 @@
 
 lifegame is an evolutionary simulation in Rust with a native wgpu/egui window. The Python version
 is kept at the `python-final` tag. `CLAUDE.md` holds the full set of working rules and the model
-(`life-behavior/16`) in brief, its numbers living in the code; this file is the short version.
+(`life-behavior/17`) in brief, its numbers living in the code; this file is the short version.
 
 ## Structure
 
@@ -13,7 +13,7 @@ is kept at the `python-final` tag. `CLAUDE.md` holds the full set of working rul
 - `crates/life-report`: CLI, JSON reports (`life-report/12`), balance comparison and `life-sweep`.
 - `crates/life-app`: window, rendering, settings, the simulation thread, the sweep's progress
   window.
-- `reference/*.json`: balance references (`life-behavior/16`).
+- `reference/*.json`: balance references (`life-behavior/17`).
 - `Relict/`: frozen archive; never change anything in it.
 
 A module with parts is a folder with `mod.rs`; long unit tests sit beside it in `tests.rs`. The
@@ -90,7 +90,9 @@ The model in brief is in `CLAUDE.md`, its numbers in `config.rs`. What a change 
   either parent. Partners must be close in genes (`MateKey`, the world rule `mate_distance`) and
   of the same diet; `life_sim::species` groups creatures by the same law, outside the tick.
 - A world is the ocean or land (`Terrain`): the same physics, on land the y axis is latitude and
-  the dead lie where they fell; texts written for the sea go through `Terrain::say`.
+  the dead lie where they fell; texts written for the sea go through `Terrain::say`. Land has days
+  (`world::night_at`, rules `day_length`, `night_sight`, `night_chill`): the night shrinks sight
+  (`Phenotype::under`), never smell, and chills the land; the ocean has none.
 
 Graphs and summaries are limited to the last 10 000 ticks. World rendering can be turned off;
 this doesn't change the simulation, statistics or the selected card.

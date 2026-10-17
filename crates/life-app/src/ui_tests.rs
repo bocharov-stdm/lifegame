@@ -292,6 +292,16 @@ fn land_fits_the_window_and_speaks_its_own_words() {
         h.state_mut().lab_tab = Tab::Water;
         settle(&mut h);
         assert!(h.query_by_label("Климат").is_some(), "{tag}: the lab's water tab is the climate on land");
+        // the climate speaks of warmth, and land's own day and night are there
+        assert!(
+            h.query_by_label("Тепло до").is_some() && h.query_by_label("Тёплая вода до").is_none(),
+            "{tag}"
+        );
+        assert!(
+            h.query_by_label("Длина суток").is_some() && h.query_by_label("Ночной холод").is_some(),
+            "{tag}"
+        );
+        check_layout(&h, size, &format!("климат суши в лаборатории, {tag}"), Some(panel));
         shot(&mut h, &format!("суша-климат-{tag}"));
         h.state_mut().screen = Screen::Setup;
         h.state_mut().setup_tab = Tab::World;
@@ -302,6 +312,45 @@ fn land_fits_the_window_and_speaks_its_own_words() {
         check_layout(&h, size, &format!("новый мир на суше, {tag}"), Some(page));
         assert!(h.query_by_label("Суша").is_some() && h.query_by_label("Климат").is_some(), "{tag}");
         shot(&mut h, &format!("новый-мир-суша-{tag}"));
+    }
+}
+
+/// Night on land: the world dims under its veil and the top bar says it is night; the sea never
+/// dims.
+#[test]
+fn the_land_s_night_dims_the_world() {
+    let _gpu = gpu();
+    // a day of 1200 ticks: the harness's tick 600 is midnight
+    let rules = life_core::Rules::default().with("day_length", 1200.0).expect("rule");
+    for terrain in [life_core::Terrain::Land, life_core::Terrain::Ocean] {
+        let cfg = WorldConfig {
+            seed: 4,
+            scale: 10.0,
+            shape: Shape::R2x1,
+            terrain,
+            rules: rules.clone(),
+            ..Default::default()
+        };
+        let mut h = harness_with(SMALL, cfg);
+        for _ in 0..120 {
+            h.step();
+        }
+        let dusk = h.state().view.dusk;
+        if terrain == life_core::Terrain::Land {
+            assert!(dusk > 0.9, "the land is dark at midnight: {dusk}");
+            assert!(h.query_by_label("ночь").is_some(), "the top bar says it");
+            shot(&mut h, "суша-ночь-960x600");
+        } else {
+            assert_eq!(dusk, 0.0, "the sea has no nights");
+            assert!(h.query_by_label("ночь").is_none());
+            // nor the night's fields in its lab
+            h.state_mut().side_open = true;
+            h.state_mut().side_tab = SideTab::Lab;
+            h.state_mut().lab_tab = Tab::Water;
+            settle(&mut h);
+            assert!(h.query_by_label("Тёплая вода до").is_some(), "the sea keeps its water");
+            assert!(h.query_by_label("Длина суток").is_none() && h.query_by_label("Ночной холод").is_none());
+        }
     }
 }
 

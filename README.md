@@ -5,7 +5,7 @@ genome, a table of genes that mutates when it divides or mates. Nobody scripts s
 themselves survive. The game, the headless runs and the balance report are Rust; the earlier
 Python and pygame version is kept under the tag `python-final`.
 
-The current model is `life-behavior/16`. [CLAUDE.md](CLAUDE.md) holds the project's working rules
+The current model is `life-behavior/17`. [CLAUDE.md](CLAUDE.md) holds the project's working rules
 and the model in brief (its exact numbers live in the code, `config.rs` above all);
 [BEHAVIOR.md](BEHAVIOR.md) records how the model got here, stage by stage.
 
@@ -30,7 +30,9 @@ and the model in brief (its exact numbers live in the code, `config.rs` above al
   there.
 - **Land** is the other world («Новый мир», `--terrain land`): the same physics seen from above —
   the warm edge on top, the cold one below, a layer is a climate belt — and the dead lie where they
-  fell.
+  fell. Land has days and nights (600 ticks by default): at night sight shrinks while the nose
+  does not, and the whole land grows cold, so the cold-blooded slow down and save; a test «темнота»
+  lets a program tell the time.
 - **Behaviour is a program that evolves**: an ordered list of blocks «if up to three tests → an
   action with its parameters», such as: flee a hunter closer than a third of its sight, hunt prey
   1.5 times smaller with some caution, defend its child, rest when full, wander at a third of its
@@ -130,7 +132,7 @@ cargo run -p life-report --release -- --compare reference/fingerprint.json
 cargo run -p life-report --release -- --save-reference reference/fingerprint.json
 ```
 
-`reference/*.json` are balance fingerprints (8 seeds × 20 000 ticks) of `life-behavior/16`. The
+`reference/*.json` are balance fingerprints (8 seeds × 20 000 ticks) of `life-behavior/17`. The
 comparison repeats the same seeds and checks the statistics; a reference of another model is
 refused.
 

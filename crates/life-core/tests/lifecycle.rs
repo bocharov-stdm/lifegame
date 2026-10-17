@@ -399,6 +399,108 @@ fn бонусы_диет() {
     assert_eq!((s.pheno.smell, c.pheno.smell, o.pheno.smell), (3.0 * vision, 1.5 * vision, 1.2 * vision));
 }
 
+/// The land's day turns smoothly: noon at tick 0, full night half a day later, the night's sight
+/// and chill at their rules there; the ocean and a land without days never get dark.
+#[test]
+fn the_land_s_day_turns_smoothly_and_the_sea_has_none() {
+    use life_core::Terrain;
+    use life_core::creature::Night;
+    use life_core::world::night_at;
+    let r = Rules::default().with("night_sight", 0.3).unwrap().with("night_chill", 0.6).unwrap();
+    let length = r.day_length as u64;
+    assert_eq!(night_at(0, &r, Terrain::Land), Night::NONE, "noon");
+    assert_eq!(night_at(length / 2, &r, Terrain::Land), Night { dark: 1.0, sight: 0.3, chill: 0.6 });
+    for tick in [0, length / 4, length / 2, 7 * length] {
+        assert_eq!(night_at(tick, &r, Terrain::Ocean), Night::NONE, "the sea at {tick}");
+    }
+    let endless = r.with("day_length", 0.0).unwrap();
+    assert_eq!(night_at(length / 2, &endless, Terrain::Land), Night::NONE, "no days");
+    let (mut day, mut night, mut last) = (0, 0, 0.0);
+    for tick in 0..=2 * length {
+        let n = night_at(tick, &r, Terrain::Land);
+        assert!((n.dark - last).abs() < 0.05, "tick {tick}: {last} -> {}", n.dark);
+        assert!((n.sight - (1.0 - 0.7 * n.dark)).abs() < 1e-12 && (n.chill - 0.6 * n.dark).abs() < 1e-12);
+        day += usize::from(n.dark == 0.0);
+        night += usize::from(n.dark == 1.0);
+        last = n.dark;
+    }
+    // a day and a night take about 40% of the turn each, dusk and dawn the rest
+    for share in [day, night] {
+        let share = share as f64 / (2 * length) as f64;
+        assert!((0.35..0.45).contains(&share), "{share}");
+    }
+}
+
+/// At night its sight shrinks and its nose does not, its eyes cost the same, and the land is cold:
+/// a cold-blooded body slows and saves, a warm-blooded one does not. Ageing keeps the night.
+#[test]
+fn the_night_takes_sight_and_warmth_not_the_nose() {
+    use life_core::config::{COLD_SAVING, COLD_SLOWING, THERMO_TOP};
+    use life_core::creature::Night;
+    let (r, space) = (Rules::default(), Space::default());
+    let night = Night { dark: 1.0, sight: 0.4, chill: 0.5 };
+    let body = |cold: f64| {
+        let mut v = parent();
+        v.genome = v.genome.with(Gene::ColdBlood, cold);
+        v.apply_rules(&r, &space);
+        v
+    };
+    let (mut warm, mut cold) = (body(0.0), body(100.0));
+    let day = warm.pheno;
+    let warm_top = space.height * THERMO_TOP / 200.0;
+    for v in [&mut warm, &mut cold] {
+        v.pheno.under(night);
+    }
+    assert_eq!(warm.pheno.vision, day.eyes * 0.4);
+    assert_eq!(warm.pheno.vision2, warm.pheno.vision * warm.pheno.vision);
+    assert_eq!((warm.pheno.smell, warm.pheno.upkeep, warm.pheno.eyes), (day.smell, day.upkeep, day.eyes));
+    assert_eq!(warm.pheno.coldness(warm_top), 0.5, "the warm belt is cold at night");
+    assert_eq!(warm.pheno.coldness(space.height), 1.0, "the cold belt is no colder");
+    assert_eq!(warm.pheno.temper(warm_top), (1.0, 1.0));
+    assert_eq!(cold.pheno.temper(warm_top), (1.0 - COLD_SLOWING * 0.5, 1.0 - COLD_SAVING * 0.5));
+    // every recompute of the phenotype keeps the night: ageing (it really recomputes: weaker eyes),
+    // growing on food, new rules
+    let under_the_night = |v: &Creature, what: &str| {
+        assert_eq!(v.pheno.night, night, "{what}");
+        assert_eq!(v.pheno.vision, v.pheno.eyes * 0.4, "{what}");
+        assert_eq!(v.pheno.vision2, v.pheno.vision * v.pheno.vision, "{what}");
+    };
+    let eyes = cold.pheno.eyes;
+    cold.age = cold.pheno.lifespan * 0.9;
+    cold.grow_old(&r);
+    assert!(cold.pheno.vigour < 1.0 && cold.pheno.eyes < eyes, "old age weakened the eyes");
+    under_the_night(&cold, "aged");
+    let mut young = parent().maybe_divide(&space, &r).expect("a child");
+    young.pheno.under(night);
+    let size = young.pheno.size;
+    young.nourish(10.0, &r);
+    assert!(young.pheno.size > size, "it grew");
+    under_the_night(&young, "grown");
+    young.apply_rules(&r.with("night_sight", 0.9).unwrap(), &space);
+    under_the_night(&young, "new rules: the world's next tick brings the new night");
+    // the day gives the day's numbers back bit for bit
+    warm.pheno.under(Night::NONE);
+    assert_eq!(warm.pheno, day);
+}
+
+/// A land world by day goes as one without days: until the first dusk the two are the same world.
+#[test]
+fn a_land_day_is_a_world_without_days() {
+    use life_core::{Terrain, World, WorldConfig};
+    let world = |days: f64| {
+        let rules = Rules::default().with("day_length", days).unwrap();
+        let mut w = World::new(&WorldConfig { seed: 4, terrain: Terrain::Land, rules, ..Default::default() });
+        for _ in 0..150 {
+            w.step();
+        }
+        let at = |v: &Creature| (v.id, v.x.to_bits(), v.y.to_bits(), v.energy.to_bits());
+        (w.stats(), w.creatures.iter().map(at).collect::<Vec<_>>())
+    };
+    // with a day of 1000 ticks the dusk begins past tick 200
+    assert_eq!(world(0.0), world(1000.0));
+    assert_ne!(world(0.0), world(200.0), "a night within the run changes the world");
+}
+
 /// Cold deep water: a cold-blooded body is slower and cheaper below the thermocline, by its gene
 /// times the coldness; a warm-blooded one is the same everywhere. It saves, it never gains.
 #[test]

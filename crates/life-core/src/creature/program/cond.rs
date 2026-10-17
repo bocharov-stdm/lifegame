@@ -52,6 +52,9 @@ pub enum Cond {
     /// A partner it could mate with (`Action::SeekMate`) closer to its body's edge than the
     /// threshold of its sight.
     MateSeen,
+    /// At least the threshold dark: 0 by day, 1 at deep night (`Night::dark`); the ocean has no
+    /// nights.
+    Night,
 }
 
 const FULLNESS: ParamSpec = ParamSpec::percent("сытость", 0, 100, 50);
@@ -67,9 +70,10 @@ const AGE: ParamSpec = ParamSpec::percent("возраст", 0, 100, 70);
 const COLD: ParamSpec = ParamSpec::percent("холод", 0, 100, 50);
 pub(super) const MODE: ParamSpec = ParamSpec::index("режим", MODES as u16);
 const MATE: ParamSpec = ParamSpec::sight("пара ближе", 0, 100, 100, PROGRAM_NUDGE_POINTS);
+const NIGHT: ParamSpec = ParamSpec::percent("темнота", 0, 100, 50);
 
 impl Cond {
-    pub const ALL: [Cond; 21] = [
+    pub const ALL: [Cond; 22] = [
         Cond::Always,
         Cond::Fullness,
         Cond::Health,
@@ -91,6 +95,7 @@ impl Cond {
         Cond::InLayer,
         Cond::Mode,
         Cond::MateSeen,
+        Cond::Night,
     ];
 
     /// The threshold a test reads, if it has one.
@@ -107,6 +112,7 @@ impl Cond {
             Cond::Cold => Some(COLD),
             Cond::Mode => Some(MODE),
             Cond::MateSeen => Some(MATE),
+            Cond::Night => Some(NIGHT),
             _ => None,
         }
     }
@@ -135,6 +141,7 @@ impl Cond {
             Cond::InLayer => ("в своём слое", "вне своего слоя"),
             Cond::Mode => ("включён режим", "выключен режим"),
             Cond::MateSeen => ("пара ближе", "пары нет ближе"),
+            Cond::Night => ("темнота ≥", "темнота <"),
         }
     }
 
@@ -178,6 +185,10 @@ impl Cond {
                 "Ближе этой доли зрения (до края тела) есть партнёр, с которым оно могло бы \
                  спариться: выросший, готовый (на его последнем ходу действовала «спариваться»), с \
                  близким геномом, не родня."
+            }
+            Cond::Night => {
+                "Насколько сейчас темно: 0% — день, 100% — глубокая ночь. Ночью зрение короче, нюх \
+                 тот же, и холоднее. Дни и ночи есть только на суше."
             }
         }
     }

@@ -940,6 +940,30 @@ fn the_chain_by_seed() {
 /// makes energy breaks this at once.
 #[test]
 fn energy_is_never_made_from_nothing() {
+    // a seed whose world takes the whole chain in (`the_chain_by_seed`)
+    let mut w = World::new(&game_world(8));
+    no_energy_from_nothing(&mut w, 3000);
+    assert!(chain::whole_chain(&w), "the whole chain took part: {:?}", w.counters);
+}
+
+/// The same on land through its days and nights: the night only takes.
+#[test]
+fn the_land_s_nights_make_no_energy() {
+    let mut w = World::new(&WorldConfig { terrain: life_core::Terrain::Land, ..game_world(8) });
+    let length = w.rules.day_length as usize;
+    assert!(length > 0, "land has days");
+    // ticks lived at deep night by somebody: the check saw nights, not an empty world
+    let mut dark = 0;
+    for _ in 0..2 * length {
+        no_energy_from_nothing(&mut w, 1);
+        dark += usize::from(w.night().dark == 1.0 && !w.creatures.is_empty());
+    }
+    assert!(dark > length / 2, "{dark} ticks of deep night with the living");
+    assert!(!w.creatures.is_empty(), "the land lives through two days");
+}
+
+/// Tick by tick for `ticks`: the living and the corpses gain no more than the plants they bit.
+fn no_energy_from_nothing(w: &mut World, ticks: usize) {
     let held = |w: &World| {
         let living: f64 = w
             .creatures
@@ -948,13 +972,11 @@ fn energy_is_never_made_from_nothing() {
             .sum();
         living + w.corpses.iter().map(|c| c.remaining).sum::<f64>()
     };
-    // a seed whose world takes the whole chain in (`the_chain_by_seed`)
-    let mut w = World::new(&game_world(8));
     let bite = w.rules.plant_energy * w.rules.plant_bite_yield / f64::from(life_core::plant::PORTIONS);
-    for _ in 0..3000 {
-        let (before, bites) = (held(&w), w.counters.plant_bites);
+    for _ in 0..ticks {
+        let (before, bites) = (held(w), w.counters.plant_bites);
         w.step();
-        let (after, eaten) = (held(&w), (w.counters.plant_bites - bites) as f64 * bite);
+        let (after, eaten) = (held(w), (w.counters.plant_bites - bites) as f64 * bite);
         assert!(
             after - before <= eaten + 1e-9 * before.max(1.0),
             "tick {}: the living and the corpses gained {:.6}, the plants gave {eaten:.6}",
@@ -962,7 +984,6 @@ fn energy_is_never_made_from_nothing() {
             after - before
         );
     }
-    assert!(chain::whole_chain(&w), "the whole chain took part: {:?}", w.counters);
 }
 
 #[test]

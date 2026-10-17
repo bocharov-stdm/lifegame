@@ -9,7 +9,7 @@ first.
 
 lifegame — an evolutionary sandbox: plants and creatures in a 2D sea or on land. A creature carries a genome
 (a gene table) and two behaviour programs that mutate on division; selection is emergent, not
-scripted. Rust only, model `life-behavior/16`:
+scripted. Rust only, model `life-behavior/17`:
 
 - `crates/life-core` — the engine; no graphics, no I/O, threads only through rayon (`parallel`).
 - `crates/life-sim` — bounded headless runs, snapshots, the chronicle, the species (`species.rs`).
@@ -98,7 +98,10 @@ chronicle texts (`life_sim::observe`).
   (`world::Occupancy`) rebuilt when the plant count stops matching — keep direct edits of `plants`
   changing the count. A world is the ocean or land (`Terrain` in `Space`): the same physics, on land
   the y axis is latitude and the dead lie where they fell; a text written for the sea is said for
-  land by `Terrain::say` (the game: `words::say`, the terrain kept in egui's memory).
+  land by `Terrain::say` (the game: `words::say`, the terrain kept in egui's memory). Land has days
+  and nights (`world::night_at`, once a tick before the snapshot): the night takes sight
+  (`Phenotype::under`; `eyes` keep the day's, which the upkeep pays for), never smell, and chills
+  the whole land (`Phenotype::coldness`); by day a land world goes as one without days, bit for bit.
 - **Corpses**: meat = the body grown since birth + the tank (`corpse::meat`); fresh, then rot that
   sinks and decays to bones (`corpse_*` rules).
 
@@ -133,8 +136,8 @@ I/O; `life-app` alone knows the screen.
   `strategy/` the decision, `steer.rs`), `flora.rs` + `plant.rs`, `combat.rs`, `corpse.rs`,
   `senses/` + `grid.rs`, `par.rs`, `profile.rs`, `space.rs` + `units.rs`, `rng.rs`. A module with
   parts is a folder with `mod.rs`; long unit tests sit beside it in `tests.rs`.
-- **Tick order**: plants → corpses decay → old age, the last tick's kinship kept
-  (`Creature::remember_kin`) → neighbour snapshot → decisions, healing, ageing, movement →
+- **Tick order**: plants → corpses decay → old age and the night (`world::night_at` of the tick
+  being made, land only), the last tick's kinship kept (`Creature::remember_kin`) → neighbour snapshot → decisions, healing, ageing, movement →
   eating plants → simultaneous strikes and shots → survivors eat corpses → reproduction (mating,
   else division) → removing
   the dead, adding children → tick number. Strikes are collected before damage (mutual death

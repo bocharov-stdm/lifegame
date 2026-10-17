@@ -89,7 +89,13 @@ pub struct Phenotype {
     pub melee_size_power: f64,
     /// How far apart two genomes may be and still mate (`Rules::mate_distance`).
     pub mate_distance: f64,
+    /// How far it sees now: its eyes (`eyes`) as far as the night lets them (`Night::sight`).
     pub vision: f64,
+    /// How far it sees by day: the `vision` gene times its vigour. Its eyes cost by this.
+    pub eyes: f64,
+    /// The night it lives in this tick (`World::night`, `under`); `Night::NONE` by day and in a
+    /// world without days.
+    pub night: Night,
 
     // ── bounds ─────────────────────────────────────────────────────────────
     /// The body's bounds in the world: its centre never goes past them. Its layer is its program's
@@ -180,6 +186,8 @@ impl Phenotype {
             melee_size_power: rules.melee_size_power,
             mate_distance: rules.mate_distance,
             vision,
+            eyes: vision,
+            night: Night::NONE,
             x_lo,
             x_hi,
             y_lo,
@@ -212,7 +220,32 @@ pub fn melee_damage(strike: f64, size: f64, target: f64, power: f64) -> f64 {
     if size <= target { strike } else { strike * (size / target).powf(power) }
 }
 
+/// What the night takes on land (`World::night`): how dark it is (0 day, 1 deep night), the
+/// share of sight left and how cold the whole land is at least (0‒1). It only takes: no sight, no
+/// warmth is given back that the day did not have.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Night {
+    pub dark: f64,
+    pub sight: f64,
+    pub chill: f64,
+}
+
+impl Night {
+    /// Day, or a world without days: nothing taken.
+    pub const NONE: Night = Night { dark: 0.0, sight: 1.0, chill: 0.0 };
+}
+
 impl Phenotype {
+    /// This tick's night (`World::night`): its sight shrinks, its nose does not (`smell` stays by
+    /// its eyes), and the cold reads the night's chill. `Night::NONE` gives the day's numbers bit
+    /// for bit.
+    #[inline]
+    pub fn under(&mut self, night: Night) {
+        self.night = night;
+        self.vision = self.eyes * night.sight;
+        self.vision2 = self.vision * self.vision;
+    }
+
     /// Efficiency on a corpse at `stage`. Unless its program lets it eat foreign food this tick
     /// (`foreign`, `Action::EatForeign`), another niche's food is worth nothing (0): a scavenger
     /// leaves fresh corpses to the hunters, a carnivore rot and bones to the scavengers.
@@ -226,15 +259,18 @@ impl Phenotype {
         if foreign || own { efficiency } else { 0.0 }
     }
 
-    /// How cold the water is at depth `y`: 0 above the thermocline, a smooth step to 1 below it.
+    /// How cold the water is at depth `y`: 0 above the thermocline, a smooth step to 1 below it;
+    /// on land at night at least the night's chill (`Night::chill`).
     #[inline]
     pub fn coldness(&self, y: f64) -> f64 {
         let (top, bottom) = self.thermo;
-        if bottom <= top {
-            return if y >= top { 1.0 } else { 0.0 };
-        }
-        let t = ((y - top) / (bottom - top)).clamp(0.0, 1.0);
-        t * t * (3.0 - 2.0 * t)
+        let water = if bottom <= top {
+            if y >= top { 1.0 } else { 0.0 }
+        } else {
+            let t = ((y - top) / (bottom - top)).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        water.max(self.night.chill)
     }
 
     /// (speed, upkeep) factors at depth `y`: a cold-blooded body is slower and cheaper in the cold.

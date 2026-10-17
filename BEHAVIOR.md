@@ -6,7 +6,25 @@ brief and in the code exactly (`config.rs`, `Rules::default()`, the templates in
 stage (the review rounds, the measurements and acceptance runs of models long gone) are in git:
 `git show fbb85ba:BEHAVIOR.md`.
 
-## `life-behavior/16`: two parents, land, species (current)
+## `life-behavior/17`: land with a character of its own (current)
+
+Land was the ocean with its axis renamed. It gets its own features, land only: the ocean's physics
+stay as they were (checked: with «темнота» out of the mutation pool the ocean's golden configs keep
+their digests bit for bit). With it in, the pool grows by one test, so every seed shifts, the
+ocean's too, and an ocean program may carry «темнота», which there always reads 0% dark.
+
+- **Day and night** (the user's choice, 2026-10-16). The sun goes round in `day_length` ticks (600),
+  full day and full night 40% of the turn each, dusk and dawn smooth (`world::night_at`). At night
+  sight shrinks to `night_sight` (40%) of the day's while the nose keeps its reach, so the night
+  is the noses' time; the eyes cost what they cost by day. Every distance a block measures in
+  shares of sight shrinks with it — the wander, the flight, the hunt, the partner, the guard — and
+  so does the shot's range. The night is cold: the whole land at least `night_chill` (50%) cold,
+  so the cold-blooded slow down and save while the warm-blooded keep their pace — a niche through
+  the existing body, no new gene. Nothing is made: the night only takes. A test «темнота» lets a
+  program tell the time; the templates do not use it. The game dims the world under a veil that
+  follows the night softly and says the time of day in the top bar.
+
+## `life-behavior/16`: two parents, land, species
 
 Golden (ten configs now) and both references re-recorded with this stage. The balance is unmeasured
 until the stage's sweep.

@@ -441,6 +441,12 @@ fn body_age_and_place_tests_read_themselves() {
     let deep = body(CreatureGenome::BASE, v.pheno.height * 0.6, 0.5);
     let shallow = body(CreatureGenome::BASE, v.pheno.height * 0.05, 0.5);
     assert!(fires(&deep, Test::at(Cond::Cold, 100)) && !fires(&shallow, Test::at(Cond::Cold, 1)));
+    // the night: as dark as the land's sky, and as cold as its chill even near the warm edge
+    let mut dusk = shallow.clone();
+    assert!(!fires(&dusk, Test::at(Cond::Night, 1)) && fires(&dusk, Test::at(Cond::Night, 1).not()));
+    dusk.pheno.under(crate::creature::Night { dark: 0.6, sight: 0.7, chill: 0.3 });
+    assert!(fires(&dusk, Test::at(Cond::Night, 60)) && !fires(&dusk, Test::at(Cond::Night, 61)));
+    assert!(fires(&dusk, Test::at(Cond::Cold, 30)) && !fires(&dusk, Test::at(Cond::Cold, 31)));
     // a layer setting from 5% to 50% of the depth: the tests after it see its band
     let layered = |v: &Creature, test: Test| {
         let program = Program::of(&[

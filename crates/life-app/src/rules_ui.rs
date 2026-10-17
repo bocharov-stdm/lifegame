@@ -15,8 +15,9 @@ use crate::theme::{self, BG, DANGER, MUTED};
 const WATER_NOTE: &str = "Сверху вода тёплая, ниже термоклина — холодная. Хладнокровным в холоде жить \
                           дешевле, но плавают они медленнее; теплокровным всё равно.";
 /// The same tab on land, «Климат».
-const CLIMATE_NOTE: &str = "У верхнего края тепло, за границей холода — холодно. Хладнокровным в холоде \
-                            жить дешевле, но ходят они медленнее; теплокровным всё равно.";
+const CLIMATE_NOTE: &str = "У верхнего края тепло, за границей холода — холодно, а ночью холодает везде. \
+                            Хладнокровным в холоде жить дешевле, но ходят они медленнее; теплокровным \
+                            всё равно. Ночью зрение короче, а нюх тот же.";
 
 /// What the «Вода» tab is about, for the world's terrain.
 pub fn water_note(ctx: &egui::Context) -> &'static str {
@@ -111,7 +112,7 @@ pub fn field_input(ui: &mut egui::Ui, f: &Field, value: &mut f64) -> bool {
                     })
                     .suffix(unit),
             )
-            .on_hover_text(field_hint(f));
+            .on_hover_text(crate::words::say(ui.ctx(), &field_hint(f)));
         if response.changed() {
             *value = shown / f.shown;
         }

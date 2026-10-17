@@ -1,20 +1,20 @@
 //! The simulation's state and one logical tick.
 //!
-//! The order of a tick: plants → corpses decay → old age, the last tick's kinship kept → grids and
-//! the herd snapshot → every creature's move (decision, healing, step; in parallel) → eating
-//! plants → simultaneous strikes and shots → survivors eat corpses → division → the dead become
-//! corpses, eaten plants swept, children added → the tick counter. Relatives are seen by the
-//! snapshot at the start of the phase. One that starved or aged out on its move neither eats nor
-//! divides; one killed in the fight gets no prey and does not divide. Children do not move in the
-//! tick of their birth. A fight is a separate pass after all the creatures have moved, when they
-//! already stand; fights are always on.
+//! The order of a tick: plants → corpses decay → old age and the night (land only), the last
+//! tick's kinship kept → grids and the herd snapshot → every creature's move (decision, healing,
+//! step; in parallel) → eating plants → simultaneous strikes and shots → survivors eat corpses →
+//! division → the dead become corpses, eaten plants swept, children added → the tick counter.
+//! Relatives are seen by the snapshot at the start of the phase. One that starved or aged out on
+//! its move neither eats nor divides; one killed in the fight gets no prey and does not divide.
+//! Children do not move in the tick of their birth. A fight is a separate pass after all the
+//! creatures have moved, when they already stand; fights are always on.
 //!
 //! Predators were a species of their own until the tag `predators-final`; the meat diets and
 //! corpses took their place.
 
 use crate::config::*;
 use crate::creature::strategy as creature_strategy;
-use crate::creature::{Creature, Diet, Food, Meal, Morsel};
+use crate::creature::{Creature, Diet, Food, Meal, Morsel, Night};
 use crate::flora::Flora;
 use crate::genome::{CreatureGenome, creature, variant_for};
 use crate::grid::Grid;
@@ -172,6 +172,25 @@ impl Counters {
     }
 }
 
+/// The night on `terrain` at `tick` by the rules: only land has days. The sun goes round once in
+/// `day_length` ticks, noon at tick 0; above `DUSK` of its height it is full day, below minus
+/// `DUSK` full night, a smooth step between (dusk and dawn). By day it is exactly `Night::NONE`,
+/// so a land world by day goes as one without days.
+pub fn night_at(tick: u64, rules: &Rules, terrain: Terrain) -> Night {
+    let length = rules.day_length as u64;
+    if terrain != Terrain::Land || length == 0 {
+        return Night::NONE;
+    }
+    let sun = (std::f64::consts::TAU * (tick % length) as f64 / length as f64).cos();
+    let t = ((DUSK - sun) / (2.0 * DUSK)).clamp(0.0, 1.0);
+    let dark = t * t * (3.0 - 2.0 * t);
+    if dark == 0.0 {
+        return Night::NONE;
+    }
+    // at deep night exactly the rules' values
+    Night { dark, sight: rules.night_sight * dark + (1.0 - dark), chill: rules.night_chill * dark }
+}
+
 #[derive(Clone, Debug)]
 pub struct World {
     pub corpses: Vec<crate::corpse::Corpse>,
@@ -298,6 +317,12 @@ impl World {
         self.next_id - 1
     }
 
+    /// The night the creatures lived the last tick under (`night_at` of the tick counter, which a
+    /// step sets after applying it): on land with days, else `Night::NONE`.
+    pub fn night(&self) -> Night {
+        night_at(self.tick, &self.rules, self.space.terrain)
+    }
+
     // ── one logical tick ────────────────────────────────────────────────────
     pub fn step(&mut self) {
         let mut clock = Stopwatch::start(self.profile.is_some());
@@ -368,9 +393,14 @@ impl World {
             }
             keep
         });
-        // old age weakens before anyone looks: the snapshot and the moves see the aged bodies
+        // old age weakens and the night falls before anyone looks: the snapshot and the moves see
+        // the aged bodies under this tick's sky
+        let night = night_at(now, &self.rules, self.space.terrain);
         for v in &mut self.creatures {
             v.grow_old(&self.rules);
+            if v.pheno.night != night {
+                v.pheno.under(night);
+            }
             // its step counts it on to this tick
             v.mind.tick = self.tick;
             v.remember_kin();

@@ -31,7 +31,10 @@ impl LifeApp {
                             self.lab_reset_selected.remove(&f.key);
                         }
                     }
-                    ui.label(f.label).on_hover_text(crate::rules_ui::field_hint(f));
+                    // on land the sea's words are said the land's way, as on «Новый мир»
+                    let say = |text: &str| crate::words::say(ui.ctx(), text);
+                    let (label, hint) = (say(f.label), say(&crate::rules_ui::field_hint(f)));
+                    ui.label(label).on_hover_text(hint);
                     let mut v = self.lab.get(f.key);
                     if crate::rules_ui::field_input(ui, f, &mut v) {
                         self.lab.set(f.key, v);

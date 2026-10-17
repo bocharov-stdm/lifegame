@@ -12,7 +12,7 @@ mod scene;
 mod steer;
 pub mod strategy;
 
-pub use phenotype::{Diet, Phenotype, melee_damage, vigour};
+pub use phenotype::{Diet, Night, Phenotype, melee_damage, vigour};
 pub use program::{ADULT, Action, Block, Cond, JUVENILE, Program, Programs, Test};
 pub use strategy::{Activity, Aid, Chase, Food, Intent, Me, Menace, Mind, Sighting, Stance, Strategy};
 
@@ -374,7 +374,9 @@ impl Creature {
 
     pub fn apply_rules(&mut self, rules: &Rules, space: &Space) {
         self.mate_key = self.genome.mate_key(rules.mutation_sigma);
+        let night = self.pheno.night;
         self.pheno = Phenotype::aged(&self.genome, rules, space, self.pheno.size, self.pheno.vigour);
+        self.pheno.under(night);
         self.space = *space;
     }
 
@@ -383,7 +385,9 @@ impl Creature {
     pub fn grow_old(&mut self, rules: &Rules) {
         let vigour = vigour(self.age, self.pheno.lifespan);
         if vigour != self.pheno.vigour {
+            let night = self.pheno.night;
             self.pheno = Phenotype::aged(&self.genome, rules, &self.space, self.pheno.size, vigour);
+            self.pheno.under(night);
             self.health = self.health.min(self.max_health());
         }
     }
@@ -439,7 +443,9 @@ impl Creature {
         let health_share = self.health / self.max_health();
         if growth > 0.0 {
             let (size, vigour) = (self.pheno.size + growth, self.pheno.vigour);
+            let night = self.pheno.night;
             self.pheno = Phenotype::aged(&self.genome, rules, &self.space, size, vigour);
+            self.pheno.under(night);
             self.x = self.x.clamp(self.pheno.x_lo, self.pheno.x_hi);
             self.y = self.y.clamp(self.pheno.y_lo, self.pheno.y_hi);
         }

@@ -144,6 +144,9 @@ pub enum Key {
     ProgramMutation,
     ProgramDrift,
     MateDistance,
+    DayLength,
+    NightSight,
+    NightChill,
     /// A diet's edge: (diet H/O/S/C, edge in `rules::DIET_EDGES` order).
     Diet(u8, u8),
 }

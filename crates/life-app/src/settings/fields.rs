@@ -65,6 +65,11 @@ fn in_water(s: &Settings) -> bool {
     s.terrain == life_core::Terrain::Ocean
 }
 
+/// The fields of day and night: only land has them (`life_core::world::night_at`).
+fn on_land(s: &Settings) -> bool {
+    s.terrain == life_core::Terrain::Land
+}
+
 fn profile_label(v: f64) -> String {
     Profile::of(v).label().into()
 }
@@ -99,8 +104,8 @@ fn per100(v: f64) -> String {
 
 /// Every field: the world's and the rules' (`BASE_FIELDS`), then the diet edges, diet by diet
 /// (`diet_field`).
-pub const FIELDS: [Field; 98] = {
-    let mut all = [NUMBER; 98];
+pub const FIELDS: [Field; 101] = {
+    let mut all = [NUMBER; 101];
     let mut i = 0;
     while i < BASE_FIELDS.len() {
         all[i] = BASE_FIELDS[i];
@@ -253,7 +258,7 @@ const fn diet_field(d: usize, e: usize) -> Field {
     }
 }
 
-const BASE_FIELDS: [Field; 58] = [
+const BASE_FIELDS: [Field; 61] = [
     // ── World: what a game begins with ──────────────────────────────────────────
     Field {
         key: Key::Creatures,
@@ -927,6 +932,55 @@ const BASE_FIELDS: [Field; 58] = [
         unit: " %",
         tab: Tab::Water,
         rule: Some("thermo_bottom"),
+        ..NUMBER
+    },
+    Field {
+        key: Key::DayLength,
+        label: "Длина суток",
+        hint: "Сколько тиков длятся сутки на суше: день, сумерки, ночь, рассвет. Ночью темно — зрение \
+               короче, а нюх тот же — и холодно: хладнокровные медленнее и экономнее, теплокровным \
+               всё равно. 0 — вечный день.",
+        lo: 0.0,
+        hi: 20_000.0,
+        step: 10.0,
+        unit: " тиков",
+        tab: Tab::Water,
+        rule: Some("day_length"),
+        visible: on_land,
+        ..NUMBER
+    },
+    Field {
+        key: Key::NightSight,
+        label: "Зрение ночью",
+        hint: "Какая доля зрения остаётся глубокой ночью. Нюх на падаль ночью не слабеет: ночь — \
+               время тех, у кого хороший нос. Глаза стоят столько же, сколько днём. Ночью короче \
+               всё, что меряется зрением: блуждание, бегство, охота, поиск пары, выстрел.",
+        lo: 0.0,
+        hi: 1.0,
+        step: 0.01,
+        format: |v| format!("{:.0}%", v * 100.0),
+        shown: 100.0,
+        unit: " %",
+        tab: Tab::Water,
+        rule: Some("night_sight"),
+        visible: on_land,
+        ..NUMBER
+    },
+    Field {
+        key: Key::NightChill,
+        label: "Ночной холод",
+        hint: "Насколько холодно глубокой ночью по всей суше, как за границей холода — 100%. \
+               Хладнокровные в холоде медленнее и тратят меньше; там, где и днём холодно, ночь \
+               холоднее не делает.",
+        lo: 0.0,
+        hi: 1.0,
+        step: 0.01,
+        format: |v| format!("{:.0}%", v * 100.0),
+        shown: 100.0,
+        unit: " %",
+        tab: Tab::Water,
+        rule: Some("night_chill"),
+        visible: on_land,
         ..NUMBER
     },
     // ── Evolution ───────────────────────────────────────────────────────────────

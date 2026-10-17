@@ -70,6 +70,17 @@ pub fn ground(latitude: f64, top: f64, bottom: f64) -> [u8; 3] {
     layered([LAND_TOP, LAND_WARM, LAND_COLD, LAND_BOTTOM], latitude, top, bottom)
 }
 
+/// The night's veil over the land (`WorldView::dusk`): a deep blue, at most `NIGHT_VEIL` thick,
+/// so even at midnight the bodies stay seen.
+const NIGHT: [u8; 3] = [4, 8, 26];
+const NIGHT_VEIL: f32 = 0.5;
+
+/// The veil at darkness `dark`, 0‒1.
+pub fn night_veil(dark: f32) -> Color32 {
+    let [r, g, b] = NIGHT;
+    Color32::from_rgba_unmultiplied(r, g, b, (dark.clamp(0.0, 1.0) * NIGHT_VEIL * 255.0) as u8)
+}
+
 /// The world's colour at `pct` % of its height for the terrain.
 pub fn world(terrain: life_core::Terrain, pct: f64, top: f64, bottom: f64) -> [u8; 3] {
     match terrain {

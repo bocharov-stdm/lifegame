@@ -285,6 +285,7 @@ impl Scene {
                 mind.modes[k] > mind.tick
             }
             Cond::MateSeen => self.mate(me, senses, value * me.pheno.vision).is_some(),
+            Cond::Night => me.pheno.night.dark >= value,
         };
         holds != t.negate
     }

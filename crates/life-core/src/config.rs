@@ -305,6 +305,20 @@ pub const COLD_SLOWING: f64 = 0.4;
 pub const COLD_BLOOD_STEP: f64 = 10.0;
 /// Scavenger founders (in a start mix) start this cold-blooded, in the deep with the rot.
 pub const SCAVENGER_START_COLD: f64 = 100.0;
+// Day and night, on land only (the user's choice, 2026-10-16: land's own character). The night is
+// dark — sight reaches `NIGHT_SIGHT` of its day's length, the nose is untouched, so the night is
+// the noses' time — and cold: the whole land at least `NIGHT_CHILL` cold at deep night, so the
+// cold-blooded slow down and save while the warm-blooded keep their pace. Nothing is made: sight
+// and warmth are only taken. Rules `day_length`, `night_sight`, `night_chill`.
+/// Ticks a day lasts: short enough that a creature lives through many nights, so selection feels
+/// the rhythm (a lifespan is thousands of ticks).
+pub const DAY_LENGTH: f64 = 600.0;
+pub const NIGHT_SIGHT: f64 = 0.4;
+pub const NIGHT_CHILL: f64 = 0.5;
+/// The sun's height (the cosine of the day's phase, 1 at noon) above which it is full day and below
+/// minus which full night: with 0.3 the day and the night take 40% of the turn each, the dusk and
+/// the dawn 10% each, so the light never jumps.
+pub const DUSK: f64 = 0.3;
 /// Which food is a diet's own (plants, fresh meat, rot, bones). Of a corpse's stages a creature eats
 /// and goes for only its own, and takes another niche's only when its program says so this tick
 /// (`Action::EatForeign`; the template, below 30% of its store). Plants are not gated: whoever

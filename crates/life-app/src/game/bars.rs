@@ -28,6 +28,27 @@ fn speed_label(index: usize) -> String {
     }
 }
 
+/// The words of the time of day, the widest sets the slot.
+const SKY_WORDS: [&str; 4] = ["день", "сумерки", "ночь", "рассвет"];
+
+/// The time of day on land with days, and the day's length: «день», «сумерки», «ночь», «рассвет».
+fn sky(tick: u64, rules: &life_core::Rules, terrain: life_core::Terrain) -> Option<(&'static str, u64)> {
+    let length = rules.day_length as u64;
+    if terrain != life_core::Terrain::Land || length == 0 {
+        return None;
+    }
+    let dark = life_core::world::night_at(tick, rules, terrain).dark;
+    let evening = (tick % length) * 2 < length;
+    let [day, dusk, night, dawn] = SKY_WORDS;
+    let word = match dark {
+        0.0 => day,
+        1.0 => night,
+        _ if evening => dusk,
+        _ => dawn,
+    };
+    Some((word, length))
+}
+
 impl LifeApp {
     /// The top bar: the menu, time (pause, a step, the speed), the counts, what state the world is
     /// in (chips), and on the right the windows: statistics, behaviour, lab, help, the side panel.
@@ -41,6 +62,7 @@ impl LifeApp {
         let (tick_ms, snapshot_ms, build_ms, draw_ms) =
             (f.tick_ms, f.snapshot_ms, f.build_ms, self.view.draw_ms);
         let phases = f.phases;
+        let sky = sky(f.tick, &f.rules, f.terrain);
         ui.add_space(3.0);
         ui.horizontal(|ui| {
             if theme::icon_button(ui, Icon::Menu, "Меню (Esc)", false).clicked() {
@@ -75,6 +97,25 @@ impl LifeApp {
             ui.add_space(theme::GAP);
             ui.label(RichText::new(format!("тик {}", spaced(tick))).monospace())
                 .on_hover_text(format!("Сид {seed}, мир ×{scale}"));
+            if let Some((word, length)) = sky {
+                // a slot as wide as the widest word: the counts beside it never jump at dusk
+                let font = egui::TextStyle::Body.resolve(ui.style());
+                let slot = SKY_WORDS
+                    .iter()
+                    .map(|w| ui.painter().layout_no_wrap(w.to_string(), font.clone(), MUTED).size().x)
+                    .fold(0.0, f32::max);
+                let layout = egui::Layout::left_to_right(egui::Align::Center);
+                let size = egui::vec2(slot, ui.spacing().interact_size.y);
+                let word = ui.allocate_ui_with_layout(size, layout, |ui| {
+                    ui.set_min_width(slot);
+                    ui.label(RichText::new(word).color(MUTED))
+                });
+                word.response.on_hover_text(format!(
+                    "Сутки — {} тиков. Ночью зрение короче, нюх тот же, и холодно: хладнокровные \
+                     медленнее и тратят меньше.",
+                    spaced(length)
+                ));
+            }
             ui.label(RichText::new(format!("● {}", spaced(counts[0] as u64))).monospace().color(rgb(PLANT_COLOR)))
                 .on_hover_text("Растений");
             ui.label(RichText::new(format!("● {}", spaced(counts[1] as u64))).monospace().color(rgb(CREATURE_COLOR)))
@@ -232,5 +273,22 @@ impl LifeApp {
             }
         });
         ui.add_space(2.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use life_core::{Rules, Terrain};
+
+    /// The top bar names the four times of a land day; the sea and a land without days have none.
+    #[test]
+    fn the_sky_names_the_time_of_a_land_day() {
+        let rules = Rules::default().with("day_length", 1000.0).unwrap();
+        let words: Vec<_> = [0, 250, 500, 750].map(|t| sky(t, &rules, Terrain::Land).map(|s| s.0)).into();
+        assert_eq!(words, [Some("день"), Some("сумерки"), Some("ночь"), Some("рассвет")]);
+        assert_eq!(sky(500, &rules, Terrain::Land).map(|s| s.1), Some(1000));
+        assert_eq!(sky(500, &rules, Terrain::Ocean), None);
+        assert_eq!(sky(500, &rules.with("day_length", 0.0).unwrap(), Terrain::Land), None);
     }
 }
