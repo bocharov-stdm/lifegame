@@ -139,6 +139,15 @@ impl WorldView {
         self.dragged_area = None;
     }
 
+    /// A new simulation thread replaced the old one: its first frame is a new world whatever its
+    /// `world_gen`, and it has to be told the view anew.
+    pub fn forget_sim(&mut self) {
+        self.frame = None;
+        self.camera = None;
+        self.last_view = None;
+        self.prev_selected = None;
+    }
+
     /// Accept a new frame. The increments (history, chronicle) are taken by the caller.
     pub fn accept(&mut self, ctx: &egui::Context, sim: &SimHandle, mut f: Frame) {
         let fresh = Arc::new(std::mem::take(&mut f.instances));

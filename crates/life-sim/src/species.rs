@@ -381,11 +381,8 @@ fn count_shape(shapes: &mut HashSet<u64>, new: &mut usize, seen: &mut HashSet<u6
         .blocks()
         .iter()
         .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ b.shape()).wrapping_mul(0x100_0000_01b3));
-    if shapes.insert(hash) && !seen.contains(&hash) {
+    if shapes.insert(hash) && seen.len() < SHAPES_MAX && seen.insert(hash) {
         *new += 1;
-        if seen.len() < SHAPES_MAX {
-            seen.insert(hash);
-        }
     }
 }
 

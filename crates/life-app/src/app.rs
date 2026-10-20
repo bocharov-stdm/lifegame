@@ -447,6 +447,9 @@ impl LifeApp {
                         let waker = ctx.clone();
                         self.sim = SimHandle::spawn(cfg, Box::new(move || waker.request_repaint()));
                         self.applied_threads = None;
+                        // the new thread starts at world_gen 0 again: without its frame the
+                        // window would keep the dead world's history and never resend the view
+                        self.view.forget_sim();
                     }
                     if ui.button("Скопировать текст").clicked() {
                         ctx.copy_text(failure.clone());
